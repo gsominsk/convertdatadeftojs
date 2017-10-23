@@ -1,0 +1,136 @@
+external procedure HTArtGroup(string, var string);
+external procedure HTItemClass(string,var string);
+external function Boolean HasItemClassification();
+external function Boolean HasItemGroups();
+external procedure HTItems(string,var string);
+external procedure HTITs(string,string,var string);
+external procedure AddPlanToStockLevel(array record SMVc,Integer,var array record SMVc,Integer,record RcVc);
+external procedure CombineAndAddPlan(array record SMVc,array record SMVc,var array record SMVc,Integer,var Integer,string,Boolean,record RcVc);
+external procedure AppendProdPlanToForecastArray(var array record SMVc,Integer,string,Boolean,record RcVc);
+external procedure AppendPOPlanToForecastArray(var array record SMVc,Integer,string,Boolean,record RcVc);
+external procedure AppendStockSMToForecastArray(var array record SMVc,Integer,record RcVc);
+external procedure BuildTheItemArray(array record SMVc,Integer,var array string,var array Integer,var Integer);
+external procedure BuildTheForecastArray(var array record SMVc,var Integer,Date,Date,string,Boolean,record RcVc);
+external procedure HT2Per(Date,Date,var string);
+external procedure AppendMaxCalculations(var array record SMVc,var Integer,Integer,Boolean,record RcVc);
+external function LongInt GetStockPolicyMonths();
+external procedure BuildCurStockPlusForecastSM(var array record SMVc,var Integer,Date,Date,string,array string,Integer,record RcVc);
+external procedure PrintForecastNumbers(Date,array record SMVc,var Integer,array string,array Integer,Integer,record RcVc,Boolean,Boolean,Integer,string);
+external procedure CopySMArray(array record SMVc,var array record SMVc,Integer);
+external procedure AssumeCorrectPlans(var array record SMVc,Integer,Integer,record RcVc);
+external procedure AppendAllPurchaseItems(var array record SMVc,var Integer,Date,Date,string,Boolean,record RcVc);
+external procedure AppendTheProdNeeds(var array record SMVc,var Integer,Date,Date,string,Boolean,record RcVc);
+external procedure AppendAutoProductions(array record SMVc,Integer,Integer,record RcVc);
+external procedure DebugSelection(record RcVc);
+external procedure DebugOption(record RcVc);
+
+global
+procedure CalcStockLevelsRn(record RcVc RepSpec)
+BEGIN
+  array record SMVc aSMr;    // Projected Month Close
+  array record SMVc amaxSMr; // Maximal Stock Level
+  array record SMVc aresSMr; // The plan that will get printed
+  string 255 tstr;
+  Integer rw;
+  Integer asmcnt,asmcnt2,arescnt;
+  array string 20 aitems;
+  array Integer atype;
+  Integer acnt;
+  Date actualstartdate,actualenddate;
+  record SFPeriodsBlock SFPb; 
+  string 255 frit,toit;
+  
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;
+  frit = FirstInRange(RepSpec.f3,20);
+  toit = LastInRange(RepSpec.f3,20);
+  StartReportJob(USetStr(16319));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+
+  rw = rw + 1;
+  Header(rw,USetStr(18201) & " " & RepSpec.LastAcc,0)
+  Header(rw,USetStr(18200) & " " & RepSpec.d1,1)
+  rw = rw + 1;
+  HTITs(frit,toit,tstr);
+  Header(rw,tstr,0);
+  HTItems(RepSpec.f1,tstr);
+  Header(rw,tstr,1);  
+  rw = rw + 1;
+  if (HasItemGroups) then begin
+    HTArtGroup(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasItemClassification) then begin
+    HTItemClass(RepSpec.f2,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  EndHeader;
+  SetRepCol(2,55);
+  SetRepCol(3,180);
+  asmcnt = 0;
+  BlockLoad(SFPb);
+  if (nonblankdate(RepSpec.d1)) then begin
+    actualstartdate = RepSpec.d1;
+    if (actualstartdate>RepSpec.sStartDate) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(16317),false);
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+      actualstartdate = RepSpec.sStartDate;
+    end;
+  end else begin
+    actualstartdate = RepSpec.sStartDate;
+  end;
+  DebugSelection(RepSpec);
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      actualenddate = AddMonth(RepSpec.sEndDate,GetStockPolicyMonths+1);
+    case kForecastPeriodTypeWeeks:
+      actualenddate = AddDay(RepSpec.sEndDate,(GetStockPolicyMonths+1)*7);
+  end;
+  BuildTheForecastArray(aSMr,asmcnt,RepSpec.sStartDate,actualenddate,RepSpec.LastAcc,false,RepSpec);
+  AppendAllPurchaseItems(aSMr,asmcnt,RepSpec.sStartDate,actualenddate,RepSpec.LastAcc,false,RepSpec);
+  AppendTheProdNeeds(aSMr,asmcnt,RepSpec.sStartDate,actualenddate,RepSpec.LastAcc,false,RepSpec);
+  BuildTheItemArray(aSMr,asmcnt,aitems,atype,acnt);
+
+  if (RepSpec.flags[5]) then begin
+    CopySMArray(aSMr,amaxSMr,asmcnt);
+    asmcnt2 = asmcnt;
+    AppendMaxCalculations(amaxSMr,asmcnt2,RepSpec.flags[3],true,RepSpec);
+  end;
+
+  BuildCurStockPlusForecastSM(aSMr,asmcnt,actualstartdate,RepSpec.sStartDate,RepSpec.LastAcc,aitems,acnt,RepSpec);
+  AppendMaxCalculations(aSMr,asmcnt,RepSpec.flags[3],false,RepSpec);
+  asmcnt = asmcnt - 1; // Odd that this has one record less, but understandable.
+  AppendStockSMToForecastArray(aSMr,asmcnt,RepSpec);
+
+  if (RepSpec.flags[5]) then begin
+    CombineAndAddPlan(aSMr,amaxSMr,aresSMr,asmcnt,arescnt,RepSpec.LastAcc,false,RepSpec);
+    AddPlanToStockLevel(aresSMr,arescnt,aSMr,asmcnt,RepSpec);
+  end else begin
+    if (RepSpec.flags[1]!=0) then begin
+      AppendPOPlanToForecastArray(aSMr,asmcnt,RepSpec.LastAcc,false,RepSpec);
+    end;
+    if (RepSpec.flags[2]!=0) then begin
+      AppendProdPlanToForecastArray(aSMr,asmcnt,RepSpec.LastAcc,false,RepSpec);
+    end;
+  end;
+  AppendAutoProductions(aSMr,asmcnt,RepSpec.flags[7],RepSpec);
+  BuildTheItemArray(aSMr,asmcnt,aitems,atype,acnt);
+
+  PrintForecastNumbers(actualstartdate,aSMr,asmcnt,aitems,atype,acnt,RepSpec,true,true,RepSpec.flags[4],"");
+  DebugOption(RepSpec);
+  EndJob;
+  RETURN;
+END;
+

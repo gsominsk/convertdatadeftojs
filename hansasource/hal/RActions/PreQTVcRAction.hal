@@ -1,0 +1,311 @@
+external function val GetINCostPrice(string,string,Boolean);
+external function Integer CheckRates(string,val,val,val,val,val,var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Integer CheckObjs(string,string,var string);
+external procedure PreQTSumup(var record PreQTVc);
+external procedure SwapM4Val(var val,var val);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetCurUser(var record UserVc);
+
+global
+function LongInt PreQTVcRecordDefaults(var record PreQTVc PreQTr,record PreQTVc PreQT2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  LongInt newnr;
+  Date blankd;
+  record UserVc Userr;
+  record AccBlock ARAccRec;
+  val fr,to1,to2,br1,br2;
+  string 10 curcode;
+
+  BlockLoad(ARAccRec);
+  PreQTr.SerNr = -1;
+  PreQTr.RealQTNr = -1;
+  PreQTr.QTDate = CurrentDate;
+  PreQTr.CustCat = "";
+  PreQTr.ExportFlag = 0;
+  PreQTr.DiscSum = blankval;
+  PreQTr.DiscPerc = blankval;
+  PreQTr.TotGP = blankval;
+  PreQTr.InclVAT = ARAccRec.BasePriceInclVAT;
+  if (SingleUserMode) then begin
+    PreQTr.SerNr = NextSerNr("PreQTVc",PreQTr.QTDate,-1,false,"");
+  end;
+  GetCurUser(Userr);
+  PreQTr.Objects = Userr.PersObjx;
+  PreQTr.OurContact = Userr.CurOurContact;
+  PreQTr.SalesMan = Userr.Code;
+  PreQTr.SalesGroup = Userr.SalesGroup;
+  PreQTr.PayDeal = "";
+  curcode = PreQTr.CurncyCode;
+  GetFullCurncyRate(curcode,PreQTr.QTDate,fr,to1,to2,br1,br2);
+  PreQTr.CurncyCode = curcode;
+  PreQTr.FrRate = fr;
+  PreQTr.ToRateB1 = to1; 
+  PreQTr.ToRateB2 = to2;
+  PreQTr.BaseRate1 = br1;
+  PreQTr.BaseRate2 = br2;
+  PreQTVcRecordDefaults = res;  
+  RETURN;
+END;
+
+global
+function LongInt PreQTVcRecordDuplicate(var record PreQTVc PreQTr,record PreQTVc PreQT2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  string 10 curcode;
+  Date blankd;
+  Integer i,rwcnt;
+  row PreQTVc PreQTrw;
+
+  PreQTr.SerNr = -1;
+  PreQTr.DiscSum = blankval;
+  PreQTr.DiscPerc = blankval;
+  PreQTr.RealQTNr = -1;
+  PreQTr.Closed = 0;
+  if (SingleUserMode) then begin
+    PreQTr.SerNr = NextSerNr("PreQTVc",PreQTr.QTDate,-1,false,"");
+  end;
+  curcode = PreQTr.CurncyCode;
+  GetFullCurncyRate(curcode,PreQTr.QTDate,fr,to1,to2,br1,br2);
+  PreQTr.CurncyCode = curcode;
+  PreQTr.FrRate = fr;
+  PreQTr.ToRateB1 = to1; 
+  PreQTr.ToRateB2 = to2;
+  PreQTr.BaseRate1 = br1;
+  PreQTr.BaseRate2 = br2;
+  PreQTr.QTDate = CurrentDate;
+  rwcnt = MatRowCnt(PreQTr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PreQTr,i,PreQTrw);
+    PreQTrw.BasePrice = GetINCostPrice("",PreQTrw.ArtCode,false);
+    MatRowPut(PreQTr,i,PreQTrw);
+  end;
+  PreQTVcRecordDuplicate = res;  
+  RETURN;
+END;
+
+procedure PreQTVcConvertB1ToB2(record PreQTVc PreQTp,val fr,var val to1,var val to2,var val br1,var val br2)
+BEGIN
+  row PreQTVc PreQTrw;
+  Integer i,rwcnt;
+  val t;
+
+  SwapM4Val(br1,br2);
+  SwapM4Val(to1,to2); 
+  rwcnt = MatRowCnt(PreQTp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PreQTp,i,PreQTrw);
+    B1ToB2Val(PreQTrw.rowGP,br1,br2,t);
+    PreQTrw.rowGP = t;
+    B1ToB2Val(PreQTrw.BasePrice,br1,br2,t);
+    PreQTrw.BasePrice = t;    
+    MatRowPut(PreQTp,i,PreQTrw);
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt PreQTVcRecordImport(var record PreQTVc PreQTr,record PreQTVc PreQT2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;  
+  Boolean gBase1ToBase2,gToDualBase;
+  record ConvMasterBlock cvm;
+  val fr,to1,to2,br1,br2,t;
+  string 10 curncy;
+  Integer rwcnt,i;
+  row PreQTVc PreQTrw;
+
+  BlockLoad(cvm);  
+  if (PreQTr.SerNr==-99) then begin
+    PreQTr.SerNr = NextSerNr("PreQTVc",PreQTr.QTDate,-1,false,"");
+  end;
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gToDualBase) then begin
+    fr = PreQTr.FrRate;
+    to1 = PreQTr.ToRateB1;
+    to2 = PreQTr.ToRateB2;
+    br1 = PreQTr.BaseRate1;
+    br2 = PreQTr.BaseRate2;
+    t = PreQTr.Sum4;
+    curncy = PreQTr.CurncyCode;
+    ConvertToDualBase(curncy,PreQTr.QTDate,fr,to1,to2,br1,br2,t,true);
+    PreQTr.CurncyCode = curncy;
+    PreQTr.FrRate = fr;
+    PreQTr.ToRateB1 = to1;
+    PreQTr.ToRateB2 = to2;
+    PreQTr.BaseRate1 = br1;
+    PreQTr.BaseRate2 = br2;
+    PreQTr.Sum4 = t;  
+  end;
+  if (gBase1ToBase2) then begin
+    to1 = PreQTr.ToRateB1;
+    to2 = PreQTr.ToRateB2;
+    br1 = PreQTr.BaseRate1;
+    br2 = PreQTr.BaseRate2;  
+    PreQTVcConvertB1ToB2(PreQTr,PreQTr.FrRate,to1,to2,br1,br2);
+    PreQTr.ToRateB1 = to1;
+    PreQTr.ToRateB2 = to2;
+    PreQTr.BaseRate1 = br1;
+    PreQTr.BaseRate2 = br2;
+    PreQTSumup(PreQTr);     
+  end;
+  if (PreQTr.TotGP==0) then begin      
+    rwcnt = MatRowCnt(PreQTr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(PreQTr,i,PreQTrw);
+      if (nonblank(PreQTrw.ArtCode)) then begin
+        PreQTr.TotGP = PreQTr.TotGP + PreQTrw.rowGP;
+      end;
+    end;
+  end;
+  PreQTVcRecordImport = res;  
+  RETURN;
+END;
+
+function Boolean CheckCurncyRates(string crncy,val from,val to1,val to2,val base1,val base2)
+BEGIN
+  Boolean res;
+  record BaseCurBlock bascur;
+
+  res = true;
+  BlockLoad(bascur);
+  if ((nonblank(crncy)) and (bascur.BaseCur1!=crncy) and (bascur.BaseCur2!=crncy)) then begin
+    if ((to1==0) and (to2==0)) then begin
+      res = false;
+    end;
+  end;
+  CheckCurncyRates = res;
+  RETURN;
+END;
+
+global
+function LongInt PreQTVcRecordCheck(record PreQTVc PreQTp,record PreQTVc PreQT2p,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record PreQTVc locPreQTr;
+  record CUVc CUr;
+  record INVc INr;
+  row PreQTVc PreQTrw;
+  Integer i,rwcnt,errcode;
+  LongInt oldnr;
+  Boolean gentrans;
+  string 255 tstr,errstr;
+  Integer insertmode,updatemode;
+
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  if (stat==updatemode) then begin
+    if (PreQTp.SerNr<=0) then begin
+      PreQTp.SerNr = PreQT2p.SerNr;
+    end;
+  end;  
+  oldnr = PreQTp.SerNr;
+  if (PreQTp.SerNr<=0) then begin
+    PreQTp.SerNr = NextSerNr("PreQTVc",PreQTp.QTDate,-1,false,"");
+  end;
+  if ((stat==insertmode) or (PreQTp.SerNr!=PreQT2p.SerNr)) then begin
+    locPreQTr.SerNr = PreQTp.SerNr;
+    if (ReadFirstMain(locPreQTr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1; 
+      goto LPreQTVcRecordCheck;
+    end;
+  end;
+  CUr.Code = PreQTp.CustCode;
+  if (ReadFirstMain(CUr,1,true)==false) then begin
+    RecordCheckError(1120,PreQTp.CustCode,-1,"CustCode");      
+    res = -1; 
+    goto LPreQTVcRecordCheck;
+  end;
+  if (CUr.CUType==0) then begin
+    RecordCheckError(1120,PreQTp.CustCode,-1,"CustCode");      
+    res = -1; 
+    goto LPreQTVcRecordCheck;
+  end;
+  if (CUr.blockedFlag!=0) then begin
+    RecordCheckError(1265,PreQTp.CustCode,-1,"CustCode");      
+    res = -1; 
+    goto LPreQTVcRecordCheck;
+  end;
+  errcode = CheckObjs("",PreQTp.Objects,errstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,errstr,-1,"Objects");      
+    res = -1; 
+    goto LPreQTVcRecordCheck;
+  end;
+  if (PreQTp.ExportFlag!=0) then begin
+    if (UserCanAction("DisallowExpSales",false)) then begin
+      RecordCheckError(20049,"",-1,"CustCode");   
+      res = -1; 
+      goto LPreQTVcRecordCheck;
+    end; 
+  end;
+  if (PreQTp.ExportFlag==0) then begin
+    if (UserCanAction("DisallowDomSales",false)) then begin
+      RecordCheckError(20056,"",-1,"CustCode");   
+      res = -1; 
+      goto LPreQTVcRecordCheck;
+    end; 
+  end;
+/*  
+  if (CheckCurncyRates(PreQTp.CurncyCode,PreQTp.FrRate,PreQTp.ToRateB1,PreQTp.ToRateB2,PreQTp.BaseRate1,PreQTp.BaseRate2)==false) then begin
+    RecordCheckError(1582,"",-1,"ToRateB1");      
+    res = -1; 
+    goto LPreQTVcRecordCheck;
+  end;  
+*/  
+  errcode = CheckRates(PreQTp.CurncyCode,PreQTp.FrRate,PreQTp.ToRateB1,PreQTp.ToRateB2,PreQTp.BaseRate1,PreQTp.BaseRate2,tstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,"",-1,tstr);      
+    res = -1; 
+    goto LPreQTVcRecordCheck;
+  end;      
+  rwcnt = MatRowCnt(PreQTp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PreQTp,i,PreQTrw);
+    switch (PreQTrw.stp) begin
+      case 1:
+        if (nonblank(PreQTrw.ArtCode)) then begin
+          if (ReadFirstItem(PreQTrw.ArtCode,INr,true,false)==false) then begin
+            RecordCheckError(1120,PreQTrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LPreQTVcRecordCheck;
+          end;
+          if (INr.Terminated!=0) then begin
+            RecordCheckError(1120,PreQTrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LPreQTVcRecordCheck;
+          end;
+        end;
+        tstr = PreQTp.Objects;
+        if (nonblank(tstr)) then begin tstr = tstr & ","; end;
+        tstr = tstr & PreQTrw.Objects;
+        errcode = CheckObjs(PreQTrw.SalesAcc,tstr,errstr);
+        if (errcode!=0) then begin
+          RecordCheckError(errcode,errstr,i,"Objects");      
+          res = -1; 
+          goto LPreQTVcRecordCheck;
+        end;
+        if (PreQTrw.Sum!=0) then begin
+          if (nonblank(PreQTrw.ArtCode)) then begin
+            if (blank(PreQTrw.VATCode)) then begin
+              RecordCheckError(1134,"",i,"VATCode");      
+              res = -1; 
+              goto LPreQTVcRecordCheck;
+            end;
+          end; 
+        end;
+    end;
+  end;
+LPreQTVcRecordCheck:;
+  if (res!=0) then begin PreQTp.SerNr = oldnr; end;
+  PreQTVcRecordCheck = res;
+  RETURN;
+END;
+

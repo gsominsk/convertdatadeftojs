@@ -1,0 +1,208 @@
+external function integer GetGuestsInJob(record JobVc);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external function LongInt DateDiff(Date,Date);
+external procedure HT2Per(Date, Date , var string);
+external function LongInt FillFullJobPriceArray(Date,LongInt,val,var array string,var array string,var array string,var array LongInt,var array LongInt,LongInt,String,String,Boolean);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+
+function val FindStayItemPrice(string artcode,val qty,val reb,string curncycode,string langcode,string custcat,string pricelist,
+                               string rebcode,Integer exportflag,Date transdate,string custcode,
+                               val frrate,val torateb1,val torateb2,val baserate1,val baserate2,var val price)
+BEGIN
+  val res;
+  record INVc INr;
+  val basep,locreb,tax2prc;
+  string 255 spec,vatcod,salesacc,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Boolean dummyf;  
+  Time blankt;
+
+  if (GetItemPriceDiscount3(artcode,qty,INr,curncycode,
+                            frrate,torateb1,torateb2,baserate1,baserate2,
+                            langcode,custcat,pricelist,rebcode,
+                            price,spec,locreb,vatcod,basep,salesacc,exportflag,calcprice,transdate,blankt,custcode,true,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    CalcSum(qty,price,0,reb,res,0);
+  end;
+  FindStayItemPrice = res;
+  RETURN;
+END;
+
+function Boolean IsChargeStayItem(string itemcode,Array string ainvitems,LongInt arwcnt)
+BEGIN
+  Boolean res;
+  LongInt i;
+   
+  for (i=0;i<arwcnt;i=i+1) begin
+    if (ainvitems[i]==itemcode) then begin
+      res = true;
+      goto LIsChargeStayItem;
+    end;
+  end;
+LIsChargeStayItem:;  
+  IsChargeStayItem = res;  
+  RETURN;
+END;
+
+global
+procedure InvShopRn(record RcVc RepSpec)
+begin
+  record JobVc Jobr;
+  record IVVc IVr;
+  row IVVc IVrw;
+  record ShopBaskVc SBr;
+  Boolean TrHs, testf,found1,found2;
+  Integer i, rwcnt,rw;
+  val sum,s,unitprice,reb,price;
+  string 255 tstr;
+  LongInt arwcnt;
+  array string 40 ainvitems;
+  array string 40 apricerules;
+  array string 40 acuclass;
+  array LongInt adummyqtya;
+  array LongInt aqty;
+  Date enddate;
+  
+  StartReportJob(USetStr(12940));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  EndHeader;
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(12941),false);
+  OutString(60,0,USetStr(12942),false);
+  OutString(180,0,USetStr(12943),false);
+  OutString(240,0,USetStr(12944),false);
+  OutString(310,0,USetStr(12945),false);
+  EndFormat;
+  Gray_Divider(0,420);
+  StartFormat(15);
+  OutString(20,0,USetStr(12946),false);
+  OutString(420,0,USetStr(12947),true);
+  EndFormat;
+  Black_Divider(0,1);
+  TrHs = true;
+  IVr.InvDate = RepSpec.sStartDate;
+  while(LoopKey("InvDate",IVr,1,TrHs)) begin
+    if (IVr.InvDate>RepSpec.sEndDate) then begin
+      TrHs = false;
+    end;
+    testf = true;
+    if (IVr.JobNr<=0) then begin
+      testf = false;
+    end;
+    if (TrHs and testf) then begin
+      testf = true;
+      Jobr.SerNr = IVr.JobNr;
+      if (ReadFirstMain(Jobr,1,true)) then begin
+        enddate = CurrentDate;
+        if (enddate>Jobr.EndDate) then begin enddate = Jobr.EndDate;  end;
+        arwcnt = FillFullJobPriceArray(Jobr.TransDate,DateDiff(enddate,Jobr.TransDate),1,ainvitems,apricerules,acuclass,adummyqtya,aqty,GetGuestsInJob(Jobr),Jobr.Type,Jobr.ResUsage,true);
+      end;
+      sum = 0;
+      ResetLoop(SBr);
+      SBr.DestinationNr = IVr.SerNr;
+      found1 = true;
+      while(LoopKey("DestinationNr",SBr,1,found1)) begin
+        if (SBr.DestinationNr!=IVr.SerNr) then begin
+          found1 = false;
+        end;
+        if (found1) then begin
+          if (SBr.PriceInCur!=0) then begin
+            price = SBr.PriceInCur;
+          end else begin
+            price = SBr.Price;
+          end;
+          
+          if (price!=0) then begin
+            CalcSum(SBr.Qty,price,0,SBr.Discount,s,0);
+            sum = sum + s;
+          end else begin
+            if (Jobr.SerNr>0) then begin
+              if (Jobr.AgreedPrice==0) then begin
+//                if (IsChargeStayItem(SBr.ItemCode,ainvitems,arwcnt)) then begin
+                  s = FindStayItemPrice(SBr.ItemCode,SBr.Qty,SBr.Discount,IVr.CurncyCode,IVr.LangCode,IVr.CustCat,IVr.PriceList,
+                               IVr.RebCode,IVr.ExportFlag,IVr.TransDate,IVr.CustCat,
+                               IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,unitprice);
+                  sum = sum + s;
+                end;
+//              end;
+            end;
+          end;
+        end;
+      end;
+      if (RepSpec.flags[1]!=0) then begin
+        if (sum <= IVr.Sum4) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        StartFormat(15);
+        OutStringID(0,"DblIVVc",IVr.SerNr,false,IVr.SerNr);
+        EndFormat;
+        Gray_Divider(0,100);
+        if (RepSpec.ArtMode==1) then begin
+          rwcnt = MatRowCnt(IVr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(IVr,i,IVrw);
+            if (nonblank(IVrw.ArtCode)) then begin
+              StartFormat(15);
+              OutString(60,0,IVrw.ArtCode,false);
+              OutString(180,0,IVrw.Quant,false);
+              OutString(240,0,IVrw.Price,false);
+              OutString(310,0,IVrw.Sum,false);
+              EndFormat;
+            end;
+          end;
+          Gray_Divider(180,360);
+        end;
+        StartFormat(15);
+        OutString(180,0,USetStr(12948),false);
+        OutString(360,0,IVr.Sum4,true);
+        EndFormat;        
+        if (RepSpec.ArtMode==1) then begin
+          RecordNew(SBr);
+          ResetLoop(SBr);
+          Gray_Divider(0,420);
+          SBr.DestinationNr = IVr.SerNr;
+          found1 = true;
+          while(LoopKey("DestinationNr",SBr,1,found1)) begin
+            if (SBr.DestinationNr!=IVr.SerNr) then begin
+              found1 = false;
+            end;
+            if (found1) then begin
+              s = FindStayItemPrice(SBr.ItemCode,SBr.Qty,SBr.Discount,IVr.CurncyCode,IVr.LangCode,IVr.CustCat,IVr.PriceList,
+                               IVr.RebCode,IVr.ExportFlag,IVr.TransDate,IVr.CustCat,
+                               IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,unitprice);
+              StartFormat(15);
+              OutStringID(20,"DblShopBaskVc2",SBr.SerNr,false,SBr.SerNr);
+              OutString(60,0,SBr.ItemCode,false);
+              OutString(180,0,SBr.Qty,false);
+              if (price==0) then begin
+                OutString(240,0,unitprice,false);
+              end else begin
+                OutString(240,0,price,false);
+                CalcSum(SBr.Qty,price,0,SBr.Discount,s,0);
+              end;
+              OutVal(310,0,s,M4Val,false);
+              OutString(420,0,SBr.TransDate,true);
+              EndFormat;            
+            end;
+          end;        
+          Gray_Divider(180,360);
+        end;
+        StartFormat(15);
+        OutString(180,0,USetStr(12949),false);
+        OutString(360,0,sum,true);
+        EndFormat;
+        Black_Divider(0,480);
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  EndJob;
+  RETURN;
+end;

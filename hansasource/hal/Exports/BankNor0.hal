@@ -1,0 +1,350 @@
+external procedure NewLineExport();
+external function Boolean check_refNor(string);
+external procedure DnBAppHeader(string,var LongInt,var LongInt,Integer);
+external procedure ConvertBankVal(val,var string); 
+external procedure DnBBegin(string,string,record CYBlock,var LongInt,var LongInt,var LongInt,Integer,string,Boolean);
+
+global
+function Boolean CheckBankExpNorwayPayment(record OPVc OPr,record RcVc RepSpec)
+begin 
+  record VIVc VIr;
+  row OPVc OPrw;
+  Boolean res, testrow;
+  Integer i,rwcnt;
+  
+  res = false;
+  
+  rwcnt = MatRowCnt(OPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPr,i,OPrw);
+    testrow = true;
+    if (OPrw.ovst<>0) then begin 
+      testrow = false; 
+    end;
+    if (blank(OPrw.BankAcc)) then begin 
+      testrow = false;
+    end;    
+    if (nonblank(RepSpec.CurncyCode)) then begin
+      if (OPrw.RecCurncy<>RepSpec.CurncyCode) then begin 
+        testrow = false;
+      end;    
+    end;
+    VIr.SerNr = OPrw.VISerNr;
+    if (ReadFirstMain(VIr,1,true)==false) then begin 
+      testrow = false;
+    end;
+    if (VIr.Invalid<>0) then begin 
+      testrow = false;
+    end;
+    if (testrow==true) then begin
+      res = true;
+      i = rwcnt; 
+    end;
+  end;  
+  CheckBankExpNorwayPayment = res;
+  return;
+end;  
+  
+
+function
+Boolean CheckDigitMatch(string tstr,Integer i)
+BEGIN
+  Boolean res;
+  
+  res = false;
+  if (CharacterMatch(tstr,"9",i) or CharacterMatch(tstr,"8",i) or CharacterMatch(tstr,"7",i) or CharacterMatch(tstr,"6",i) or
+      CharacterMatch(tstr,"5",i) or CharacterMatch(tstr,"4",i) or CharacterMatch(tstr,"3",i) or CharacterMatch(tstr,"2",i) or
+      CharacterMatch(tstr,"1",i) or CharacterMatch(tstr,"0",i)) then 
+  begin
+    res = true;
+  end;    
+  CheckDigitMatch = res;
+  RETURN;
+END;    
+
+procedure SplitAddress(string addr,var string pnr,var string town)
+BEGIN
+    string 255 t2,tstr,c;
+    Integer i,cp;
+
+    pnr = "";
+    tstr = addr;
+    cp = 1;
+    for (i=1;i<=len(tstr);i=i+1) begin
+//      if (CheckDigitMatch(tstr,i)==false) then begin
+//        cp = i-1;
+      if (Mid(tstr,i,1)==" ") then begin
+        cp = i;
+        goto L22;
+      end;
+    end;
+L22:;
+    if (cp>0) then begin
+      t2 = Left(tstr,cp);
+    end else begin
+      t2 = " ";
+    end;  
+    pnr = t2;
+    tstr = addr;
+    t2 = Right (tstr,len(tstr)-(cp+1));
+    town = t2;
+    
+  t2 = pnr;
+  pnr = "";
+  for (i=0;i<len(t2);i=i+1) begin
+    c = Mid(t2,i,1);
+    if (asc(c)>=asc("0")) and (asc(c)<=asc("9")) then begin
+      pnr = pnr & Mid(t2,i,1);
+    end;
+  end;
+  RETURN;
+END;
+
+procedure SplitString(string in,Integer pos,var string res1,var string res2)
+BEGIN
+  Integer l;
+  
+  l = len(in);
+  res1 = in;
+  if (pos<l) then begin
+    res1 = Left(in,pos);
+  end;  
+  if (l<=pos) then begin
+    res2 = " ";
+    goto L99;
+  end;
+  res2 = Right(in,l-pos);
+L99:;
+  RETURN;
+END;
+
+global
+updating procedure BankExpNorway0(record OPVc OPr,record RcVc RepSpec,Boolean newversf,var LongInt rowsernr,var LongInt betcount,var LongInt appsernr)
+BEGIN
+  Integer i,j,rwcnt;
+  Integer row14count;  
+  row OPVc OPrw;
+  row OPVc OP2rw;  
+  record VIVc VIr;
+  record VIVc VI2r;
+  record CUVc VEr;
+  record CYBlock CompYear;
+  val t,totsum;
+  string 255 tstr,t1,t2;
+  Boolean testf,VEf;
+  record BankFileBlock bfr;
+  string 255 refstr;
+  Integer betfor21cnt;
+  
+  if (CheckBankExpNorwayPayment(OPr,RepSpec)==false) then begin 
+    goto L99;
+  end;
+  
+  betfor21cnt = 0;
+  BlockLoad(bfr);
+  BlockLoad(CompYear);
+  rowsernr = bfr.RowSerNr;
+  appsernr = bfr.LastSerNr;
+  if (CurrentDate<>bfr.LastDate) then begin
+    appsernr = 1;
+  end;  
+  if (betcount==0) then begin
+    DnBBegin(OPr.PayCurCode,bfr.User,CompYear,rowsernr,appsernr,rowsernr,RepSpec.flags[2],RepSpec.Stext,newversf);
+  end;
+  row14count = 0;
+  rwcnt = MatRowCnt(OPr);
+  for (i = 0 ; i<rwcnt;i=i+1) begin
+    MatRowGet(OPr,i,OPrw);
+    if (OPrw.ovst<>0) then begin goto L88; end;
+    if (blank(OPrw.BankAcc)) then begin goto L88; end;    
+    if (nonblank(RepSpec.CurncyCode)) then begin
+      if (OPrw.RecCurncy<>RepSpec.CurncyCode) then begin goto L88; end;    
+    end;
+    VIr.SerNr = OPrw.VISerNr;
+    if (ReadFirstMain(VIr,1,true)==false) then begin goto L88; end;
+    if (VIr.Invalid<>0) then begin goto L88; end;
+    if (VIr.InvType==kInvoiceTypeNormalSpecialSales) then begin VIr.InvType = kInvoiceTypeNormal; end;
+    if (VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin VIr.InvType = kInvoiceTypeCredit; end;
+    if ((VIr.InvType<kInvoiceTypeNormal) or (VIr.InvType>kInvoiceTypeCredit)) then begin VIr.InvType = kInvoiceTypeNormal; end;
+
+    if ((VIr.InvType==kInvoiceTypeNormal) and (VIr.PayVal<0)) then begin
+      VIr.InvType = kInvoiceTypeCredit; 
+    end;
+    VEr.Code = VIr.VECode;
+    VEf = ReadFirstMain(VEr,1,true);
+    testf = true;
+    for (j=0;j<i;j=j+1) begin        
+      MatRowGet(OPr,j,OP2rw);
+      if (OP2rw.VECode==OPrw.VECode) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      totsum = 0;
+      for (j=i;j<rwcnt;j=j+1) begin
+        MatRowGet(OPr,j,OP2rw);
+        if (OP2rw.VECode==OPrw.VECode) then begin
+          totsum = OP2rw.RecVal + totsum;
+        end;
+      end;
+      if (totsum<0) then begin goto L77; end;
+      DnBAppHeader(OPrw.RecCurncy,appsernr,betcount,RepSpec.flags[2]);
+      tstr = "BETFOR21";
+      betfor21cnt = betfor21cnt + 1;
+      ExportPadString(tstr,8," ",false);
+      ExportPadString(StripNonDigits(CompYear.BankCode),11,"0",true);
+      ExportPadString(StripNonDigits(CompYear.Bank1),11,"0",true);
+      tstr = rowsernr;
+      ExportPadString(tstr,4,"0",true);
+      rowsernr = rowsernr + 1;
+      if (rowsernr>9999) then begin rowsernr = 0; end;
+      ExportPadString(" ",6," ",true);
+      NewLineExport;
+      ExportPadString(DateToString(OPr.PayDate,"YYMMDD"),6," ",false);
+      tstr = OPr.SerNr;
+      ExportPadString(tstr,30," ",false);
+      ExportPadString(" ",1," ",true);
+      ExportPadString(StripNonDigits(OPrw.BankAcc),11,"0",true);
+      ExportPadString(UpperCase(ConvertSpecStr(VIr.VEName,"NOSCANDCHAR")),30," ",false);
+      tstr = UpperCase(ConvertSpecStr(VEr.InvAddr0,"NOSCANDCHAR"));
+      SplitString(tstr,2,t1,t2);
+      ExportPadString(t1,2," ",false);
+      NewLineExport;
+      ExportPadString(t2,28," ",false);
+      ExportPadString(UpperCase(ConvertSpecStr(VEr.InvAddr1,"NOSCANDCHAR")),30," ",false);
+      SplitAddress(VEr.InvAddr2,t1,t2);
+      ExportPadString(UpperCase(ConvertSpecStr(t1,"NOSCANDCHAR")),4,"0",false);
+      tstr = UpperCase(ConvertSpecStr(t2,"NOSCANDCHAR"));
+      SplitString(tstr,18,t1,t2);
+      ExportPadString(UpperCase(t1),18," ",false);
+      NewLineExport;
+      ExportPadString(UpperCase(t2),8," ",true);
+      ExportPadString("0",15,"0",true);
+      if (blank(VIr.RefStr)) then begin
+        ExportPadString("600",3," ",true);
+      end else begin
+        if (check_refNor(VIr.RefStr)) then begin
+          ExportPadString("601",3," ",true);
+        end else begin
+          ExportPadString("602",3," ",true);
+        end;
+      end;
+      ExportPadString("F",1," ",true);
+      ExportPadString(" ",1," ",true);
+//      ConvertBankVal(OPrw.RecVal,tstr); // Is not correct I think.
+//      ExportPadString(tstr,15,"0",true);
+      ExportPadString("0",15,"0",true);
+      ExportPadString(" ",5," ",false);
+      ExportPadString(DateToString(CurrentDate,"YYMMDD"),6," ",false);
+      ExportPadString(DateToString(CurrentDate,"YYMMDD"),6," ",true);
+      ExportPadString(" ",1," ",false);
+      ExportPadString(" ",9," ",false);
+      ExportPadString("0",10,"0",true);
+      NewLineExport;
+      for (j=i;j<rwcnt;j=j+1) begin
+        MatRowGet(OPr,j,OP2rw);
+        if (OP2rw.VECode==OPrw.VECode) then begin
+          if (nonblank(RepSpec.CurncyCode)) then begin
+            if (OP2rw.RecCurncy<>RepSpec.CurncyCode) then begin goto L66; end;
+          end;
+          if (OP2rw.stp<>1) then begin goto L66; end;
+          VI2r.SerNr = OP2rw.VISerNr;
+          if (ReadFirstMain(VI2r,1,true)==false) then begin goto L88; end;
+          if (VI2r.Invalid<>0) then begin goto L88; end;
+          DnBAppHeader(OP2rw.RecCurncy,appsernr,betcount,RepSpec.flags[2]);
+          ExportPadString("BETFOR23",8," ",false);
+          ExportPadString(StripNonDigits(CompYear.BankCode),11,"0",true);
+          ExportPadString(StripNonDigits(CompYear.Bank1),11,"0",true);
+          tstr = rowsernr;
+          ExportPadString(tstr,4,"0",true);
+          rowsernr = rowsernr + 1;
+          if (rowsernr>9999) then begin rowsernr = 0; end;
+          ExportPadString(" ",6," ",true);
+          NewLineExport;
+          refstr = VI2r.RefStr;
+          if (blank(refstr)) then begin
+            refstr = OP2rw.rkPayNumber;
+          end;
+/*          
+          if (nonblank(refstr)) then begin
+            ExportPadString(" ",40," ",false);
+            ExportPadString(" ",40," ",false);
+            NewLineExport;
+            ExportPadString(" ",40," ",false);
+            ExportPadString(UpperCase(refstr),27," ",false);
+          end else begin
+            tstr = "Faktura: ";
+            tstr = tstr & VI2r.InvoiceNr;
+            //BS endring må gjøres her
+            ExportPadString(UpperCase(ConvertSpecStr(tstr,"NOSCANDCHAR")),40," ",false);
+            ExportPadString(UpperCase(ConvertSpecStr(VI2r.Comment,"NOSCANDCHAR")),40," ",false);
+            NewLineExport;
+            ExportPadString(" ",40," ",false);
+            ExportPadString(" ",27," ",false);
+          end;
+          tstr = VI2r.SerNr;
+          ExportPadString(tstr,13," ",false);
+        //  SplitString(tstr,13,t1,t2);
+         // ExportPadString(UpperCase(t1),13," ",false);
+          NewLineExport;
+          ExportPadString(UpperCase(t2),17," ",false);
+*/          
+
+          ExportPadString(" ",40," ",false);
+          ExportPadString(" ",40," ",false);
+          NewLineExport;
+          if (nonblank(refstr)) then begin
+            ExportPadString(" ",40," ",false);
+            ExportPadString(UpperCase(refstr),27," ",false);
+          end else begin
+            ExportPadString(" ",40," ",false);
+            ExportPadString(" ",27," ",false);
+          end;
+          ExportPadString(" ",13," ",false);
+          NewLineExport;
+          ExportPadString(" ",17," ",false);
+          if ((VI2r.InvType==kInvoiceTypeCredit or VI2r.InvType==kInvoiceTypeCreditSpecialSales) or (OP2rw.RecVal<0)) then begin
+            if (OP2rw.RecVal<0) then begin
+              t = -OP2rw.RecVal;
+            end else begin
+              t = OP2rw.RecVal;
+            end;  
+            ConvertBankVal(t,tstr);
+            ExportPadString(UpperCase(tstr),15,"0",true);
+            ExportPadString("K",1," ",true);
+          end else begin
+            ConvertBankVal(OP2rw.RecVal,tstr);
+            ExportPadString(tstr,15,"0",true);
+            ExportPadString("D",1," ",true);
+          end;
+          if (blank(refstr)) then begin
+            if (blank(VI2r.InvoiceNr)) then begin
+              ExportPadString(VIr.SerNr,20," ",false);
+            end else begin
+              ExportPadString(VI2r.InvoiceNr,20," ",false);
+            end;
+          end else begin
+            ExportPadString(" ",20," ",true);
+          end;
+          ExportPadString("0",3,"0",true);
+          ExportPadString(" ",1," ",false);
+          ExportPadString(" ",15," ",false);
+          if (blank(refstr)) then begin
+            ExportPadString(DateToString(CurrentDate,"YYYYMMDD"),8," ",false);          
+          end else begin
+            ExportPadString(" ",8," ",false);
+          end;
+          NewLineExport;
+        end;
+L66:;        
+      end;            
+L77:;      
+    end;          
+L88:;     
+  end;    
+  UserTrace(OPr.SerNr,M4Long);
+  bfr.RowSerNr = rowsernr;
+  bfr.LastSerNr = appsernr;
+  bfr.LastDate = CurrentDate;  
+  BlockStore(bfr);
+L99:;      
+  RETURN;
+END;

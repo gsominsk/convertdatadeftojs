@@ -1,0 +1,479 @@
+external function Integer IsBankHoliday(record BHollVc,Integer,Date);
+remote function Integer LTApprovalStatus(record LeaveTransferVc,var record AcceptanceRulesVc);
+remote function Integer LAApprovalStatus(record LeaveApplicationVc,var record AcceptanceRulesVc);
+external function Boolean HasApprovals();
+external function roundmode SetRoundModeD(Integer);
+external procedure FindFiscalYear(Date,var Date,var Date);
+external function LongInt DateDiff(Date,Date);
+external function Integer DateIsRedDay(Integer,Date);
+external function Time AddTime2(Time,LongInt);
+external function Time TimeDiff(Time,Time);
+external function LongInt MonthDiff(Date,Date);
+
+global
+function Integer DateIsBankHoliDay(Integer calsystem,Date d)
+begin
+  Integer res;
+  Boolean bhollf;
+  record BHollVc BHollr;
+  record CYBlock CYb;
+
+  BlockLoad(CYb);
+  BHollr.CountryCode = CYb.CountryCode;
+  bhollf = ReadFirstMain(BHollr,1,true);
+  res = IsBankHoliday(BHollr,calsystem,d);
+  DateIsBankHoliDay = res;
+  return;
+end;
+
+global
+updating procedure LeaveApplicationOKActivities(record LeaveApplicationVc LAr)
+begin
+  record ActVc Actr;
+  record ActVc oldActr;
+  Boolean found;
+  
+  Actr.FromFileName = "LeaveApplicationVc";
+  Actr.FromSerNr = LAr.SerNr;
+  found = true;
+  while (LoopKey("FromFileName",Actr,1,found)) begin
+    if (Actr.FromFileName!="LeaveApplicationVc") then begin found = false; end;
+    if (StringToLongInt(Actr.FromSerNr)!=LAr.SerNr) then begin found = false; end;
+    if (found) then begin
+      RecordCopy(oldActr,Actr);
+      Actr.OKFlag = 1;
+      RecordUpdate(oldActr,Actr,true);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ActFromLA_StoreActivity(record LeaveApplicationVc LAr,record ActVc Actr)
+begin
+  if (LAr.OKFlag!=0) then begin
+    Actr.OKFlag = 1;
+  end;
+  Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");
+  if (RecordStore(Actr,false)) then begin
+    CreateRecordLink(LAr,CurrentCompany,Actr,CurrentCompany);  
+    CreateRecordLink(Actr,CurrentCompany,LAr,CurrentCompany);  
+  end;
+  return;
+end;
+
+global
+function Integer ActFromLA(var record LeaveApplicationVc LAr)
+begin
+  Integer res;
+  record HRMCOVc HRMCOr;
+  record LeaveSchemeVc LSr;
+  row LeaveSchemeVc LSrw;
+  record UserVc Userr;
+  Integer i,rwcnt;
+  record ActVc Actr;
+  record ActTypeVc ATr;
+  record ActTypeGrVc ATGRr;
+  Date td;
+  Boolean testf;
+  
+  HRMCOr.Employee = LAr.Employee;
+  if (ReadFirstKey("Employee",HRMCOr,1,true)==false) then begin
+    res = 26121;
+    goto LActFromLA;
+  end;
+  LSr.Code = HRMCOr.LeaveScheme;
+  if (ReadFirstMain(LSr,1,true)==false) then begin
+    res = 26122;
+    goto LActFromLA;
+  end;
+  if (blankdate(LAr.StartDate)) then begin
+    res = 26123;
+    goto LActFromLA;
+  end;
+  res = 26120;
+  rwcnt = MatRowCnt(LSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LSr,i,LSrw);
+    if (LAr.LeaveActType==LSrw.ActType) then begin
+      res = 0;
+      i = rwcnt;
+    end;
+  end;
+  if (res!=0) then begin
+    goto LActFromLA;
+  end;
+  Actr.FromFileName = "LeaveApplicationVc";
+  Actr.FromSerNr = LAr.SerNr;
+  if (ReadFirstKey("FromFileName",Actr,2,true)) then begin
+    goto LActFromLA;
+  end;  
+  td = LAr.StartDate;
+  while (td<=LAr.EndDate) begin
+    RecordNew(Actr);
+    testf = true;
+    switch (GetDateId(td)) begin
+      case 1:
+        Actr.StartTime =  LSrw.MonStartTime;     
+        Actr.EndTime =  LSrw.MonEndTime;     
+        testf = LSrw.Mondays==kIncludedinAllowance;
+      case 2:
+        Actr.StartTime =  LSrw.TueStartTime;     
+        Actr.EndTime =  LSrw.TueEndTime;     
+        testf = LSrw.Tuesdays==kIncludedinAllowance;
+      case 3:
+        Actr.StartTime =  LSrw.WedStartTime;     
+        Actr.EndTime =  LSrw.WedEndTime;     
+        testf = LSrw.Wednesdays==kIncludedinAllowance;
+      case 4:
+        Actr.StartTime =  LSrw.ThuStartTime;     
+        Actr.EndTime =  LSrw.ThuEndTime;     
+        testf = LSrw.Thursdays==kIncludedinAllowance;
+      case 5:
+        Actr.StartTime =  LSrw.FriStartTime;     
+        Actr.EndTime =  LSrw.FriEndTime;     
+        testf = LSrw.Fridays==kIncludedinAllowance;
+      case 6:
+        Actr.StartTime =  LSrw.SatStartTime;     
+        Actr.EndTime =  LSrw.SatEndTime;     
+        testf = LSrw.Saturndays==kIncludedinAllowance;
+      case 7:
+        Actr.StartTime =  LSrw.SunStartTime;     
+        Actr.EndTime =  LSrw.SunEndTime;     
+        testf = LSrw.Sundays==kIncludedinAllowance;
+    end;    
+    if (testf) then begin
+      if (DateIsBankHoliDay(CalendarSystem,td)!=0) then begin
+        testf = LSrw.BankHolidays==kIncludedinAllowance;
+      end;
+    end;
+    if (testf) then begin
+      Actr.ActType = LAr.LeaveActType;
+      Actr.CUCode = LAr.Employee;
+      Actr.CUName = LAr.Name;
+      ATr.Code = Actr.ActType;
+      ReadFirstMain(ATr,1,true);
+      Actr.Comment = ATr.Comment;
+      Userr.CustCode = LAr.Employee;
+      if (ReadFirstKey("CustCode",Userr,1,true)) then begin
+        Actr.MainPersons = Userr.Code;
+      end else begin
+        Actr.MainPersons = CurrentUser;
+      end;
+      Actr.TransDate = td;
+      Actr.EndDate = td;
+      Actr.CostTime = TimeDiff(Actr.StartTime,Actr.EndTime);  
+      Actr.TodoFlag = kTodoFlagCalendar;
+      ATGRr.Code = ATr.ActTypeGr;
+      if (ReadFirstMain(ATGRr,1,true)) then begin
+        Actr.CalTimeFlag = ATGRr.DefTimeFlag;
+      end;
+      Actr.AlarmType = ATr.AlarmType;
+      Actr.AlarmWhen = ATr.AlarmWhen;
+      Actr.AlarmUnits = ATr.AlarmUnits;
+      Actr.SymbNr = kActivitySymbolOther;
+      Actr.FromFileName = "LeaveApplicationVc";
+      Actr.FromSerNr = LAr.SerNr;
+      queued.ActFromLA_StoreActivity(LAr,Actr);
+    end;
+    td = AddDay(td,1);
+  end;  
+LActFromLA:;  
+  ActFromLA = res;
+  return;
+end;
+
+global
+procedure CalculateLeaveAplicationDays(var record LeaveApplicationVc LAr)
+begin  
+  Date td;
+  record HRMCOVc HRMCOr;
+  record LeaveSchemeVc LSr;
+  row LeaveSchemeVc LSrw;
+  Boolean testf;
+  Integer i,rwcnt;
+  
+  HRMCOr.Employee = LAr.Employee;
+  if (ReadFirstKey("Employee",HRMCOr,1,true)==false) then begin
+    goto LCalculateLeaveAplicationDays;
+  end;
+  LSr.Code = HRMCOr.LeaveScheme;
+  if (ReadFirstMain(LSr,1,true)==false) then begin
+    goto LCalculateLeaveAplicationDays;
+  end;
+  if (blankdate(LAr.StartDate)) then begin
+    LAr.Days = blankval;
+    LAr.RemDays = LAr.Days - LAr.FwdBalDays;
+    goto LCalculateLeaveAplicationDays;
+  end;
+  testf = false;
+  rwcnt = MatRowCnt(LSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LSr,i,LSrw);
+    if (LAr.LeaveActType==LSrw.ActType) then begin
+      testf = true;
+      i = rwcnt;
+    end;
+  end;
+  if (testf==false) then begin
+    goto LCalculateLeaveAplicationDays;
+  end;
+
+  LAr.Days = blankval;
+  td = LAr.StartDate;
+  while (td<=LAr.EndDate) begin
+    testf = true;
+    switch (GetDateId(td)) begin
+      case 1:
+        testf = LSrw.Mondays==kIncludedinAllowance;
+      case 2:
+        testf = LSrw.Tuesdays==kIncludedinAllowance;
+      case 3:
+        testf = LSrw.Wednesdays==kIncludedinAllowance;
+      case 4:
+        testf = LSrw.Thursdays==kIncludedinAllowance;
+      case 5:
+        testf = LSrw.Fridays==kIncludedinAllowance;
+      case 6:
+        testf = LSrw.Saturndays==kIncludedinAllowance;
+      case 7:
+        testf = LSrw.Sundays==kIncludedinAllowance;
+    end;    
+    if (testf) then begin
+      if (DateIsBankHoliDay(CalendarSystem,td)!=0) then begin
+        testf = LSrw.BankHolidays==kIncludedinAllowance;
+      end;
+    end;
+    if (testf) then begin
+      LAr.Days = LAr.Days + 1;
+    end;
+    td = AddDay(td,1);
+  end;
+  LAr.RemDays = LAr.FwdBalDays - LAr.Days;
+LCalculateLeaveAplicationDays:;  
+  return;
+end;
+
+global
+procedure CalcluateLeaveApplicationFwdBalDays(var record LeaveApplicationVc LAr)
+begin
+  record HRMCOVc HRMCOr;
+  record HRMCOChangeVc HRMCOChanger;
+  record LeaveTransferVc LTr;
+  record LeaveRulesBlock LRb;
+  record LeaveSchemeVc LSr;
+  record LeaveApplicationVc lLAr;
+  row LeaveSchemeVc LSContractrw;
+  row LeaveSchemeVc LSCOChangerw;
+  Integer i,rwcnt;
+  Date StartDate,EndDate,appldate;
+  Date sd,ed;
+  Boolean found,testf,foundchange;
+  val fwdbaldays,montshdiff,months;
+  val daysdiff1,daysdiff2;
+  Integer m;
+  
+  if (blank(LAr.Employee)) then begin
+    goto LCalcluateLeaveApplicationFwdBalDays;
+  end;
+  if (blank(LAr.LeaveActType)) then begin
+    goto LCalcluateLeaveApplicationFwdBalDays;
+  end;
+  HRMCOr.Employee = LAr.Employee;
+  if (ReadFirstKey("Employee",HRMCOr,1,true)==false) then begin
+    goto LCalcluateLeaveApplicationFwdBalDays;
+  end;
+  LSr.Code = HRMCOr.LeaveScheme;
+  if (ReadFirstMain(LSr,1,true)==false) then begin
+    goto LCalcluateLeaveApplicationFwdBalDays;
+  end;
+  appldate = LAr.StartDate;
+  if (blankdate(appldate)) then begin
+    appldate = LAr.TransDate;
+  end;
+  if (blankdate(appldate)) then begin
+    goto LCalcluateLeaveApplicationFwdBalDays;
+  end;
+  BlockLoad(LRb);
+  StartDate = appldate;
+  switch (LRb.LeaveCalculationBase) begin
+    case kLeaveCalculationBaseCalendarYear:
+      StartDate = HRMCOr.StartDate;
+      EndDate.year = GetYear(LAr.TransDate);
+      EndDate.month = 12;
+      EndDate.day = 31;
+    case kLeaveCalculationBaseFiscalYear:
+      FindFiscalYear(LAr.TransDate,StartDate,EndDate);  
+      StartDate = HRMCOr.StartDate;
+  end;
+  months = MonthDiff(StartDate,EndDate); // GetMonth(EndDate) - GetMonth(StartDate) + 1;    
+//  m = 12*((months-12)/12);
+  months = 12 + m;
+  testf = false;
+  rwcnt = MatRowCnt(LSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LSr,i,LSContractrw);
+    if (LAr.LeaveActType==LSContractrw.ActType) then begin
+      testf = true;
+      i = rwcnt;
+    end;
+  end;
+  if (testf==false) then begin
+    goto LCalcluateLeaveApplicationFwdBalDays;
+  end;
+
+  HRMCOChanger.HRMCOSerNr = HRMCOr.SerNr;
+  HRMCOChanger.TransDate = StartDate;
+  found = true;
+  while (LoopKey("HRMCONrDate",HRMCOChanger,2,found)) begin
+    if (HRMCOChanger.HRMCOSerNr!=HRMCOr.SerNr) then begin found = false; end;
+    if (DateInRange(HRMCOChanger.TransDate,StartDate,EndDate)==false) then begin
+      found = false;
+    end;
+    if (DateInRange(HRMCOChanger.TransDate,HRMCOr.StartDate,HRMCOr.EndDate)==false) then begin
+      found = false;
+    end;
+    if (HRMCOChanger.TransDate>appldate) then begin
+      found = false;
+    end;
+    if (found) then begin
+      testf = true;
+      if (HRMCOChanger.OKFlag==0) then begin testf = false; end;
+      LSr.Code = HRMCOChanger.LeaveScheme;
+      if (ReadFirstMain(LSr,1,true)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        testf = false;
+        rwcnt = MatRowCnt(LSr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(LSr,i,LSCOChangerw);
+          if (LAr.LeaveActType==LSCOChangerw.ActType) then begin
+            testf = true;
+            i = rwcnt;
+          end;
+        end;
+      end;
+
+      if (testf) then begin        
+        sd = AddMonth(StartDate,1);
+        sd.day = 1;
+        ed = AddMonth(HRMCOChanger.TransDate,-1);
+        ed.day = DaysInMonth(ed.year,ed.month);
+
+        montshdiff = MonthDiff(sd,ed);
+        daysdiff1 = DateDiff(sd,StartDate);
+        if (daysdiff1<=0) then begin daysdiff1 = 0; end;
+        daysdiff1 = daysdiff1/DaysInMonth(StartDate.year,StartDate.month);
+        daysdiff2 = DateDiff(HRMCOChanger.TransDate,ed) - 1;
+        if (daysdiff2<=0) then begin daysdiff2 = 0; end;
+        daysdiff2 = daysdiff2/DaysInMonth(appldate.year,appldate.month);
+
+//        montshdiff = MonthDiff(StartDate,HRMCOChanger.TransDate); // GetMonth(HRMCOChanger.TransDate) - GetMonth(StartDate);
+        if (foundchange==false) then begin
+          fwdbaldays = fwdbaldays + (LSContractrw.Allowance*montshdiff)/months;
+          fwdbaldays = fwdbaldays + (LSContractrw.Allowance*daysdiff1)/months;
+          fwdbaldays = fwdbaldays + (LSContractrw.Allowance*daysdiff2)/months;
+        end else begin
+          fwdbaldays = fwdbaldays + (LSCOChangerw.Allowance*montshdiff)/months;
+          fwdbaldays = fwdbaldays + (LSCOChangerw.Allowance*daysdiff1)/months;
+          fwdbaldays = fwdbaldays + (LSCOChangerw.Allowance*daysdiff2)/months;
+        end;
+        StartDate = HRMCOChanger.TransDate;
+        if (HRMCOChanger.LeaveFwdBalDate<=LAr.StartDate) then begin
+          fwdbaldays = fwdbaldays + HRMCOChanger.LeaveFwdBal;
+        end;
+        foundchange = true;
+      end;
+
+    end;
+  end;
+
+  sd = AddMonth(StartDate,1);
+  sd.day = 1;
+  if (HasLocalization("POL")) then begin
+    ed = AddMonth(appldate,0);
+  end else begin
+    ed = AddMonth(appldate,-1);
+  end;
+  ed.day = DaysInMonth(ed.year,ed.month);
+//  montshdiff = MonthDiff(StartDate,appldate); // GetMonth(appldate) - GetMonth(StartDate);
+  montshdiff = MonthDiff(sd,ed);
+  daysdiff1 = DateDiff(sd,StartDate);
+  if (daysdiff1<=0) then begin daysdiff1 = 0; end;
+  daysdiff1 = daysdiff1/DaysInMonth(StartDate.year,StartDate.month);
+  daysdiff2 = DateDiff(appldate,ed) - 1;
+  if (daysdiff2<=0) then begin daysdiff2 = 0; end;
+  daysdiff2 = daysdiff2/DaysInMonth(appldate.year,appldate.month);
+
+  if (foundchange==false) then begin
+    fwdbaldays = fwdbaldays + (LSContractrw.Allowance*montshdiff)/months;
+    fwdbaldays = fwdbaldays + (LSContractrw.Allowance*daysdiff1)/months;
+    fwdbaldays = fwdbaldays + (LSContractrw.Allowance*daysdiff2)/months;
+    if (nonblank(HRMCOr.LeaveFwdBal) and (HRMCOr.LeaveFwdBalDate==appldate)) then begin
+      fwdbaldays = fwdbaldays + HRMCOr.LeaveFwdBal;
+    end;
+  end else begin
+    fwdbaldays = fwdbaldays + (LSCOChangerw.Allowance*montshdiff)/months;
+    fwdbaldays = fwdbaldays + (LSCOChangerw.Allowance*daysdiff1)/months;
+    fwdbaldays = fwdbaldays + (LSCOChangerw.Allowance*daysdiff2)/months;
+  end;
+   
+  LTr.Employee = LAr.Employee;
+  LTr.TransDate = StartDate;
+  found = true;
+  while (LoopKey("EmployeeDate",LTr,2,found)) begin
+    if (LTr.Employee!=LAr.Employee) then begin found = false; end;
+    if (DateInRange(LTr.TransDate,StartDate,EndDate)==false) then begin
+      found = false;
+    end;
+    if (LTr.TransDate>appldate) then begin found = false; end;
+    if (found) then begin
+      fwdbaldays = fwdbaldays + LTr.Days;
+    end;
+  end;
+
+  lLAr.Employee = LAr.Employee;
+  found = true;
+  while (LoopKey("Employee",lLAr,1,found)) begin
+    if (lLAr.Employee!=LAr.Employee) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (DateInRange(lLAr.TransDate,StartDate,EndDate)==false) then begin testf = false; end;
+      if (lLAr.TransDate>appldate) then begin testf = false; end;
+      if (lLAr.SerNr==LAr.SerNr) then begin testf = false; end;
+      if (testf) then begin
+        fwdbaldays = fwdbaldays - lLAr.Days;
+      end;
+    end;
+  end;
+  
+  LAr.FwdBalDays = Round(fwdbaldays,SetRoundModeD(2));
+  LAr.RemDays = LAr.FwdBalDays - LAr.Days;
+LCalcluateLeaveApplicationFwdBalDays:;  
+  return;
+end;
+
+global
+procedure LADClassOnOpenWindowRemote(var record LeaveApplicationVc LAr,var Integer AcceptanceStatusFlag)
+begin
+  record AcceptanceRulesVc Acptr;
+  record ActVc Actr;
+  
+  if (HasApprovals) then begin
+    AcceptanceStatusFlag = LAApprovalStatus(LAr,Acptr);
+  end;
+  return;
+end;
+
+global
+procedure LTDClassOnOpenWindowRemote(var record LeaveTransferVc LTr,var Integer AcceptanceStatusFlag)
+begin
+  record AcceptanceRulesVc Acptr;
+  record ActVc Actr;
+  
+  if (HasApprovals) then begin
+    AcceptanceStatusFlag = LTApprovalStatus(LTr,Acptr);
+  end;
+  return;
+end;

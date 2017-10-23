@@ -1,0 +1,185 @@
+external procedure HT2Per(Date, Date , var string);
+external procedure HTDetailLevel(Integer, var string);
+external procedure HTOKF(Integer,Integer, var string);
+
+procedure PrintOneDelModeOver(Array string INDMdelmode,Array val INDMqty,Array val INDMsum)
+BEGIN 
+   StartFormat(15);
+    OutString(0,0,INDMdelmode[0],false);
+    OutVal(200,0,INDMqty[0],M4Qty,true);
+    OutVal(480,0,INDMsum[0],M4Val,true);
+   EndFormat;
+   RETURN;
+END;
+
+procedure PrintOneDelModeDet(Array string INDMitemcode, Array string INDMdelmode,Array val INDMqty,Array val INDMsum,Integer cnt,var val TotSump,var val TotQtyp)
+BEGIN
+  LongInt i;
+  Boolean newf;
+  string 255 lastdmcode;
+  newf = true;
+  for (i=0;i<cnt;i=i+1) begin     
+    if (lastdmcode!=INDMdelmode[i]) then begin
+      StartFormat(15);
+      OutString(0,0,INDMdelmode[i],false);
+      EndFormat;   
+      lastdmcode = INDMdelmode[i];
+    end;
+    StartFormat(15);
+     OutString(100,0,INDMitemcode[i],false);
+     OutVal(200,0,INDMqty[i],M4Qty,true);
+     OutVal(480,0,INDMsum[i],M4Val,true);
+    EndFormat;
+    TotQtyp = TotQtyp + INDMqty[i];
+    TotSump = TotSump + INDMsum[i];
+  end;  
+  RETURN;
+END;
+
+global
+procedure INDMRn(record RcVc RepSpec)
+BEGIN
+  record SHVc SHr;
+  row SHVc SHrw;
+  Array string 20 INDMitemcode;
+  Array string 5 INDMdelmode;
+  Array val INDMqty;
+  Array val INDMsum;
+  Boolean testf,TrHs,firstf,newf;
+  string 255 frdm,todm;
+  string 255 lastdmcode;
+  Integer rwcnt,i,j;
+  LongInt indmcnt;
+  val TotQty, TotSum;
+  string 255 tstr,t2;
+  Integer rw;
+
+  firstf = true;
+  frdm = FirstInRange(RepSpec.f1,20);
+  todm = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(5602));
+   rw = 1;
+   HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   if (nonblank(RepSpec.f1)) then begin
+     tstr = USetStr(2314);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   HTDetailLevel(RepSpec.ArtMode,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+  EndHeader;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2314),false);
+    OutString(100,0,USetStr(2325),false);
+    OutString(200,0,USetStr(2394),true);
+    OutString(480,0,USetStr(7069),true);
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2314),false);
+    OutString(200,0,USetStr(2394),true);
+    OutString(480,0,USetStr(7069),true);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  SHr.ShipMode = frdm;
+  TrHs = true;
+  while (LoopKey("ShipMode",SHr,1,TrHs)) begin
+    testf = true;
+    
+    if (nonblank(RepSpec.f1)) then begin
+      if (SHr.ShipMode>todm) then begin TrHs = false; end;
+      if (SHr.ShipMode<frdm) then begin testf = false; end;
+    end;
+    if (TrHs==false) then begin testf = false; end;
+    if (testf) then begin
+      if (DateInRange(SHr.ShipDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;        
+      if ((RepSpec.flags[1]==0) and (SHr.OKFlag==0)) then begin testf = false; end;
+      if ((RepSpec.flags[2]==0) and (SHr.OKFlag!=0)) then begin testf = false; end;
+      if (testf) then begin
+        if (lastdmcode!=SHr.ShipMode) then begin
+          lastdmcode = SHr.ShipMode;
+          if (RepSpec.ArtMode==1) then begin
+             if (firstf==true) then begin
+               firstf = false;
+             end;
+          end;    
+          if (RepSpec.ArtMode==0) then begin
+             if (firstf==false) then begin
+               PrintOneDelModeOver(INDMdelmode,INDMqty,INDMsum);
+               TotQty = TotQty + INDMqty[0];
+               TotSum = TotSum + INDMsum[0];
+             end;  
+             INDMsum[0] = blankval;
+             INDMqty[0] = blankval;
+             INDMdelmode[0] = "";
+             INDMitemcode[0] = "";
+             firstf = false;
+          end;    
+        end;
+        if (RepSpec.ArtMode==1) then begin
+          rwcnt = MatRowCnt(SHr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(SHr,i,SHrw);
+            newf = true;
+            for (j=0;j<indmcnt;j=j+1) begin
+              if (INDMitemcode[j]==SHrw.ArtCode) then begin
+                if (INDMdelmode[j]==SHr.ShipMode) then begin                
+                  INDMqty[0] = INDMqty[j] + SHrw.Ship;
+                  INDMsum[0] = INDMsum[j] + SHrw.FIFORowVal;
+                  newf = false;
+                  goto L12;
+                end;  
+              end;  
+            end;
+L12:;              
+            if (newf == true) then begin
+               INDMsum[indmcnt] = SHrw.FIFORowVal;
+               INDMqty[indmcnt] = SHrw.Ship;
+               INDMdelmode[indmcnt] = SHr.ShipMode;
+               INDMitemcode[indmcnt] = SHrw.ArtCode;
+               indmcnt = indmcnt + 1;
+            end; 
+          end;  
+        end;
+        if (RepSpec.ArtMode==0) then begin          
+          rwcnt = MatRowCnt(SHr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(SHr,i,SHrw);              
+            INDMdelmode[0] = SHr.ShipMode;
+            INDMqty[0] = INDMqty[0] + SHrw.Ship;
+            INDMsum[0] = INDMsum[0] + SHrw.FIFORowVal;
+          end;             
+        end;
+      end;
+    end;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    PrintOneDelModeDet(INDMitemcode,INDMdelmode,INDMqty,INDMsum,indmcnt,TotSum,TotQty);
+  end;        
+  if (RepSpec.ArtMode==0) then begin
+    if (firstf==false) then begin
+      PrintOneDelModeOver(INDMdelmode,INDMqty,INDMsum);
+      TotQty = TotQty + INDMqty[0];
+      TotSum = TotSum + INDMsum[0];
+    end;   
+  end;        
+  Gray_Divider(0,1);
+  
+  StartFormat(15);
+   OutVal(200,0,TotQty,M4Qty,true);
+   OutVal(480,0,TotSum,M4Val,true);
+  EndFormat;
+  EndJob;
+  RETURN;
+END;

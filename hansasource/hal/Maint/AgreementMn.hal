@@ -1,0 +1,455 @@
+external procedure OpenDispatch(record DispatchVc);
+external procedure CheckFlush(var Integer,Integer);
+external procedure AddAgreementToOffHire(var record OffHireVc,record AgreementVc);
+external procedure DispatchSumup(var record DispatchVc);
+external procedure OffHireSumUp(var record OffHireVc);
+external procedure AddAgreementToDispatch(var record DispatchVc,record AgreementVc);
+external procedure AddRentResToDispatch(var record DispatchVc,record RentResVc,var Integer);
+external procedure AddRentResToOffHire(var record OffHireVc,record RentResVc,var Integer);
+external procedure AddRentResToCollection(var record CollectionVc,record RentResVc,var Integer);
+external function Boolean TestLocation(string,string);
+external procedure DispatchVc_PasteSite(var record DispatchVc);
+
+procedure FindProperDispatch(record AgreementVc Agreementr,Date dispdat,string Location,var Integer srw,var record DispatchVc Dispatchp,var record DispatchVc Dispatch2p,var Boolean olddispf)
+begin
+  Boolean dispfoundf; // If set to true, we are filling up an old Dispatch record
+  Boolean foundf,testf;
+  
+  dispfoundf = false;
+  if (olddispf) then begin
+    if (Dispatchp.AgreementNr<>Agreementr.SerNr) then begin
+      olddispf = false;
+    end;
+    if (Dispatchp.TransDate<>dispdat) then begin
+      olddispf = false;
+    end;
+    if (Dispatchp.CustCode<>Agreementr.CustCode) then begin
+      olddispf = false;
+    end;
+    if (Dispatchp.OKFlag<>0) then begin
+      olddispf = false;
+    end;
+    if (Dispatchp.Site<>Agreementr.Site) then begin
+      olddispf = false;
+    end;
+    if (TestLocation(Location,Dispatchp.Location)==false) then begin
+      olddispf = false;
+    end;
+  end;
+  if (olddispf) then begin
+    dispfoundf = true;
+  end else begin
+    foundf = true;
+    Dispatchp.AgreementNr = Agreementr.SerNr;
+    Dispatchp.TransDate = dispdat;
+    while (LoopKey("TransDate",Dispatchp,2,foundf)) begin
+      testf = true;
+      if (Dispatchp.AgreementNr<>Agreementr.SerNr) then begin
+        foundf = false;
+      end;
+      if (Dispatchp.TransDate<>dispdat) then begin
+        foundf = false;
+      end;
+      if (Dispatchp.CustCode<>Agreementr.CustCode) then begin
+        testf = false;
+      end;
+      if (Dispatchp.OKFlag<>0) then begin
+        testf = false;
+      end;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (Dispatchp.Site<>Agreementr.Site) then begin
+        testf = false;
+      end;
+      if (TestLocation(Location,Dispatchp.Location)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        dispfoundf = true;
+        foundf = false;
+      end;
+    end;
+  end;
+  if (dispfoundf==false) then begin
+    RecordNew(Dispatchp);
+    AddAgreementToDispatch(Dispatchp,Agreementr);
+    Dispatchp.TransDate = dispdat;
+    Dispatchp.Location = Location;
+    Dispatchp.Site = Agreementr.Site;
+    if (nonblank(Dispatchp.Site)) then begin
+      DispatchVc_PasteSite(Dispatchp);
+    end;
+  end else begin
+    RecordCopy(Dispatch2p,Dispatchp);
+  end;
+  srw = MatRowCnt(Dispatchp);
+  olddispf = dispfoundf;
+  return;
+end;
+
+global
+updating function LongInt DispatchAgreement1Mn(record RcVc RepSpec)
+begin
+  record DispatchVc Dispatchp;
+  record DispatchVc oldDispatchp;
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  Integer srw;
+  Boolean foundf,testf,olddispf;
+  Date dispdat,thedispdat;
+  Date dueuntil;
+  Integer flushcnt;
+  LongInt DispatchNr;
+
+  olddispf = false;
+  dispdat = RepSpec.d1;
+  if (blankdate(dispdat)) then begin
+    dispdat = CurrentDate;
+  end;
+  dueuntil = RepSpec.d2;
+  if (blankdate(dueuntil)) then begin
+    dueuntil = CurrentDate;
+  end;
+  Agreementr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    foundf = true;
+    RentResr.AgreementNr = Agreementr.SerNr;
+    while(LoopKey("AgreementNr",RentResr,1,foundf)) begin
+      if (RentResr.AgreementNr<>Agreementr.SerNr) then begin
+        foundf = false;
+      end;
+      testf = true;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (RentResr.TransDate>dueuntil) then begin
+        testf = false;
+      end;
+      if (RentResr.Done!=0) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        thedispdat = dispdat;
+        if (RepSpec.ArtMode==1) then begin
+          if (RentResr.TransDate>thedispdat) then begin
+            thedispdat = RentResr.TransDate;
+          end;
+        end;
+        FindProperDispatch(Agreementr,thedispdat,RentResr.Location,srw,Dispatchp,oldDispatchp,olddispf);
+        AddRentResToDispatch(Dispatchp,RentResr,srw);
+        DispatchSumUp(Dispatchp);
+        if (olddispf==false) then begin
+          Dispatchp.SerNr = NextSerNr("DispatchVc",Dispatchp.TransDate,-1,false,"");
+          if ((MatRowCnt(Dispatchp)>0) and (Dispatchp.SerNr!=-1)) then begin
+            if (RecordInsert(Dispatchp,false)) then begin
+            end;
+            olddispf = true;
+          end;
+        end else begin
+          if (RecordUpdate(oldDispatchp,Dispatchp,false)<>0) then begin
+          end;
+        end;
+        if (DispatchNr<=0) then begin
+          DispatchNr = Dispatchp.SerNr;
+        end;
+      end;
+    end;
+  end;
+  /*
+  if (DispatchNr==Dispatchp.SerNr) and (DispatchNr>0) then begin//in case of one record only
+    ClientRemoteAsync.OpenDispatch(Dispatchp);
+  end;
+  */
+  DispatchAgreement1Mn = DispatchNr;
+  return;
+end;  
+
+global
+updating procedure DispatchAgreementMn(record RcVc RepSpec)
+begin
+  LongInt despatch;
+  
+  despatch = DispatchAgreement1Mn(RepSpec);
+ 
+  return;
+end;
+
+procedure FindProperCollection(record AgreementVc Agreementr,Date dispdat,string Location,var Integer srw,var record CollectionVc Collectionp,var record CollectionVc Collection2p,var Boolean olddispf,var Integer flushcnt,record RentResVc RentResr)
+begin
+  Boolean dispfoundf; // If set to true, we are filling up an old Collection record
+  Boolean foundf,testf;
+  
+  dispfoundf = false;
+  if (olddispf) then begin
+    if (Collectionp.AgreementNr<>Agreementr.SerNr) then begin
+      olddispf = false;
+    end;
+    if (Collectionp.TransDate<>dispdat) then begin
+      olddispf = false;
+    end;
+    if (Collectionp.CustCode<>Agreementr.CustCode) then begin
+      olddispf = false;
+    end;
+    if (TestLocation(Location,Collectionp.Location)==false) then begin
+      olddispf = false;
+    end;
+  end;
+  if (olddispf) then begin
+    dispfoundf = true;
+  end else begin
+    foundf = true;
+    Collectionp.AgreementNr = Agreementr.SerNr;
+    Collectionp.TransDate = dispdat;
+    while (LoopKey("TransDate",Collectionp,2,foundf)) begin
+      testf = true;
+      if (Collectionp.AgreementNr<>Agreementr.SerNr) then begin
+        foundf = false;
+      end;
+      if (Collectionp.TransDate<>dispdat) then begin
+        foundf = false;
+      end;
+      if (Collectionp.CustCode<>Agreementr.CustCode) then begin
+        testf = false;
+      end;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (TestLocation(Location,Collectionp.Location)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        dispfoundf = true;
+        foundf = false;
+      end;
+    end;
+  end;
+  if (dispfoundf==false) then begin
+    RecordNew(Collectionp);
+    Collectionp.AgreementNr = Agreementr.SerNr;
+    Collectionp.TransDate = dispdat;
+    Collectionp.CustCode = Agreementr.CustCode;
+    Collectionp.Addr0 = Agreementr.Addr0;
+    Collectionp.Location = Location;
+    Collectionp.LangCode = Agreementr.LangCode;  
+    Collectionp.ClientContact = RentResr.ClientContact;
+  end else begin
+    RecordCopy(Collection2p,Collectionp);
+  end;
+  srw = MatRowCnt(Collectionp);
+  olddispf = dispfoundf;
+  return;
+end;
+
+global
+updating procedure CollectionAgreementMn(record RcVc RepSpec)
+begin
+  record CollectionVc Collectionp;
+  record CollectionVc oldCollectionp;
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  Integer srw;
+  Boolean foundf,testf,olddispf;
+  Date dispdat,thedispdat;
+  Date dueuntil;
+  Integer flushcnt;  
+
+  olddispf = false;
+  dispdat = RepSpec.d1;
+  if (blankdate(dispdat)) then begin
+    dispdat = CurrentDate;
+  end;
+  dueuntil = RepSpec.d2;
+  if (blankdate(dueuntil)) then begin
+    dueuntil = CurrentDate;
+  end;
+  Agreementr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    foundf = true;
+    RentResr.AgreementNr = Agreementr.SerNr;
+    while(LoopKey("AgreementNr",RentResr,1,foundf)) begin
+      if (RentResr.AgreementNr<>Agreementr.SerNr) then begin
+        foundf = false;
+      end;
+      testf = true;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (RentResr.TransDate>dueuntil) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        thedispdat = dispdat;
+        if (RepSpec.ArtMode==1) then begin
+          if (RentResr.EndDate>thedispdat) then begin
+            thedispdat = RentResr.EndDate;
+          end;
+        end;
+        FindProperCollection(Agreementr,thedispdat,RentResr.Location,srw,Collectionp,oldCollectionp,olddispf,flushcnt,RentResr);
+        AddRentResToCollection(Collectionp,RentResr,srw);
+//        CollectionSumUp(Collectionp);
+        if (olddispf==false) then begin
+          Collectionp.SerNr = NextSerNr("CollectionVc",Collectionp.TransDate,-1,false,"");
+          if ((MatRowCnt(Collectionp)>0) and (Collectionp.SerNr!=-1)) then begin
+            if (RecordInsert(Collectionp,false)) then begin
+            end;
+          end;
+          olddispf = true;
+        end else begin
+          if (RecordUpdate(oldCollectionp,Collectionp,false)<>0) then begin
+          end;
+          CheckFlush(flushcnt,10);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure FindProperOffHire(record AgreementVc Agreementr,Date dispdat,string Location,var Integer srw,var record OffHireVc OffHirep,var record OffHireVc OffHire2p,var Boolean olddispf)
+begin
+  Boolean dispfoundf; // If set to true, we are filling up an old OffHire record
+  Boolean foundf,testf;
+  
+  dispfoundf = false;
+  if (olddispf) then begin
+    if (OffHirep.AgreementNr<>Agreementr.SerNr) then begin
+      olddispf = false;
+    end;
+    if (OffHirep.TransDate<>dispdat) then begin
+      olddispf = false;
+    end;
+    if (OffHirep.CustCode<>Agreementr.CustCode) then begin
+      olddispf = false;
+    end;
+    if (OffHirep.Site<>Agreementr.Site) then begin
+      olddispf = false;
+    end;
+    if (TestLocation(Location,OffHirep.Location)==false) then begin
+      olddispf = false;
+    end;
+  end;
+  if (olddispf) then begin
+    dispfoundf = true;
+  end else begin
+    foundf = true;
+    OffHirep.AgreementNr = Agreementr.SerNr;
+    OffHirep.TransDate = dispdat;
+    while (LoopKey("TransDate",OffHirep,2,foundf)) begin
+      testf = true;
+      if (OffHirep.AgreementNr<>Agreementr.SerNr) then begin
+        foundf = false;
+      end;
+      if (OffHirep.TransDate<>dispdat) then begin
+        foundf = false;
+      end;
+      if (OffHirep.CustCode<>Agreementr.CustCode) then begin
+        testf = false;
+      end;
+      if (OffHirep.Site<>Agreementr.Site) then begin
+        testf = false;
+      end;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (TestLocation(Location,OffHirep.Location)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        dispfoundf = true;
+        foundf = false;
+      end;
+    end;
+  end;
+  if (dispfoundf==false) then begin
+    RecordNew(OffHirep);
+    AddAgreementToOffHire(OffHirep,Agreementr);
+    OffHirep.TransDate = dispdat;
+    OffHirep.Location = Location;
+  end else begin
+    RecordCopy(OffHire2p,OffHirep);
+  end;
+  srw = MatRowCnt(OffHirep);
+  olddispf = dispfoundf;
+  return;
+end;
+
+global
+updating function LongInt OffHireAgreement1Mn(record RcVc RepSpec)
+begin
+  record OffHireVc OffHirep;
+  record OffHireVc oldOffHirep;
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  Integer srw;
+  Boolean foundf,testf,olddispf;
+  Date dispdat,thedispdat;
+  Date dueuntil;
+  Integer flushcnt;
+  LongInt OffHireNr;
+
+  olddispf = false;
+  dispdat = RepSpec.d1;
+  if (blankdate(dispdat)) then begin
+    dispdat = CurrentDate;
+  end;
+  dueuntil = RepSpec.d2;
+  if (blankdate(dueuntil)) then begin
+    dueuntil = CurrentDate;
+  end;
+  Agreementr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    foundf = true;
+    RentResr.AgreementNr = Agreementr.SerNr;
+    while(LoopKey("AgreementNr",RentResr,1,foundf)) begin
+      if (RentResr.AgreementNr<>Agreementr.SerNr) then begin
+        foundf = false;
+      end;
+      testf = true;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (RentResr.EndDate>dueuntil) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        thedispdat = dispdat;
+        if (RepSpec.ArtMode==1) then begin
+          if (RentResr.TransDate>thedispdat) then begin
+            thedispdat = RentResr.TransDate;
+          end;
+        end;
+        FindProperOffHire(Agreementr,thedispdat,RentResr.Location,srw,OffHirep,oldOffHirep,olddispf);
+        AddRentResToOffHire(OffHirep,RentResr,srw);
+        OffHireSumUp(OffHirep);
+        if (olddispf==false) then begin
+          OffHirep.SerNr = NextSerNr("OffHireVc",OffHirep.TransDate,-1,false,"");
+          if ((MatRowCnt(OffHirep)>=0) and (OffHirep.SerNr!=-1)) then begin
+            if (RecordInsert(OffHirep,false)) then begin
+            end;
+          end;
+          olddispf = true;
+        end else begin
+          if (RecordUpdate(oldOffHirep,OffHirep,false)<>0) then begin
+          end;
+          CheckFlush(flushcnt,10);
+        end;
+        if (OffHireNr<=0) then begin
+          OffHireNr = OffHirep.SerNr;
+        end;
+      end;
+    end;
+  end;
+  OffHireAgreement1Mn = OffHireNr;
+  return;
+end;
+
+global
+updating procedure OffHireAgreementMn(record RcVc RepSpec)
+begin
+  LongInt res;
+
+  res = OffHireAgreement1Mn(RepSpec);
+  
+  return;
+end;  

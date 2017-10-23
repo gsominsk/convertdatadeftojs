@@ -1,0 +1,1099 @@
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure Base1ToBase2(var val,Date,var val);
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function string 255 CreateInvoiceNumber(LongInt,string);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure HTCusts(string, string, var string);
+external procedure HTSaleMan(string, var string);
+external procedure HTCustCat(string,var string);
+external procedure HT2Per(Date,Date,var string);
+external procedure HTBranchIDs(string,string,var string);
+external procedure HTClasses(string,string,var string);
+
+procedure HTArt(string a,var string res)
+begin
+  if (blank(a)) then begin
+     res = USetStr(1106);
+  end else begin
+     res = USetStr(1107);
+     res = res & a;
+  end;
+return;
+end;
+
+global
+function Boolean FindICS(string custcode,string artcode,string branch,string class,var record ICSVc ICSr)
+begin
+  Boolean res;
+              
+  ICSr.CustCode = custcode;
+  ICSr.ArtCode = artcode;
+  if (blank(branch)) then begin
+    ICSr.BranchID = ";;;";
+  end else begin
+    ICSr.BranchID = branch;
+  end;
+  if (blank(class)) then begin
+    ICSr.Class = ";;;";
+  end else begin
+    ICSr.Class = class;
+  end;
+  res = ReadFirstMain(ICSr,4,true);
+  FindICS = res;
+  return;
+end;
+
+global
+function Boolean FindCS(string custcode,string branch,string class,var record CSVc CSr)
+begin
+  Boolean res;
+              
+  CSr.CustCode = custcode;
+  if (blank(branch)) then begin
+    CSr.BranchID = ";;;";
+  end else begin
+    CSr.BranchID = branch;
+  end;
+  if (blank(class)) then begin
+    CSr.Class = ";;;";
+  end else begin
+    CSr.Class = class;
+  end;
+  res = ReadFirstMain(CSr,3,true);
+  FindCS = res;
+  return;
+end;
+
+global
+function Boolean FindST2(string artcode,string branch,string class,string variety,var record STVc STr)
+begin
+  Boolean res;
+              
+  STr.ArtCode = artcode;
+  if (blank(branch)) then begin
+    STr.BranchID = ";;;";
+  end else begin
+    STr.BranchID = branch;
+  end;
+  if (blank(class)) then begin
+    STr.Class = ";;;";
+  end else begin
+    STr.Class = class;
+  end;
+  if (nonblank(variety)) then begin
+    STr.Variety = variety;
+    res = ReadFirstMain(STr,4,true);
+  end else begin
+    res = ReadFirstMain(STr,3,true);
+  end;
+  FindST2 = res;
+  return;
+end;
+
+global
+function Boolean FindST(string artcode,string branch,string class,var record STVc STr)
+begin
+  FindST = FindST2(artcode,branch,class,"",STr);
+  return;
+end;
+
+
+procedure PrintHeader(record RcVc RepSpec,string frcc,string tocc)
+begin
+  Integer rw;
+  string 255 tstr,t2;
+  
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (RepSpec.flags[2]<>2) then begin
+    HTBranchIDs(RepSpec.f5,RepSpec.f5,tstr);
+    Header(rw,tstr,0);
+    HTCusts(frcc,tocc,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end else begin
+    HTBranchIDs(RepSpec.f5,RepSpec.f5,tstr);
+    Header(rw,tstr,0);
+  end;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f6,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  HTClasses(RepSpec.LastAcc,RepSpec.LastAcc,tstr);
+  Header(rw,tstr,0);
+  if (nonblank(RepSpec.f2)) then begin
+    HTArt(RepSpec.f2,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  HTSaleMan(RepSpec.AccStr,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;  
+  t2 = RepSpec.vals0;
+  if (nonblank(t2)) then begin
+    tstr = USetStr(2498);
+    tstr = tstr & ": ";
+    tstr = tstr & t2;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  t2 = RepSpec.vals1;
+  if (nonblank(t2)) then begin
+    tstr = USetStr(2499);
+    tstr = tstr & ": ";
+    tstr = tstr & t2;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  return;
+end;    
+
+procedure AmountsForObject(string custcode,Date sStartDate,Date sEndDate,string artcode,string ObjStr,string itemgroup,string itemclass,
+                           var val s,var val gps,var val sump)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  Boolean found,testf;
+  Integer i,rwcnt;
+  val t,basesum,price;
+  record INVc INr;
+  record TaxMatrixVc TMr;
+  
+//IVashvc ? RestAccVC ?   
+  found = true;
+  IVr.CustCode = custcode;  
+  IVr.InvDate = sStartDate;  
+  while (LoopKey("CustDate",IVr,2,found)) begin
+    if (IVr.CustCode!=custcode) then begin found = false; end;
+    if (IVr.TransDate>sEndDate) then begin found = false; end;
+    if (found) then begin      
+      testf = true;
+      if (SetInSet(ObjStr,IVr.Objects)==false) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(IVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if (nonblank(artcode)) then begin
+            if (IVrw.ArtCode!=artcode) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            if (nonblank(itemgroup)) or (nonblank(itemclass)) then begin
+              INr.Code = artcode;
+              if (ReadFirstMain(INr,1,true)) then begin end;
+              if (INr.Group!=itemgroup) then begin testf = false; end;
+              if (SetInSet(itemclass,INr.DispGroups)==false) then begin
+                testf = false; 
+              end;
+            end;
+          end;
+          if (testf) then begin
+            UnpackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+            t = MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            FindSalesExVat(TMr,IVrw.VATCode,t,IVr.InclVAT,IVr.NoTAXonVAT,basesum);
+            price = IVrw.Quant*IVrw.Price;
+            if (price==0) then begin
+              price = IVrw.Sum;
+            end;
+            t = MulRateToBase1(IVr.CurncyCode,price,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            FindSalesExVat(TMr,IVrw.VATCode,t,IVr.InclVAT,IVr.NoTAXonVAT,price);      
+            if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              s = s - basesum;
+              sump = sump - price;
+              switch (IVrw.stp) begin
+                case 11:
+                  gps = gps - IVrw.rowGP;
+                otherwise
+                  gps = gps + IVrw.rowGP;
+              end;
+            end else begin
+              s = s + basesum;
+              gps = gps + IVrw.rowGP;
+              sump = sump + price;
+            end;  
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure CustStatListDetails(record RcVc RepSpec)
+begin
+  record CUVc  CUr;
+  record ICSVc ICSr;
+  record CSVc CSr;
+  record IVVc  IVr;
+  row IVVc IVrw;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record RestAccVc RAr;
+  row RestAccVc RArw;
+  Boolean icsf,stfound;
+  Boolean TrHs;
+  Boolean testf;
+  string 20 frcc,tocc;
+  string 255  ckey,tstr;
+  Integer  k,rwcnt;
+  val   amount,vat,rebate,t1;
+  val   bal,gps;
+  val   totrebforve,totsum,totsumam;
+  val   rebforve,sum,sumam,t;
+
+  icsf = false;
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(7161));
+  PrintHeader(RepSpec,frcc,tocc)
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(2482),false);
+  OutString(120,0,USetStr(2483),false);
+  EndFormat;
+  StartFormat(15);
+  OutString(30,0,USetStr(2423),false);
+  OutString(150,0,USetStr(2707),false);
+  OutString(300,0,USetStr(7162),true);
+  OutString(385,0,USetStr(7163),true);
+  OutString(480,0,USetStr(7676),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (nonblank(RepSpec.f2)) then begin icsf = true; end;
+  CUr.Code = RepSpec.f1;
+  if (ReadFirstMain(CUr,1,true)==false) then begin 
+    StartFormat(15);
+    OutString(30,0,USetStr(7164),false);
+    EndFormat;
+    goto LCustStatListDetails;
+  end;
+
+    if (icsf==false) then begin
+      stfound = FindCS(CUr.Code,RepSpec.f5,RepSpec.LastAcc,CSr);
+      if (stfound) then begin
+        bal = GetTurnover(CSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+        gps = GetTurnover(CSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+      end;
+    end else begin
+      stfound = FindICS(CUr.Code,RepSpec.f2,RepSpec.f5,RepSpec.LastAcc,ICSr);
+      if (stfound) then begin
+        bal = GetTurnover(ICSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+        gps = GetTurnover(ICSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+      end;
+    end;
+    testf = true;
+    if (RepSpec.vals0<>0) then begin
+      if (bal<RepSpec.vals0) then begin testf = false; end;
+    end;    
+    if (RepSpec.vals1<>0) then begin
+      if (gps<RepSpec.vals1) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      if (nonblank(RepSpec.AccStr)) then begin 
+        if (RepSpec.AccStr<>CUr.SalesMan) then begin testf = false; end;
+      end; 
+      if (testf) then begin
+        testf = ContactInGroupClass("",RepSpec.f3,RepSpec.f6,"CUST",CUr.CustCat,CUr.Classification);
+      end;
+      Gray_Divider(0,1);
+      if (testf) then begin
+        StartFormat(15);
+        OutString(0,0,CUr.Code,false);
+        OutString(120,0,CUr.Name,false);
+        EndFormat;
+        IVr.InvDate = RepSpec.sStartDate;
+        ckey = "CustDate";
+        IVr.CustCode = CUr.Code;
+        TrHs = true;
+        while (LoopKey(ckey,IVr,2,TrHs)) begin
+          testf = true;
+          if (DateInRange(IVr.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            TrHs = false;     
+          end;
+          if (IVr.CustCode<>CUr.Code)  then  begin TrHs = false; end;
+          if (nonblank(RepSpec.AccStr)) then  begin
+            if (RepSpec.AccStr<>IVr.SalesMan) then begin testf = false; end;
+          end;
+          if (IVr.OKFlag==0) then begin testf = false; end;
+          if (IVr.Invalid<>0) then begin testf = false; end;
+          if (TrHs and testf) then begin
+            sum = 0;
+            sumam = 0;
+            rebforve = 0;
+            rwcnt = MatRowCnt(IVr);
+            for (k=0;k<rwcnt;k=k+1) begin
+              testf = true;
+              amount = 0;
+              rebate = 0;
+              vat = 0;
+              MatRowGet(IVr,k,IVrw);
+              if (nonblank(RepSpec.f2)) then begin
+                if (IVrw.ArtCode!=RepSpec.f2) then begin testf = false; end;
+              end;
+              if (IVrw.stp!=kInvoiceRowTypeNormal) and  (IVrw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+                testf = false;
+              end;
+              if (testf) then begin
+                if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                 IVrw.Price = 0 - IVrw.Price;
+                 IVrw.Sum = 0 - IVrw.Sum;
+                end;
+                if (IVr.InclVAT>0) then begin
+                  if (nonblank(IVrw.VATCode)) then begin
+    //              MulVATIV(IVrw.VATCode,&IVrw.Price,&vat,&t1,IVr.InclVAT);
+                    vat = FindVAT(IVrw.VATCode,IVrw.Price,IVr.InclVAT,IVr.NoTAXonVAT);
+                    IVrw.Price = IVrw.Price - vat;
+                  end;
+                end;  
+                amount = IVrw.Quant * IVrw.Price;
+                if (amount==0) then begin
+                  amount = IVrw.Sum;
+                end;  
+                amount = MulRateToBase1(IVr.CurncyCode,amount,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);           
+                if (IVr.InclVAT>0) then begin
+                  t = IVrw.Sum - FindVAT(IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT);
+                end else begin
+                 t = IVrw.Sum;
+                end;
+                t = MulRateToBase1(IVr.CurncyCode,t,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);           
+                rebate =  amount - t;
+                sum = sum + t;
+                sumam = amount + sumam;
+                rebforve = rebate + rebforve;
+              end;
+            end;
+            totsum = sum + totsum;
+            totsumam = sumam + totsumam;
+            if (sumam <> 0) or (rebforve <> 0) or (sum <> 0) then begin 
+              StartFormat(15);
+               tstr = CreateInvoiceNumber(IVr.SerNr,IVr.OfficialSerNr);
+               OutString(30,"DblIVVc",tstr,false);
+               OutDate(150,0,IVr.InvDate,false);
+               OutVal(300,0,sumam,M4Val,true);
+               OutVal(385,0,rebforve,M4Val,true);
+               OutVal(480,0,sum,M4Val,true);
+              EndFormat;
+            end;
+          end;// testf 
+        end;// while 
+        totrebforve = totsumam - totsum;    
+
+        IVCashr.InvDate = RepSpec.sStartDate;
+        ckey = "CustDate";
+        IVCashr.CustCode = CUr.Code;
+        TrHs = true;
+        while (LoopKey(ckey,IVCashr,2,TrHs)) begin
+          testf = true;
+          if (DateInRange(IVCashr.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            TrHs = false;     
+          end;
+          if (IVCashr.CustCode<>CUr.Code)  then  begin TrHs = false; end;
+          if (nonblank(RepSpec.AccStr)) then  begin
+            if (RepSpec.AccStr<>IVCashr.SalesMan) then begin testf = false; end;
+          end;
+          if (IVCashr.Invalid<>0) then begin testf = false; end;
+          if (TrHs and testf) then begin
+            sum = 0;
+            sumam = 0;
+            rebforve = 0;
+            rwcnt = MatRowCnt(IVCashr);
+            for (k=0;k<rwcnt;k=k+1) begin
+              testf = true;
+              amount = 0;
+              rebate = 0;
+              vat = 0;
+              MatRowGet(IVCashr,k,IVCashrw);
+              if (nonblank(RepSpec.f2)) then begin
+                if (IVCashrw.ArtCode!=RepSpec.f2) then begin testf = false; end;
+              end;
+              if (IVCashrw.stp!=kInvoiceRowTypeNormal) and  (IVCashrw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+                testf = false;
+              end;
+              if (testf) then begin
+                if (IVCashr.InclVAT>0) then begin
+                  if (nonblank(IVCashrw.VATCode)) then begin
+                    vat = FindVAT(IVCashrw.VATCode,IVCashrw.Price,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+                    IVCashrw.Price = IVCashrw.Price - vat;
+                  end;
+                end;  
+                amount = IVCashrw.Quant * IVCashrw.Price;
+                if (amount==0) then begin
+                  amount = IVCashrw.Sum;
+                end;  
+                amount = MulRateToBase1(IVCashr.CurncyCode,amount,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);           
+                if (IVCashr.InclVAT>0) then begin
+                  t = IVCashrw.Sum - FindVAT(IVCashrw.VATCode,IVCashrw.Sum,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+                end else begin
+                 t = IVCashrw.Sum;
+                end;
+                t = MulRateToBase1(IVCashr.CurncyCode,t,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);           
+                rebate =  amount - t;
+                sum = sum + t;
+                sumam = amount + sumam;
+                rebforve = rebate + rebforve;
+              end;
+            end;
+            totsum = sum + totsum;
+            totsumam = sumam + totsumam;
+            if (sumam <> 0) or (rebforve <> 0) or (sum <> 0) then begin 
+              StartFormat(15);
+               tstr = CreateInvoiceNumber(IVCashr.SerNr,"");
+               OutString(30,"DblIVCashVc",tstr,false);
+               OutDate(150,0,IVCashr.InvDate,false);
+               OutVal(300,0,sumam,M4Val,true);
+               OutVal(385,0,rebforve,M4Val,true);
+               OutVal(480,0,sum,M4Val,true);
+              EndFormat;
+            end;
+          end;// testf 
+        end;// while 
+
+        RAr.ReportingDate = RepSpec.sStartDate;
+        ckey = "CUCodeRepDate";
+        RAr.CUCode = CUr.Code;
+        TrHs = true;
+        while (LoopKey(ckey,RAr,2,TrHs)) begin
+          testf = true;
+          if (RAr.CUCode<>CUr.Code)  then  begin TrHs = false; end;
+          if (DateInRange(RAr.ReportingDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            TrHs = false;     
+          end;
+          if (nonblank(RepSpec.AccStr)) then  begin
+            if (RepSpec.AccStr<>RAr.Cashier) then begin testf = false; end;
+          end;
+          if (RAr.Invalid<>0) then begin testf = false; end;
+          if (TrHs and testf) then begin
+            sum = 0;
+            sumam = 0;
+            rebforve = 0;
+            rwcnt = MatRowCnt(RAr);
+            for (k=0;k<rwcnt;k=k+1) begin
+              testf = true;
+              amount = 0;
+              rebate = 0;
+              vat = 0;
+              MatRowGet(RAr,k,RArw);
+              if (nonblank(RepSpec.f2)) then begin
+                if (RArw.ArtCode!=RepSpec.f2) then begin testf = false; end;
+              end;
+              if (RArw.stp!=kInvoiceRowTypeNormal) and  (RArw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+                testf = false;
+              end;
+              if (testf) then begin
+                if (nonblank(RArw.VATCode)) then begin
+                  vat = FindVAT(RArw.VATCode,RArw.Price,1,0);
+                  RArw.Price = RArw.Price - vat;
+                end;
+                amount = RArw.Quant * RArw.Price;
+                if (amount==0) then begin
+                  amount = RArw.Sum;
+                end;  
+                t = RArw.Sum - FindVAT(RArw.VATCode,RArw.Sum,1,0);
+                rebate =  amount - t;
+                sum = sum + t;
+                sumam = amount + sumam;
+                rebforve = rebate + rebforve;
+              end;
+            end;
+            totsum = sum + totsum;
+            totsumam = sumam + totsumam;
+            if (sumam <> 0) or (rebforve <> 0) or (sum <> 0) then begin 
+              StartFormat(15);
+               OutLongInt(30,"DblRestAccVc",RAr.SerNr,false);
+               OutDate(150,0,RAr.ReportingDate,false);
+               OutVal(300,0,sumam,M4Val,true);
+               OutVal(385,0,rebforve,M4Val,true);
+               OutVal(480,0,sum,M4Val,true);
+              EndFormat;
+            end;
+          end;// testf 
+        end;// while
+      end;
+    end;
+    Black_Divider(0,1);
+    StartFormat(15);
+     OutVal(300,0,totsumam,M4Val,true);
+     OutVal(385,0,totrebforve,M4Val,true);
+     OutVal(480,0,totsum,M4Val,true);
+    EndFormat;
+LCustStatListDetails:;
+  EndJob;
+  return;
+end;
+
+procedure CustStatListTurnover(record RcVc RepSpec)
+begin
+  record CUVc CUr;
+  record CSVc CSr;
+  record ICSVc ICSr;
+  record SMVc SMr;
+  row SMVc acum;  
+  row SMVc res;
+  row SMVc tmp;
+  val s,t,siv;
+  val sum2,sum1;
+  val gps,sump;
+  string 255 frcc,tocc;
+  Boolean TrHs,stfound;
+  Boolean testf,testf2,icsf;
+  Integer rowqty,i;
+  Integer zmiana;
+  record INVc INr;
+  Boolean foundin;
+
+  icsf = false;
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc = LastInRange(RepSpec.f1,20);
+  if (nonblank(RepSpec.f2)) then begin icsf = true; end;
+  StartReportJob(USetStr(7161));
+   PrintHeader(RepSpec,frcc,tocc);
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(2482),false);
+  OutString(120,0,USetStr(2483),false);
+  OutString(300,0,USetStr(7162),true);
+  OutString(385,0,USetStr(7163),true);
+  OutString(480,0,USetStr(2484),true);
+  EndFormat;
+  rowqty = 0;
+
+  CUr.Code = frcc;
+  Gray_Divider(0,1);
+  TrHs = true;
+  while (LoopMain(CUr,1,TrHs)) begin
+   if (TrHs) then begin
+    if (nonblank(tocc)) then begin
+      if (CUr.Code>tocc) then begin
+       TrHs = false;
+      end;
+    end;   
+   end;
+   if (TrHs) then begin
+   testf = true;
+   if (testf) then begin
+     testf = ContactInGroupClass("",RepSpec.f3,RepSpec.f6,"CUST",CUr.CustCat,CUr.Classification);
+   end;
+   if (nonblank(RepSpec.AccStr)) then begin
+    if (RepSpec.AccStr<>CUr.SalesMan) then begin testf = false; end;
+   end;
+   if (CUr.CUType==0) then begin testf = false; end;
+   if (testf) then begin
+    s = 0;
+    gps = 0;
+    sump = 0;
+    siv = 0;
+
+
+    if (blank(RepSpec.ObjStr)) then begin
+      if (icsf==false) then begin
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          s = blankval;
+          gps = blankval;
+          sump = blankval;
+          ResetLoop(INr);
+          foundin = true;
+          INr.Group = RepSpec.FirstAcc;
+          while (LoopKey("Group",INr,1,foundin)) begin
+            if (INr.Group!=RepSpec.FirstAcc) then begin foundin = false; end;
+            if (foundin) then begin
+              stfound = FindICS(CUr.Code,INr.Code,RepSpec.f5,RepSpec.LastAcc,ICSr);
+              if (stfound) then begin
+                s = s + GetTurnover(ICSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+                gps = gps + GetTurnover(ICSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+                switch (RepSpec.flags[3]) begin
+                  case 1:
+                    sump = sump + INr.UPrice1*GetTurnover(ICSr,"quant",RepSpec.sStartDate,RepSpec.sEndDate);
+                  otherwise 
+                    sump = sump + GetTurnover(ICSr,"price",RepSpec.sStartDate,RepSpec.sEndDate);
+                end;
+              end;
+            end;
+          end;
+        end else begin
+          stfound = FindCS(CUr.Code,RepSpec.f5,RepSpec.LastAcc,CSr);
+          if (stfound) then begin
+            s = GetTurnover(CSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+            gps = GetTurnover(CSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+            sump = GetTurnover(CSr,"priceexcldiscount",RepSpec.sStartDate,RepSpec.sEndDate);
+          end;
+        end;
+      end else begin
+        stfound = FindICS(CUr.Code,RepSpec.f2,RepSpec.f5,RepSpec.LastAcc,ICSr);
+        if (stfound) then begin
+          s = GetTurnover(ICSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+          gps = GetTurnover(ICSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+          sump = GetTurnover(ICSr,"price",RepSpec.sStartDate,RepSpec.sEndDate);
+        end;
+      end;
+    end else begin
+      AmountsForObject(CUr.Code,RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.f2,RepSpec.ObjStr,RepSpec.FirstAcc,RepSpec.f4,s,gps,sump);
+    end;
+      testf2 = true;
+      if (RepSpec.vals0<>0) then begin
+       if (s<RepSpec.vals0) then begin testf2 = false; end;
+        end;
+      if (RepSpec.vals1<>0) then begin
+       if (gps<RepSpec.vals1) then begin testf2 = false; end;
+          end; 
+      if (testf) then begin
+            rowqty = MatRowCnt(SMr);
+        acum.Objects = CUr.Code;
+        acum.DebVal = sump;
+        acum.CredVal = s;
+        MatRowPut(SMr,rowqty,acum);        
+        sum1 = s + sum1;
+        sum2 = sump + sum2;
+      end;
+    end;
+   end;//TrHs
+  end;//while
+ // Sorting;
+  rowqty = MatRowCnt(SMr);
+  zmiana = 1;
+  while (zmiana==1) begin
+    zmiana = 0;
+    for (i=0;i<rowqty-1;i=i+1) begin
+      MatRowGet(SMr,i,res);
+      MatRowGet(SMr,i+1,acum);
+      if (res.CredVal<acum.CredVal) then begin
+        zmiana = 1;
+        tmp.Objects = res.Objects;
+        tmp.DebVal = res.DebVal;
+        tmp.CredVal = res.CredVal;
+
+        res.Objects = acum.Objects;
+        res.DebVal = acum.DebVal;
+        res.CredVal = acum.CredVal;
+
+        acum.Objects = tmp.Objects;
+        acum.DebVal = tmp.DebVal;
+        acum.CredVal = tmp.CredVal;
+        MatRowPut(SMr,i,res);
+        MatRowPut(SMr,i+1,acum);        
+      end;
+    end;
+  end;  
+ // Sorting;
+  rowqty = MatRowCnt(SMr);  
+  for (i=0;i<rowqty;i=i+1) begin
+    MatRowGet(SMr,i,acum);
+    CUr.Code = acum.Objects;
+    testf = ReadFirstMain(CUr,1,true);
+    t = acum.DebVal - acum.CredVal;
+    if (acum.DebVal <> 0) or (t <> 0) or (acum.CredVal <> 0) then begin
+      StartFormat(15);
+      OutString(0,0,CUr.Code,false);
+      OutString(120,0,CUr.Name,false);
+      OutVal(300,0,acum.DebVal,M4Val,true);
+      OutVal(385,0,t,M4Val,true);
+      OutVal(480,0,acum.CredVal,M4Val,true);
+      EndFormat;
+    end;
+  end;
+  
+  Black_Divider(0,1);
+  t = sum2 - sum1;
+  StartFormat(15);
+  OutVal(300,0,sum2,M4Val,true);
+  OutVal(385,0,t,M4Val,true);
+  OutVal(480,0,sum1,M4Val,true);
+  EndFormat;
+  EndJob;
+  RETURN;
+END;
+
+function val GetTurnover_BasePrice(string custcode,Date sStartDate,Date sEndDate)
+begin
+  val res;
+  record INVc INr;
+  record IVVc IVr;
+  row IVVc IVrw;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+  Boolean found,testf;
+  Integer i,rwcnt;
+    
+  found = true;
+  IVr.CustCode = custcode;  
+  IVr.InvDate = sStartDate;  
+  while (LoopKey("CustDate",IVr,2,found)) begin
+    if (IVr.CustCode!=custcode) then begin found = false; end;
+    if (IVr.InvDate>sEndDate) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      rwcnt = MatRowCnt(IVr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        if (testf) then begin
+          if (ReadFirstItem(IVrw.ArtCode,INr,true,false)) then begin end;
+          switch (IVr.InvType) begin
+            case kInvoiceTypeCreditSpecialSales: goto LkInvoiceTypeCredit;
+            case kInvoiceTypeCredit:
+              LkInvoiceTypeCredit:
+              switch (IVrw.stp) begin
+                case 11:
+                  res = res - IVrw.Quant*INr.UPrice1;
+                otherwise
+                  res = res + IVrw.Quant*INr.UPrice1;
+              end;
+            otherwise
+              res = res + IVrw.Quant*INr.UPrice1;
+          end;  
+        end;
+      end;
+    end;
+  end;
+  
+  found = true;
+  IVCashr.CustCode = custcode;  
+  IVCashr.InvDate = sStartDate;  
+  while (LoopKey("CustDate",IVCashr,2,found)) begin
+    if (IVCashr.CustCode!=custcode) then begin found = false; end;
+    if (IVCashr.InvDate>sEndDate) then begin found = false; end;
+    if (found) then begin
+      rwcnt = MatRowCnt(IVCashr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVCashr,i,IVCashrw);
+        testf = true;
+        if (IVCashrw.stp!=kInvoiceRowTypeNormal and IVCashrw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          ReadFirstItem(IVCashrw.ArtCode,INr,true,false);
+          res = res + IVCashrw.Quant*INr.UPrice1;
+        end;
+      end;
+    end;
+  end;
+  
+  found = true;
+  RestAccr.CUCode = custcode;  
+  RestAccr.ReportingDate = sStartDate;  
+  while (LoopKey("CUCodeRepDate",RestAccr,2,found)) begin
+    if (RestAccr.CUCode!=custcode) then begin found = false; end;
+    if (RestAccr.ReportingDate>sEndDate) then begin found = false; end;
+    if (found) then begin
+      rwcnt = MatRowCnt(RestAccr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(RestAccr,i,RestAccrw);
+        testf = true;
+        if (RestAccrw.stp!=kInvoiceRowTypeNormal and RestAccrw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          ReadFirstItem(RestAccrw.ArtCode,INr,true,false);
+          res = res + RestAccrw.Quant*INr.UPrice1;
+        end;
+      end;
+    end;
+  end;
+  
+  GetTurnover_BasePrice = res;
+  return;
+end;
+
+procedure CustStatList(record RcVc RepSpec,string motherbasecur,var val totnotdiscounted,var val totdiscounted)
+begin
+  record CUVc CUr;
+  record CSVc CSr;
+  record ICSVc ICSr;
+  val discounted,t,siv;
+  val gps,nodisc;
+  string 255 frcc,tocc,ckey;
+  string 255 frin,toin;
+  Boolean TrHs,stfound;
+  Boolean icsf;
+  Boolean testf,testf2,infound;
+  record INVc INr;
+  Boolean foundin;
+  record BaseCurBlock BCb;
+
+  BlockLoad(BCb);
+  
+  totnotdiscounted = blankval;
+  totdiscounted = blankval;
+  
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc = LastInRange(RepSpec.f1,20);
+  if (nonblank(RepSpec.f2)) then begin icsf = true; end;
+
+  CUr.Code = frcc;
+  TrHs = true;
+  while (LoopMain(CUr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (nonblank(tocc)) then begin
+        if (CUr.Code>tocc) then begin
+          TrHs = false;
+        end; 
+      end;   
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (testf) then begin
+        testf = ContactInGroupClass("",RepSpec.f3,RepSpec.f6,"CUST",CUr.CustCat,CUr.Classification);
+      end;        
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (RepSpec.AccStr<>CUr.SalesMan) then begin testf = false; end;
+      end;
+      if (CUr.CUType==0) then begin testf = false; end;     
+      if (testf) then  begin
+        discounted = 0;
+        gps = 0;
+        nodisc = 0;
+        siv = 0;
+        t = 0;
+        if (blank(RepSpec.ObjStr)) then begin
+          if (icsf==false) then begin
+            if (nonblank(RepSpec.FirstAcc)) or (nonblank(RepSpec.f4)) then begin
+              ckey = "Code";
+              if (nonblank(RepSpec.FirstAcc)) then begin
+                ckey = "Group";
+                INr.Group = RepSpec.FirstAcc;
+              end;
+              discounted = blankval;
+              gps = blankval;
+              nodisc = blankval;
+              ResetLoop(INr);
+              INr.Code = "";
+              foundin = true;
+              while (LoopKey(ckey,INr,1,foundin)) begin
+                if (nonblank(RepSpec.FirstAcc)) then begin
+                  if (INr.Group!=RepSpec.FirstAcc) then begin foundin = false; end;
+                end;
+                if (foundin) then begin
+                  testf = true; 
+                  if (SetInSet(RepSpec.f4,INr.DispGroups)==false) then begin
+                    testf = false; 
+                  end;
+                  if (testf) then begin
+                    stfound = FindICS(CUr.Code,INr.Code,RepSpec.f5,RepSpec.LastAcc,ICSr);
+                    if (stfound) then begin
+                      discounted = discounted + GetTurnover(ICSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+                      gps = gps + GetTurnover(ICSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+                      switch (RepSpec.flags[3]) begin
+                        case 1:
+                          nodisc = nodisc + INr.UPrice1*GetTurnover(ICSr,"quant",RepSpec.sStartDate,RepSpec.sEndDate);
+                        otherwise 
+                          nodisc = nodisc + GetTurnover(ICSr,"price",RepSpec.sStartDate,RepSpec.sEndDate);
+                      end;
+                    end;
+                  end;
+                end;
+              end;
+            end else begin
+              stfound = FindCS(CUr.Code,RepSpec.f5,RepSpec.LastAcc,CSr);
+              if (stfound) then begin
+                discounted = GetTurnover(CSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+                gps = GetTurnover(CSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+                switch (RepSpec.flags[3]) begin
+                  case 1:
+                     nodisc = GetTurnover_BasePrice(CUr.Code,RepSpec.sStartDate,RepSpec.sEndDate);
+                  otherwise 
+                    nodisc = GetTurnover(CSr,"priceexcldiscount",RepSpec.sStartDate,RepSpec.sEndDate);
+                end;
+              end;
+            end;
+          end else begin
+            stfound = FindICS(CUr.Code,RepSpec.f2,RepSpec.f5,RepSpec.LastAcc,ICSr);
+            if (stfound) then begin
+              discounted = GetTurnover(ICSr,"salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate);
+              gps = GetTurnover(ICSr,"grossprofit",RepSpec.sStartDate,RepSpec.sEndDate);
+              switch (RepSpec.flags[3]) begin
+                case 1:
+                  INr.Code = ICSr.ArtCode;
+                  if (ReadFirstMain(INr,1,true)) then begin end;
+                  nodisc = INr.UPrice1*GetTurnover(ICSr,"quant",RepSpec.sStartDate,RepSpec.sEndDate);
+                otherwise 
+                  nodisc = GetTurnover(ICSr,"price",RepSpec.sStartDate,RepSpec.sEndDate);
+              end;
+            end;
+          end;
+        end else begin
+          AmountsForObject(CUr.Code,RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.f2,RepSpec.ObjStr,RepSpec.FirstAcc,RepSpec.f4,discounted,gps,nodisc);
+        end;
+        testf2 = true;
+        if (RepSpec.vals0<>0) then begin
+          if (discounted<RepSpec.vals0) then begin testf2 = false; end;
+        end;   
+        if (RepSpec.vals1<>0) then begin
+          if (gps<RepSpec.vals1) then begin testf2 = false; end;
+        end;   
+        if (testf2) then begin
+          if (BCb.BaseCur1!=motherbasecur) then begin
+            if (BCb.BaseCur2==motherbasecur) then begin
+              Base1ToBase2(nodisc,CurrentDate,nodisc);
+            end else begin
+            //??
+            end;
+          end;
+          t = nodisc - discounted;
+          if (nodisc <> 0) or (t <> 0) or (discounted <> 0) then begin
+            if (RepSpec.IncDaughter==0) then begin
+              StartFormat(15);
+              OutString(0,0,CUr.Code,false);
+              OutString(120,0,CUr.Name,false);
+              OutValBiDi(300,0,nodisc,M4Val,true,331);
+              OutValBiDi(385,0,t,M4Val,true,428);
+              OutValBiDi(480,0,discounted,M4Val,true,522);
+              EndFormat;
+            end;
+          end;
+          totdiscounted = totdiscounted + discounted;
+          totnotdiscounted = totnotdiscounted + nodisc;
+        end;
+      end;
+    end;
+  end;//while
+  if (RepSpec.IncDaughter==0) then begin
+    if (RepSpec.ArtMode==0) begin
+      t = 0;
+      Black_Divider(0,1);
+      t = totnotdiscounted - totdiscounted;
+      StartFormat(15);
+      OutValBiDi(300,0,totnotdiscounted,M4Val,true,331);
+      OutValBiDi(385,0,t,M4Val,true,428);
+      OutValBiDi(480,0,totdiscounted,M4Val,true,522);
+      EndFormat;
+    end;
+  end;
+  return;
+end;
+    
+global
+procedure Cust2STRn(record RcVc RepSpec)
+begin
+  Boolean testf;
+  val totnotdiscounted,totdiscounted;
+  val cmpnotdiscounted,cmpdiscounted;
+  string 255 frcc,tocc;
+  record CompaniesBlock Cb;
+  row CompaniesBlock Cbrw;
+  record DaughterCompBlock DCb;
+  row DaughterCompBlock DCbrw;
+  Integer i,rwcnt;
+  Integer oldcomp;
+  record BaseCurBlock BCb;
+  string 255 motherbasecur;
+
+  testf = false;
+  if (RepSpec.IncDaughter==0) then begin
+    if (RepSpec.flags[1]==1) then begin
+      CustStatListTurnover(RepSpec); 
+      testf = true;
+    end;
+    if (testf==false) then begin
+      if (RepSpec.flags[2]==1) then begin
+        CustStatListDetails(RepSpec); 
+        testf = true;
+      end;
+    end;
+  end else begin
+  end;
+
+  if (testf==false) then begin
+    frcc = FirstInRange(RepSpec.f1,20);
+    tocc = LastInRange(RepSpec.f1,20);
+    StartReportJob(USetStr(7161));
+     PrintHeader(RepSpec,frcc,tocc);
+    EndHeader;
+    if (RepSpec.IncDaughter==0) then begin
+      if (nonblank(RepSpec.f11)) then begin
+        oldcomp = CurrentCompany;
+        if (SetCompanyCode(RepSpec.f11,false)) then begin
+        end;
+      end;
+      StartFormat(15);
+      OutString(0,0,USetStr(2482),false);
+      OutString(120,0,USetStr(2483),false);
+      OutString(300,0,USetStr(7162),true);
+      OutString(385,0,USetStr(7163),true);
+      OutString(480,0,USetStr(2484),true);
+      EndFormat;
+      Gray_Divider(0,1);
+      BlockLoad(BCb);
+      CustStatList(RepSpec,BCb.BaseCur1,totnotdiscounted,totdiscounted);    
+      if (nonblank(RepSpec.f11)) then begin
+        ResetCompany(oldcomp);
+      end;
+    end else begin
+      BlockLoad(Cb);
+      rwcnt = MatRowCnt(Cb);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Cb,i,Cbrw);
+        if ((i+1)==CurrentCompany) then begin
+          i = rwcnt;
+        end;
+      end;
+      BlockLoad(BCb);
+      motherbasecur = BCb.BaseCur1;
+      oldcomp = CurrentCompany;
+      StartFormat(15);
+      OutString(0,0,USetStr(7165),false);
+      OutString(120,0,USetStr(2483),false);
+      OutString(300,0,USetStr(7162),true);
+      OutString(385,0,USetStr(7163),true);
+      OutString(480,0,USetStr(2484),true);
+      EndFormat;
+      Gray_Divider(0,1);
+      CustStatList(RepSpec,motherbasecur,cmpnotdiscounted,cmpdiscounted);
+      totnotdiscounted = totnotdiscounted + cmpnotdiscounted;
+      totdiscounted = totdiscounted + cmpdiscounted;
+      StartFormat(15);
+      OutString(0,"DblCust2ST",Cbrw.CompCode,false);
+      OutString(120,0,Cbrw.CompName,false);
+      OutValBiDi(300,0,cmpnotdiscounted,M4Val,true,331);
+      OutValBiDi(385,0,cmpnotdiscounted-cmpdiscounted,M4Val,true,428);
+      OutValBiDi(480,0,cmpdiscounted,M4Val,true,522);
+      EndFormat;
+      BlockLoad(DCb);
+      rwcnt = MatRowCnt(DCb);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(DCb,i,DCbrw);
+        if (SetCompanyCode(DCbrw.CompCode,false)) then begin
+          CustStatList(RepSpec,motherbasecur,cmpnotdiscounted,cmpdiscounted);
+          StartFormat(15);
+          OutString(0,"DblCust2ST",DCbrw.CompCode,false);
+          OutString(120,0,DCbrw.CompName,false);
+          OutValBiDi(300,0,cmpnotdiscounted,M4Val,true,331);
+          OutValBiDi(385,0,cmpnotdiscounted-cmpdiscounted,M4Val,true,428);
+          OutValBiDi(480,0,cmpdiscounted,M4Val,true,522);
+          EndFormat;
+          totnotdiscounted = totnotdiscounted + cmpnotdiscounted;
+          totdiscounted = totdiscounted + cmpdiscounted;
+        end;
+      end;
+      Gray_Divider(0,1);
+      StartFormat(15);
+      OutString(120,0,"Total",false);
+      OutValBiDi(300,0,totnotdiscounted,M4Val,true,331);
+      OutValBiDi(385,0,totnotdiscounted-totdiscounted,M4Val,true,428);
+      OutValBiDi(480,0,totdiscounted,M4Val,true,522);
+      EndFormat;
+      ResetCompany(oldcomp);
+    end;
+    EndJob;
+  end;  
+  return;
+end;

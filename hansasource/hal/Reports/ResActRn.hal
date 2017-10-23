@@ -1,0 +1,246 @@
+external function LongInt FindReservation(string,Date,Time);
+external function Time TimeDiff(Time,Time);
+external procedure HTRess(string,string,var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTRooms(string,string,var string);
+
+function Boolean PrintObservations(record RcVc RepSpec,record ResVc Resr,var Boolean printresf)
+begin
+  Boolean res;
+  record GuestObserVc GuestObser;
+  record JobVc Jobr;
+  row JobVc Jobrw;
+  Boolean testf,TsHr,firstf,test2f;
+  Integer i,rwcnt;
+  Time bltim;
+  
+  firstf = true;
+  testf = false;
+  if (nonblank(Resr.Code)) then begin
+    if (RepSpec.sStartDate==RepSpec.sEndDate) then begin
+      testf = true;
+    end;
+  end;
+  if (testf) then begin
+    Jobr.SerNr = FindReservation(Resr.Code,RepSpec.sStartDate,bltim);
+    if (ReadFirstMain(Jobr,1,true)) then begin
+      rwcnt = MatrowCnt(Jobr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatrowGet(Jobr,i,Jobrw);
+        if (nonblank(Jobrw.GuestCode)) then begin
+          ResetLoop(GuestObser);
+          TsHr = true;
+          GuestObser.Guest = Jobrw.GuestCode;
+          GuestObser.Type = 3;
+          while (LoopKey("Guest",GuestObser,2,TsHr)) begin
+            if (GuestObser.Guest!=Jobrw.GuestCode) then begin
+              TsHr = false;
+            end;
+            if ((GuestObser.Type!=3) and (GuestObser.Type!=4)) then begin
+              TsHr = false;
+            end;
+            if (TsHr) then begin
+              test2f = false;
+              if (nonblank(GuestObser.TransDate)) then begin
+                if (GuestObser.TransDate==RepSpec.sStartDate) then begin
+                  test2f = true;
+                end;
+              end else begin
+                if (DateInRange(RepSpec.sStartDate,GuestObser.StartDate,GuestObser.EndDate)) then begin
+                  test2f = true;
+                end;
+              end;
+            end;
+            if (TsHr and test2f) then begin
+              if (firstf) then begin
+                //Some header...
+                firstf = false;
+              end;
+              if (printresf) then begin
+                StartFormat(15);
+                OutString(0,0,Resr.Code,false);
+                OutString(3,0,Resr.Name,false);
+                EndFormat;
+                printresf = false;
+              end;
+              StartFormat(15);
+              OutString(70,0,GuestObser.Person,false);
+              OutLongInt(110,"DblGuestObserVc",GuestObser.SerNr,false);
+              OutDate(150,0,GuestObser.TransDate,false);
+              OutString(210,0,GuestObser.Comment,false);
+              EndFormat;
+              res = true;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  PrintObservations = res;
+  return;
+end;
+
+procedure ResActRnRun(record RcVc RepSpec,Boolean hotelf)
+BEGIN
+  record ActVc Actr;
+  row ActVc Actrw;
+  record ResVc Resr;
+  record JobVc Jobr;
+  string 255 frres,tores;
+  Boolean foundf,resfoundf,testf,printresf;
+  Boolean firstf,firstf2;
+  Integer rw,i,rwcnt;
+  string 255 tstr,ckey;
+  Time TimeTaken;
+  Val Average;
+  Boolean jobexists;
+  record HotelBlock HotelRec;
+
+  BlockLoad(HotelRec);
+  rw = 1;
+  firstf = true;
+  firstf2 = true;
+  frres = FirstInRange(RepSpec.f1,5);
+  tores = LastInRange(RepSpec.f1,5);
+  if (hotelf) then begin
+    StartReportJob(USetStr(9420));
+  end else begin
+    StartReportJob(USetStr(9410));
+  end;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw=rw+1;
+  if (hotelf) then begin
+    HTRooms(frres,tores,tstr);
+  end else begin
+    HTRess(frres,tores,tstr);
+  end;
+  Header(rw,tstr,1);
+  EndHeader;
+  SetRepCol(8,15);
+  SetRepCol(2,60);
+  SetRepCol(3,290);
+  SetRepCol(4,330);
+  SetRepCol(5,400);
+  SetRepCol(6,440);
+  SetRepCol(7,480);
+  SetRepCol(9,170);
+  Resr.Code = frres;
+  resfoundf = true;
+  while (LoopMain(Resr,1,resfoundf)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (Resr.Code>tores) then begin
+        resfoundf = false;
+      end;
+    end;
+    if (resfoundf) then begin
+      firstf = true;
+      Actr.TransDate = RepSpec.sStartDate;
+      Actr.TodoFlag = 0;
+      Actr.OKFlag = 0;
+      foundf = true;
+      ckey = "ResourceMain:" & Resr.Code;
+      ResetLoop(Actr);
+      while (LoopKey(ckey,Actr,2,foundf)) begin
+        if (Actr.TransDate>RepSpec.sEndDate) then begin foundf = false; end;
+        testf = true;
+        if (nonblank(RepSpec.f2)) then begin
+          if ((SetInSet(RepSpec.f2,Actr.MainPersons)==false) and 
+              (SetInSet(RepSpec.f2,Actr.CCPersons)==false)) then begin
+            testf = false;
+          end;
+        end; 
+        if ((Actr.ActType<>RepSpec.f3) and nonblank(RepSpec.f3)) then begin
+          testf = false;
+        end;
+        if (RepSpec.flags[1]==1 and RepSpec.flags[2]==1) then begin
+          //
+        end else begin
+          if (RepSpec.flags[1] == 1 and Actr.OKFlag == 0) then begin
+            testf= false;
+          end;
+          if (RepSpec.flags[0] == 1 and Actr.OKFlag == 1) then begin
+            testf = false;
+          end;
+        end;
+/*
+        if (RepSpec.flags[3]!=0) then begin
+          if (Actr.ActType==HotelRec.CheckinMes) then begin testf = false; end;
+          if (Actr.ActType==HotelRec.CheckoutMes) then begin testf = false; end;
+        end;
+*/
+        if (foundf==false) then begin testf = false; end;
+        if (testf) then begin
+          if (firstf) then begin
+            if (RepSpec.sStartDate==RepSpec.sEndDate) then begin
+              Jobr.SerNr = FindReservation(Resr.Code,RepSpec.sStartDate,RepSpec.sStartTime);
+              jobexists = ReadFirstMain(Jobr,1,true);
+            end;
+            if (firstf2==false) then begin
+              StartFormat(15);
+              EndFormat;
+              Gray_Divider(0,1);
+            end;
+            StartFormat(15);
+            if (jobexists) then begin                        
+              OutStringID(0,"DblJobVcID",Resr.Code,false,Jobr.SerNr);
+              OutString(8,0,Resr.Name,false);
+              OutString(9,0,USetStr(9411) & ": " & Jobr.TransDate,false);
+              OutString(3,0,USetStr(9412) & ": " & Jobr.EndDate,false);
+              OutString(7,0,USetStr(9413) & ": " & MatRowCnt(Jobr),true);
+            end else begin
+              OutString(0,0,Resr.Code,false);
+              OutString(2,0,Resr.Name,false);
+            end;
+            EndFormat;
+            Gray_Divider(0,1);
+            firstf = false;
+            firstf2 = false;
+          end;
+          StartFormat(15);
+          OutStringID(0,"DblActRec",Actr.MainPersons,false,Actr.SerNr);
+          OutStringID(8,"DblActRec",Actr.ActType,false,Actr.SerNr);
+          OutString(2,0,Actr.Comment,false);
+          tstr = DateToString(Actr.TransDate,"DD/MM");
+          Outstring(3,0,tstr,false);
+          tstr = DateToString(Actr.EndDate,"DD/MM");
+          Outstring(4,0,tstr,false);
+          OutString(5,0,left(Actr.StartTime,5),true);
+          OutString(6,0,left(Actr.EndTime,5),true);
+          OutString(7,0,left(Actr.CostTime,5),true);
+          EndFormat;
+          rwcnt = MatRowCnt(Actr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(Actr,i,Actrw);
+            StartFormat(15);
+            OutString(2,0,Actrw.Text,false);
+            EndFormat;
+          end;
+          TimeTaken = TimeDiff(TimeTaken,Actr.CostTime);
+        end;
+      end;
+      
+      if (PrintObservations(RepSpec,Resr,firstf)) then begin
+        Gray_Divider(0,1);
+        StartFormat(15);
+        EndFormat;
+      end;
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;  
+
+global
+procedure ResActRn(record RcVc RepSpec)
+BEGIN
+  ResActRnRun(RepSpec,false);
+  RETURN;
+END;  
+
+global
+procedure RoomActRn(record RcVc RepSpec)
+BEGIN
+  ResActRnRun(RepSpec,true);
+  RETURN;
+END;  

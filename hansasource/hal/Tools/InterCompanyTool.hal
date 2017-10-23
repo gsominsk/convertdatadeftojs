@@ -1,0 +1,378 @@
+external function Boolean ORVc_PasteArtCode(var record ORVc,Integer,var string,var string,Boolean);
+external procedure Base1ToBase2(var val,Date,var val);
+external procedure Base2ToBase1(var val,Date,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Integer GetIntYc(Date);
+external updating procedure SaveTrans(record TRVc);
+
+function Integer ToCompanyinArray(Integer ToCompany,Array Integer atocompany,Integer ancnt,var Integer tocomp)
+begin 
+  Integer res;
+  Integer ai;
+  
+  for (ai=0;ai<ancnt;ai=ai+1) begin
+    if (ToCompany==atocompany[ai]) then begin
+      res = ai;
+      tocomp = atocompany[ai];
+      goto LToCompanyinArray;
+    end;
+  end;
+  res = ancnt;
+  tocomp = ToCompany;
+LToCompanyinArray:;  
+  ToCompanyinArray = res;
+  return;
+end;
+
+global
+updating procedure CreateIntercompanyTransactionsFromTR(record TRVc TRr)
+begin
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  record ICTRuleVc ICTRr;
+  record TRVc nTRr;
+  row TRVc nTRrw;
+  row TRVc tmpTRrw;
+  Array record TRVc anTRr;
+  Array Integer atocompany;
+  Integer ai,ancnt;
+  Integer curcomp,tocomp;
+  Boolean found,trdonef;
+  record BaseCurBlock BCbToComp;
+  record BaseCurBlock BCbFromComp;
+  val fr,to1,to2,br1,br2;
+  val v;
+  record DBLockBlock DBLb;
+  
+  BlockLoad(DBLb);
+  curcomp = CurrentCompany;
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    trdonef = false;
+    if (TRr.IntYc>=IVYc) begin
+      ICTRr.IntYc = TRr.IntYc;      
+    end else begin
+      ICTRr.IntYc = 0;
+    end;
+    ICTRr.AccNumber = TRrw.AccNumber;
+    if (nonblank(TRrw.DebVal)) then begin
+      ICTRr.DC = 0;
+    end else begin
+      ICTRr.DC = 1;
+    end;
+    ICTRr.Objects = TRrw.Objects;
+    ResetLoop(ICTRr);
+    found = true;
+    while (LoopKey("AccNumberDC",ICTRr,4,found)) begin
+      if (TRr.IntYc>=IVYc) begin
+        if (ICTRr.IntYc!=TRr.IntYc) then begin found = false; end;
+      end else begin
+        if (ICTRr.IntYc!=0) then begin found = false; end;
+      end;
+      if (ICTRr.AccNumber!=TRrw.AccNumber) then begin found = false; end;
+      if (nonblank(TRrw.DebVal)) then begin
+        if (ICTRr.DC!=0) then begin found = false; end;
+      end else begin
+        if (ICTRr.DC!=1) then begin found = false; end;
+      end;
+      if (ICTRr.Objects!=TRrw.Objects) then begin found = false; end;
+      if (blank(ICTRr.Objects)) then begin found = false; end;
+            
+      if (found) then begin
+        if (ICTRr.ToCompany>0) then begin
+          BlockLoad(BCbFromComp);
+          ai = ToCompanyinArray(ICTRr.ToCompany,atocompany,ancnt,tocomp);
+          if (SetCompany(tocomp,false)) then begin
+          end;
+
+          if (ai==ancnt) then begin        
+            RecordNew(nTRr);
+            nTRr.TransDate = TRr.TransDate;
+            anTRr[ai] = nTRr;
+            atocompany[ai] = tocomp;
+            ancnt = ancnt + 1;
+          end;        
+          BlockLoad(BCbToComp);
+          nTRr = anTRr[ai];
+
+   //       nTRr.Comment = TRr.Comment;
+          nTRr.Comment = ICTRr.Comment;
+          CopyRow(TRr,TRrw,tmpTRrw);
+          ClearRow(TRr,nTRrw,1);
+
+          nTRrw.AccNumber = ICTRr.ToAccNumber;
+          nTRrw.Comment = ICTRr.ToAccName;
+          if (nonblank(ICTRr.ToObjects)) then begin
+            nTRrw.Objects = ICTRr.ToObjects;
+          end;
+          nTRrw.Curncy = tmpTRrw.Curncy;
+          if (tmpTRrw.Curncy!=BCbToComp.BaseCur1) and (tmpTRrw.Curncy!=BCbToComp.BaseCur2) then begin
+            nTRrw.CurDebVal = tmpTRrw.CurCredVal;
+            nTRrw.CurCredVal = tmpTRrw.CurDebVal;
+          end;
+          if (BCbFromComp.BaseCur1==BCbToComp.BaseCur1) then begin
+            nTRrw.DebVal = tmpTRrw.CredVal;
+            nTRrw.CredVal = tmpTRrw.DebVal;
+          end;
+          if (BCbFromComp.BaseCur1==BCbToComp.BaseCur2) then begin
+            nTRrw.DebVal2 = tmpTRrw.CredVal;
+            nTRrw.CredVal2 = tmpTRrw.DebVal;
+          end;
+
+          if (BCbFromComp.BaseCur2==BCbToComp.BaseCur2) then begin
+            nTRrw.DebVal2 = tmpTRrw.CredVal2;
+            nTRrw.CredVal2 = tmpTRrw.DebVal2;
+          end;
+          if (BCbFromComp.BaseCur2==BCbToComp.BaseCur1) then begin
+            nTRrw.DebVal = tmpTRrw.CredVal2;
+            nTRrw.CredVal = tmpTRrw.DebVal2;
+          end;
+          GetFullCurncyRate(nTRrw.Curncy,TRr.TransDate,fr,to1,to2,br1,br2);        
+          if (nTRrw.Curncy!=BCbToComp.BaseCur1) and (nTRrw.Curncy!=BCbToComp.BaseCur2) then begin        
+  //we asssume EUR is 1st or 2nd base curecny in from comapny and is 2nd base cureny in to company        
+            nTRrw.FrRate = tmpTRrw.FrRate;
+            nTRrw.ToRateB1 = tmpTRrw.ToRateB1;
+            nTRrw.ToRateB2 = tmpTRrw.ToRateB2;
+          end;
+          nTRrw.BaseRate1 = br1;
+          nTRrw.BaseRate2 = br2;
+          if (blank(nTRrw.DebVal)) then begin
+            Base2ToBase1(nTRrw.DebVal2,TRr.TransDate,v); 
+            nTRrw.DebVal = v;
+          end;
+          if (blank(nTRrw.CredVal)) then begin
+            Base2ToBase1(nTRrw.CredVal2,TRr.TransDate,v); 
+            nTRrw.CredVal = v;
+          end;
+          if (blank(nTRrw.DebVal2)) then begin
+            Base1ToBase2(nTRrw.DebVal,TRr.TransDate,v); 
+            nTRrw.DebVal2 = v;
+          end;
+          if (blank(nTRrw.CredVal2)) then begin
+            Base1ToBase2(nTRrw.CredVal,TRr.TransDate,v); 
+            nTRrw.CredVal2 = v;
+          end;
+          MatRowPut(nTRr,MatRowCnt(nTRr),nTRrw);
+          
+
+          
+          CopyRow(TRr,nTRrw,tmpTRrw);
+          nTRrw.AccNumber = ICTRr.CorAccNumber;
+          nTRrw.Comment = ICTRr.CorAccName;
+          if (nonblank(ICTRr.CorObjects)) then begin
+            nTRrw.Objects = ICTRr.CorObjects;
+          end;
+          
+          nTRrw.DebVal = tmpTRrw.CredVal;
+          nTRrw.CredVal = tmpTRrw.DebVal;
+          nTRrw.DebVal2 = tmpTRrw.CredVal2;
+          nTRrw.CredVal2 = tmpTRrw.DebVal2;
+          nTRrw.CurDebVal = tmpTRrw.CurCredVal;
+          nTRrw.CurCredVal = tmpTRrw.CurDebVal;
+                                         
+          MatRowPut(nTRr,MatRowCnt(nTRr),nTRrw);
+          anTRr[ai] = nTRr;
+          ResetCompany(curcomp);
+          trdonef = true;
+        end;
+      end;
+    end;
+    if (trdonef==false) then begin
+//same code as above ecept difrent segmets of index    
+      if (TRr.IntYc>=IVYc) begin
+        ICTRr.IntYc = TRr.IntYc;      
+      end else begin
+        ICTRr.IntYc = 0;
+      end;
+      ICTRr.AccNumber = TRrw.AccNumber;
+      if (nonblank(TRrw.DebVal)) then begin
+        ICTRr.DC = 0;
+      end else begin
+        ICTRr.DC = 1;
+      end;
+      ICTRr.Objects = "";
+      found = ReadFirstKey("AccNumberDC",ICTRr,4,true);
+    end;
+
+    ResetLoop(ICTRr);
+    found = true;
+    while (LoopKey("AccNumberDC",ICTRr,4,found)) begin
+      if (TRr.IntYc>=IVYc) begin
+        if (ICTRr.IntYc!=TRr.IntYc) then begin found = false; end;
+      end else begin
+        if (ICTRr.IntYc!=0) then begin found = false; end;
+      end;
+      if (ICTRr.AccNumber!=TRrw.AccNumber) then begin found = false; end;
+      if (nonblank(TRrw.DebVal)) then begin
+        if (ICTRr.DC!=0) then begin found = false; end;
+      end else begin
+        if (ICTRr.DC!=1) then begin found = false; end;
+      end;
+      if (ICTRr.Objects!="") then begin found = false; end;
+            
+      if (found) then begin
+        if (ICTRr.ToCompany>0) then begin
+          BlockLoad(BCbFromComp);
+          ai = ToCompanyinArray(ICTRr.ToCompany,atocompany,ancnt,tocomp);
+          if (SetCompany(tocomp,false)) then begin
+          end;
+
+          if (ai==ancnt) then begin        
+            RecordNew(nTRr);
+            nTRr.TransDate = TRr.TransDate;
+            anTRr[ai] = nTRr;
+            atocompany[ai] = tocomp;
+            ancnt = ancnt + 1;
+          end;        
+          BlockLoad(BCbToComp);
+          nTRr = anTRr[ai];
+
+  //        nTRr.Comment = TRr.Comment;
+          nTRr.Comment = ICTRr.Comment;
+          CopyRow(TRr,TRrw,tmpTRrw);
+          ClearRow(TRr,nTRrw,1);
+
+          nTRrw.AccNumber = ICTRr.ToAccNumber;
+          nTRrw.Comment = ICTRr.ToAccName;
+          if (nonblank(ICTRr.ToObjects)) then begin
+            nTRrw.Objects = ICTRr.ToObjects;
+          end;
+
+          nTRrw.Curncy = tmpTRrw.Curncy;
+          if (tmpTRrw.Curncy!=BCbToComp.BaseCur1) and (tmpTRrw.Curncy!=BCbToComp.BaseCur2) then begin
+            nTRrw.CurDebVal = tmpTRrw.CurCredVal;
+            nTRrw.CurCredVal = tmpTRrw.CurDebVal;
+          end;
+          if (BCbFromComp.BaseCur1==BCbToComp.BaseCur1) then begin
+            nTRrw.DebVal = tmpTRrw.CredVal;
+            nTRrw.CredVal = tmpTRrw.DebVal;
+          end;
+          if (BCbFromComp.BaseCur1==BCbToComp.BaseCur2) then begin
+            nTRrw.DebVal2 = tmpTRrw.CredVal;
+            nTRrw.CredVal2 = tmpTRrw.DebVal;
+          end;
+
+          if (BCbFromComp.BaseCur2==BCbToComp.BaseCur2) then begin
+            nTRrw.DebVal2 = tmpTRrw.CredVal2;
+            nTRrw.CredVal2 = tmpTRrw.DebVal2;
+          end;
+          if (BCbFromComp.BaseCur2==BCbToComp.BaseCur1) then begin
+            nTRrw.DebVal = tmpTRrw.CredVal2;
+            nTRrw.CredVal = tmpTRrw.DebVal2;
+          end;
+
+          GetFullCurncyRate(nTRrw.Curncy,TRr.TransDate,fr,to1,to2,br1,br2);        
+          if (nTRrw.Curncy!=BCbToComp.BaseCur1) and (nTRrw.Curncy!=BCbToComp.BaseCur2) then begin        
+  //we asssume EUR is 1st or 2nd base curecny in from comapny and is 2nd base cureny in to company        
+            nTRrw.FrRate = tmpTRrw.FrRate;
+            nTRrw.ToRateB1 = tmpTRrw.ToRateB1;
+            nTRrw.ToRateB2 = tmpTRrw.ToRateB2;
+          end;
+          nTRrw.BaseRate1 = br1;
+          nTRrw.BaseRate2 = br2;
+          
+  //we asssume EUR is 1st curncy if DebVal2 is blank end 2nd Curency is base2 not blank
+           if (blank(nTRrw.DebVal)) then begin
+            Base2ToBase1(nTRrw.DebVal2,TRr.TransDate,v); 
+            nTRrw.DebVal = v;
+          end;
+          if (blank(nTRrw.CredVal)) then begin
+            Base2ToBase1(nTRrw.CredVal2,TRr.TransDate,v); 
+            nTRrw.CredVal = v;
+          end;
+          if (blank(nTRrw.DebVal2)) then begin
+            Base1ToBase2(nTRrw.DebVal,TRr.TransDate,v); 
+            nTRrw.DebVal2 = v;
+          end;
+          if (blank(nTRrw.CredVal2)) then begin
+            Base1ToBase2(nTRrw.CredVal,TRr.TransDate,v); 
+            nTRrw.CredVal2 = v;
+          end;
+          MatRowPut(nTRr,MatRowCnt(nTRr),nTRrw);
+          
+
+          
+          CopyRow(TRr,nTRrw,tmpTRrw);
+          nTRrw.AccNumber = ICTRr.CorAccNumber;
+          nTRrw.Comment = ICTRr.CorAccName;
+          if (nonblank(ICTRr.CorObjects)) then begin
+            nTRrw.Objects = ICTRr.CorObjects;
+          end;
+          
+          nTRrw.DebVal = tmpTRrw.CredVal;
+          nTRrw.CredVal = tmpTRrw.DebVal;
+          nTRrw.DebVal2 = tmpTRrw.CredVal2;
+          nTRrw.CredVal2 = tmpTRrw.DebVal2;
+          nTRrw.CurDebVal = tmpTRrw.CurCredVal;
+          nTRrw.CurCredVal = tmpTRrw.CurDebVal;
+                                         
+          MatRowPut(nTRr,MatRowCnt(nTRr),nTRrw);
+          anTRr[ai] = nTRr;
+          ResetCompany(curcomp);
+        end;
+      end;
+    end;
+
+    
+  end;
+  for (i=0;i<ancnt;i=i+1) begin
+    RecordCopy(nTRr,anTRr[i]);
+    if (SetCompany(atocompany[i],false)) then begin
+      BlockLoad(DBLb);
+      if (nTRr.TransDate>DBLb.TRLock) then begin
+        nTRr.Number = NextSerNr("TRVc",nTRr.TransDate,-1,false,"");            
+        nTRr.IntYc = GetIntYc(nTRr.TransDate);
+        SaveTrans(nTRr);
+      end;
+    end;
+  end;
+  ResetCompany(curcomp);
+  return;
+end;
+
+global
+procedure ICPOItemPriceWarning(record POVc POr,Integer rownr)
+begin
+  row POVc POrw;
+  record ModuleBlock Modb;
+  record CUVc VEr;
+  record CUVc CUr;
+  Integer oldcomp;
+  record ORVc ORr;
+  row ORVc ORrw;
+  string 255 inwarning,warning;
+  record CYBlock CYb;
+  
+  BlockLoad(Modb);
+  if (Modb.InterCompany) then begin
+    VEr.Code = POr.VECode;
+    if (ReadFirstMain(VEr,1,true)) then begin
+      MatRowGet(POr,rownr,POrw);
+      if (VEr.ePORcvPref==kPORcvPreferenceInternal and nonblank(VEr.ePORcvToCompanyCode) and nonblank(POrw.VEArtCode)) then begin
+        BlockLoad(CYb);
+
+        oldcomp = CurrentCompany;
+        SetServerCompany(StringToInt(VEr.ePORcvToCompanyCode));
+        CUr.VATNr = CYb.VATNr;
+        ORr.CustCode = CUr.Code;
+        if (ReadFirstKey("VATNr",CUr,1,true)) then begin
+          ORr.OrdDate = POr.TransDate;
+          ORr.CurncyCode = POr.CurncyCode;
+          ClearRow(ORr,ORrw,POrw.stp);
+          ORrw.ArtCode = POrw.VEArtCode;
+          ORrw.Quant = POrw.Quant;
+          MatRowPut(ORr,0,ORrw); 
+          ORVc_PasteArtCode(ORr,0,inwarning,warning,false);
+          MatRowGet(ORr,0,ORrw);
+          if (ORrw.Price!=POrw.Price) then begin
+            warning = USetStr(21448) & " " & VEr.ePORcvToCompanyCode & " " & USetStr(21449);
+            MessageBox(0,warning);
+          end;
+        end;        
+        ResetCompany(oldcomp);
+      end;
+    end;
+  end;
+  return;
+end;

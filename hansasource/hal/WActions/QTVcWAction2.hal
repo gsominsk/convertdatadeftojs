@@ -1,0 +1,210 @@
+external procedure AutomatedSalesOrderly(string);
+remote procedure QTVc_PasteUnitFactPrice(var record QTVc,Integer);
+remote procedure QTVc_PasteTaxTemplateCode(var record QTVc,Integer,var Boolean);
+external procedure RecalcQTSubtotal(var record QTVc);
+remote procedure QTVc_PastevRebate(var record QTVc,Integer,var Boolean);
+external procedure RowCalculateTaxMatrix_QTVc(var record QTVc,Integer,row QTVc);
+external function roundmode SetRoundModeD(Integer);
+external procedure CalcPrice(val,val,val,var val,Integer);
+external procedure CalcExtra(val,string,var val);
+external procedure RoundRowSum(string,string,string,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+remote function val GetTax1Discount(string,Date,string);
+remote procedure QTSumup(var record QTVc);
+external procedure QTDchsum(record QTVc,Integer);
+
+global
+function Boolean QTDchrsum(var record QTVc QTr,Integer rownr,Integer UseDiscount)
+begin
+  Boolean chsum;
+  row QTVc QTrw;
+  val s,v,p;
+
+  chsum = false;
+  MatRowGet(QTr,rownr,QTrw);
+  p = QTrw.Price; 
+  CalcPrice(QTrw.BasePrice,QTrw.PriceFactor,QTrw.vRebate,p,UseDiscount);
+  QTrw.Price = p;  
+  CalcSum(QTrw.Quant,QTrw.Price,QTrw.PriceFactor,QTrw.vRebate,s,UseDiscount);
+  if (blank(QTrw.Quant)) or (blank(QTrw.Price)) then begin
+    s = blankval;
+  end;
+  CalcExtra(s,QTrw.Markup,v);
+  s = s + v;
+  RoundRowSum(QTr.CurncyCode,QTr.PayDeal,"QTVc",s);
+  if (s<>QTrw.Sum) or ((s==0.00) and (blank(QTrw.Sum))) then begin
+    QTrw.Sum = s;
+    RowCalculateTaxMatrix_QTVc(QTr,rownr,QTrw);
+    MatRowPut(QTr,rownr,QTrw);
+    chsum = true;
+  end;
+  if (QTrw.Price==0) then begin chsum = true; end;
+  QTDchrsum = chsum;
+  return;
+end;
+
+global
+procedure QTVc_PasteMarkup(var record QTVc QTr,Integer rownr,var Boolean chsum)
+BEGIN
+  record GeneralOptionBlock GenOptRec;
+  row QTVc QTrw;
+  Boolean chrsum,lchsum;
+  Integer i,rwcnt;
+  
+  BlockLoad(GenOptRec);
+  if (rownr==-1) then begin
+    rwcnt = MatRowCnt(QTr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(QTr,i,QTrw);
+      QTrw.Markup = QTr.Markup;
+      MatRowPut(QTr,i,QTrw);
+      lchsum = QTDchrsum(QTr,i,GenOptRec.UseDiscount);
+      if (lchsum) then begin
+        QTDchsum(QTr,i);
+      end;
+    end; 
+    chsum = true;
+  end else begin
+    chrsum = true;//it is needed
+  end;
+  if (chrsum) then begin
+    chsum = QTDchrsum(QTr,rownr,GenOptRec.UseDiscount);
+    if (chsum) then begin
+      QTDchsum(QTr,rownr);
+    end;
+  end;
+  QTSumup(QTr);
+    
+  RETURN;
+END;
+
+global
+function Boolean QTDClassvRebateEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record QTVc QTr;
+  Boolean chsum;
+
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,QTr);
+    QTVc_PastevRebate(QTr,rownr,chsum);
+    if (chsum) then begin
+      QTDchsum(QTr,rownr);
+      QTSumup(QTr);
+    end;
+    PutWindowRecord(wn,QTr);
+    AutomatedSalesOrderly("HasPriceLists+Edit_QTVc");
+  end;
+  QTDClassvRebateEFAfter = true;
+  return;
+end;
+
+global
+function Boolean QTDClassVATCodeEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record QTVc QTr;
+  row QTVc QTrw;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,QTr);  
+    if (QTr.NoTax1==0) then begin
+      MatRowGet(QTr,rownr,QTrw);
+      QTrw.TAX1Reb = GetTax1Discount(QTr.CustCode,QTr.QTDate,QTrw.VATCode);
+      MatRowPut(QTr,rownr,QTrw);
+    end;
+    QTDchsum(QTr,rownr);
+    QTSumup(QTr);
+    PutWindowRecord(wn,QTr);
+  end;
+  QTDClassVATCodeEFAfter = true;
+  return;
+end;
+
+global
+function Boolean QTDClassTaxTemplateCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin  
+  record QTVc QTr;
+  Boolean chsum;
+
+  if (changedf) then begin  
+    GetWindowRecord(wn,QTr);
+    QTVc_PasteTaxTemplateCode(QTr,rownr,chsum);
+    if (chsum) then begin
+      QTDchsum(QTr,rownr);
+    end;    
+    QTSumup(QTr);
+    PutWindowRecord(wn,QTr);
+  end;  
+  QTDClassTaxTemplateCodeEFAfter = true;
+  return;
+end;
+
+procedure QTVc_PasteSum(var record QTVc QTr,Integer rownr)
+BEGIN
+  record GeneralOptionBlock GenOptr;
+  row QTVc QTrw;
+  val s,t;
+
+  MatRowGet(QTr,rownr,QTrw);
+  if ((QTrw.Quant!=0) and (QTrw.Price!=0)) then begin
+    QTrw.vRebate = blankval;
+    BlockLoad(GenOptr);    
+    CalcSum(QTrw.Quant,QTrw.Price,QTrw.PriceFactor,QTrw.vRebate,t,GenOptr.UseDiscount);
+    RoundRowSum(QTr.CurncyCode,QTr.PayDeal,"QTVc",t); 
+    s = QTrw.Sum;// /QTrw.Quant;not good
+    s = t - s;
+    s = s*100;
+    s = s/t;
+    QTrw.vRebate = Round(s,SetRoundModeD(1));
+    RowCalculateTaxMatrix_QTVc(QTr,rownr,QTrw);
+    if (QTrw.vRebate==0) then begin QTrw.vRebate = blankval; end;
+    MatRowPut(QTr,rownr,QTrw);
+  end;
+  RETURN;
+END;
+
+global
+function Boolean QTDClassSumEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record QTVc QTr;
+  Boolean chsum;
+
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,QTr);
+    QTVc_PasteSum(QTr,rownr);
+//    QTVc_PastevRebate(QTr,rownr,chsum);
+    QTDchsum(QTr,rownr);
+    QTSumup(QTr);
+    PutWindowRecord(wn,QTr);
+  end;
+  QTDClassSumEFAfter = true;
+  return;
+end;
+
+global
+function Boolean QTDClassUnitFactPriceEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record QTVc QTr;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,QTr);
+    QTVc_PasteUnitFactPrice(QTr,rownr);
+    PutWindowRecord(wn,QTr);
+  end;
+  QTDClassUnitFactPriceEFAfter = true;
+  return;
+end;
+
+global
+function string 255 QTLClassSumExclVAT(var record QTVc QTr)
+begin
+  val v;
+  
+  v = QTr.Sum1;
+  if (QTr.InclVAT>0) then begin
+    v = QTr.Sum1 - QTr.Sum3;
+  end;
+  QTLClassSumExclVAT = v;
+  return;
+end;

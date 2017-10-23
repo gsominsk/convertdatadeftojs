@@ -1,0 +1,175 @@
+external procedure HTObj(string,var string);
+external procedure HTAccs(string,string,Integer, var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure ToStrTRCode(var string,Integer,LongInt);
+
+procedure ListLinesWithVATCode(record RcVc RepSpec,record MainVc mainr,var Boolean printaccf,
+                               var val totvatout,var val totvatin,var val totnet,var val totvat)
+begin
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  Boolean testf;
+  val v,net,vat,t1;
+  
+  TRr.Number = mainr.TransNr;
+  TRr.IntYc = mainr.IntYc;
+  if (ReadFirstMain(TRr,0,true)) then begin
+    rwcnt = MatRowCnt(TRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+      testf = true;
+      if (TRrw.AccNumber!=mainr.AccNumber) then begin testf = false; end;
+      if (TRrw.ovst!=0) then begin testf = false; end;
+      if (blank(TRrw.VATCode)) then begin testf = false; end;
+      if (nonblank(RepSpec.ObjStr)) then begin
+        if (SetInSet(RepSpec.ObjStr,TRrw.Objects)==false) then begin
+          testf = false;
+        end;
+      end;     
+      if (testf) then begin
+        if (printaccf) then begin
+          printaccf = false;
+          StartFormat(15);
+           OutString(0,0,USetStr(18161),false);            
+           OutString(50,"DblAccVc",mainr.AccNumber,false);            
+          EndFormat;
+          StartFormat(15);
+           OutString(15,0,USetStr(18162),false);            
+           OutString(160,0,USetStr(18163),true);            
+           OutString(240,0,USetStr(18164),true);            
+           OutString(320,0,USetStr(18165),true);            
+          EndFormat;
+          Gray_Divider(0,1);
+        end;
+        ToStrTRCode(tstr,TRr.IntYc,TRr.Number);
+        switch (TRr.IntYc) begin
+          case IVYc:
+            v = TRrw.CredVal-TRrw.DebVal;
+          case VIYc:
+            v = TRrw.CredVal-TRrw.DebVal;
+          otherwise
+            v = TRrw.CredVal-TRrw.DebVal;
+        end;        
+
+        net = v;
+
+        MulVATIV(TRrw.VATCode,net,vat,t1,0,0);
+
+        switch (TRr.IntYc) begin
+          case IVYc:
+            totvatin = totvatin + vat;
+            totnet = totnet + v;          
+          case VIYc:
+            totvatout = totvatout - vat;
+            totnet = totnet + v;          
+          otherwise
+            if (v<0) then begin
+              totvatout = totvatout - vat;
+            end else begin
+              totvatin = totvatin + vat;
+            end;
+            totnet = totnet + v;          
+        end;        
+        
+        StartFormat(15);
+         OutStringID(15,"DblTrans",tstr,false,CurrentCompany);            
+         OutVal(160,0,net,M4Val,true);            
+         OutVal(240,0,vat,M4Val,true);            
+         OutVal(320,0,net+vat,M4Val,true);            
+        EndFormat;
+
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure VATTransJRn(record RcVc RepSpec)
+begin
+  record MainVc mainr;
+  Boolean found,testf,printaccf;
+  Integer segs;
+  string 255 fracc,toacc,lastaccnumber,tstr;
+  val totvatout,totvatin,totnet,totvat;
+  Integer rw;
+  Integer yc1,yc2;
+  LongInt n1,n2;
+  
+  fracc = FirstInRange(RepSpec.f1,10);
+  toacc = LastInRange(RepSpec.f1,10);
+
+  n1 = FirstTransInRange(RepSpec.f2);
+  n2 = LastTransInRange(RepSpec.f2);
+  yc1 = FirstTransTypeInRange(RepSpec.f2);
+  yc2 = LastTransTypeInRange(RepSpec.f2);  
+
+  StartReportJob(USetStr(18160));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTAccs(fracc,toacc,0,tstr);
+  Header(rw,tstr,0);
+  if (nonblank(RepSpec.ObjStr)) then begin
+    HTObj(RepSpec.ObjStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+    
+  segs = 1;
+  if (nonblank(RepSpec.f1)) then begin
+    segs = 2;
+  end;
+  mainr.AccNumber = fracc;
+  mainr.TransDate = RepSpec.sStartDate;
+  found = true;
+  while (LoopMain(mainr,segs,found)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (mainr.AccNumber>toacc) then begin found = false; end;
+    end;
+    if (found) then begin
+      testf = true;
+      if (DateInRange(mainr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;  
+      if (nonblank(RepSpec.f2)) then begin
+        if (mainr.TransNr<n1) or (mainr.TransNr>n2) then begin testf = false; end;
+        if (mainr.IntYc!=yc1) and (mainr.IntYc!=yc2) then begin testf = false; end;
+      end;    
+      if (testf) then begin
+        if (lastaccnumber!=mainr.AccNumber) then begin printaccf = true; end;
+        ListLinesWithVATCode(RepSpec,mainr,printaccf,totvatout,totvatin,totnet,totvat);
+        lastaccnumber = mainr.AccNumber;
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+   OutVal(160,0,totnet,M4Val,true);      
+   OutVal(240,0,totvatin-totvatout,M4Val,true);      
+   OutVal(320,0,totnet+(totvatin-totvatout),M4Val,true);      
+  EndFormat;
+
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+   OutString(0,0,USetStr(18167),false)
+   OutVal(240,0,-totvatout,M4Val,true);      
+  EndFormat;
+  StartFormat(15);
+   OutString(0,0,USetStr(18166),false)
+   OutVal(240,0,totvatin,M4Val,true);      
+  EndFormat;
+  StartFormat(15);
+   OutString(0,0,USetStr(18168),false)
+   OutVal(240,0,totvatin-totvatout,M4Val,true);      
+  EndFormat;
+  EndJob;
+  return;
+end;
+

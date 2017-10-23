@@ -1,0 +1,15 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fVcName: { public: true, type: 'TEXT' },
+     fServerIP: { public: true, type: 'TEXT' },
+     fServerPort: { public: true, type: 'INTEGER' },
+     fFromCompCode: { public: true, type: 'TEXT' },
+     fUserCode: { public: true, type: 'TEXT' },
+     fPassword: { public: true, type: 'TEXT' },
+     fClosedf: { public: true, type: 'INTEGER' },
+     fStatus: { public: true, type: 'TEXT' },
+     fSSLPort: { public: true, type: 'INTEGER' },
+     fXBug: { public: true, type: 'INTEGER' },
+     fAPIKey: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex835: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

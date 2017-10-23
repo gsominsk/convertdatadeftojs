@@ -1,0 +1,390 @@
+external function Boolean TestForMATVARINS(Integer);
+remote procedure RecVc_PasteItem(var record RecVc,Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+
+global
+procedure RecSumup(record RecVc Recp)
+BEGIN
+  row RecVc Recrw;
+  val s,ms;
+  Integer i,rwcnt;
+  record ProdSettingsBlock PSb;
+  val wsum;
+  val numprod;
+  val prodhours;
+  Boolean wsumaddef;
+
+  BlockLoad(PSb);
+
+  if (PSb.AddWorkCost!=0) then begin
+    if (PSb.WorkCostPerHour!=0) then begin
+      if (blank(Recp.DefaultRouting)) then begin
+	      numprod = Recp.NumProd;
+	      if (numprod==0) then begin
+	        numprod = 1;
+	      end;
+	      prodhours = Recp.HrsToProd + (Recp.QtyAssemblyDays * 24.00);
+        if (Recp.MinsToProd>=0) then begin
+          prodhours = prodhours + Recp.MinsToProd/60.00;
+        end;
+        if (Recp.SecsToProd>=0) then begin
+          prodhours = prodhours + Recp.SecsToProd/3600.00;
+        end;
+	      
+	      wsum = wsum + prodhours*PSb.WorkCostPerHour/numprod;
+	      if (nonblanktime(Recp.SetUpTime)) then begin
+	        wsum = wsum + (TimeToVal(Recp.SetUpTime)/numprod) * PSb.WorkCostPerHour;        
+	      end;
+	      rwcnt = MatRowCnt(Recp);
+	      for (i=rwcnt-1;i>=0;i=i-1) begin
+	        MatRowGet(Recp,i,Recrw);
+	        if (Recrw.InQty!=0) then begin
+	          if (wsumaddef==false) then begin
+  	          Recrw.ExtraCost = wsum;
+  	          wsumaddef = true;
+  	        end else begin
+  	          Recrw.ExtraCost = blankval;
+  	        end;
+	          MatRowPut(Recp,i,Recrw);
+	        end;
+	      end;
+	    end;
+    end;
+  end;
+
+  Recp.InSum = blankval;
+  Recp.OutSum = blankval;
+  rwcnt = MatRowCnt(Recp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recp,i,Recrw);
+    if (Recrw.InQty!=0) then begin
+      ms = (Recrw.ItemCost*Recrw.InQty) + Recrw.ExtraCost;
+      Recp.InSum = ms + Recp.InSum;
+    end else begin
+      ms = (Recrw.ItemCost*Recrw.OutQty) + Recrw.ExtraCost;
+      Recp.OutSum = ms + Recp.OutSum;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Boolean RecDClassSwitchRow(Integer wn,Integer rownr)
+begin        
+  record RecVc Recr;
+  row RecVc Recrw; 
+  Boolean res;
+  Integer rwcnt;
+
+  res = true;
+  GetWindowRecord(wn,Recr);
+  rwcnt = MatRowCnt(Recr);  
+  if ((rownr<rwcnt) and (rownr>=0)) then begin
+    MatRowGet(Recr,rownr,Recrw);
+    SetWindowNameArg(wn,Recrw.Item & ":" & "");
+  end;
+  RecDClassSwitchRow = res;  
+  RETURN;
+END;
+
+function Boolean RecDClassItemEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+  row RecVc Recrw;
+  record INVc INr;
+  
+  if (changed!=0) then begin
+    if (rownr>=0) then begin    
+      GetWindowRecord(wn,Recr);
+      RecVc_PasteItem(Recr,rownr);
+      PutWindowRecord(wn,Recr);
+      if (RecDClassSwitchRow(wn,rownr)) then begin end;
+      res = true;
+    end;
+  end;  
+  RecDClassItemEFAfter = res;
+  RETURN;
+END;
+
+function Boolean RecDClassInQtyEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+  
+  if (changed!=0) then begin
+    if (rownr>=0) then begin    
+      GetWindowRecord(wn,Recr);
+      RecSumup(Recr); 
+      PutWindowRecord(wn,Recr);
+      res = true;
+    end;
+  end;  
+  RecDClassInQtyEFAfter = res;
+  RETURN;
+END;
+
+function Boolean RecDClassHrsToProdEFAfter(Integer wn,Boolean changedf)
+begin
+  Boolean res;
+  record RecVc Recr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,Recr);
+    RecSumup(Recr); 
+    PutWindowRecord(wn,Recr);
+    res = true;
+  end;  
+  RecDClassHrsToProdEFAfter = res;
+  return;
+end;
+
+function Boolean RecDClassCodeEFAfter(Integer wn,Boolean changedf)
+begin
+  Boolean res;
+  record RecVc Recr;
+  row RecVc Recrw;
+  record INVc INr;
+  Integer i,rwcnt;
+  string 255 outitem;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,Recr);
+    if (nonblank(Recr.Code)) then begin
+      if (blank(Recr.Comment)) then begin
+        rwcnt = MatRowCnt(Recr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(Recr,i,Recrw);
+          if (Recrw.OutQty!=0) then begin
+            outitem = Recrw.Item; 
+            i = rwcnt;
+          end;
+        end;
+        if (ReadFirstItem(outitem,INr,true,true)) then begin
+        end;
+        Recr.Comment = INr.Name;
+        PutWindowRecord(wn,Recr);
+        res = true;
+      end;
+    end;
+  end;  
+  RecDClassCodeEFAfter = res;
+  return;
+end;
+
+function Boolean RecDClassOutQtyEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+  
+  if (changed!=0) then begin
+    if (rownr>=0) then begin    
+      GetWindowRecord(wn,Recr);
+      RecSumup(Recr); 
+      PutWindowRecord(wn,Recr);
+      res = true;
+    end;
+  end;  
+  RecDClassOutQtyEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean RecDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "Item": res = RecDClassItemEFAfter(wn,fn,rownr,changed);
+    case "InQty": res = RecDClassInQtyEFAfter(wn,fn,rownr,changed);
+    case "OutQty": res = RecDClassOutQtyEFAfter(wn,fn,rownr,changed);
+    case "ItemCost": res = RecDClassInQtyEFAfter(wn,fn,rownr,changed);
+    case "ExtraCost": res = RecDClassInQtyEFAfter(wn,fn,rownr,changed);
+    case "QtyAssemblyDays": res = RecDClassHrsToProdEFAfter(wn,changed!=0);
+    case "HrsToProd": res = RecDClassHrsToProdEFAfter(wn,changed!=0);
+    case "MinsToProd": res = RecDClassHrsToProdEFAfter(wn,changed!=0);
+    case "SecsToProd": res = RecDClassHrsToProdEFAfter(wn,changed!=0);
+    case "SetUpTime": res = RecDClassHrsToProdEFAfter(wn,changed!=0);
+    case "NumProd": res = RecDClassHrsToProdEFAfter(wn,changed!=0);
+    case "Code": res = RecDClassCodeEFAfter(wn,changed!=0);
+  end;
+  RecDClassAfterEditField = res;
+  RETURN;
+END;
+
+
+global
+function Boolean RecDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,Recr);
+    if (Recr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,Recr);
+    if (Recr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  RecDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean RecDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record RecVc Rec2r;
+  
+  res = true;
+  if (wnst==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,Rec2r);
+    if (Rec2r.OKFlag!=0) then begin
+      res = false;
+      switch (fieldname) begin
+        case "FixedAssembDays": res = true;
+        case "QtyAssemblyDays": res = true;
+        case "MinProdQty": res = true;
+        case "NormProdQty": res = true;
+        case "Comment": res = true;
+      end;
+    end;
+    switch (fieldname) begin
+      case "Unittext": res = false;
+    end;
+  end;
+  RecDClassActiveEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean RecDClassInsertRowTest(Integer wn, Integer rownr)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+
+  res = true;
+  GetWindowRecord(CurWindow,Recr);
+  if (Recr.OKFlag!=0) then begin
+    res = false;
+  end;
+  RecDClassInsertRowTest = res;
+  RETURN;
+END;
+
+global
+function Boolean RecDClassDeleteRowTest(Integer wn, Integer rownr)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+
+  res = true;
+  GetWindowRecord(CurWindow,Recr);
+  if (Recr.OKFlag!=0) then begin
+    res = false;
+  end;
+  RecDClassDeleteRowTest = res;
+  RETURN;
+END;
+
+global
+function Boolean RecDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record RecVc Recr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,Recr);    
+    RecSumup(Recr);
+    PutWindowRecord(wn,Recr);    
+  end;
+  RecDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global
+procedure RecShowMachineDsm()
+begin
+  record RecVc Recr;
+  row RecVc Recrw;
+  Integer i,rwcnt;
+  record ProdItemVc ProdItemr;
+  Integer wn,nwn;
+  string 255 outitem;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Recr);
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    if (Recrw.OutQty!=0) then begin
+      outitem = Recrw.Item; 
+      i = rwcnt;
+    end;
+  end;
+  ProdItemr.ItemCode = outitem;
+  if (ReadFirstMain(ProdItemr,1,true)==false) then begin
+    RecordNew(ProdItemr);
+    ProdItemr.ItemCode = outitem;
+  end;
+  nwn = OpenWindow("ProdItemDClass",1,0,"","",ProdItemr);
+  RETURN;
+END;
+
+global
+function Boolean RecDClassBeforeEditField(Integer wn,string fieldname,Integer fn, Integer rownr)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+  row RecVc Recrw;
+
+  switch (fieldname) begin  
+    case "InQty":     
+      GetWindowRecord(wn,Recr);      
+      MatRowGet(Recr,rownr,Recrw);
+      if (Recrw.InQty==0) then begin
+        if (TestForMATVARINS(wn)) then begin end;
+      end;
+  end;
+  RecDClassBeforeEditField = res;
+  return;
+end;
+
+procedure RecDClassSpecPasteNameItem(Integer wn,var string psname)
+begin
+  record RecVc Recr;
+  Integer rownr;
+
+  GetWindowRecord(wn,Recr);
+  rownr = WindowActiveRow(wn);
+  DeselectWindow(wn,false);//to get VARINSClass working
+  WindowFieldGoto(wn,Recr,rownr,"Item",false);
+  return;
+end;
+
+global
+function string 40 RecDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "Item": RecDClassSpecPasteNameItem(wn,psname);
+  end;
+  RecDClassSpecPasteName = psname;
+  return;
+end;

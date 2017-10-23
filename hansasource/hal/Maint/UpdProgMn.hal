@@ -1,0 +1,222 @@
+external function roundmode SetRoundModeD(Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external updating procedure CleanPrelINProg();
+
+updating procedure StoreItemDeficiency(string artcode,Date orddate,Date neededdate,string location,val qty,Integer itemtype,string filename,string vecode,string recepy)
+begin
+  record MainStockBlock MainStockRec;
+  record INProgVc INProgr;
+  record PIVc PIr;
+  record RecVc Recr;
+  Boolean foundf;
+  val deldays;
+  string 20 locvecode;
+
+  if ((itemtype==0) or (itemtype==1)) then begin
+    BlockLoad(MainStockRec);
+    locvecode = vecode;
+    if (nonblank(recepy)) then begin
+      Recr.Code = recepy;
+      foundf = ReadFirstMain(Recr,1,true);
+    end else begin
+      PIr.ItemCode = artcode;
+      PIr.Location = location;
+      if (nonblank(locvecode)) then begin
+        PIr.VECode = locvecode;
+        foundf = ReadFirstMain(PIr,3,true);
+        if (foundf==false) then begin
+          if (nonblank(location)) then begin
+            PIr.ItemCode = artcode;
+            PIr.Location = "";
+            PIr.VECode = locvecode;
+            foundf = ReadFirstMain(PIr,3,true);
+          end;
+        end;
+        if (PIr.DefaultChoice==1) then begin
+          locvecode = ""; // To make an order with Blank Supplier the same as an order with a supplier that happens to be the Default one
+        end;
+      end else begin
+        PIr.DefaultChoice = 1;
+        foundf = ReadFirstKey("DefaultChoice",PIr,3,true);
+        if (foundf==false) then begin
+          if (nonblank(location)) then begin
+            PIr.ItemCode = artcode;
+            PIr.Location = "";
+            PIr.DefaultChoice = 1;
+            foundf = ReadFirstKey("DefaultChoice",PIr,3,true);
+          end;
+        end;
+      end;
+    end;
+    if (foundf) then begin
+      if (nonblank(recepy)) then begin
+        deldays = Recr.FixedAssembDays;
+      end else begin
+        deldays = PIr.PlannedDelDays;
+      end;
+    end else begin
+      deldays = 0; // Setting for Default number of days to delivery ?
+    end;
+    INProgr.ItemCode = artcode;
+    INProgr.OrderDate = orddate; // AddDay(neededdate,-deldays);
+    INProgr.NeededDate = neededdate; // AddDay(neededdate,-deldays);;
+    INProgr.Location = location;
+    INProgr.VECode = locvecode;
+    INProgr.FileName = filename;
+    if (blank(INProgr.Location)) then begin
+      INProgr.Location = MainStockRec.MainStock;
+    end;
+//    if (ReadFirstMain(INProgr,5,true)) then begin
+    if (ReadFirstKey("NeededDate",INProgr,5,true)) then begin
+    end else begin
+      RecordNew(INProgr);
+      INProgr.ItemCode = artcode;
+      INProgr.VECode = locvecode;
+//      INProgr.NeededDate = neededdate;
+      INProgr.NeededDate = neededdate; // AddDay(neededdate,-deldays);;
+      INProgr.OrderDate = orddate; // AddDay(neededdate,-deldays);
+      INProgr.Location = location;
+      INProgr.MaintDate = CurrentDate;
+      if (blank(INProgr.Location)) then begin
+        INProgr.Location = MainStockRec.MainStock;
+      end;
+      INProgr.Qty = 0;
+      INProgr.FileName = filename;
+      INProgr.ItemType = itemtype;
+    end;
+    INProgr.Qty = INProgr.Qty + qty;
+    if (RecordStore(INProgr,true)) then begin
+    end;
+  end;
+  return;
+end;
+
+updating procedure ExpandAndStoreStructure(var array string Aartcode,var array val Aqty,var array Integer Aitemtype,var array Date Aneededdate,
+                                           var Integer arwcnt,string artcode,Date orddate,Date neededdate,string location,val qty,Integer itemtype,string recepy,
+                                           string vecode,Integer storeprod)
+begin
+  record INVc INr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  Integer i,j,rwcnt;
+  val daystoadd;
+  val outqty,temp;
+  Boolean skipf;
+  Date localneededdate;
+  
+  outqty = 1;
+  Recr.Code = recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    daystoadd = Recr.FixedAssembDays;
+    localneededdate = AddDay(neededdate,-daystoadd);
+    rwcnt = MatRowCnt(Recr);
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.OutQty>0) then begin
+        if (Recrw.Item==artcode) then begin // What if more than one item item code out?
+          outqty = Recrw.OutQty;
+        end;
+      end;
+    end;
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.InQty>0) then begin
+        if (ReadFirstItem(Recrw.Item,INr,false,false)) then begin
+          if (nonblank(INr.Recepy)) then begin
+            ExpandAndStoreStructure(Aartcode,Aqty,Aitemtype,Aneededdate,arwcnt,INr.Code,orddate,localneededdate,location,Recrw.InQty * qty,INr.ItemType,INr.Recepy,vecode,storeprod);
+            if (storeprod==1) then begin
+              StoreItemDeficiency(INr.Code,orddate,localneededdate,location,Recrw.InQty * qty,INr.ItemType,"ProdVc",vecode,INr.Recepy);
+            end;
+          end else begin
+            skipf = false;
+            for (j=0;j<arwcnt;j=j+1) begin
+              if ((Aartcode[j]==Recrw.Item) and (Aneededdate[j]==localneededdate)) then begin
+                Aqty[j] = Aqty[j] + round(((Recrw.InQty * qty) / outqty) + 49999.00/100000.00,SetRoundModeD(0));
+                skipf = true;
+              end;
+            end;
+            if (skipf==false) then begin
+              Aartcode[arwcnt] = Recrw.Item;
+              Aitemtype[arwcnt] = INr.ItemType;
+              Aneededdate[arwcnt] = localneededdate;
+              Aqty[arwcnt] = round(((Recrw.InQty * qty) / outqty) + 49999.00/100000.00,SetRoundModeD(0));
+              arwcnt = arwcnt + 1;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+// Used to be local and called ExpandStructure
+global
+updating procedure ExpandStructure2(string artcode,Date orddate,Date neededdate,string location,val qty,Integer itemtype,string recepy,string vecode,Integer storeprod)
+begin
+  array string 20 Aartcode;
+  array val Aqty;
+  array Integer Aitemtype;
+  array Date Aneededdate;
+  Integer arwcnt,i;
+  string 20 filename;
+
+  arwcnt = 0;
+  ExpandAndStoreStructure(Aartcode,Aqty,Aitemtype,Aneededdate,arwcnt,artcode,orddate,neededdate,location,qty,itemtype,recepy,vecode,storeprod);
+  if (storeprod==1) then begin
+    StoreItemDeficiency(artcode,orddate,neededdate,location,qty,itemtype,"ProdVc",vecode,recepy);
+  end;
+  for (i=0;i<arwcnt;i=i+1) begin
+    StoreItemDeficiency(Aartcode[i],orddate,Aneededdate[i],location,Aqty[i],Aitemtype[i],"PUVc",vecode,"");
+  end;
+  return;
+end;
+
+global
+updating procedure UpdProgMn(record RcVc RepSpec)
+begin
+  record INVc INr;
+  record ORProgVc ORProgr;
+  record ORProgVc oldORProgr;
+  row ORProgVc ORProgrw;
+  Boolean foundf,testf;
+  Integer rwcnt,i;
+  Integer res;
+  
+  CleanPrelINProg;
+  foundf = true;
+  ORProgr.OrdDate = RepSpec.sStartDate;
+  while (LoopKey("OrdDate",ORProgr,1,foundf)) begin
+    if (ORProgr.OrdDate>RepSpec.sEndDate) then begin
+      foundf = false;
+    end;
+    testf = true;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (ORProgr.Closed<>0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+//      DBFlush;
+//      DBHold;  
+      rwcnt = MatRowCnt(ORProgr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(ORProgr,i,ORProgrw);
+        INr.Code = ORProgrw.ArtCode;
+        if (ReadFirstMain(INr,1,true)) then begin
+          if (nonblank(INr.Recepy)) then begin
+            ExpandStructure2(ORProgrw.ArtCode,ORProgr.OrdDate,ORProgr.OrdDate,ORProgr.Location,ORProgrw.Quant,INr.ItemType,INr.Recepy,ORProgr.VECode,RepSpec.flags[0]);
+          end else begin
+            StoreItemDeficiency(ORProgrw.ArtCode,ORProgr.OrdDate,ORProgr.OrdDate,ORProgr.Location,ORProgrw.Quant,INr.ItemType,"PUVc",ORProgr.VECode,"");
+          end;
+        end;
+      end;
+      RecordCopy(oldORProgr,ORProgr);
+      ORProgr.MaintDate = CurrentDate;
+      res = RecordUpdate(oldORProgr,ORProgr,true);
+      MaintTrace(ORProgr.OrdDate);
+    end;
+  end;
+  return;
+end;

@@ -1,0 +1,242 @@
+external procedure DblDigit(var string,Integer);
+external procedure InternalSerialNrVc_PasteMainItem(var record InternalSerialNrVc);
+
+procedure PrintIntSerNr(record InternalSerialNrVc InternalSerialNrr)
+begin
+  StartFormat(15);
+  OutString(0,0,InternalSerialNrr.SerNr,false);
+  OutString(2,0,InternalSerialNrr.Dealer,false);
+  OutString(3,0,InternalSerialNrr.CustCode,false);
+//  OutString(4,0,InternalSerialNrr.CreateDate,false);
+  OutString(4,0,StringFromSet(310,InternalSerialNrr.ProgType),false);
+  OutString(6,0,StringFromStringSet(546,InternalSerialNrr.ProductCode),false);
+  if (InternalSerialNrr.PrePaid!=0) then begin
+    OutString(1,0,"Ã",true);
+  end else begin
+    OutString(1,0,"",true);
+  end;
+  EndFormat;
+  return;
+end;
+
+procedure PrintIntSerNrHeader()
+begin
+  StartFormat(15);
+  OutString(0,0,"Activ. Code",false);
+  OutString(2,0,"Dealer",false);
+  OutString(3,0,"Customer",false);
+//  OutString(4,0,"Create Date",false);
+  OutString(4,0,"Program",false);
+  OutString(1,0,"Pre Paid",true);
+  EndFormat;
+  Gray_Divider(0,1);
+  return;
+end;
+
+function Boolean AlreadyGenerated(array LongInt ai,LongInt acnt,LongInt r)
+begin
+  Boolean res;
+  LongInt i;
+  
+  res = false;
+  for (i=0;i<acnt;i=i+1) begin
+    if (ai[i]==r) then begin
+      res = true;
+      i = acnt;
+    end;
+  end;
+  AlreadyGenerated = res;
+  return;
+end;
+
+function string 30 GenerateSerialNr(array LongInt ai,var LongInt acnt,LongInt pos,string dat,var Integer lasts)
+begin
+  string 30 res1;
+  string 30 res2;
+  string 20 h, m, s;
+  Integer si,i;
+  LongInt r;
+  Integer attempts;
+  
+  attempts = 0;
+  si = GetSecond(CurrentTime);
+  if (si!=lasts) then begin
+    lasts = si;
+    acnt = 0;
+  end;
+  DblDigit(h,GetHour(CurrentTime));
+  DblDigit(m,GetMinute(CurrentTime));
+  DblDigit(s,si);
+LTryAgain:;
+  r = Random(111111,999999);
+  if (r+pos<99999) then begin r = r + pos; end;
+  if (AlreadyGenerated(ai,acnt,r)) then begin
+    Randomize;
+    attempts = attempts + 1;
+    if (attempts>10) then begin
+      goto LFail;
+    end;
+    goto LTryAgain;
+  end else begin
+    ai[acnt] = r;
+    acnt = acnt + 1;
+  end;
+  res1 = dat & h & m & s & r;
+  for (i=0;i<18;i=i+1) begin
+    res2 = res2 & Chr(65 + StringToLongInt(Mid(res1,i,1)));
+    if (i==5 or i==11) then begin
+      res2 = res2 & "-";
+    end;
+  end;
+LFail:;
+  GenerateSerialNr = res2;
+  return;
+end;
+
+global
+procedure GenerateProdSerNoRn(record RcVc RepSpec)
+begin
+  record InternalSerialNrVc InternalSerialNrr;
+  Integer lasts;
+  string 20 dat;
+  array LongInt ai;
+  LongInt acnt;
+  LongInt i;
+  LongInt cnt;
+  record InternalSerialNrConfigVc ISNCr;
+  
+  ISNCr.MainItem = RepSpec.f2;
+  ReadFirstMain(ISNCr,1,true);
+  StartReportJob("Test Generating Activation Codes");
+  EndHeader;
+  cnt = 0;
+  SetRepCol(2,160);
+  SetRepCol(3,230);
+  SetRepCol(4,300);
+  SetRepCol(5,370);
+  SetRepCol(6,420);
+  PrintIntSerNrHeader;
+  dat = DateToString(CurrentDate,"YYMMDD");
+  Randomize;
+  lasts = GetSecond(CurrentTime);
+  for (i=0;i<RepSpec.long1;i=i+1) begin
+    RecordNew(InternalSerialNrr);
+    InternalSerialNrr.CreateDate = CurrentDate;
+    InternalSerialNrr.Dealer = RepSpec.f1;
+    InternalSerialNrr.ProgType = ISNCr.ProgType;
+    InternalSerialNrr.ProductCode = ISNCr.ProductCode;
+    InternalSerialNrr.PrePaid = RepSpec.flags[0];
+    InternalSerialNrr.SerNr = GenerateSerialNr(ai,acnt,i,dat,lasts);
+    if (nonblank(InternalSerialNrr.SerNr)) then begin
+      PrintIntSerNr(InternalSerialNrr);
+      cnt = cnt + 1;
+    end else begin
+      i = RepSpec.long1;
+      StartFormat(15);
+      OutString(0,0,"FAILED TO MAKE MORE UNIQUE ACTIVATION CODES, STOPPING",false);
+      EndFormat;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,"Number of Activation Codes: " & cnt,false);
+  EndFormat;
+  EndJob;
+  return;
+end;
+
+global
+procedure ProdSerNoRn(record RcVc RepSpec)
+begin
+  record InternalSerialNrVc InternalSerialNrr;
+  Boolean foundf,testf;
+  Integer progtype;
+  LongInt cnt;
+  
+  StartReportJob("Available Activation Codes");
+  EndHeader;
+  SetRepCol(2,160);
+  SetRepCol(3,230);
+  SetRepCol(4,300);
+  SetRepCol(5,370);
+  PrintIntSerNrHeader;
+  cnt = 0;
+  foundf = true;
+  InternalSerialNrr.Dealer = RepSpec.f1;
+  while (LoopKey("Dealer",InternalSerialNrr,1,foundf)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (InternalSerialNrr.Dealer!=RepSpec.f1) then begin
+        foundf = false;
+      end;
+    end;
+    testf = foundf;
+    if (RepSpec.flags[1]>0) then begin
+      progtype = RepSpec.flags[1];
+      if (progtype==100) then begin
+        progtype = 0;
+      end;
+      if (InternalSerialNrr.ProgType!=progtype) then begin
+        testf = false;
+      end;
+    end;
+    if (nonblank(RepSpec.f2)) then begin
+      if (InternalSerialNrr.ProductCode!=RepSpec.f2) then begin
+        testf = false;
+      end;
+    end;
+    if (blank(InternalSerialNrr.CustCode)) then begin
+      if (RepSpec.flags[2]==0) then begin
+        testf = false;
+      end;
+    end else begin
+      if (RepSpec.flags[3]==0) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      PrintIntSerNr(InternalSerialNrr);
+      cnt = cnt + 1;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,"Number of Activation Codes: " & cnt,false);
+  EndFormat;
+  EndJob;
+  return;
+end;
+
+global
+updating procedure GenerateProdSerNoMn(record RcVc RepSpec)
+begin
+  record InternalSerialNrVc InternalSerialNrr;
+  record InternalSerialNrConfigVc ISNCr; 
+  Integer lasts;
+  string 20 dat;
+  array LongInt ai;
+  LongInt acnt;
+  LongInt i;
+  
+  ISNCr.MainItem = RepSpec.f2;
+  ReadFirstMain(ISNCr,1,true);
+  dat = DateToString(CurrentDate,"YYMMDD");
+  Randomize;
+  lasts = GetSecond(CurrentTime);
+  for (i=0;i<RepSpec.long1;i=i+1) begin
+    RecordClear(InternalSerialNrr);
+    InternalSerialNrr.CreateDate = CurrentDate;
+    InternalSerialNrr.Dealer = RepSpec.f1;
+    InternalSerialNrr.PrePaid = RepSpec.flags[0];
+    InternalSerialNrr.SerNr = GenerateSerialNr(ai,acnt,i,dat,lasts);
+    InternalSerialNrr.MaintRequired = ISNCr.MaintRequired;
+    InternalSerialNrr.MainItem = RepSpec.f2;
+    InternalSerialNrVc_PasteMainItem(InternalSerialNrr);
+    if (nonblank(InternalSerialNrr.SerNr)) then begin
+      if (RecordInsert(InternalSerialNrr,true)) then begin
+      end;
+    end else begin
+      i = RepSpec.long1;
+    end;
+  end;
+  return;
+end;

@@ -1,0 +1,415 @@
+external procedure ActVcRecordDefClient(var record ActVc);
+external function val CalculateSerialNrQuantity(string,string,string,Boolean,val,val,val,val);
+remote procedure AutoFillProdOperationSerNr(var record ProdOperationVc);
+external procedure WarnFutureDate(Boolean,Date);
+external function roundmode SetRoundModeD(Integer);
+remote function Integer CreateQualConFromProdOperation(record ProdOperationVc,Integer,var record QualConVc,Integer);
+external procedure PasteProdOperationActualQty(var record ProdOperationVc,string,string);
+external procedure SendArtStat(string,string,string,val,val,val,Date,Integer);
+external procedure CalcProc(val,val,var val);
+remote updating function Boolean MakeActFromProdOperationVc(record ProdOperationVc,var record ActVc);
+remote function Boolean AddLabourProdOperation(var record ProdOperationVc);
+remote procedure ProdOperationVc_PasteItem(var record ProdOperationVc,Integer);
+external function Integer CheckSerialStatus(string,string,var string);
+external function Boolean WarnOldRecords(Date,string,LongInt);
+external function Boolean DateWarned(Date,string);
+
+global
+procedure ProdOperationSumup(var record ProdOperationVc ProdOperationr)
+begin
+
+  return;
+end;
+
+function Boolean ProdOperationDClassProdDateEFAfter(Integer wn,Integer changed)
+BEGIN
+  record ProdOperationVc ProdOperationr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,ProdOperationr);
+    if (DateWarned(ProdOperationr.ProdDate,"ProdOperationVc")) then begin
+      MessageBox(1045,"");
+    end;
+    if (WarnOldRecords(ProdOperationr.ProdDate,"ProdOperationVc",ProdOperationr.SerNr)) then begin
+      MessageBox(2020,"");
+    end;
+    WarnFutureDate(true,ProdOperationr.ProdDate);
+  end;
+  ProdOperationDClassProdDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean ProdOperationDClassInQtyEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row ProdOperationVc ProdOperationrw;
+  record ProdOperationVc ProdOperationr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,ProdOperationr);
+    MatRowGet(ProdOperationr,rownr,ProdOperationrw);
+    if (nonblank(ProdOperationrw.InQty)) then begin
+      ProdOperationrw.FIFORowVal = ProdOperationrw.InQty*ProdOperationrw.ItemCost;
+      ProdOperationrw.FIFORowVal = Round(ProdOperationrw.FIFORowVal,SetRoundModeD(5));
+    end else begin
+      ProdOperationrw.FIFORowVal = blankval;
+    end;
+    MatRowPut(ProdOperationr,rownr,ProdOperationrw);
+    ProdOperationSumup(ProdOperationr);
+    PutWindowRecord(wn,ProdOperationr);    
+  end;
+  ProdOperationDClassInQtyEFAfter = res;
+  RETURN;
+END;
+
+function Boolean ProdOperationDClassOutQtyEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row ProdOperationVc ProdOperationrw;
+  record ProdOperationVc ProdOperationr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,ProdOperationr);
+    MatRowGet(ProdOperationr,rownr,ProdOperationrw);
+    if (nonblank(ProdOperationrw.InQty)) then begin
+      ProdOperationrw.FIFORowVal = ProdOperationrw.InQty*ProdOperationrw.ItemCost;
+      ProdOperationrw.FIFORowVal = Round(ProdOperationrw.FIFORowVal,SetRoundModeD(5));
+    end else begin
+      ProdOperationrw.FIFORowVal = blankval;
+    end;
+    MatRowPut(ProdOperationr,rownr,ProdOperationrw);
+    ProdOperationSumup(ProdOperationr);
+    PutWindowRecord(wn,ProdOperationr);    
+  end;
+  ProdOperationDClassOutQtyEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean ProdOperationDClassSwitchRow(Integer wn,Integer rownr)
+begin        
+  record ProdOperationVc ProdOpr;
+  row ProdOperationVc ProdOprw; 
+  Integer rwcnt;
+  Boolean res;
+  val t,tproc,unitprdisc,s,rowsum,sum;
+  string 255 recepy;
+
+  res = true;
+  GetWindowRecord(wn,ProdOpr);
+  rwcnt = MatRowCnt(ProdOpr);  
+  if ((rownr<rwcnt) and (rownr>=0)) then begin
+    MatRowGet(ProdOpr,rownr,ProdOprw);
+    CalcProc(ProdOprw.ItemCost,t,tproc);    
+    SetWindowNameArg(wn,ProdOprw.Item & ":" & ProdOpr.Location);
+    SendArtStat(ProdOprw.Item,ProdOpr.Location,recepy,t,tproc,unitprdisc,ProdOpr.ProdDate,0);
+  end;
+  ProdOperationDClassSwitchRow = res;  
+  RETURN;
+END;
+
+function Boolean ProdOperationDClassItemEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  record ProdOperationVc ProdOperationr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,ProdOperationr);
+    ProdOperationVc_PasteItem(ProdOperationr,rownr);
+    ProdOperationSumup(ProdOperationr);
+    PutWindowRecord(wn,ProdOperationr);    
+    if (ProdOperationDClassSwitchRow(wn,rownr)) then begin end;
+  end;
+  ProdOperationDClassItemEFAfter = res;
+  RETURN;
+END;
+
+function Boolean ProdOperationDClassQtyEFAfter(Integer wn,Integer changed)
+BEGIN
+  row ProdOperationVc ProdOprw;
+  record ProdOperationVc ProdOpr;
+  Boolean res;
+  Integer i,rwcnt;
+  val qty;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,ProdOpr);
+    switch (ProdOpr.RowsHoldActualQty) begin
+      case 1: 
+        rwcnt = MatRowCnt(ProdOpr);
+        qty = StringToVal(WindEFStr(wn),M4Qty);
+        if (qty>0) then begin
+	        for (i=0;i<rwcnt;i=i+1) begin         
+	          MatRowGet(ProdOpr,i,ProdOprw);
+	          if (ProdOprw.InQty>0) then begin
+	            ProdOprw.InQty = ProdOprw.InQty/qty;
+	          end;
+	          if (ProdOprw.OutQty>0) then begin
+	            ProdOprw.OutQty = ProdOprw.OutQty/qty;
+	          end;
+	          MatRowPut(ProdOpr,i,ProdOprw);
+	        end;
+	      end;
+
+        for (i=0;i<rwcnt;i=i+1) begin         
+          MatRowGet(ProdOpr,i,ProdOprw);
+          if (ProdOprw.InQty>0) then begin
+            ProdOprw.InQty = ProdOprw.InQty*ProdOpr.Qty;
+          end;
+          if (ProdOprw.OutQty>0) then begin
+            ProdOprw.OutQty = ProdOprw.OutQty*ProdOpr.Qty;
+          end;
+          MatRowPut(ProdOpr,i,ProdOprw);
+        end;
+    end;    
+    ProdOperationSumup(ProdOpr);
+    PutWindowRecord(wn,ProdOpr);    
+  end;
+  ProdOperationDClassQtyEFAfter = res;
+  RETURN;
+END;
+
+function Boolean ProdOperationDClassActualQtyEFAfter(Integer wn,Boolean changedf)
+begin
+  record ProdOperationVc ProdOpr;
+  Boolean res;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,ProdOpr);
+    PasteProdOperationActualQty(ProdOpr,"ActualQty",WindEFStr(wn));
+//WindowActiveField(wn) gives empty string    
+    PutWindowRecord(wn,ProdOpr);    
+  end;
+  ProdOperationDClassActualQtyEFAfter = res;
+  return;
+end;
+
+function Boolean ProdOperationDClassSerialNrEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row ProdOperationVc ProdOperationrw;
+  record ProdOperationVc ProdOperationr;
+  Boolean res;
+  string 255 tstr;
+  val orgqty;
+  
+  res = true;
+  if ((changed!=0) and (rownr>=0)) then begin
+    GetWindowRecord(wn,ProdOperationr);
+    MatRowGet(ProdOperationr,rownr,ProdOperationrw);
+    if (ProdOperationrw.InQty>0) then begin
+      if (CheckSerialStatus(ProdOperationrw.Item,ProdOperationrw.SerialNr,tstr)==1) then begin
+        MessageBox(0,tstr);
+      end;
+      orgqty = ProdOperationrw.InQty;
+      ProdOperationrw.InQty = CalculateSerialNrQuantity(ProdOperationrw.Item,ProdOperationrw.SerialNr,ProdOperationr.Location,true,0,0,0,ProdOperationrw.InQty);    
+      MatRowPut(ProdOperationr,rownr,ProdOperationrw);
+      if (orgqty!=ProdOperationrw.InQty) then begin
+        ProdOperationrw.SerialNr= "";
+        ProdOperationrw.InQty = orgqty - ProdOperationrw.InQty;
+        MatRowInsert(ProdOperationr,rownr+1,ProdOperationrw);
+      end;
+      PutWindowRecord(wn,ProdOperationr);    
+    end;
+  end;
+  ProdOperationDClassSerialNrEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean ProdOperationDClassAfterEditField(Integer wn,string fieldname,Integer fn,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "SerialNr": res = ProdOperationDClassSerialNrEFAfter(wn,rownr,changed);
+    case "Item": res = ProdOperationDClassItemEFAfter(wn,rownr,changed);
+    case "InQty": res = ProdOperationDClassInQtyEFAfter(wn,rownr,changed);
+    case "OutQty": res = ProdOperationDClassOutQtyEFAfter(wn,rownr,changed);
+    case "ProdDate": res = ProdOperationDClassProdDateEFAfter(wn,changed);
+    case "Qty": res = ProdOperationDClassQtyEFAfter(wn,changed);
+    case "ActualQty": res = ProdOperationDClassActualQtyEFAfter(wn,changed!=0);
+  end;
+  ProdOperationDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+procedure LabourProdOperationDsm()
+begin
+  Integer wn;
+  record ProdOperationVc ProdOpr;
+
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,ProdOpr);
+  if (ProdOpr.PRStatusFlag==0) or (ProdOpr.PRStatusFlag==2) then begin
+    if (AddLabourProdOperation(ProdOpr)) then begin
+      PutWindowRecord(wn,ProdOpr);  
+    end;
+  end;
+  return;
+end;
+
+global
+function Boolean ProdOperationDClassUpdateTest(Integer wn)
+begin
+  Boolean res;
+  record ProdOperationVc ProdOpr;
+  
+  res = true;
+  GetWindowRecord(wn,ProdOpr);
+  if (ProdOpr.PRStatusFlag>2) then begin res = false; end;
+  ProdOperationDClassUpdateTest = res;
+  return;
+end;
+
+global
+function Boolean ProdOperationDClassPRStatusFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  record ProdOperationVc ProdOpr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,ProdOpr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,ProdOpr);
+  end;  
+  if (ProdOpr.PRStatusFlag>2) then begin
+    res = false;
+    if (UserCanAction("UnOKAll",false)) then begin
+      res = true;
+    end;
+  end;  
+  ProdOperationDClassPRStatusFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean ProdOperationDClassBatchTimeButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  record ProdOperationVc ProdOpr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,ProdOpr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,ProdOpr);
+  end;  
+  if (ProdOpr.PRStatusFlag>2) then begin
+    res = false;
+  end;  
+  ProdOperationDClassBatchTimeButtonAction = res;
+  return;
+end;
+
+global
+function Boolean ProdOperationDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record ProdOperationVc ProdOpr;
+  Integer insertmode,updatemode;
+
+  res = true;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)!=insertmode) then begin
+    switch (fieldname) begin
+      case "SerNr": res = false;
+    end;
+  end;
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,ProdOpr);
+    if (ProdOpr.PRStatusFlag>2) then begin
+      res = false;
+    end;    
+    switch (fieldname) begin
+      case "Math2": res = true;
+      case "Qty": res = false;
+    end;
+  end;  
+  ProdOperationDClassActiveEditField = res;
+  return;
+end;
+
+global
+updating procedure CreateActFromProdOperation()
+begin
+  record ProdOperationVc ProdOpr;
+  record ActVc Actr;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,ProdOpr);
+  RecordNew(Actr);
+  ActVcRecordDefClient(Actr);
+  if (MakeActFromProdOperationVc(ProdOpr,Actr)) then begin
+    nwn = OpenWindow("ActDClass",1,0,"","",Actr);
+    SetRLink(wn,true);  
+  end;
+  return;
+end;
+
+global
+updating procedure ProdOperationVcCreateActivity()
+begin
+  CreateActFromProdOperation;
+  return;
+end;
+
+global
+procedure QualConFromProdOperationDsm()
+begin
+  Integer wn,nwn;
+  Integer rownr,err;
+  record ProdOperationVc ProdOpr;
+  record QualConVc QCr;
+
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    rownr = WindowActiveRow(wn);
+    DeselectWindow(wn,true);
+    GetWindowRecord(wn,ProdOpr);
+    err = CreateQualConFromProdOperation(ProdOpr,rownr,QCr,0);
+    if (err==0) then begin
+      nwn = OpenWindow("QualConDClass",1,0,"","",QCr);
+    end else begin
+      MessageBox(err,"");
+    end;
+  end else begin
+    MessageBox(22064,"");
+  end;
+  return;
+end;
+
+global
+updating procedure GenSerialNosProdOperDsm()
+BEGIN
+  record ProdOperationVc ProdOpr;
+  Integer wn;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,ProdOpr);
+  if (ProdOpr.PRStatusFlag<3) then begin  
+    AutoFillProdOperationSerNr(ProdOpr);
+    PutWindowRecord(wn,ProdOpr);
+  end;
+  RETURN;
+END;

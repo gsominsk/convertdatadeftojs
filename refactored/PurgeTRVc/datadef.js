@@ -1,0 +1,28 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fNumber: { public: true, type: 'INTEGER' },
+     fIntYc: { public: true, type: 'INTEGER' },
+     fTransRow: { public: true, type: 'INTEGER' },
+     fAccNumber: { public: true, type: 'TEXT' },
+     fTyp: { public: true, type: 'INTEGER' },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fTransDate: { public: true, type: 'DATE' },
+     fCompCode: { public: true, type: 'TEXT' },
+     fDueDate: { public: true, type: 'DATE' },
+     fObjects: { public: true, type: 'TEXT' },
+     fDebVal: { public: true, type: 'FLOAT' },
+     fCredVal: { public: true, type: 'FLOAT' },
+     fCurncy: { public: true, type: 'TEXT' },
+     fCurDebVal: { public: true, type: 'FLOAT' },
+     fCurCredVal: { public: true, type: 'FLOAT' },
+     fDebVal2: { public: true, type: 'FLOAT' },
+     fCredVal2: { public: true, type: 'FLOAT' },
+     fFrRate: { public: true, type: 'FLOAT' },
+     fToRateB1: { public: true, type: 'FLOAT' },
+     fToRateB2: { public: true, type: 'FLOAT' },
+     fBaseRate1: { public: true, type: 'FLOAT' },
+     fBaseRate2: { public: true, type: 'FLOAT' } },
+  indexes: 
+   { NumberIndex758: 
+      { fields: [ 'fIntYc', 'fNumber', 'fTransRow' ],
+        indicesType: 'UNIQUE' } } }

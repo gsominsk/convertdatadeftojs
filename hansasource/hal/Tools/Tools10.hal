@@ -1,0 +1,344 @@
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external procedure GetItemVATCode(string,Integer,var string,Boolean);
+external procedure GetUserObject(string,var string);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure GetSalesGroup(string,var string);
+external procedure Base1ToBase2(var val,Date,var val);
+external procedure RemoveOldCustObjects(string,var string);
+external procedure RemoveOldPersObjects(string,var string);
+
+global
+function Boolean AllowThisItem(string fnr,string project,string incode,Integer typ)
+BEGIN
+  Boolean res;
+  record PRITHandleBlock prt;
+  record PRITHVc prthr;
+  record INVc INr;
+  Integer intype;
+  Boolean prspecf;
+  Integer AllowSO,AllowPO,AllowTS,StockItemOn;
+
+  res = true;
+  if (blank(project)) then begin
+    goto LAllowThisItem;
+  end;  
+  intype = typ;
+  if (intype==-1) then begin
+    INr.Code = incode;
+    if (ReadFirstMain(INr,1,true)) then begin
+      intype = INr.ItemType;
+    end;  
+  end;
+  BlockLoad(prt);
+  AllowSO = prt.AllowSO;
+  AllowPO = prt.AllowPO;
+  AllowTS = prt.AllowTS;
+  StockItemOn = prt.StockItem;
+  prthr.Project = project;
+  prthr.ItemCode = incode;
+  prspecf = ReadFirstMain(prthr,2,true);
+  if (prspecf==false) then begin
+    prthr.Project = project;
+    prthr.ItemCode = "";
+    prspecf = ReadFirstMain(prthr,2,true);
+  end;
+  if (prspecf==false) then begin
+    prthr.ItemCode = incode;
+    prthr.Project = "";
+    prspecf = ReadFirstMain(prthr,2,true);
+  end;
+  if (prspecf) then begin
+    AllowSO = prthr.AllowSO;
+    AllowPO = prthr.AllowPO;
+    AllowTS = prthr.AllowTS;
+    StockItemOn = prthr.StockItem;
+  end;
+  if (fnr=="ORVc") then begin
+    switch (intype) begin
+      case 0: if (AllowSO==0) then begin res = false; end; //res = AllowSO;
+      case 1: if (StockItemOn==1) then begin res = false; end;
+      case 2: if (StockItemOn==1) then begin res = false; end;
+      case 3: res = false;
+    end;
+  end;
+  if (fnr=="POVc") then begin
+    switch (intype) begin
+      case 0: if (AllowPO==0) then begin res = false; end; //res = AllowPO;
+      case 1: if (StockItemOn==0) then begin res = false; end;
+      case 2: res = false;
+      case 3: res = true;
+    end;
+  end;
+  if (fnr=="POQTVc") then begin
+    switch( intype) begin
+      case 0: if (AllowPO==0) then begin res = false; end; //res = AllowPO;
+      case 1: if (StockItemOn==0) then begin res = false; end;
+      case 2: res = false; 
+      case 3: res = true; 
+    end;
+  end;
+  if (fnr=="TSVc") then begin
+    switch (intype) begin
+      case 0: if (AllowTS==0) then begin res = false; end; //res = AllowTS;
+      case 1: if (StockItemOn!=2) then begin res = false; end;
+      case 2: res = false; 
+      case 3: res = true; 
+    end;
+  end;
+LAllowThisItem:;
+  AllowThisItem = res;
+  return;
+end;
+
+global
+procedure DefaultPeriod(var string res)
+BEGIN
+  Integer i,yrwcnt,prwcnt;
+  record YearBlock YearRec;
+  row YearBlock Yearrw;
+  record PeriodBlock PerRec;
+  row PeriodBlock Perrw;
+  string 255 t2;
+  Integer yn;
+  Date curdate;
+
+  curdate = CurrentDate;
+  BlockLoad(PerRec);
+  BlockLoad(YearRec);
+  prwcnt = MatRowCnt(PerRec);
+  yrwcnt = MatRowCnt(YearRec);
+  if (prwcnt==0) then begin
+    if (yrwcnt==0) then begin goto LDefaultPeriod; end;
+    yn = -1;
+    for (i=0;i<yrwcnt;i=i+1) begin
+      MatRowGet(YearRec,i,Yearrw);
+      if (DateInRange(CurrentDate,Yearrw.StartDate,Yearrw.EndDate)) then begin
+        yn = i;
+      end;
+    end;
+    if (yn>=0) then begin
+      MatRowGet(YearRec,yn,Yearrw);
+      res = Yearrw.StartDate;
+      if (nonblankdate(Yearrw.EndDate)) then begin
+        res = res & ":";
+        res = res & Yearrw.EndDate;
+      end;
+    end;  
+  end else begin
+    MatRowGet(PerRec,0,Perrw);
+    res = Perrw.FromDate;
+    res = res & ":";
+    res = res & Perrw.ToDate;
+  end;
+LDefaultPeriod:;
+  return;
+end;
+
+global
+procedure GetARAcc(string cust,var string acc)
+BEGIN
+  record AccBlock ARAccRec;
+  record CUVc CUr;
+  record CCatVc CCatR;
+  
+  BlockLoad(ARAccRec);
+  acc = "";
+  CUr.Code = cust;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (CUr.CUType!=0) then begin
+      if (nonblank(CUr.CustCat)) then begin
+        CCatR.Code = CUr.CustCat;
+        if (ReadFirstMain(CCatR,1,true)) then begin
+          if (nonblank(CCatR.ARAcc)) then begin
+            acc = CCatR.ARAcc;
+          end;  
+        end;
+      end;
+      if (blank(acc)) then begin
+        acc = ARAccRec.ARAcc;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure GetAROnAccAcc(string cust,var string acc)
+begin
+  record AccBlock ARb;
+  record CUVc CUr;
+  record CCatVc CCatR;
+  
+  BlockLoad(ARb);
+  acc = "";
+  CUr.Code = cust;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (CUr.CUType!=0) then begin
+      if (nonblank(CUr.CustCat)) then begin
+        CCatR.Code = CUr.CustCat;
+        if (ReadFirstMain(CCatR,1,true)) then begin
+          if (nonblank(CCatR.OnAccAcc)) then begin
+            acc = CCatR.OnAccAcc;
+          end;  
+        end;
+      end;
+      if (blank(acc)) then begin
+        acc = ARb.OnAccAcc;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure GetAPAcc(string VECode,var string acc)
+BEGIN
+  record CUVc VEr;
+  record CCatVc CCatr;
+  record VGVc VGr;
+  record APAccBlock APAccRec;
+
+  BlockLoad(APAccRec);
+  acc = "";
+  VEr.Code = VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    if (VEr.VEType!=0) then begin
+      if (nonblank(VEr.AccAP)) then begin
+        acc = VEr.AccAP;
+      end else begin
+        if (blank(VEr.VECat)) then begin
+          if (nonblank(VEr.CustCat)) then begin
+            CCatr.Code = VEr.CustCat;
+            if (ReadFirstMain(CCatr,1,true)) then begin
+              if (nonblank(CCatr.AccAP)) then begin
+                acc = CCatr.AccAP;
+              end;
+            end;
+          end;
+        end else begin
+          VGr.Code = VEr.VECat;
+          if (ReadFirstMain(VGr,1,true)) then begin
+            if (nonblank(VGr.AccAP)) then begin
+              acc = VGr.AccAP;
+            end;
+          end;
+        end;
+      end;
+      if (blank(acc)) then begin
+        acc = APAccRec.APAcc;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure GetAPOnAccAcc(string VECode,var string acc)
+begin
+  record CUVc VEr;
+  record CCatVc CCatr;
+  record VGVc VGr;
+  record APAccBlock APb;
+
+  BlockLoad(APb);
+  acc = "";
+  VEr.Code = VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    if (VEr.VEType!=0) then begin
+      if (nonblank(VEr.OnAccAccAP)) then begin
+        acc = VEr.OnAccAccAP;
+      end else begin
+        if (blank(VEr.VECat)) then begin
+          if (nonblank(VEr.CustCat)) then begin
+            CCatr.Code = VEr.CustCat;
+            if (ReadFirstMain(CCatr,1,true)) then begin
+              if (nonblank(CCatr.OnAccAcc)) then begin
+                acc = CCatr.OnAccAcc;
+              end;
+            end;
+          end;
+        end else begin
+          VGr.Code = VEr.VECat;
+          if (ReadFirstMain(VGr,1,true)) then begin
+            if (nonblank(VGr.OnAccAcc)) then begin
+              acc = VGr.OnAccAcc;
+            end;
+          end;
+        end;
+      end;
+      if (blank(acc)) then begin
+        acc = APb.OnAccAcc;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure PasteSalesManInQT(var record QTVc QTp)
+begin
+  record UserVc Userr;
+
+  Userr.Code = QTp.SalesMan;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    QTp.SalesGroup = Userr.SalesGroup;
+  end;
+  return;
+end;
+
+global
+procedure PasteSalesManInOY(var record OYVc OYp)
+begin
+  record UserVc Userr;
+
+  Userr.Code = OYp.SalesMan;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    OYp.SalesGroup = Userr.SalesGroup;
+  end;
+  return;
+end;
+
+global
+function Boolean CheckProjectManager(record PRVc PRr)
+begin 
+  string 10 person;
+  Boolean res;
+
+  person = CurrentUser;
+  res = false;
+  if (PRr.Leader==person) then begin 
+    res = true;
+  end;
+  if (PRr.Leader2==person) then begin 
+    res = true;
+  end;
+  if (PRr.Leader3==person) then begin 
+    res = true;
+  end;
+  if (PRr.Leader4==person) then begin 
+    res = true;
+  end;
+  if (PRr.Leader5==person) then begin 
+    res = true;
+  end;
+  CheckProjectManager = res;
+  return;
+end;  
+
+global
+function Boolean CheckProjectMember(record PRVc PRr)
+begin 
+  string 10 person;
+  Boolean res;
+
+  person = CurrentUser;
+  res = false;
+  
+  if (SetInSet(person,PRr.Members)==true) then begin 
+    res = true; 
+  end;
+
+  CheckProjectMember = res;
+  return;
+end;  

@@ -1,0 +1,174 @@
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function roundmode SetRoundModeD(Integer);
+external function string 255 MonthName(Date);
+external function Boolean SkipResTest(record ReservationStatusVc,Boolean);
+external function LongInt DateDiff(Date,Date);
+
+function
+LongInt CountResources(string type)
+BEGIN
+  LongInt res;
+  Boolean TrHs;
+  record ResVc Resr;
+   
+  res = 0; 
+  TrHs = true;
+  Resr.Type = type;
+  while (LoopKey("Type",Resr,1,TrHs)) begin
+    if (Resr.Type!=type) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      res = res + 1;
+    end;
+  end;
+  CountResources = res;
+  RETURN;
+END;
+
+procedure PrintAndAddup(string lasttype,Date startdate,Date enddate,var val ocupprc,var val availqty,var val typepers,var val typesum,var val typeqty)
+begin
+  string 255 tstr;
+  
+  ocupprc = typeqty/availqty;
+  ocupprc = Round(100 * ocupprc,SetRoundModeD(1));
+  StartFormat(15);
+  OutString(0,0,lasttype,false);
+/*
+  tstr = startdate;
+  tstr = tstr & ":";
+  tstr = tstr & enddate;
+*/
+  tstr = MonthName(startdate) & " " & GetYear(startdate);
+  OutString(6,0,tstr,false);
+  OutVal(7,0,availqty,M4UVal,true);
+  OutVal(2,0,typeqty,M4UVal,true);
+  OutVal(3,0,ocupprc,M4UVal,true);
+  OutVal(4,0,typepers,M4UVal,true);
+  OutVal(5,0,typesum,M4Val,true);
+  OutVal(1,0,typesum/typeqty,M4Val,true);
+  EndFormat;
+  typesum = 0;
+  typeqty = 0;
+  typepers = 0;
+  ocupprc = 0;
+  return;
+end;
+
+global
+procedure OcupatationRn(record RcVc RepSpec)
+BEGIN
+  record JobVc Jobr;
+  Boolean TrHs,testf,printedf;
+  string 5 frtype,totype,lasttype;
+  val sum4;
+  val typesum,typeqty,typepers,ocupprc,availqty;
+  val stypesum,stypeqty,stypepers,socupprc,savailqty;
+  Date startdate,enddate;
+  Date td1,td2;
+  string 255 tstr;
+  record  HotelBlock HotelRec;
+  record ReservationStatusVc rsr;
+  
+  StartReportJob(USetStr(10215));
+  EndHeader;  
+  SetRepCol(2,220);
+  SetRepCol(3,290);
+  SetRepCol(4,340);
+  SetRepCol(5,420);
+  SetRepCol(6,40);
+  SetRepCol(7,180);
+  if (blank(RepSpec.f1)) then begin
+    goto LOcupatationRn;
+  end;
+  BlockLoad(HotelRec);
+  StartFormat(15);
+  OutString(0,0,USetStr(10216),false);
+  OutString(7,0,USetStr(10222),true);
+  OutString(2,0,USetStr(10218),true);
+  OutString(3,0,USetStr(10220),true);
+  OutString(4,0,USetStr(10223),true);
+  OutString(5,0,USetStr(10217),true);
+  OutString(1,0,USetStr(10219),true);
+  EndFormat;  startdate = RepSpec.sStartDate;
+  enddate = AddDay(startdate,-GetDay(startdate) + DaysInMonth(GetYear(startdate),GetMonth(startdate)));  
+  Gray_Divider(0,1);
+  frtype = FirstInRange(RepSpec.f1,5);
+  totype = LastInRange(RepSpec.f1,5);
+  while (enddate<=RepSpec.sEndDate) begin
+    lasttype = "";
+    printedf = false;
+    ResetLoop(Jobr);
+    TrHs = true;
+    Jobr.Type = frtype;
+    Jobr.TransDate = startdate;
+    while (LoopKey("DateType",Jobr,2,TrHs)) begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (Jobr.Type>totype) then begin
+          TrHs = false;
+        end;
+      end;  
+      if (DateInRange(Jobr.TransDate,startdate,enddate)==false) then begin
+        testf = false;
+      end;
+      if (TrHs) then begin
+        rsr.Code = Jobr.ResStatus;
+        if (ReadFirstMain(rsr,1,true)) then begin
+          if (SkipResTest(rsr,true)) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (TrHs and testf) then begin
+        if (nonblank(lasttype)) then begin
+          if ((lasttype!=Jobr.Type) and (typeqty!=0)) then begin          
+            availqty = CountResources(lasttype);
+            availqty = availqty*DaysInMonth(GetYear(startdate),GetMonth(startdate));
+            savailqty = savailqty + availqty;
+            PrintAndAddup(lasttype,startdate,enddate,ocupprc,availqty,typepers,typesum,typeqty);
+            printedf = true;
+          end;
+        end;        
+        td1 = Jobr.TransDate;
+        td2 = Jobr.EndDate;
+        if (td1<RepSpec.sStartDate) then begin
+          td1 = RepSpec.sStartDate;
+        end;
+        if (td2>RepSpec.sEndDate) then begin
+          td2 = RepSpec.sEndDate;
+        end;
+        if (Jobr.Persons>0) then begin
+          typepers  = typepers + Jobr.Persons;
+          stypepers = stypepers + Jobr.Persons;
+        end;
+        sum4 = MulRateToBase1(Jobr.CurncyCode,Jobr.Sum4,Jobr.FrRate,Jobr.ToRateB1,Jobr.ToRateB2,Jobr.BaseRate1,Jobr.BaseRate2,DefaultCurRoundOff);
+        typesum   = typesum + sum4;
+        stypesum  = stypesum + sum4;
+        typeqty   = typeqty + DateDiff(td2,td1);
+        stypeqty  = stypeqty + DateDiff(td2,td1);
+        lasttype  = Jobr.Type;
+      end;     
+    end;
+    if (typeqty!=0) then begin   
+      availqty = CountResources(lasttype);
+      availqty = availqty*DaysInMonth(GetYear(startdate),GetMonth(startdate));
+      savailqty = savailqty + availqty;
+      PrintAndAddup(lasttype,startdate,enddate,ocupprc,availqty,typepers,typesum,typeqty);
+      printedf = true;
+    end;  
+    if (printedf) then begin
+      Gray_Divider(0,1);
+      PrintAndAddup(USetStr(10221),startdate,enddate,socupprc,savailqty,stypepers,stypesum,stypeqty);
+      savailqty = 0;
+      StartFormat(15);
+      EndFormat;
+      Gray_Divider(0,1);
+    end;
+    startdate = AddMonth(startdate,1);
+    enddate = AddDay(startdate,-GetDay(startdate) + DaysInMonth(GetYear(startdate),GetMonth(startdate)));  
+  end;  
+LOcupatationRn:;  
+  EndJob;
+  RETURN;
+END;

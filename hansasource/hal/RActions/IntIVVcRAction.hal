@@ -1,0 +1,427 @@
+external function Integer TRVc_AddRoundOffRow(var record TRVc,val,val,string,Boolean,Boolean,Boolean,val,var val);
+external updating procedure AddTTrans_IntIVVc(record TRVc,record IntIVVc);
+external function Boolean CheckTTRPerRow(string,string,string,Boolean,var string,Integer);
+external function string 5 AddVATCodeToVATAccRows(string);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Boolean TransInFiscal(Date);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external function Boolean IsVATCodeDefined(string);
+external function Integer IsUnOKAllowed_IntIVVc(record IntIVVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean SerNrTestIntIVVc(LongInt,Date,var Boolean);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetCurUser(var record UserVc);
+external function Boolean Date2Test(string,Date,string,Integer);
+
+global
+function LongInt IntIVVcRecordDefaults(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  record DepVc Depr;
+  record UserVc USr;
+  LongInt res;
+
+  IntIVr.SerNr = -1;
+  IntIVr.VISerNr = -1;
+  IntIVr.TransDate = CurrentDate;
+  GetCurUser(USr);
+  IntIVr.SalesMan = USr.Code;
+  IntIVr.Name = USr.Name;
+  IntIVr.Department = USr.Department;
+  if (SingleUserMode) then begin
+    IntIVr.SerNr = NextSerNr("IntIVVc",IntIVr.TransDate,-1,false,"");
+  end;
+  IntIVVcRecordDefaults = res;  
+  return;
+end;
+
+global
+function LongInt IntIVVcRecordDuplicate(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  row IntIVVc IntIVrw;
+  Integer rwcnt,i;
+  
+  IntIVr.SerNr= -1;  
+  IntIVr.VISerNr = -1;
+  IntIVr.TransDate = CurrentDate;
+  IntIVr.OKFlag = 0;
+  if (SingleUserMode) then begin
+    IntIVr.SerNr = NextSerNr("IntIVVc",IntIVr.TransDate,-1,false,"");
+  end;
+  IntIVVcRecordDuplicate = res;  
+  return;
+end;
+
+global
+updating function LongInt IntIVVcRecordSave(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  IntIVVcRecordSave = res; 
+  return;
+end;
+
+global
+updating function LongInt IntIVVcRecordSaveAfter(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record VIVc VIr;
+
+  if (IntIVr.VISerNr>0) then begin
+    VIr.SerNr = IntIVr.VISerNr;
+    if (ReadFirstMain(VIr,1,true)) then begin
+      CreateRecordLink(IntIVr,CurrentCompany,VIr,CurrentCompany);
+      CreateRecordLink(VIr,CurrentCompany,IntIVr,CurrentCompany);
+    end;
+  end;
+  IntIVVcRecordSaveAfter = res; 
+  return;
+end;
+
+global
+updating function LongInt IntIVVcRecordUpdate(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  IntIVVcRecordUpdate = res; 
+  return;
+end;
+
+global
+updating function LongInt IntIVVcRecordUpdateAfter(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  if ((IntIVr.OKFlag==0) and (IntIV2r.OKFlag!=0)) then begin//unok
+    DeleteTransaction(IntIVr.SerNr,IntIVYc);
+  end;
+  IntIVVcRecordUpdateAfter = res; 
+  return;
+end;
+
+procedure IntIVVcConvertB1ToB2Date(record IntIVVc IntIVp)
+begin
+  row IntIVVc IntIVrw;
+  Integer i,rwcnt;
+  string 20 curncy;
+  val fr,to1,to2,br1,br2,t;
+
+  curncy = "";
+  GetFullCurncyRate(curncy,IntIVp.TransDate,fr,to1,to2,br1,br2);
+  rwcnt = MatRowCnt(IntIVp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntIVp,i,IntIVrw);
+    B1ToB2Val(IntIVrw.Price,br1,br2,t);
+    IntIVrw.Price = t;
+    B1ToB2Val(IntIVrw.Sum,br1,br2,t);
+    IntIVrw.Sum = t;
+    MatRowPut(IntIVp,i,IntIVrw);
+  end;
+  return;
+end;
+ 
+global
+function LongInt IntIVVcRecordImport(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Boolean gBase1ToBase2;
+  record ConvMasterBlock cvm;
+      
+  BlockLoad(cvm);
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    IntIVVcConvertB1ToB2Date(IntIVr);
+  end;
+  IntIVVcRecordImport = res;
+  return;
+end;
+
+function LongInt IntIVRemoveTest(record IntIVVc IntIVp,LongInt errmf)
+begin
+  LongInt res;
+  record DBLockBlock DBLockRec;
+  
+  res = 1;
+  if (IntIVp.OKFlag==0) then begin
+    goto LIntIVRemoveTest;
+  end;
+  BlockLoad(DBLockRec);
+  if (IntIVp.TransDate>DBLockRec.DeleteBeforeDate) then begin
+    if (errmf!=0) then begin MessageBox(1544,""); end;
+    res = 0;
+    goto LIntIVRemoveTest;
+  end;
+LIntIVRemoveTest:;
+  IntIVRemoveTest = res;
+  return;
+end;
+
+global
+function LongInt IntIVVcRecordRemoveTest(var record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  res = IntIVRemoveTest(IntIVr,long3);
+  IntIVVcRecordRemoveTest = res; 
+  return;
+end;
+
+global
+function Integer MakeTransFromIntIV(var record TRVc gTRp,record IntIVVc IntIVp,Boolean rpt)
+begin
+  record TRGenBlock TRGenRec;
+  record AccBlock ARAccRec;
+  record VATCodeBlock VATCodeRec;
+  record RoundBlock RoundRec;
+  row VATCodeBlock VATCoderw;
+  record TRVc lTRr;
+  record IntIVVc IntIV2r;
+  record SMVc VATr;
+  row SMVc VATrw;
+  row IntIVVc IntIVrw;
+  Integer res;
+  Integer i,rwcnt,vcrwcnt,vatcnt;
+  string 255 objstr;
+  string 255 tstr,salesacc,paysalesvatacc,taccnumber;
+  string 10 firstVAT,curncy,firstrev;
+  val VATSum,TotSum,TAXSum,srev;
+  val t1,rs,t,baserate1,baserate2,tvat,tax1val;
+  Boolean dc1,dc2;
+                                        
+  res = 1085;// Transactions could not be generated, please check settings 
+  BlockLoad(ARAccRec);
+  BlockLoad(TRGenRec);
+  BlockLoad(VATCodeRec);
+  BlockLoad(RoundRec);
+  RecordNew(gTRp);
+  if (rpt==false) then begin
+    if (TRGenRec.IntIVGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromIntIV;
+    end;
+  end;  
+  if (rpt==false) then begin
+    if (nonblankdate(TRGenRec.IntIVStartDate) and
+        (IntIVp.TransDate<TRGenRec.IntIVStartDate)) then begin
+      res = 0;
+      goto LMakeTransFromIntIV;
+    end;
+  end;  
+  if (true) then begin
+    gTRp.IntYc = IntIVYc;
+    gTRp.Number = IntIVp.SerNr;
+    gTRp.RefStr = USetStr(34501) & " " & IntIVp.SerNr;
+  end;
+  if (rpt==false) then begin
+    lTRr.IntYc = gTRp.IntYc;
+    lTRr.Number = gTRp.Number;
+    if (ReadFirstMain(lTRr,2,true)) then begin
+      res = 1032;
+      goto LMakeTransFromIntIV;
+    end;
+  end;  
+  gTRp.RegDate = CurrentDate;
+  gTRp.RegTime = CurrentTime;
+  gTRp.TransDate = IntIVp.TransDate;
+  if (TransInFiscal(gTRp.TransDate)==false) then begin
+    res = 1075;
+    goto LMakeTransFromIntIV;
+  end;
+  curncy = "";
+  GetFullCurncyRate(curncy,gTRp.TransDate,t,t,t,baserate1,baserate2);
+  SetupVATBase(VATr,vcrwcnt);  
+  
+  dc1 = true;
+  dc2 = false;
+  if (GetAccName(ARAccRec.IntARAcc,tstr,60)==false) then begin
+    res = 20020;
+    goto LMakeTransFromIntIV;
+  end;
+  if (CheckTTRPerRow("CLOutVc",ARAccRec.IntARAcc,objstr,dc1,taccnumber,0)) then begin end;      
+  AddEuroTrRow(gTRp,ARAccRec.IntARAcc,objstr,"",tstr,IntIVp.Sum3,baserate1,baserate2,false,dc1,TotSum,false,taccnumber,"","");
+  rwcnt = MatRowCnt(IntIVp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntIVp,i,IntIVrw);
+    AddVATBase(VATr,IntIVrw.VATCode,IntIVrw.Sum,blankval,vcrwcnt,0,0);
+  end;
+/*  
+  rwcnt = MatRowCnt(IntIVp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntIVp,i,IntIVrw);
+    salesacc = IntIVrw.SalesAcc;
+    if (blank(salesacc)) then begin
+      salesacc = ARAccRec.IntDomSalesAcc;
+    end;
+    if (GetAccName(salesacc,tstr,60)==false) then begin
+      res = 20021;
+      goto LMakeTransFromIntIV;
+    end;
+    AddEuroTrRow(gTRp,salesacc,objstr,IntIVrw.VATCode,tstr,IntIVrw.Sum,baserate1,baserate2,true,dc2,TotSum,false,"","","");
+    AddVATBase(VATr,IntIVrw.VATCode,IntIVrw.Sum,vcrwcnt,0);
+  end;
+*/  
+  CalcVATBaseVAT(VATr,0,0,vcrwcnt,VATSum,TAXSum);
+  vcrwcnt = MatRowCnt(VATCodeRec);
+  for (i=0;i<vcrwcnt;i=i+1) begin
+    MatRowGet(VATCodeRec,i,VATCoderw);
+    MatRowGet(VATr,i,VATrw);
+    if (VATrw.DebVal!=0) then begin 
+    if (nonblank(VATCoderw.VATCode)) then begin
+      switch (RoundRec.VATCalcWay) begin
+        case 0:    
+          MulVATIV(VATCoderw.VATCode,VATrw.DebVal,tvat,tax1val,0,0);
+        case 1:
+          tvat = VATrw.CredVal2;
+          tax1val = VATrw.CurCredVal;
+      end;            
+      if (GetAccName(VATCoderw.SalesVATAcc,tstr,60)==false) then begin 
+        res = 1902;
+        goto LMakeTransFromIntIV;
+      end;
+      if (CheckTTRPerRow("CLOutVc",VATCoderw.SalesVATAcc,objstr,dc2,taccnumber,0)) then begin end;      
+      AddEuroTrRow(gTRp,VATCoderw.SalesVATAcc,objstr,AddVATCodeToVATAccRows(VATCoderw.VATCode),tstr,tvat,baserate1,baserate2,false,dc2,TotSum,false,taccnumber,"","");
+      if (tax1val!=0) then begin
+        if (GetAccName(VATCoderw.Tax1Acc,tstr,60)==false) then begin 
+          res = 1902;
+          goto LMakeTransFromIntIV;
+        end;
+        if (CheckTTRPerRow("CLOutVc",VATCoderw.Tax1Acc,"",dc2,taccnumber,0)) then begin end;      
+        AddEuroTrRow(gTRp,VATCoderw.Tax1Acc,"","",tstr,tax1val,baserate1,baserate2,false,dc2,TotSum,false,taccnumber,"","");
+      end;
+    end;
+    end;
+  end;
+  res = TRVc_AddRoundOffRow(gTRp,baserate1,baserate2,"",false,false,false,TotSum,TotSum);
+  if (res!=0) then begin
+    goto LMakeTransFromIntIV;
+  end;
+  res = 0;
+LMakeTransFromIntIV:;
+  MakeTransFromIntIV = res;
+  return;
+end;
+
+global
+updating function LongInt IntIVVcRecordCheck(record IntIVVc IntIVr,record IntIVVc IntIV2r,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  Integer insertmode,updatemode;
+  record IntIVVc lIntIVr;
+  row IntIVVc IntIVrw;
+  Boolean gentrans,unokf,transf;
+  Integer i,rwcnt,errcode;
+  record INVc INr;
+  record UserVc USr;
+  record TRVc gTRp;
+  LongInt oldnr;
+  string 255 tstr;
+
+  res = 0;
+  insertmode = 1;
+  updatemode = 2;
+  oldnr = IntIVr.SerNr;
+  transf = false;
+  if (stat==insertmode) then begin
+    if (IntIVr.OKFlag!=0) then begin
+      transf = true;
+    end;
+  end;    
+  if (stat==updatemode) then begin
+    if ((IntIVr.OKFlag!=0) and (IntIV2r.OKFlag==0)) then begin
+      transf = true;
+    end;
+  end;    
+  
+  if (IntIVr.OKFlag==0) then begin
+    if (stat==updatemode) then begin
+      if (IntIV2r.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    errcode = IsUnOKAllowed_IntIVVc(IntIVr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LIntIVVcRecordCheck;
+  end;
+  if (stat==updatemode) then begin
+    if (IntIVr.SerNr<=0) and (IntIV2r.OKFlag==0) then begin
+      IntIVr.SerNr = IntIV2r.SerNr;
+    end;
+  end;  
+  if (IntIVr.SerNr<=0) then begin
+    IntIVr.SerNr = NextSerNr("IntIVVc",IntIVr.TransDate,-1,false,"");
+  end;
+  if ((stat==insertmode) or (IntIVr.SerNr!=IntIV2r.SerNr)) then begin
+    lIntIVr.SerNr = IntIVr.SerNr;
+    if (ReadFirstMain(lIntIVr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1;
+      goto LIntIVVcRecordCheck;
+    end;
+  end;  
+  if (SerNrTestIntIVVc(IntIVr.SerNr,IntIVr.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto LIntIVVcRecordCheck;
+  end;
+  if (Date2Test("IntIVVc",IntIVr.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto LIntIVVcRecordCheck;
+  end;
+  USr.Code = IntIVr.SalesMan;
+  if (ReadFirstMain(USr,1,true)==false) then begin
+    RecordCheckError(1120,IntIVr.SalesMan,-1,"SalesMan");      
+    res = -1; 
+    goto LIntIVVcRecordCheck;
+  end;
+  rwcnt = MatRowCnt(IntIVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntIVr,i,IntIVrw);
+    if (nonblank(IntIVrw.ArtCode)) then begin
+      if (ReadFirstItem(IntIVrw.ArtCode,INr,true,true)==false) then begin
+        RecordCheckError(1120,IntIVrw.ArtCode,i,"ArtCode");      
+        res = -1; 
+        goto LIntIVVcRecordCheck;
+      end;
+    end;    
+    if ((nonblank(IntIVrw.VATCode)) and (IsVATCodeDefined(IntIVrw.VATCode)==false)) then begin
+      RecordCheckError(1120,IntIVrw.VATCode,i,"VATCode");      
+      res = -1; 
+      goto LIntIVVcRecordCheck;
+    end;
+  end;
+  RecordNew(gTRp);
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+    errcode = MakeTransFromIntIV(gTRp,IntIVr,false);
+    if (errcode>0) then begin
+      RecordCheckError(errcode,"",-1,"SerNr");      
+      res = -1;
+      goto LIntIVVcRecordCheck;
+    end;
+    if ((gTRp.Number>0) and (gTRp.IntYc==IntIVYc)) then begin
+      tstr = CheckTrans(gTRp,2,true);
+      if (nonblank(tstr)) then begin
+        RecordCheckError(1085,tstr,-1,"SerNr");      
+        res = -1;
+        goto LIntIVVcRecordCheck;
+      end;
+      SaveTrans(gTRp);
+      AddTTrans_IntIVVc(gTRp,IntIVr);
+    end;
+  end;
+LIntIVVcRecordCheck:;  
+  if (res!=0) then begin IntIVr.SerNr = oldnr; end;
+  IntIVVcRecordCheck = res; 
+  RETURN;
+END;

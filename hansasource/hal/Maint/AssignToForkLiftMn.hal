@@ -1,0 +1,94 @@
+updating procedure SetForkLiftQueStatus(record ForkLiftQueVc ForkLiftQuer,Integer status,string comment)
+BEGIN
+  record ForkLiftQueVc oldForkLiftQuer;
+  Integer flid;
+  record NT7000NumbersVc NTNr;
+  record NT7000NumbersVc oldNTNr;
+
+  RecordCopy(oldForkLiftQuer,ForkLiftQuer);
+  ForkLiftQuer.Status = status;
+  if (status==1) then begin
+    ForkLiftQuer.Attempts = ForkLiftQuer.Attempts + 1;
+  end;
+  if (blank(ForkLiftQuer.ForkLiftSystemID)) then begin
+    NTNr.Location = ForkLiftQuer.FrLocation;
+    ReadFirstMain(NTNr,1,true);
+    RecordCopy(oldNTNr,NTNr);
+    if (ForkLiftQuer.QueType!=0) then begin
+      if (NTNr.LastAutomaticNr<0) then begin NTNr.LastAutomaticNr = 0; end;
+      if (NTNr.LastAutomaticNr>=9999) then begin NTNr.LastAutomaticNr = 0; end;
+      NTNr.LastAutomaticNr  = NTNr.LastAutomaticNr + 1;
+      ForkLiftQuer.ForkLiftSystemID = NTNr.LastAutomaticNr;
+    end else begin
+      if (NTNr.LastPickingNr<10001) then begin NTNr.LastPickingNr = 10000; end;
+      if (NTNr.LastPickingNr>=19999) then begin NTNr.LastPickingNr = 10000; end;
+      NTNr.LastPickingNr  = NTNr.LastPickingNr + 1;
+      ForkLiftQuer.ForkLiftSystemID = NTNr.LastPickingNr;
+    end;
+    RecordUpdate(oldNTNr,NTNr,true);
+  end;
+  if (ForkLiftQuer.Attempts>=5) then begin
+    ForkLiftQuer.Status = 3;
+  end;
+  ForkLiftQuer.Comment = comment;
+  if (RecordUpdate(oldForkLiftQuer,ForkLiftQuer,false)==0) then begin end;
+  RETURN;
+END;
+
+global
+updating procedure AssignToForkLiftMn(record RcVc RepSpec)
+BEGIN
+  record SHVc SHr;
+  record StockMovVc StockMovr;
+  record ForkLiftQueVc ForkLiftQuer;
+  record ForkLiftQueVc oldForkLiftQuer;
+  record ForkLiftVc ForkLiftr;
+  Boolean TrHs,testf;
+  LongInt lastordnr;
+  
+  if (blank(RepSpec.f1)) then begin goto LAssignToForkLiftMn; end;
+  if (blank(RepSpec.f2)) then begin goto LAssignToForkLiftMn; end;
+  ForkLiftr.Code = RepSpec.f1;
+  if (ReadFirstMain(ForkLiftr,1,true)==false) then begin goto LAssignToForkLiftMn; end;
+  if (ForkLiftr.Closed!=0) then begin goto LAssignToForkLiftMn; end;
+  TrHs = true;
+  ForkLiftQuer.QueType = 0;
+  while (LoopKey("QueType",ForkLiftQuer,1,TrHs)) begin
+    if (ForkLiftQuer.QueType!=0) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(ForkLiftQuer.ForkLift)) then begin testf = false; end;
+      if (ForkLiftQuer.Status==2) then begin testf = false; end;
+      StockMovr.SerNr = ForkLiftQuer.StockMovNr;
+      if (ReadFirstMain(StockMovr,1,true)) then begin
+        if (StockMovr.FileName=="SHVc") then begin
+          SHr.SerNr = StockMovr.TransNr;
+          if (ReadFirstMain(SHr,1,true)) then begin
+            if (SHr.OrderNr==StringToLongInt(RepSpec.f2)) then begin 
+              testf = true;
+            end else begin
+              testf = false;
+            end;
+          end else begin
+            testf = false;
+          end;
+        end else begin
+          testf = false;
+        end;
+      end else begin
+        testf = false;
+      end;
+      if (testf) then begin
+        RecordCopy(oldForkLiftQuer,ForkLiftQuer);
+        ForkLiftQuer.ForkLift = RepSpec.f1;
+        if (RecordUpdate(oldForkLiftQuer,ForkLiftQuer,false)==0) then begin end;
+        if (lastordnr!=SHr.OrderNr) then begin
+          SetForkLiftQueStatus(ForkLiftQuer,2,"");
+        end;
+        lastordnr = SHr.OrderNr;
+      end;
+    end;
+  end;
+LAssignToForkLiftMn:;  
+  RETURN;
+END;

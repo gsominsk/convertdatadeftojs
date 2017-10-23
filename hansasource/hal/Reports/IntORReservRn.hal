@@ -1,0 +1,377 @@
+external function val GetIntORRowReserv(LongInt,string,string,var val,var string,var string,var string,Boolean);
+external function val FindReseverdQty(string,string,string);
+external function Boolean AllowedToTakeFromThisLoc(record LocationVc);
+//external function val GetStockQty(string,string,Date,Boolean);
+external function val GetPORowReserv(LongInt,string,var val,Boolean);
+external procedure FindStockValueInclStockReserv(LongInt,string,string,string,var record ItemStatusVc,var val);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+
+procedure FindAndPrintPO(record IntORVc IntORr,string artcode)
+begin
+  record POVc POr;
+  row POVc POrw;
+  Integer rwcnt,i;
+  Boolean foundf;
+  Boolean firstf;
+  val resrv,ordqty;
+  
+  POr.PUFlag = 0;
+  foundf = true;
+  firstf = true;
+  while (LoopKey("PUFlag",POr,1,foundf)) begin
+    if (POr.PUFlag!=0) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      rwcnt = MatRowCnt(POr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(POr,i,POrw);
+        if (POrw.ArtCode==artcode) then begin
+          if (POrw.Quant>POrw.Shipd1) then begin
+            resrv = GetPORowReserv(POr.SerNr,POrw.ArtCode,ordqty,false);
+            if (resrv<POrw.Quant-POrw.Shipd1) then begin
+              if (firstf) then begin
+                StartFormat(15);
+                OutString(0,0,USetStr(16149),false);
+                OutString(2,0,USetStr(16145),false);
+                OutString(5,0,USetStr(16137),true);
+                OutString(6,0,USetStr(16146),true);
+                EndFormat;
+                Gray_Divider(0,1);
+                firstf = false;
+              end;
+              StartFormat(15);
+              OutString(0,"DblPOVc",POr.SerNr,false);
+              OutString(2,0,POr.PlanShip,false);
+              OutVal(5,0,POrw.Quant-POrw.Shipd1,M4Qty,true);
+              OutVal(6,0,resrv,M4Qty,true);
+              if (IntORr.Closed==0) then begin
+                OutStringID(1,"DblIntORNewReserv",USetStr(16141),true,"1," & POr.SerNr & "," & i & "," & IntORr.SerNr);
+              end else begin
+                OutString(1,0,USetStr(16157),true);
+              end;
+              EndFormat;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (firstf==false) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure FindAndPrintStock(record IntORVc IntORr,string artcode,string serialnr)
+begin
+  record INVc INr;
+  record SerBalVc SBr;
+  record LocationVc Locr;
+  record ItemStatusVc ISr;
+  Boolean foundf;
+  Boolean firstf,testf;
+  Date bldat;
+  val instock,stockreservq;
+  Boolean sernrf;
+  
+  INr.Code = artcode;
+  if (ReadFirstMain(INr,1,true)) then begin
+    if (INr.SerNrf>0) then begin
+      sernrf = true;
+    end;
+  end;
+  foundf = true;
+  firstf = true;
+  Locr.Code = "";
+  while (LoopMain(Locr,1,foundf)) begin
+    if (foundf) then begin
+      testf = true;
+      if (nonblank(IntORr.FrLocation)) then begin
+        if (Locr.Code!=IntORr.FrLocation) then begin testf = false; end;
+      end;
+      if (testf) then begin
+
+        FindStockValueInclStockReserv(IntORr.SerNr,artcode,serialnr,Locr.Code,ISr,stockreservq);
+
+  //      FindStockValue(artcode,Locr.Code,ISr);
+        instock = ISr.Instock; // - stockreservq;
+        if (sernrf and nonblank(serialnr)) then begin
+          SBr.Item = artcode;
+          SBr.Serial = serialnr;
+          SBr.Location = Locr.Code;
+          if (ReadFirstMain(SBr,3,true)) then begin
+            instock = SBr.Quant;
+            stockreservq = FindReseverdQty(SBr.Item,SBr.Serial,SBr.Location);
+          end else begin
+            instock = 0;
+            stockreservq = 0;
+          end;
+        end else begin
+  //        stockreservq = ISr.StockRsrvQty;
+          stockreservq = FindReseverdQty(artcode,"",Locr.Code);
+  /*
+          if (stockreservq!=ISr.StockRsrvQty) then begin
+            StartFormat(15);
+            OutString(0,0,"#### ISr.StockRsrvQty is out of synk ####",false);
+            EndFormat;
+          end;
+  */
+        end;
+        if (instock - stockreservq > 0) then begin
+          if (firstf) then begin
+            StartFormat(15);
+            OutString(0,0,USetStr(16158),false);
+            OutString(2,0,USetStr(16138),false);
+            OutString(5,0,USetStr(16168),true);
+            OutString(6,0,USetStr(16146),true);
+            OutString(7,0,USetStr(16172),true);
+            EndFormat;
+            Gray_Divider(0,1);
+            firstf = false;
+          end;
+          StartFormat(15);
+          OutString(0,0,Locr.Code,false);
+          OutString(2,0,Locr.Name,false);
+          OutVal(5,0,instock,M4Qty,true);
+          OutVal(6,0,stockreservq,M4Qty,true);
+          OutVal(7,0,instock - stockreservq,M4Qty,true);
+          if (AllowedToTakeFromThisLoc(Locr)==false) then begin
+            OutString(1,0,USetStr(16167),true);
+          end else begin
+            if (IntORr.Closed==0) then begin
+              OutStringID(1,"DblIntORNewRsrvStock",USetStr(16141),true,Locr.Code & "," & artcode & "," & IntORr.SerNr & "," & serialnr);
+            end else begin
+              OutString(1,0,USetStr(16157),true);
+            end;
+          end;
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  if (firstf==false) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure ReserveNextPO(record IntORVc IntORr,string artcode)
+begin
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  if (IntORr.Closed==0) then begin
+    OutStringID(1,"DblIntORNewRsrvNext",USetStr(16161),true,artcode & ":" & IntORr.SerNr);
+  end else begin
+    OutString(1,0,USetStr(16157),true);
+  end;
+  EndFormat;
+  return;
+end;
+
+procedure ReserveBackToBackPO(record IntORVc IntORr,string artcode)
+begin
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  if (IntORr.Closed==0) then begin
+    OutStringID(1,"DblIntORNewBToBPO",USetStr(16126),true,artcode & ":" & IntORr.SerNr);
+  end else begin
+    OutString(1,0,USetStr(16157),true);
+  end;
+  EndFormat;
+  return;
+end;
+
+global
+procedure IntORReservDrillRn(record RcVc RepSpec)
+BEGIN
+  record IntORVc IntORr;
+  row IntORVc IntORrw;
+  Integer i,rwcnt;
+  Boolean foundf;
+  LongInt fror,toor;
+  val resrv,ordqty;
+  string 60 comment;
+  
+  StartReportJob(USetStr(16130));
+  EndHeader;
+  SetRepCol(2,75);
+  SetRepCol(4,170);
+  SetRepCol(5,280);
+  SetRepCol(6,350);
+  SetRepCol(7,410);
+  SetRepCol(8,230);
+  IntORr.SerNr = RepSpec.f1;
+  if (ReadFirstMain(IntORr,1,true)) then begin
+    rwcnt = MatRowCnt(IntORr);
+    i = StringToInt(RepSpec.f2);
+    if (i<rwcnt) then begin
+      MatRowGet(IntORr,i,IntORrw);
+      resrv = GetIntORRowReserv(IntORr.SerNr,IntORrw.ArtCode,IntORrw.SerialNr,ordqty,comment,IntORr.FrLocation,IntORr.Location,true);
+      if (resrv!=ordqty) then begin
+        StartFormat(15);
+        OutString(0,0,USetStr(16136),false);
+        OutString(2,0,USetStr(16138),false);
+        OutString(5,0,USetStr(16153),true);
+        OutString(6,0,USetStr(16146),true);
+        OutString(7,0,USetStr(16154),true);
+        EndFormat;
+        Gray_Divider(0,1);
+        StartFormat(15);
+        OutString(0,"DblINVc",IntORrw.ArtCode,false);
+        OutString(2,0,Left(IntORrw.Spec,30),false);
+        OutString(5,0,ordqty,true);
+        OutString(6,0,resrv,true);
+        OutString(7,0,ordqty-resrv,true);
+        EndFormat;
+        Gray_Divider(0,1);
+        StartFormat(15);
+        EndFormat;
+        FindAndPrintStock(IntORr,IntORrw.ArtCode,IntORrw.SerialNr);
+        if (blank(IntORrw.SerialNr)) then begin
+          FindAndPrintPO(IntORr,IntORrw.ArtCode);
+          ReserveNextPO(IntORr,IntORrw.ArtCode);
+          ReserveBackToBackPO(IntORr,IntORrw.ArtCode);
+        end;
+      end;
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;
+
+global
+procedure IntORReservRn(record RcVc RepSpec)
+BEGIN
+  record StockReservBlock SRb;
+  record IntORVc IntORr;
+  row IntORVc IntORrw;
+  row IntORVc IntORrw2;
+  Integer i,j,rwcnt;
+  Boolean foundf,testf;
+  LongInt fror,toor;
+  val resrv,ordqty,ordrtot,rsrvtot;
+  string 60 comment;
+  
+  BlockLoad(SRb);
+  fror = FirstInRange(RepSpec.f1,10);
+  toor = LastInRange(RepSpec.f1,10);
+  StartReportJob(USetStr(16130));
+  EndHeader;
+  SetRepCol(2,20);
+  SetRepCol(3,100);
+  SetRepCol(4,130);
+  SetRepCol(5,280);
+  SetRepCol(6,370);
+  SetRepCol(7,400);
+  SetRepCol(8,250);
+  SetRepCol(9,440);
+  foundf = true;
+  IntORr.SerNr = fror;
+  while (LoopMain(IntORr,1,foundf)) begin
+    if (IntORr.SerNr>toor) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(16144),false);
+      OutString(70,0,USetStr(16132),false);
+      OutString(130,0,USetStr(16133),false);
+      OutString(200,0,USetStr(16134),false);
+      OutString(410,0,USetStr(16135),false);
+      EndFormat;
+      Black_Divider(0,1);
+      StartFormat(15);
+      OutLongInt(0,"DblIntORVc",IntORr.SerNr,false);
+      OutDate(70,0,IntORr.TransDate,false);
+      OutString(130,"DblCUVc",IntORr.OurUser,false);
+      OutString(200,0,IntORr.Name,false);
+      OutString(410,0,IntORr.PlanShip,false);
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      OutString(2,0,USetStr(16136),false);
+      OutString(3,0,USetStr(16138),false);
+      OutString(5,0,USetStr(16137),true);
+//      OutString(5,0,USetStr(16139),true);
+      OutString(6,0,USetStr(16140),true);
+      OutString(7,0,USetStr(16142),false);
+      EndFormat;
+      Gray_Divider(0,1);
+      rwcnt = MatRowCnt(IntORr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IntORr,i,IntORrw);
+        testf = true;
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(IntORr,j,IntORrw2);
+          if (IntORrw.ArtCode==IntORrw2.ArtCode and IntORrw.SerialNr==IntORrw2.SerialNr) then begin
+            testf = false;
+            j = i;
+          end;
+        end;
+        if (testf) then begin
+          resrv = GetIntORRowReserv(IntORr.SerNr,IntORrw.ArtCode,IntORrw.SerialNr,ordqty,comment,IntORr.FrLocation,IntORr.Location,false);
+          ordrtot = ordrtot + ordqty;
+          rsrvtot = rsrvtot + resrv;
+          StartFormat(15);
+          OutString(2,"DblINVc",IntORrw.ArtCode,false);
+          OutString(3,0,Left(IntORrw.Spec,23),false);
+          OutVal(5,0,ordqty,M4Qty,true);
+//          OutVal(5,0,IntORrw.Sum,M4Val,true);
+          OutVal(6,0,resrv,M4Val,true);
+          if (ordqty==resrv) then begin
+            if (IntORr.Closed==0) then begin
+              OutStringID(7,"DblIntORReserv",USetStr(16162),false,"" & IntORr.SerNr & ":" & i);
+            end else begin
+              OutString(7,0,USetStr(16157),false);
+            end;
+            OutStringID(9,"DblIntORReleaseLine",USetStr(16169),false,"" & IntORr.SerNr & ":" & i);
+          end else begin
+            if (IntORr.Closed==0) then begin
+              OutStringID(7,"DblIntORReserv",USetStr(16176),false,"" & IntORr.SerNr & ":" & i);
+              OutStringID(9,"DblIntORAutoRsrvLine",USetStr(16173),false,"" & IntORr.SerNr & ":" & i);
+            end else begin
+              OutString(7,0,USetStr(16157),false);
+              OutString(9,0,"",false);
+            end;
+          end;
+          EndFormat;
+          if (nonblank(IntORrw.SerialNr)) then begin
+            StartFormat(15);
+            OutString(3,0,IntORrw.SerialNr,false);
+            EndFormat;
+          end;
+        end;
+      end;
+      if (SRb.AutoLevel!=0) then begin
+        StartFormat(15);
+        EndFormat;
+        if (ordrtot!=rsrvtot) then begin
+          if (IntORr.Closed==0) then begin
+            StartFormat(15);
+            OutStringID(1,"DblIntORAutoRsrvAll",USetStr(16170),true,IntORr.SerNr);
+            EndFormat;
+          end;
+          StartFormat(15);
+          EndFormat;
+        end;
+        if (rsrvtot>0) then begin
+          StartFormat(15);
+          OutStringID(1,"DblIntORReleaseAll",USetStr(16171),true,IntORr.SerNr);
+          EndFormat;
+        end;
+      end;
+      Gray_Divider(0,1);
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;
+

@@ -1,0 +1,237 @@
+external procedure PrintCurrencyCode(string,string);
+external procedure PortugueseFormFields(Integer);
+external function string 255 GetOffSerNrIVJournalID(LongInt,string,string);
+external procedure PrintFINREFBC128(record DocVc,string,val,string,Date);
+external procedure OutAddress(string,string,string,string,string,string,string);
+external procedure AddBC128Flags(var string);
+external procedure FinRefChecksum2(var string,Array Integer,Integer,Array Integer,Array Integer);
+external procedure ConvertToBC128(var string,var string,Array Integer,var Integer,Array Integer,Array Integer);
+external procedure FinRefChecksum1(var string);
+external procedure FinnishBankDate(var string,Date);
+external procedure StripSpace(var string,string);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure FinnishBankVal(var string,val);
+external procedure FillBC128(Array Integer,Array Integer);
+external procedure FinnishBankacc(var string,string);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function LongInt DateDiff(Date,Date);
+external procedure CreateKIDNoCheck(string,LongInt,var string);
+external procedure CreateKIDCheckNor(val,LongInt,var string);
+external procedure CreateKIDCode(string,LongInt,var string);
+external procedure GetPayDealText(string,string,var string);
+external procedure InvoiceType(Integer,var string);
+external procedure RemText(string,LongInt,Integer,var string );
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external procedure GetRemFee(var val);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure CommonDocumentFields(record RcVc);
+
+procedure RebDate(record IVVc IVp,var string res)
+BEGIN
+  Date td;
+  
+  res = "";
+  if (IVp.pdvrebt!=0) then begin
+    td = AddDay(IVp.InvDate,IVp.pdrdays);
+    res = td;
+  end;
+  RETURN;  
+END;     
+
+procedure RebDate2(record IVVc IVp,var string res)
+BEGIN
+  Date td;
+  
+  res = "";
+  if (IVp.pdvrebt2!=0) then begin
+    td = AddDay(IVp.InvDate,IVp.pdrdays2);
+    res = td;
+  end;
+  RETURN;  
+END;     
+
+global
+procedure DoRemForm(record RcVc RepSpec,record ARVc ARr)
+BEGIN
+  record CUVc CUr;
+  record IVVc IVr;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+  LongInt latedays;
+  val t;
+  record SysFormatBlock SysFormatRec;
+  record LangNrVc LangNrr;
+  Date curdate;
+  string 10 langcode;
+  Boolean langf;
+  record DocVc Docr;
+  
+  IVr.SerNr = ARr.InvoiceNr;
+  if (ReadFirstMain(IVr,1,true)) then begin end;
+  if (IVr.LastRemndr<0) then begin
+    IVr.LastRemndr = 0;
+  end;
+  if (RepSpec.flags[1]!=0) then begin
+    IVr.LastRemndr = IVr.LastRemndr + 1;
+  end;
+  if (RepSpec.flags[0]==0) then begin
+    langcode = IVr.LangCode;
+  end else begin
+    langcode = RepSpec.Language;
+  end;
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoRemForm;
+  end;
+  Docr.Code = formcode;
+  if (ReadFirstMain(Docr,1,true)) then begin
+  end;
+  rwcnt = MatRowCnt(FDr);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;    
+  curdate = CurrentDate;
+  GetLangNr("",LangNrr);  
+  BlockLoad(SysFormatRec);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,-1,FDrw.PrintGroupCode,
+                      langcode,intdocnr,"",formcode)) then
+      begin
+        goto LBREAK;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin  
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+        if (HasLocalization("PRT")) then begin
+          PortugueseFormFields(1806);
+        end;  
+//        NumberofDocumentPages(formcode,MatRowCnt(Actr));
+        CUr.Code = ARr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin end;
+        if (blank(IVr.Fax)) then begin
+          tstr = CUr.Fax;
+        end else begin
+          tstr = IVr.Fax;
+        end;
+        OUTFORMFIELD("F_KUNDFAX",tstr);
+        GetRemFee(t);
+        PrintValue("F_INTERESTFEE",t,M4Val,LangNrr,SysFormatRec,false);
+        t = t + MulRateToBase1(IVr.CurncyCode,ARr.RVal,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+        PrintValue("F_SUMPLUSFEE",t,M4Val,LangNrr,SysFormatRec,false);
+        OUTFORMFIELD("F_PAMINNELSEDATUM",curdate);
+
+        OUTFORMFIELD("F_FAKTKOMMENTAR",CUr.Department);
+        OUTFORMFIELD("F_KUNDTEL",CUr.Phone);
+        OUTFORMFIELD("F_STATUS",DateDiff(ARr.DueDate,curdate));
+        RemText(IVr.LangCode,IVr.LastRemndr,0,tstr);
+        OUTFORMFIELD("F_PAMINNELSETEXT",tstr);
+        RemText(IVr.LangCode,IVr.LastRemndr,1,tstr);
+        OUTFORMFIELD("F_PAMINNELSETEXT",tstr);
+        RemText(IVr.LangCode,IVr.LastRemndr,2,tstr);
+        OUTFORMFIELD("F_PAMINNELSETEXT",tstr);
+        InvoiceType(5,tstr)
+        OUTFORMFIELD("F_FAKTTYP",tstr);
+        OUTFORMFIELD("F_FAKTURATYP",tstr);
+        OUTFORMFIELD("F_FAKTKOMMENTAR",IVr.InvComment);
+        if (IVr.LastRemndr!=-1) then begin
+          OUTFORMFIELD("F_PAMINNELSENR",IVr.LastRemndr);
+        end;
+        if (HasLocalization("PRT")) then begin
+          OUTFORMFIELD("F_OFFICIALSERNO",GetOffSerNrIVJournalID(IVr.SerNr,"IVVc",IVr.OfficialSerNr) & " " & IVr.OfficialSerNrSerie & "/" & Right(IVr.OfficialSerNr,len(IVr.OfficialSerNr)-len(IVr.OfficialSerNrSerie)));
+        end else begin
+          OUTFORMFIELD("F_OFFICIALSERNO",IVr.OfficialSerNr);
+        end;
+        OUTFORMFIELD("F_FAKTURADATUM",IVr.InvDate);
+        OUTFORMFIELD("F_REFERENSNUMMER",IVr.CalcFinRef);
+        OUTFORMFIELD("F_FORFALLODATUM",IVr.PayDate);
+        OutAddress("F_LEVADRESS",IVr.ShipAddr0,IVr.ShipAddr1,IVr.ShipAddr2,IVr.ShipAddr3,IVr.DelAddr3,IVr.DelAddr4);
+//        OUTFORMFIELD("F_ADRESS24",IVr.Addr0);
+        OUTFORMFIELD("F_ADRESS24",IVr.Addr1);
+        OUTFORMFIELD("F_ADRESS24",IVr.Addr2);
+        OUTFORMFIELD("F_ADRESS24",IVr.Addr3);
+        OUTFORMFIELD("F_ADRESS24",IVr.InvAddr3);
+        OUTFORMFIELD("F_ADRESS24",IVr.InvAddr4);
+        OutAddress("F_ADRESS",IVr.Addr0,IVr.Addr1,IVr.Addr2,IVr.Addr3,IVr.InvAddr3,IVr.InvAddr4);        
+        OUTFORMFIELD("F_ADDR1",IVr.Addr0);
+        OUTFORMFIELD("F_ADDR2",IVr.Addr1);
+        OUTFORMFIELD("F_ADDR3",IVr.Addr2);
+        OUTFORMFIELD("F_ADDR4",IVr.Addr3);
+        OUTFORMFIELD("F_INVADDR3",IVr.InvAddr3);
+        OUTFORMFIELD("F_INVADDR4",IVr.InvAddr4);
+        
+        OUTFORMFIELD("F_INVCOMMENT",IVr.InvComment);
+        OUTFORMFIELD("F_ADRESSNAMN",IVr.Addr0);
+        GetPayDealText(IVr.PayDeal,IVr.LangCode,tstr);
+        OUTFORMFIELD("F_VILLKOR",tstr);
+        OUTFORMFIELD("F_VARREFERENS",IVr.OurContact);
+        OUTFORMFIELD("F_ERREFERENS",IVr.ClientContact);
+        OUTFORMFIELD("F_RANTASATS",IVr.IntCode);
+        OUTFORMFIELD("F_KUNDMOMSNR",IVr.VATNr);
+        OUTFORMFIELD("F_REGNUMBER1",CUr.RegNr1);
+        OUTFORMFIELD("F_REGNUMBER2",CUr.RegNr2);
+        OUTFORMFIELD("F_KUNDNR",ARr.CustCode);
+        OUTFORMFIELD("F_FAKTURANUMMER",ARr.InvoiceNr);
+        OUTFORMFIELD("F_ATTBETALA",ARr.RVal);
+        OUTFORMFIELD("F_BASE1ATTBETALA",MulRateToBase1(ARr.ARCurncyCode,ARr.RVal,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff));
+        OUTFORMFIELD("F_BASE1ATTBETALA",MulRateToBase2(ARr.ARCurncyCode,ARr.RVal,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff));
+        if (FIELDINFORM("F_KID")) then begin
+          CreateKIDCode(ARr.CustCode,ARr.InvoiceNr,tstr);
+          OUTFORMFIELD("F_KID",tstr);
+        end;
+        if (FIELDINFORM("F_KIDCHECK")) then begin
+          CreateKIDCheckNor(ARr.RVal,ARr.InvoiceNr,tstr);
+          OUTFORMFIELD("F_KIDCHECK",tstr);
+        end;
+        if (FIELDINFORM("F_KIDNOCHECK")) then begin
+          CreateKIDNoCheck(ARr.CustCode,ARr.InvoiceNr,tstr);
+          OUTFORMFIELD("F_KIDNOCHECK",tstr);
+        end;        
+        tstr = ValToString(ARr.RVal,M4Val,SysFormatRec.thousSep,SysFormatRec.decimalPt,0);
+        OUTFORMFIELD("F_ATTBETALAFIXED",Left(tstr,len(tstr)-3));
+        OUTFORMFIELD("F_ATTBETALAFRAC",Right(tstr,2));
+        PrintCurrencyCode("F_VALUTA",ARr.ARCurncyCode);
+        RebDate(IVr,tstr);
+        OUTFORMFIELD("F_KASSADATUM",tstr);
+        RebDate2(IVr,tstr);
+        OUTFORMFIELD("F_KASSADATUM_2",tstr);
+        OUTFORMFIELD("F_DEPARTMENT",CUr.Department);
+        PrintValue("F_EXTRAKOSTNAD",RepSpec.vals1,M4Val,LangNrr,SysFormatRec,false);
+        PrintFINREFBC128(Docr,IVr.CurncyCode,ARr.RVal + RepSpec.vals1,IVr.CalcFinRef,IVr.PayDate);
+        CloseForm;        
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoRemForm:;  
+  RETURN;  
+END;     

@@ -1,0 +1,164 @@
+external procedure HTLocations(string, string, var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean IVVc_PasteArtCode(var record IVVc,Integer,var string,var string,Boolean,var Integer);
+external procedure HT2Per(Date, Date , var string);
+
+procedure DiscSort(var record IVVc IVr,longint invnr,String itemnr,String name,val ivprice,val bprice,val lprice,val dperc,val dval)
+begin
+  row IVVc IVrw,IVrw2;
+  Integer i,j,rwcnt;
+  Boolean added;
+  
+  added = false;
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    if (dval<IVrw.rowGP) then begin
+      IVrw2.OrdRow = invnr;
+      IVrw2.ArtCode = itemnr;
+      IVrw2.Spec = name;
+      IVrw2.Price = ivprice;
+      IVrw2.Sum = bprice;
+      IVrw2.BasePrice = lprice;
+      IVrw2.vRebate = dperc;
+      IVrw2.rowGP = dval;
+      MatRowInsert(IVr,i,IVrw2);
+      added = true;
+      i = rwcnt;
+    end;
+  end;
+  if (added==false) then begin
+    IVrw2.OrdRow = invnr;
+    IVrw2.ArtCode = itemnr;
+    IVrw2.Spec = name;
+    IVrw2.Price = ivprice;
+    IVrw2.Sum = bprice;
+    IVrw2.BasePrice = lprice;
+    IVrw2.vRebate = dperc;
+    IVrw2.rowGP = dval;
+    MatRowPut(IVr,rwcnt,IVrw2);
+  end;
+  return;
+end;
+
+global
+procedure SalesPriceCheckRn(record RcVc RepSpec)
+BEGIN
+  record IVVc IVr,IVtemp,IVr2;
+  record INVc INr;
+  row IVVc IVrw,IVtemprw,IVrw2;
+  Integer rw,rwcnt,i,tempivrwcnt;
+  String 255 tstr;
+  String 50 keystr;
+  Boolean TrHs,testf,rowsok;
+  longint CurSerial;
+  val disc,discp;
+  Integer sernrf;
+  
+  CurSerial = 0;
+  RecordNew(IVtemp);
+ 
+  StartReportJob(USetStr(17200));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if(nonblank(RepSpec.f1))then begin
+    HTLocations(RepSpec.f1,RepSpec.f1,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if(RepSpec.flags[1]==1) then begin
+    tstr = USetStr(17201);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(17202),false);
+  OutString(55,0,USetStr(17203),false);
+  OutString(105,0,USetStr(17204),false);
+  OutString(240,0,USetStr(17205),true);
+  OutString(300,0,USetStr(17206),true);
+  OutString(360,0,USetStr(17207),true);
+  OutString(420,0,USetStr(17208),true);
+  OutString(1,0,USetStr(17209),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  IVr.SerNr = -1;
+  TrHs = true;
+  IVr.InvDate = RepSpec.sStartDate;
+  while (LoopKey("InvDate",IVr,2,TrHs)) begin
+      testf = true;
+      if((nonblank(RepSpec.f1))and(IVr.Location <> RepSpec.f1)) then begin
+        testf = false;
+      end;
+      if(IVr.InvDate > RepSpec.sEndDate) then begin
+        TrHs = false;
+        testf = false;
+      end;
+      if (testf) then begin
+        rwcnt = MatrowCnt(IVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if (IVrw.stp == kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+            RecordCopy(IVr2,IVr);
+            rowsok = true;
+            if (IVVc_PasteArtCode(IVr2,i,tstr,tstr,false,sernrf)) then begin
+              if (ReadFirstItem(IVrw.ArtCode,INr,true,false)) then begin
+              end;
+              MatRowGet(IVr2,i,IVrw2);
+              rowsok = false;
+              if (IVrw2.Price==IVrw.Price) then begin
+                rowsok = true;
+              end;
+            end;
+            if (rowsok==false) then begin
+              disc = IVrw.Price - IVrw2.Price;
+              if(IVrw.Price > IVrw2.Price) then begin
+                discp = (IVrw.Price/IVrw2.Price)*100;
+              end else begin
+                discp = 100-((IVrw.Price/IVrw2.Price)*100);
+              end;
+              if(RepSpec.flags[1]==1)then begin
+                DiscSort(IVtemp, IVr.SerNr, INr.Code, IVrw.Spec, IVrw.Price, INr.UPrice1,IVrw2.Price, discp, disc);
+              end else begin
+                StartFormat(15);
+                if(IVr.SerNr <> CurSerial) then begin
+                  OutString(0,"DblIVVc",IVr.SerNr,false);
+                end;
+                OutString(55,"DblINVc",INr.Code,false);
+                OutString(105,0,IVrw.Spec,false);
+                OutString(240,0,IVrw.Price,true);
+                OutString(300,0,INr.UPrice1,true);
+                OutString(360,0,IVrw2.Price,true);
+                OutString(420,0,discp,true);
+                OutString(1,0,disc,true);
+                EndFormat;
+                CurSerial = IVr.SerNr;
+              end;
+            end;
+          end;
+        end;
+      end;
+  end;
+  if(RepSpec.flags[1]==1) then begin
+    tempivrwcnt = MatRowCnt(IVtemp);
+    for (i=0;i<tempivrwcnt;i=i+1) begin
+      MatRowGet(IVtemp,i,IVtemprw);
+      StartFormat(15);
+      OutString(0,"DblIVVc",IVtemprw.OrdRow,false);
+      OutString(55,"DblINVc",IVtemprw.ArtCode,false);
+      OutString(105,0,IVtemprw.Spec,false);
+      OutString(240,0,IVtemprw.Price,true);
+      OutString(300,0,IVtemprw.Sum,true);
+      OutString(360,0,IVtemprw.BasePrice,true);
+      OutString(420,0,IVtemprw.vRebate,true);
+      OutString(1,0,IVtemprw.rowGP,true);
+      EndFormat;
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;
+

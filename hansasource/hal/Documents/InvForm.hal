@@ -1,0 +1,288 @@
+external procedure RecordActionIV_PrintOrg2(record RcVc,var record IVVc,string,Boolean);
+external procedure RecordActionIV_Print2(record RcVc,var record IVVc,string,Boolean);
+external function Integer IVTestApprovalStatus(record IVVc);
+remote function integer TestEinvoiceQueueRemote(LongInt);
+external procedure RecordActionIV_Print(var record IVVc,string,string,Integer,Boolean);
+external procedure RecordActionIV_PrintOrg(var record IVVc,string,string,Integer,Boolean);
+external function Boolean FindLocalSerialPortDevice(Integer,LongInt,string,var record LSerialPortDeviceVc);
+external function Boolean IsEnterprise();
+
+function Boolean TestElecInvoicing(string custcode,LongInt sernr)
+begin
+  Boolean res;
+  record CUVc CUr;
+  record EInvoiceQueVc EIQr;
+  
+  CUr.Code = custcode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (CUr.EGOFlag!=0) then begin res = true; end;
+    if (CUr.EDIFlag!=0) then begin res = true; end;
+  end; 
+  if (CountRecords("EInvoiceQueVc")>0) then begin
+    if (res==false) then begin
+      EIQr.FileName = "IVVc";
+      EIQr.RecSerNr = sernr;
+      res = ReadFirstKey("FileName",EIQr,2,true);
+    end;
+    if (res==false) then begin
+      EIQr.FileName = "ArgIVVc";
+      EIQr.RecSerNr = sernr;
+      res = ReadFirstKey("FileName",EIQr,2,true);
+    end;
+    if (res==false) then begin
+      EIQr.FileName = "estIVVc";
+      EIQr.RecSerNr = sernr;
+      res = ReadFirstKey("FileName",EIQr,2,true);
+    end;
+  end;
+  TestElecInvoicing = res;
+  return;
+end;
+
+function Boolean TestEDIInvoicing(string custcode)
+begin
+  Boolean res;
+  record CUVc CUr;
+  
+  CUr.Code = custcode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (CUr.EGOFlag!=0) then begin res = true; end;
+    if (CUr.EDIFlag!=0) then begin res = true; end;
+  end; 
+  TestEDIInvoicing = res;
+  return;
+end;
+
+procedure PrintInvoices(record RcVc RepSpec)
+BEGIN
+  record IVVc IVr;
+  Boolean TrHs,testf;
+  LongInt afr,ato;
+  Integer tf;
+  Integer err;
+  string 255 frcu,tocu,aosnfr,aosnto;
+  record ARVc ARr;
+  string 255 index;
+  record LocalMachineBlock LMb;
+  record LSerialPortDeviceVc LSPDr;
+  boolean fiscalf;
+  
+  StartPrintDialogGroup;
+  fiscalf = false;
+  BlockLoad(LMb);
+  if (HasLocalization("SWE")) then begin
+    if (FindLocalSerialPortDevice(kSerialPortDeviceClassFiscalControlUnit,kSerialPortDeviceModelFiscPrinterCLEANCASHTypeA,LMb.LocalMachineCode,LSPDr)) then begin  
+      fiscalf = true;
+    end else begin
+      if (FindLocalSerialPortDevice(kSerialPortDeviceClassFiscalControlUnit,kSerialPortDeviceModelFiscPrinterCLEANCASHTypeC,LMb.LocalMachineCode,LSPDr)) then begin  
+        fiscalf = true;
+      end;
+    end;
+  end;
+  
+  index = "SerNr";
+  if (IsStandardProduct or IsSberbankProduct) then begin
+    if (HasLocalization("POL")) then begin
+      index = "OfficialSerNr";
+      if (RepSpec.f3!="*") then begin
+        aosnfr = FirstInRange(RepSpec.f3,10);
+        aosnto = LastInRange(RepSpec.f3,10);
+      end;
+    end;
+  end;
+  if (blank(RepSpec.f1) or RepSpec.f1=="*") then begin
+    index = "TransDate";
+  end;
+  if (IsEnterprise and nonblank(RepSpec.f3)) then begin
+    index = "OfficialSerNr";
+    if (RepSpec.f3!="*") then begin
+      aosnfr = FirstInRange(RepSpec.f3,10);
+      aosnto = LastInRange(RepSpec.f3,10);
+    end;
+  end;
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  frcu = FirstInRange(RepSpec.f2,10);
+  tocu = LastInRange(RepSpec.f2,10);
+  IVr.SerNr = afr;
+  IVr.TransDate = RepSpec.sStartDate;
+  IVr.OfficialSerNr = aosnfr;
+  if (blank(RepSpec.f1)) and (blank(RepSpec.f3)) then begin
+    TrHs = false;
+  end else begin
+    TrHs = true;
+  end;
+  while (LoopKey(index,IVr,1,TrHs)) begin
+    switch (index) begin
+      case "TransDate":
+        if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          TrHs = false;
+        end;
+      case "OfficialSerNr":
+        if (nonblank(RepSpec.f3)) then begin
+          if (IVr.OfficialSerNr<aosnfr) then begin TrHs = false; end;
+          if (IVr.OfficialSerNr>aosnto) then begin TrHs = false; end;
+        end;
+      otherwise   
+        if (nonblank(RepSpec.f1) and RepSpec.f1!="*") then begin
+          if (ato!=-1) then begin
+            if (IVr.SerNr>ato) then begin TrHs = false; end;
+          end;
+        end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f2)) then begin
+        if (IVr.CustCode<frcu) then begin testf = false; end;  
+        if (IVr.CustCode>tocu) then begin testf = false; end;  
+      end;  
+      if (nonblank(RepSpec.f1) and RepSpec.f1!="*") then begin
+        if (IVr.SerNr<afr) then begin testf = false; end;
+        if (IVr.SerNr>ato) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f3) and RepSpec.f3!="*") then begin
+        if (IVr.OfficialSerNr<aosnfr) then begin testf = false; end;
+        if (IVr.OfficialSerNr>aosnto) then begin testf = false; end;
+      end;
+      if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.Language)) then begin
+        if (IVr.LangCode!=RepSpec.Language) then begin
+          testf = false;
+        end;  
+      end;  
+      if (TestEDIInvoicing(IVr.CustCode)) then begin 
+        if (RepSpec.flags[28]==0) then begin
+          testf = false; 
+        end;
+      end;  
+      if (RepSpec.flags[5]==0) then begin
+        if (TestElecInvoicing(IVr.CustCode,IVr.SerNr)) then begin 
+          testf = false; 
+        end;
+      end;  
+      if (RepSpec.flags[11]!=0) then begin
+        if (IVr.Invalid!=0) then begin testf = false; end;
+      end;
+      if (RepSpec.long2!=-1) then begin
+        if (IVr.LastRemndr!=RepSpec.long2) then begin
+          testf = false;
+        end;  
+      end;    
+      tf = RepSpec.flags[1];
+      if (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+        tf = RepSpec.flags[2];
+      end;
+      if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        tf = RepSpec.flags[3];
+      end;
+      if (IVr.InvType==kInvoiceTypeInterest) then begin
+        tf = RepSpec.flags[4];
+      end;
+      if (tf==0) then begin testf = false; end;
+      if (testf) then begin
+        if (RepSpec.flags[10]!=0) then begin
+          ARr.InvoiceNr = IVr.SerNr;
+          testf = ReadFIrstMain(ARr,1,true);
+        end;
+      end;
+      if (RepSpec.repname=="Inv1Form") then begin 
+        if (IVr.OKFlag==0) then begin// and IVr.InvType==
+          testf = true;
+          IVr.Prntdf = 0;
+        end;       
+      end;      
+      err = IVTestApprovalStatus(IVr);
+      if (err!=0) then begin
+        MessageBox(err,": " & IVr.SerNr);
+        testf = false;
+      end;
+      if (fiscalf) then begin
+        switch (IVr.InvType) begin
+          case kInvoiceTypeCashInvoiceReceiptPRT:
+            goto LkInvoiceTypeCash;
+          case kInvoiceTypeCash:
+LkInvoiceTypeCash:;          
+            if (IVr.OKFlag==0) then begin
+              testf = false;
+            end else begin
+              if (RepSpec.OnlyUnprntd==2) then begin
+                testf = false;
+              end;
+            end;
+        end;
+      end;
+      if (testf) then begin        
+        if (RepSpec.OnlyUnprntd==0) then begin
+          if (IVr.Prntdf==0) then begin
+            RecordActionIV_Print2(RepSpec,IVr,"",false);//RecidAction(rlIVLPrint,IVVc,recid,NIL);
+          end;  
+        end;
+        if (RepSpec.OnlyUnprntd==1) then begin
+          RecordActionIV_Print2(RepSpec,IVr,"",false);//RecidAction(rlIVLPrint,IVVc,recid,NIL);
+        end;
+        if (RepSpec.OnlyUnprntd==2) then begin
+          RecordActionIV_PrintOrg2(RepSpec,IVr,"",false);//RecidAction(rlInvPrintOrg,IVVc,recid,NIL);
+        end;
+      end;  
+    end;
+  end;
+LPrintInvoices:;
+  EndPrintDialogGroup;
+  RETURN;
+END;
+
+global
+procedure InvForm(record RcVc RepSpec)
+BEGIN
+  PrintInvoices(RepSpec);
+  RETURN;
+END;
+
+global
+procedure CredInvForm(record RcVc RepSpec)
+BEGIN
+  PrintInvoices(RepSpec);
+  RETURN;
+END;
+
+global
+procedure CashInvForm(record RcVc RepSpec)
+BEGIN
+  PrintInvoices(RepSpec);
+  RETURN;
+END;
+
+global
+procedure CashInvRecPRTForm(record RcVc RepSpec)
+BEGIN
+  PrintInvoices(RepSpec);
+  RETURN;
+END;
+
+global
+procedure IIInvForm(record RcVc RepSpec)
+BEGIN
+  PrintInvoices(RepSpec);
+  RETURN;
+END;
+
+global
+procedure Inv1Form(var record RcVc RepSpec)
+BEGIN
+  RepSpec.flags[1] = 1;
+  RepSpec.flags[2] = 1;
+  RepSpec.flags[3] = 1;
+  RepSpec.flags[4] = 1;
+  RepSpec.OnlyUnprntd = 1;
+  PrintInvoices(RepSpec);
+  RETURN;
+END;
+
+global
+procedure ProjInvForm(record RcVc RepSpec)
+BEGIN
+  PrintInvoices(RepSpec);
+  RETURN;
+END;

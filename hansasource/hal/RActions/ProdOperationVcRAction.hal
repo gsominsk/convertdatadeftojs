@@ -1,0 +1,1559 @@
+external procedure B1ToB2ValRM(val,val,val,var val,roundmode);
+external function roundmode GetCostRoundModeRB();
+external function Boolean StockRecordForLocationAllowed(string,string,string,date,integer,var Integer,var string);
+external function LongInt DateDiff(Date,Date);
+external function LongInt TimeToMinutes(Time);
+external procedure WarnFutureDate(Boolean,Date);
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external function string 255 GetMachineGroup(string);
+external function roundmode SetRoundModeD(Integer);
+external updating procedure UpdateTrans_Stock(record TRVc);
+external function Integer IsUnOKAllowed_ProdOperationVc(record ProdOperationVc);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external function Boolean ItemHistExists(string,LongInt);
+external updating procedure StoreUnOKHistory(string,LongInt,Date,Time,string);
+external updating procedure UpdateRecalcStockNeeded(Integer);
+//external updating procedure CreateQualConFromProdOperationOnSave(record ProdOperationVc);
+external function Boolean IsPhantomItem(record INVc);
+external function Time DivideTime(Time,val);
+external function Time MultiplyTime(Time,val);
+external function Integer Nr_SequenceProdOperations(record ProdOperationVc);
+external function Boolean SerNrTestProdOperationVc(LongInt,Date,var Boolean);
+external updating procedure ProdOperationUpdateItemHistory(record ProdOperationVc);
+external updating procedure ProdOperationUpdateCostPrice(record ProdOperationVc);
+external updating procedure ProdOperationUpdateSerialNr(record ProdOperationVc,Boolean);
+external function Boolean CanOKStockRecord(var Integer);
+external updating procedure UpdatePosition(string,string,string,val,val,val);
+external updating procedure UpdateInstock(string,string,string,string,date,val,val,val,val,val,val,val,val,val);
+external function Boolean ShouldItemUpdateStock(string);
+external updating function val NextLocOKNr(string);
+external function Integer MakeTransFromProdOperation(record TRVc,record ProdOperationVc,Boolean);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean IsSerialNrCorrect(string);
+external updating procedure SaveTrans(record TRVc);
+external procedure ProdOperationFillFIFO(record ProdOperationVc,Boolean);
+external function Boolean ExistStockTrans(string,Date,var Integer,var string,string,LongInt,record MainStockBlock);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external function Boolean SerialNrAvail(string,string,string,val);
+external function Boolean SerialNrAvail2(string,string,val);
+external function Integer CheckSerialStatus(string,string,var string);
+external function Boolean Date2Test(string,Date,string,Integer);
+external procedure GetCurUser(var record UserVc);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure B1ToB2Val(val,val,val,var val);
+
+updating procedure ProdOperCalcItemCost(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,Boolean updatef)
+begin
+  Integer mchrow,outrow,rwcnt,i;
+  row ProdOperationVc ProdOprrw;
+  val sum,cost,sixty;
+  record ProdSettingsBlock psb;
+  record AT2UnitVc AT2Unitr;
+  record INVc INr;
+  val idlemin,runmin;
+  Boolean updatecost;
+  record ProdVc Prodr;
+    
+  BlockLoad(psb);
+  
+  updatecost = false;
+  if (psb.AutoCalcCostf!=0) and (nonblank(psb.MachineCostItem)) then begin
+    updatecost = true;
+    if (updatef) then begin
+      updatecost = false;
+      if ((ProdOpr.StartTime!=ProdOp2r.StartTime) or 
+          (ProdOpr.EndTime!=ProdOp2r.EndTime) or 
+          (ProdOpr.StartDate!=ProdOp2r.StartDate) or 
+          (ProdOpr.ProdDate!=ProdOp2r.ProdDate) or 
+          (ProdOpr.Qty!=ProdOp2r.Qty) or
+          (ProdOpr.Machine!=ProdOp2r.Machine)) then begin
+        updatecost = true;
+      end;
+    end;
+  end;
+  if (updatecost) then begin
+    Prodr.SerNr = ProdOpr.ProdNr;
+    ReadFirstMain(Prodr,1,true);
+    
+    rwcnt = MatRowCnt(ProdOpr);
+    outrow = -1;
+    mchrow = rwcnt;
+    sum = 0.0;
+  
+    for (i = 0; i<rwcnt; i = i + 1) begin
+      MatRowGet(ProdOpr,i,ProdOprrw);
+      if (ProdOprrw.InQty>0) then begin
+        if (ProdOprrw.Item==psb.MachineCostItem) then begin
+          mchrow = i;
+        end else begin
+//          sum = sum + ProdOprrw.InQty * (ProdOprrw.ItemCost + ProdOprrw.ExtraCost);
+          sum = sum + ProdOprrw.InQty * ProdOprrw.ItemCost;
+        end;
+      end else begin
+        outrow = i;
+      end;
+      if (ProdOprrw.OutQty>0) then begin
+//        sum = sum + ProdOprrw.OutQty * ProdOprrw.ExtraCost;
+      end;
+    end;
+    ClearRow(ProdOpr,ProdOprrw,1);
+    AT2Unitr.InventoryNr = ProdOpr.Machine;
+    if (ReadFirstMain(AT2Unitr,1,true)) then begin
+      sixty = 60;
+      idlemin = TimeToMinutes(ProdOpr.QueueTime);
+      runmin = TimeToMinutes(ProdOpr.EndTime) - TimeToMinutes(ProdOpr.StartTime);
+    
+      if (NonBlankDate(ProdOpr.StartDate) and NonBlankDate(ProdOpr.ProdDate)) then begin
+        runmin = runmin + 60 * 24 * DateDiff(ProdOpr.ProdDate,ProdOpr.StartDate);
+      end;
+    
+      cost = 0;
+      if (AT2Unitr.IdleCost>0) then begin
+        cost = cost + (Round(AT2Unitr.IdleCost / sixty,SetRoundModeD(2))) * (idlemin/Prodr.TotalProdOrdQty);
+      end;
+      if (runmin>0) then begin
+        if (AT2Unitr.RunCost>0) then begin
+          cost = cost + ((AT2Unitr.RunCost * runmin)/sixty);
+        end;
+      end;
+      if (cost>0) then begin
+			  switch (ProdOpr.RowsHoldActualQty) begin
+			    case 1: ;
+			    otherwise cost = cost / ProdOpr.ActualQty;
+			  end;              
+      end;
+      INr.Code = psb.MachineCostItem;
+      if (ReadFirstMain(INr,1,true)) then begin end;
+      ProdOprrw.Item = psb.MachineCostItem;
+      ProdOprrw.Comment = INr.Name;
+      ProdOprrw.InQty = 1;
+      ProdOprrw.ItemCost = cost;
+      sum = sum + cost;
+      MatRowPut(ProdOpr,mchrow,ProdOprrw);
+    end;
+    
+    if (outrow>-1) then begin
+      MatRowGet(ProdOpr,outrow,ProdOprrw);
+      sum = sum / ProdOprrw.OutQty;
+      ProdOprrw.ItemCost = sum;
+      MatRowPut(ProdOpr,outrow,ProdOprrw);
+      ProdOperationFillFIFO(ProdOpr,true);
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt ProdOperationVcRecordRemoveTest(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (ProdOpr.PRStatusFlag!=0) then begin
+    if (ProdOpr.ProdDate>DBLockRec.DeleteBeforeDate) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+      res = 0;
+      goto LProdOperationVcRecordRemoveTest;
+    end;
+  end;
+  if (((ProdOpr.PRStatusFlag>1) and (ProdOpr.PRStatusFlag<4)) or (ProdOpr.PRStatusFlag==5)) then begin
+    if (long3>0) then begin
+      MessageBox(1544,"");
+    end;
+    res = 0;
+  end; 
+LProdOperationVcRecordRemoveTest:;
+  ProdOperationVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+function LongInt ProdOperationVcRecordDefaults(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt long1,LongInt long2)
+BEGIN
+  LongInt res;
+  Time blankt;
+  record UserVc USr;
+  record ProdSettingsBlock PSb;
+  
+  BlockLoad(PSb);  
+  res = 0;
+  ProdOpr.SerNr = -1;
+  ProdOpr.StartDate = CurrentDate;
+  if (SingleUserMode) then begin
+    ProdOpr.SerNr = NextSerNr("ProdOperationVc",ProdOpr.StartDate,-1,false,"");
+  end;
+  ProdOpr.DoneFlag = 0;
+  ProdOpr.PRStatusFlag = 0;
+  ProdOpr.FinnishedFlag = 0;
+  ProdOpr.Qty = 1;
+  ProdOpr.ActualQty = BlankVal;
+  GetCurUser(USr);  
+  ProdOpr.Location = USr.Location;
+  ProdOpr.StartTime = blankt;
+  ProdOpr.EndTime = blankt;
+  ProdOpr.ProdOrdNr = -1;
+  ProdOpr.RowsHoldActualQty = PSb.ProdRowsHoldActualQty;
+  ProdOperationVcRecordDefaults = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdOperationVcRecordDuplicate(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt long1,LongInt long2)
+BEGIN
+  LongInt res;
+  Time bt;
+  record ProdSettingsBlock PSb;
+  
+  BlockLoad(PSb);
+  res = 0;
+  ProdOpr.SerNr = -1;
+  ProdOpr.DoneFlag = 0;
+  ProdOpr.PRStatusFlag = 0;
+  ProdOpr.FinnishedFlag = 0;
+  ProdOpr.LocOKNr = blankval;
+  ProdOpr.ProdOrdNr = -1;
+  ProdOpr.StartTime = bt;
+  ProdOpr.EndTime = bt;
+  ProdOpr.ActualQty = BlankVal;
+  ProdOpr.ProdDate = CurrentDate;
+  if (SingleUserMode) then begin
+    ProdOpr.SerNr = NextSerNr("ProdOperationVc",ProdOpr.ProdDate,-1,false,"");
+  end;  
+  ProdOpr.RowsHoldActualQty = PSb.ProdRowsHoldActualQty;
+  WarnFutureDate(true,ProdOpr.ProdDate);
+  ProdOperationVcRecordDuplicate = res;      
+  RETURN;
+END;
+
+global
+updating function LongInt ProdOperationVcRecordRemove(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  ProdOperationVcRecordRemove = res;
+  return;
+end;
+
+procedure SetProdOperationFlags(var record ProdOperationVc ProdOpr)
+begin
+  switch (ProdOpr.PRStatusFlag) begin
+    case 0: ProdOpr.FinnishedFlag = 0;
+    case 2: ProdOpr.FinnishedFlag = 0;
+    case 3: ProdOpr.FinnishedFlag = 1;
+    case 4: ProdOpr.FinnishedFlag = 1;
+    case 5: ProdOpr.FinnishedFlag = 1;
+  end;
+  switch (ProdOpr.PRStatusFlag) begin
+    case 0: ProdOpr.DoneFlag = 0;  // Created 
+    case 2: ProdOpr.DoneFlag = 45; // Started 
+    case 3: ProdOpr.DoneFlag = 18; // Finnished 
+    case 4: ProdOpr.DoneFlag = 18; // Canceled 
+    case 5: ProdOpr.DoneFlag = 18; // Finnished 
+  end;
+  return;
+end;
+
+procedure SetProdOperationTime(record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,Boolean updatef)
+begin
+  if (ProdOpr.PRStatusFlag==2) then begin
+    if (updatef) then begin
+      if (ProdOp2r.PRStatusFlag<2) then begin
+        if (blanktime(ProdOpr.StartTime)) then begin
+          ProdOpr.StartTime = CurrentTime;
+        end;
+        if (blankdate(ProdOpr.StartDate)) then begin
+          ProdOpr.StartDate = CurrentDate;
+        end;
+      end;
+    end else begin
+      if (blanktime(ProdOpr.StartTime)) then begin
+        ProdOpr.StartTime = CurrentTime;
+      end;
+      if (blankdate(ProdOpr.StartDate)) then begin
+        ProdOpr.StartDate = CurrentDate;
+      end;
+    end;
+  end;
+  if ((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) then begin
+    if (updatef) then begin
+      if (ProdOp2r.PRStatusFlag<3) then begin
+        if (blanktime(ProdOpr.StartTime)) then begin
+          ProdOpr.StartTime = AddMinutes(CurrentTime,-1);
+        end;
+        if (blanktime(ProdOpr.EndTime)) then begin
+          ProdOpr.EndTime = CurrentTime;
+        end;
+        if (blankdate(ProdOpr.StartDate)) then begin
+          ProdOpr.StartDate = CurrentDate;
+        end;
+      end;
+    end else begin
+      if (blanktime(ProdOpr.StartTime)) then begin
+        ProdOpr.StartTime = AddMinutes(CurrentTime,-1);
+      end;
+      if (blanktime(ProdOpr.EndTime)) then begin
+        ProdOpr.EndTime = CurrentTime;
+      end;
+      if (blankdate(ProdOpr.StartDate)) then begin
+        ProdOpr.StartDate = CurrentDate;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordSave(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  SetProdOperationFlags(ProdOpr);
+  if ((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) then begin
+    ProdOpr.LocOKNr = NextLocOKNr(ProdOpr.Location);
+  end;
+  ProdOperationVcRecordSave = res;
+  return;
+end;
+
+updating procedure UpdateProdOperationNextSeq(record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r)
+begin
+  record ProdOperationVc nextProdOpr;
+  record ProdOperationVc oldnextProdOpr;
+  Integer cursequenceoperations;
+  Boolean found,updatef;
+  string 255 keystr;
+  Integer keys;
+  val newq;
+  Integer i,rwcnt;  
+  row ProdOperationVc ProdOprw;
+  
+/*PROD*/  
+  updatef = true;
+  if (Nr_SequenceProdOperations(ProdOpr)>1) then begin
+	  if (ProdOpr.SubSequence<=0) then begin
+			if (updatef) then begin
+		    nextProdOpr.Sequence = ProdOpr.Sequence + 1;
+	      nextProdOpr.ProdNr = ProdOpr.ProdNr;
+		    nextProdOpr.PRStatusFlag = 0; 
+	  	  if (ReadFirstKey("Sequence",nextProdOpr,3,true)) then begin
+	        updatef = false;
+	      end;
+		  end;
+			if (updatef) then begin
+			  nextProdOpr.Sequence = ProdOpr.Sequence + 1;
+			  nextProdOpr.ProdNr = ProdOpr.ProdNr;
+			  nextProdOpr.PRStatusFlag = 2; 
+			  if (ReadFirstKey("Sequence",nextProdOpr,3,true)) then begin
+		      updatef = false;
+		    end;
+		  end;
+		end;
+	end;
+	if (updatef) then begin
+    found = true;
+    ResetLoop(nextProdOpr);
+	  nextProdOpr.Sequence = ProdOpr.Sequence + 1;
+	  nextProdOpr.ProdNr = ProdOpr.ProdNr;
+	  while (LoopKey("Sequence",nextProdOpr,2,found)) begin
+	    if (nextProdOpr.Sequence!=(ProdOpr.Sequence + 1)) then begin found = false; end;
+	    if (nextProdOpr.ProdNr!=ProdOpr.ProdNr) then begin found = false; end;
+	    if (found) then begin
+			  if (nextProdOpr.PRStatusFlag==0) or (nextProdOpr.PRStatusFlag==2) then begin
+			    RecordCopy(oldnextProdOpr,nextProdOpr);
+			    newq = ProdOpr.ActualQty - ProdOp2r.ActualQty;
+			    nextProdOpr.Qty = nextProdOpr.Qty + newq;
+			    rwcnt = MatRowCnt(nextProdOpr);
+			    for (i=0;i<rwcnt;i=i+1) begin
+			      MatRowGet(nextProdOpr,i,ProdOprw);
+			      switch (ProdOpr.RowsHoldActualQty) begin
+			        case 1: 
+			          if (ProdOprw.InQty!=0) then begin
+  			          ProdOprw.InQty = ProdOprw.InQty + ProdOprw.InQty*newq;
+			          end;
+			          if (ProdOprw.OutQty!=0) then begin
+  			          ProdOprw.OutQty = ProdOprw.OutQty + ProdOprw.OutQty*newq;
+  			        end;
+			        otherwise ;
+			      end;
+			      MatRowPut(nextProdOpr,i,ProdOprw);
+			    end;
+			    if (RecordUpdate(oldnextProdOpr,nextProdOpr,false)) then begin
+			    end;
+			  end;
+			end;
+	  end;
+	end;
+  RETURN;
+END;
+
+global
+updating procedure UpdateProdOperationOut(record ProdOperationVc ProdOpr,Boolean addf)
+begin
+  record MainStockBlock MSb;
+  string 255 location;
+  row ProdOperationVc ProdOprw;
+  Integer i,rwcnt;
+  val t,inst,prodord,q2;
+  record INVc INr;
+  Boolean instockf,outstockf,testf;
+  
+  switch (ProdOpr.PRStatusFlag) begin
+    case kPRStatusCancelled: 
+      goto LUpdateProdOperationOut;
+  end;
+  BlockLoad(MSb);
+  location = ProdOpr.Location;
+  if (blank(location)) then begin
+    location = MSb.MainStock;
+  end;
+  rwcnt = MatRowCnt(ProdOpr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdOpr,i,ProdOprw);
+    if (ReadFirstItem(ProdOprw.Item,INr,false,false)) then begin end;
+    if (INr.ItemType==kItemTypeStocked) then begin
+      switch (ProdOpr.PRStatusFlag) begin
+        case kPRStatusFinished:
+          if (ProdOprw.Discarded!=0) then begin
+            if (addf) then begin
+              outstockf = true;
+              instockf = false;
+            end else begin
+              outstockf = true;
+              instockf = true;
+            end;
+          end else begin
+            outstockf = true;
+            instockf = true;
+          end;
+        case kPRStatusFinishedandDiscarded:
+          if (addf) then begin
+            outstockf = true;
+            instockf = false;
+          end else begin
+            outstockf = true;
+            instockf = true;
+          end;
+      end;
+	    inst = blankval;
+	    prodord = blankval;
+	    q2 = blankval;    
+
+	      inst = ProdOprw.OutQty - ProdOprw.InQty;
+	      switch (ProdOpr.RowsHoldActualQty) begin
+	        case 1: ;
+	        otherwise inst = Round(inst*ProdOpr.ActualQty,SetRoundModeD(3));
+	      end;
+	      
+	      if (MSb.UnitConvCalc==0) then begin
+	        q2 = inst * ProdOprw.Coefficient;
+	      end else begin
+	        q2 = inst / ProdOprw.Coefficient;
+	      end;
+
+      if ((ProdOpr.PRStatusFlag!=3) and (ProdOpr.PRStatusFlag!=5)) then begin
+	      switch (ProdOpr.RowsHoldActualQty) begin
+	        case 1: prodord = ProdOprw.InQty;
+	        otherwise prodord = ProdOprw.InQty*ProdOpr.ActualQty;
+	      end;
+	    end;
+	    if (addf==false) then begin
+	      inst = -inst;
+	      q2 = -q2;
+	      prodord = -prodord;
+	    end;
+
+      testf = false;
+	    if ((inst!=0) or (prodord!=0) or (q2!=0)) then begin
+        testf = true;
+      end;
+      if (testf) then begin
+        if (ProdOprw.OutQty>0) then begin
+          testf = instockf;
+        end;
+        if (ProdOprw.InQty>0) then begin
+          testf = outstockf;
+        end;
+      end;
+
+      if (testf) then begin
+	      if (ShouldItemUpdateStock(ProdOprw.Item)) then begin
+	        UpdateInstock("ProdOperationVc",ProdOpr.SerNr,ProdOprw.Item,location,ProdOpr.ProdDate,inst,t,t,t,t,q2,prodord,t,t);
+	        UpdatePosition(ProdOprw.Item,location,ProdOprw.PosCode,inst,q2,t);
+	      end;
+	    end;
+	  end;
+  end;
+LUpdateProdOperationOut:;  
+  return;
+end;
+
+updating procedure ProdOperationUpdateProd(record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,Boolean addf)
+begin
+  row ProdOperationVc ProdOprw;
+  record ProdVc Prodr;
+  record ProdVc oldProdr;
+  row ProdVc Prodrw;
+  Integer i,rwcnt;
+  Integer opi,oprwcnt;
+  val t;
+  
+  Prodr.SerNr = ProdOpr.ProdNr;
+  if (ReadFIrstMain(Prodr,1,true)) then begin
+    RecordCopy(oldProdr,Prodr);
+	  if (RecordValid(ProdOp2r)) then begin
+	    t = 0;
+	    rwcnt = MatRowCnt(Prodr);
+	    for (i=0;i<rwcnt;i=i+1) begin
+	      MatRowGet(Prodr,i,Prodrw);
+	      if (Prodrw.InQty>0) then begin
+		      switch (ProdOp2r.RowsHoldActualQty) begin
+		        case 1: 
+	            t = t - Prodrw.InQty*Prodrw.ItemCost*ProdOp2r.Qty;
+		        otherwise 
+		          t = t - Prodrw.InQty*Prodrw.ItemCost;
+		      end;        
+	      end;
+	      if (Prodrw.OutQty>0) then begin
+	        oprwcnt = MatRowCnt(ProdOp2r);
+	        for (opi=0;opi<oprwcnt;opi=opi+1) begin
+    	      MatRowGet(ProdOp2r,i,ProdOprw);
+    	      if (ProdOprw.Item==Prodrw.Item) then begin
+    	        Prodrw.ActualQty = Prodrw.ActualQty - ProdOprw.OutQty;
+    	      end;
+	        end;
+      	  MatRowPut(Prodr,i,Prodrw);
+	      end;
+	    end;
+	    if (addf) then begin
+	      Prodr.AcumCostPrice = Prodr.AcumCostPrice + t;
+	    end else begin
+	      Prodr.AcumCostPrice = Prodr.AcumCostPrice - t;
+	    end;    
+	  end;
+	  t = 0;
+    rwcnt = MatRowCnt(Prodr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      if (Prodrw.InQty>0) then begin
+	      switch (ProdOpr.RowsHoldActualQty) begin
+	        case 1: 
+            t = t + Prodrw.InQty*Prodrw.ItemCost*ProdOpr.Qty;
+	        otherwise 
+	          t = t + Prodrw.InQty*Prodrw.ItemCost;
+	      end;        
+      end;
+	    if (Prodrw.OutQty>0) then begin
+        if (Prodrw.OutQty>0) then begin
+	        oprwcnt = MatRowCnt(ProdOpr);
+	        for (opi=0;opi<oprwcnt;opi=opi+1) begin
+    	      MatRowGet(ProdOpr,i,ProdOprw);
+    	      if (ProdOprw.Item==Prodrw.Item) then begin
+    	        Prodrw.ActualQty = Prodrw.ActualQty + ProdOprw.OutQty;
+    	      end;
+	        end;
+      	  MatRowPut(Prodr,i,Prodrw);
+	      end;
+	    end;
+    end;
+    if (addf) then begin
+      Prodr.AcumCostPrice = Prodr.AcumCostPrice + t;
+    end else begin
+      Prodr.AcumCostPrice = Prodr.AcumCostPrice - t;
+    end;    
+    if (RecordUpdate(oldProdr,Prodr,false)) then begin end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordSaveAfter(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if ((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) then begin
+    ProdOperationUpdateProd(ProdOpr,ProdOp2r,true);
+    UpdateProdOperationOut(ProdOpr,true);
+    ProdOperationUpdateSerialNr(ProdOpr,false);
+    ProdOperationUpdateCostPrice(ProdOpr);
+    ProdOperationUpdateItemHistory(ProdOpr);
+
+//    ProdMakeSD(ProdOpr);
+//    UpdateProdOrdFinished(ProdOpr);
+  end;
+//  if (ProdOpr.PRStatusFlag==2) then begin
+//    UpdateProdOrdStarted(ProdOpr);
+//  end;
+//  if (ProdOpr.PRStatusFlag==0) or (ProdOpr.PRStatusFlag==2) then begin
+//    CreateQualConFromProdOperationOnSave(ProdOpr);
+//  end;
+  ProdOperationVcRecordSaveAfter = res;
+  return;
+end;
+
+procedure ProdOperationVcConvertB1ToB2Date(record ProdOperationVc ProdOpr)
+begin
+  val fr,to1,to2,br1,br2,t;
+  string 20 curncy;
+  Integer i,rwcnt;
+  row ProdOperationVc ProdOprw;
+
+  GetFullCurncyRate(curncy,ProdOpr.ProdDate,fr,to1,to2,br1,br2);
+  rwcnt = MatRowCnt(ProdOpr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdOpr,i,ProdOprw);
+    B1ToB2ValRM(ProdOprw.ItemCost,br1,br2,t,GetCostRoundModeRB);
+    ProdOprw.ItemCost = t;
+    MatRowPut(ProdOpr,i,ProdOprw);
+  end;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordImport(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  string 5 crncycode;
+  Boolean gBase1ToBase2;
+  record ConvMasterBlock cvm;
+
+  if (ProdOpr.DoneFlag==1) then begin
+    ProdOpr.PRStatusFlag = 3;
+  end;
+  SetProdOperationFlags(ProdOpr);
+  BlockLoad(cvm);
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+     ProdOperationVcConvertB1ToB2Date(ProdOpr);
+  end;
+  ProdOperationVcRecordImport = res;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordImportAfter(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Integer err;
+
+  if ((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) then begin
+    ProdOperationUpdateSerialNr(ProdOpr,false);
+  end;
+  if (ImportingTextBackup==false and CanOKStockRecord(err)==true) then begin
+    if ((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) then begin
+      ProdOperationUpdateCostPrice(ProdOpr);
+      ProdOperationUpdateItemHistory(ProdOpr);
+    end;
+  end;  
+  ProdOperationVcRecordImportAfter = res;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordUpdate(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  SetProdOperationFlags(ProdOpr);
+  if (((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) and ((ProdOp2r.PRStatusFlag!=3) and (ProdOp2r.PRStatusFlag!=5))) then begin
+    if (ItemHistExists("ProdOperationVc",ProdOpr.SerNr)==false) then begin
+      ProdOpr.LocOKNr = NextLocOKNr(ProdOpr.Location);
+    end;
+  end;
+  ProdOperationVcRecordUpdate = res;
+  return;
+end;
+
+global
+function val ProdOperationsSequenceQty(record ProdOperationVc curProdOpr)
+begin
+  val res;
+  record ProdOperationVc ProdOpr;
+  Boolean found;
+
+  res = curProdOpr.ActualQty;
+  ProdOpr.Sequence = curProdOpr.Sequence;
+	ProdOpr.ProdNr = curProdOpr.ProdNr;
+	while (LoopKey("Sequence",ProdOpr,2,found)) begin
+	  if (ProdOpr.Sequence!=curProdOpr.Sequence) then begin found = false; end;
+	  if (ProdOpr.ProdNr!=curProdOpr.ProdNr) then begin found = false; end;
+	  if (found) then begin
+  	  if (ProdOpr.SerNr!=curProdOpr.SerNr) then begin
+  	    res = res + ProdOpr.ActualQty;
+  	  end;
+	  end;
+	end;
+	ProdOperationsSequenceQty = res;
+  return;
+end;
+
+updating procedure ChildProdOperation(record ProdOperationVc ProdOpr)
+begin
+  record ProdOperationVc childProdOpr;
+  record ProdOperationVc lastProdOpr;
+  record ProdVc Prodr;
+  row ProdOperationVc childProdOprw;
+  Integer i,rwcnt;
+  Time bt;
+  Date bd;
+  val q;
+  Boolean newopf,timef;
+  
+  if ((ProdOpr.Qty - ProdOpr.ActualQty)>0) then begin
+    q = ProdOpr.Qty - ProdOpr.ActualQty;
+    newopf = true;
+    timef = true;
+  end else begin
+ 		lastProdOpr.Sequence = ProdOpr.Sequence + 1;
+		lastProdOpr.ProdNr = ProdOpr.ProdNr;
+ 		if (ReadFirstKey("Sequence",lastProdOpr,2,true)==false) then begin
+      q = ProdOperationsSequenceQty(ProdOpr);
+      if ((Prodr.Qty - q)>0) then begin
+        q = Prodr.Qty - q;
+        newopf = true;
+      end;
+		end;
+  end;
+  if (ProdOpr.PRStatusFlag==4) then begin
+    q = ProdOpr.Qty;
+    newopf = true;
+    timef = true;
+  end;
+//StopAlert("q " & q & " ProdOpr.Qty " & ProdOpr.Qty  & " ProdOpr.Qty " & ProdOpr.Qty);  
+  if (newopf) then begin
+    RecordCopy(childProdOpr,ProdOpr);
+    childProdOpr.Qty = q;
+    childProdOpr.ActualQty = blankval;
+    childProdOpr.PRStatusFlag = 0;
+    childProdOpr.StartTime = bt;
+    childProdOpr.EndTime = bt;
+    childProdOpr.StartDate = CurrentDate;
+    childProdOpr.EndDate = bd;
+    childProdOpr.ProdDate = CurrentDate;
+    if (timef) then begin
+      childProdOpr.SetupTime = DivideTime(ProdOpr.SetupTime,ProdOpr.Qty);
+      childProdOpr.SetupTime = MultiplyTime(childProdOpr.SetupTime,childProdOpr.Qty);
+      childProdOpr.QueueTime = DivideTime(ProdOpr.QueueTime,ProdOpr.Qty);
+      childProdOpr.QueueTime = MultiplyTime(childProdOpr.QueueTime,childProdOpr.Qty);
+      childProdOpr.MoveTime = DivideTime(ProdOpr.MoveTime,ProdOpr.Qty);
+      childProdOpr.MoveTime = MultiplyTime(childProdOpr.MoveTime,childProdOpr.Qty);
+    end else begin
+     //?
+    end;
+    rwcnt = MatRowCnt(childProdOpr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(childProdOpr,i,childProdOprw);
+      switch (childProdOpr.RowsHoldActualQty) begin
+        case 1: 
+          if (childProdOprw.InQty!=0) then begin
+            childProdOprw.InQty = childProdOprw.InQty/ProdOpr.ActualQty;//Find the sequence qty
+            childProdOprw.InQty = childProdOprw.InQty*childProdOpr.Qty;          
+          end;
+          if (childProdOprw.OutQty!=0) then begin
+            childProdOprw.OutQty = childProdOprw.OutQty/ProdOpr.ActualQty;//Find the sequence qty
+            childProdOprw.OutQty = childProdOprw.OutQty*childProdOpr.Qty;          
+          end;
+        otherwise ;
+      end;
+      MatRowPut(childProdOpr,i,childProdOprw);
+    end;
+    childProdOpr.SerNr = NextSerNr("ProdOperationVc",childProdOpr.ProdDate,-1,false,"");
+    if (RecordStore(childProdOpr,false)) then begin end;
+  end;
+  return;
+end;
+
+global
+updating procedure UnOKProductionOperation(record ProdOperationVc ProdOr,record ProdOperationVc ProdO2r,Boolean deltrf)
+begin
+//  ChildProdOperation(ProdOpr);//JJRECALCSTOCK
+//    ProdOperationUpdateProd(ProdOpr,ProdOp2r,true);//JJRECALCSTOCK
+    ProdOperationUpdateSerialNr(ProdOr,true);
+//    ProdOperationUpdateCostPrice(ProdOpr);//JJRECALCSTOCK
+  UpdateRecalcStockNeeded(1);
+  StoreUnOKHistory("ProdOperationVc",ProdOr.SerNr,CurrentDate,CurrentTime,CurrentUser);    
+  if (deltrf) then begin
+    DeleteTransaction(ProdOr.SerNr,ProdOperationYc);
+  end;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordUpdateAfter(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  val LocOKNr;
+  Boolean ihef;
+
+  ihef = ItemHistExists("ProdOperationVc",ProdOpr.SerNr);
+//  UpdateProdOperationNextSeq(ProdOpr,ProdOp2r);
+  if (((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) and ((ProdOp2r.PRStatusFlag!=3) and (ProdOp2r.PRStatusFlag!=5))) then begin
+    if (ihef==false) then begin
+      ChildProdOperation(ProdOpr);
+      ProdOperationUpdateProd(ProdOpr,ProdOp2r,true);
+    end;
+    UpdateProdOperationOut(ProdOpr,true);
+    ProdOperationUpdateSerialNr(ProdOpr,false);
+    if (ihef==false) then begin
+      ProdOperationUpdateCostPrice(ProdOpr);
+      ProdOperationUpdateItemHistory(ProdOpr);
+    end;
+    
+//    ProdMakeSD(ProdOpr);
+//    UpdateProdOrdFinished(ProdOpr);
+  end else begin
+//    if (ProdOpr.PRStatusFlag==2) and (ProdOp2r.PRStatusFlag!=2) then begin
+//      UpdateProdOrdStarted(ProdOpr);
+//    end;
+  end;
+//  if ((IVr.Invalid==0) and (IV2r.Invalid==0)) then begin
+  if ((ProdOpr.PRStatusFlag==0) and (ProdOp2r.PRStatusFlag!=0)) then begin//unok
+    UnOKProductionOperation(ProdOpr,ProdOp2r,true);
+  end;
+  ProdOperationVcRecordUpdateAfter = res;
+  return;
+end;
+
+function LongInt ProdOperationVc_FindPreviousSequenceNr(record ProdOperationVc ProdOpr)
+begin
+  LongInt res;
+  record ProdOperationVc prevseqProdOpr;
+  Boolean found;
+  
+	prevseqProdOpr.Sequence = ProdOpr.Sequence - 1;
+  prevseqProdOpr.ProdNr = ProdOpr.ProdNr;
+  found = true;
+  while (LoopBackKey("Sequence",prevseqProdOpr,2,found)) begin
+    if (prevseqProdOpr.Sequence>=ProdOpr.Sequence) then begin found = false; end;
+    if (prevseqProdOpr.ProdNr!=ProdOpr.ProdNr) then begin found = false; end;
+    if (found) then begin
+      res = prevseqProdOpr.Sequence;
+      goto LProdOperationVc_FindPreviousSequenceNr;
+    end;
+  end;
+LProdOperationVc_FindPreviousSequenceNr:;  
+  if (res<0) then begin
+  	res = ProdOpr.Sequence - 1;
+  end;
+  ProdOperationVc_FindPreviousSequenceNr = res;
+  return;
+end;
+
+function Boolean PrevOperationInSequenceOKed(record ProdOperationVc ProdOpr)
+begin
+  Boolean res;
+  record ProdOperationVc prevseqProdOpr;
+  record ProdOperationVc lProdOpr;
+  Boolean seqf,found,prevseqfound;
+  LongInt previoussequencenr;
+
+  if (ProdOpr.SubSequence>0) then begin
+    previoussequencenr = ProdOperationVc_FindPreviousSequenceNr(ProdOpr);
+		prevseqProdOpr.Sequence = previoussequencenr;
+		prevseqProdOpr.SubSequence = ProdOpr.SubSequence;
+    prevseqProdOpr.ProdNr = ProdOpr.ProdNr;
+    found = true;
+    while (LoopKey("SubSequence",prevseqProdOpr,3,found)) begin
+      if (prevseqProdOpr.Sequence>=ProdOpr.Sequence) then begin found = false; end;
+      if (prevseqProdOpr.SubSequence!=ProdOpr.SubSequence) then begin found = false; end;
+      if (prevseqProdOpr.ProdNr!=ProdOpr.ProdNr) then begin found = false; end;
+      if (found) then begin
+        prevseqfound = true;
+        found = false;
+      end;
+    end;        
+		if (prevseqfound) then begin
+			lProdOpr.Sequence = prevseqProdOpr.Sequence;
+			lProdOpr.SubSequence = prevseqProdOpr.SubSequence;
+	    lProdOpr.ProdNr = prevseqProdOpr.ProdNr;
+	  	lProdOpr.PRStatusFlag = 0;
+      seqf = ReadFirstKey("SubSequence",lProdOpr,4,true);
+      if (!seqf) then begin
+				lProdOpr.Sequence = prevseqProdOpr.Sequence;
+				lProdOpr.SubSequence = prevseqProdOpr.SubSequence;
+		    lProdOpr.ProdNr = prevseqProdOpr.ProdNr;
+		  	lProdOpr.PRStatusFlag = 2;
+	      seqf = ReadFirstKey("SubSequence",lProdOpr,4,true);
+      end;
+    end;
+  end;
+  if (!seqf) then begin
+    previoussequencenr = ProdOperationVc_FindPreviousSequenceNr(ProdOpr);
+		prevseqProdOpr.Sequence = previoussequencenr;
+    prevseqProdOpr.ProdNr = ProdOpr.ProdNr;
+    prevseqProdOpr.PRStatusFlag = kPRStatusCreated;
+    found = true;
+    ResetLoop(prevseqProdOpr);
+    while (LoopKey("Sequence",prevseqProdOpr,3,found)) begin
+      if (prevseqProdOpr.Sequence>=ProdOpr.Sequence) then begin found = false; end;
+      if (prevseqProdOpr.ProdNr!=ProdOpr.ProdNr) then begin found = false; end;
+      if (prevseqProdOpr.PRStatusFlag!=kPRStatusCreated) then begin found = false; end;
+      if (found) then begin
+        seqf = true;
+        found = false;
+      end;
+    end;        
+  end;
+  if (!seqf) then begin
+    if (ProdOpr.Sequence>1) then begin
+      previoussequencenr = ProdOperationVc_FindPreviousSequenceNr(ProdOpr);
+  	  prevseqProdOpr.Sequence = previoussequencenr;
+      prevseqProdOpr.ProdNr = ProdOpr.ProdNr;
+      prevseqProdOpr.PRStatusFlag = kPRStatusStarted;
+      found = true;
+      ResetLoop(prevseqProdOpr);
+      while (LoopKey("Sequence",prevseqProdOpr,3,found)) begin
+        if (prevseqProdOpr.Sequence>=ProdOpr.Sequence) then begin found = false; end;
+        if (prevseqProdOpr.ProdNr!=ProdOpr.ProdNr) then begin found = false; end;
+        if (prevseqProdOpr.PRStatusFlag!=kPRStatusStarted) then begin found = false; end;
+        if (found) then begin
+          seqf = true;
+          found = false;
+        end;
+      end;        
+  	end;
+  end;
+  res = !seqf;
+  PrevOperationInSequenceOKed = res;
+  return;
+end;
+
+/*
+function Boolean PrevOperationInSequenceOKed(record ProdOperationVc ProdOpr)
+begin
+  Boolean res;
+  record ProdOperationVc lProdOpr;
+  Boolean seqf;
+
+  if (ProdOpr.SubSequence>0) then begin
+		lProdOpr.Sequence = ProdOpr.Sequence - 1;
+		lProdOpr.SubSequence = ProdOpr.SubSequence;
+    lProdOpr.ProdNr = ProdOpr.ProdNr;
+		if (ReadFirstKey("SubSequence",lProdOpr,3,true)) then begin
+			lProdOpr.Sequence = ProdOpr.Sequence - 1;
+			lProdOpr.SubSequence = ProdOpr.SubSequence;
+	    lProdOpr.ProdNr = ProdOpr.ProdNr;
+	  	lProdOpr.PRStatusFlag = 0;
+      seqf = ReadFirstKey("SubSequence",lProdOpr,4,true);
+      if (!seqf) then begin
+				lProdOpr.Sequence = ProdOpr.Sequence - 1;
+				lProdOpr.SubSequence = ProdOpr.SubSequence;
+		    lProdOpr.ProdNr = ProdOpr.ProdNr;
+		  	lProdOpr.PRStatusFlag = 2;
+	      seqf = ReadFirstKey("SubSequence",lProdOpr,4,true);
+      end;
+    end;
+  end;
+  if (!seqf) then begin
+    lProdOpr.Sequence = ProdOpr.Sequence - 1;
+    lProdOpr.ProdNr = ProdOpr.ProdNr;
+    lProdOpr.PRStatusFlag = 0;
+    seqf = ReadFirstKey("Sequence",lProdOpr,3,true);
+  end;
+  if (!seqf) then begin
+    if (ProdOpr.Sequence>1) then begin
+  	  lProdOpr.Sequence = ProdOpr.Sequence - 1;
+	    lProdOpr.ProdNr = ProdOpr.ProdNr;
+	    lProdOpr.PRStatusFlag = 2;
+  	  seqf = ReadFirstKey("Sequence",lProdOpr,3,true);
+  	end;
+  end;
+  res = !seqf;
+  PrevOperationInSequenceOKed = res;
+  return;
+end;
+*/
+
+function val QtyProduced(record ProdOperationVc curProdOpr,string item)
+begin
+  val res;
+  Integer i,rwcnt;
+  record ProdOperationVc prevProdOpr;
+  row ProdOperationVc prevProdOprw;
+  Boolean found,testf;
+
+  found = true;
+	prevProdOpr.ProdNr = curProdOpr.ProdNr;
+	prevProdOpr.Sequence = curProdOpr.Sequence - 1;
+	prevProdOpr.PRStatusFlag = 3;
+	while (LoopKey("Sequence",prevProdOpr,3,found)) begin
+	  if (prevProdOpr.ProdNr!=curProdOpr.ProdNr) then begin found = false; end;
+	  if (prevProdOpr.Sequence!=(curProdOpr.Sequence - 1)) then begin found = false; end;
+	  if (prevProdOpr.PRStatusFlag!=3) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (prevProdOpr.SerNr==curProdOpr.SerNr) then begin testf = false; end;
+      if (testf) then begin
+	      if (nonblank(item)) then begin
+				  rwcnt = MatRowCnt(prevProdOpr);
+				  for (i=0;i<rwcnt;i=i+1) begin
+				    MatRowGet(prevProdOpr,i,prevProdOprw);
+				    if (prevProdOprw.Item==item) then begin
+					    switch (prevProdOpr.RowsHoldActualQty) begin
+					      case 1: res = res + prevProdOprw.OutQty;
+					      otherwise res = res + prevProdOprw.OutQty*prevProdOpr.Qty;
+					    end;		      
+				    end;
+				  end;
+				end;
+		  end;
+		end;
+  end;
+/*
+  found = true;
+  ResetLoop(prevProdOpr);
+	prevProdOpr.ProdNr = curProdOpr.ProdNr;
+	prevProdOpr.Sequence = curProdOpr.Sequence - 1;
+	prevProdOpr.PRStatusFlag = 5;
+	while (LoopKey("Sequence",prevProdOpr,3,found)) begin
+	  if (prevProdOpr.ProdNr!=curProdOpr.ProdNr) then begin found = false; end;
+	  if (prevProdOpr.Sequence!=(curProdOpr.Sequence - 1)) then begin found = false; end;
+	  if (prevProdOpr.PRStatusFlag!=5) then begin found = false; end;
+    if (found) then begin
+		  rwcnt = MatRowCnt(prevProdOpr);
+		  for (i=0;i<rwcnt;i=i+1) begin
+		    MatRowGet(prevProdOpr,i,prevProdOprw);
+		    if (prevProdOprw.Item==item) then begin
+			    switch (prevProdOpr.RowsHoldActualQty) begin
+			      case 1: res = res + prevProdOprw.OutQty;
+			      otherwise res = res + prevProdOprw.OutQty*prevProdOpr.Qty;
+			    end;		      
+		    end;
+		  end;
+		end;
+  end;
+  */
+  QtyProduced = res;
+  return;
+end;
+
+function val ActualQtyProduced(LongInt ProdNr,LongInt Sequence,LongInt SubSequence,LongInt skipprodopnr)
+begin
+  val res;
+  Integer i,rwcnt;
+  record ProdOperationVc ProdOpr;
+  row ProdOperationVc ProdOprw;
+  Boolean found,testf;
+
+  found = true;
+	ProdOpr.ProdNr = ProdNr;
+	ProdOpr.Sequence = Sequence;
+	ProdOpr.Sequence = SubSequence;
+	ProdOpr.PRStatusFlag = 3;
+	while (LoopKey("SubSequence",ProdOpr,4,found)) begin
+	  if (ProdOpr.ProdNr!=ProdNr) then begin found = false; end;
+	  if (ProdOpr.Sequence!=Sequence) then begin found = false; end;
+	  if (ProdOpr.PRStatusFlag!=3) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (ProdOpr.SerNr==skipprodopnr) then begin testf = false; end;
+      if (testf) then begin
+        res = res + ProdOpr.ActualQty;
+		  end;
+		end;
+  end;
+/*
+  found = true;
+  ResetLoop(prevProdOpr);
+	prevProdOpr.ProdNr = curProdOpr.ProdNr;
+	prevProdOpr.Sequence = curProdOpr.Sequence - 1;
+	prevProdOpr.PRStatusFlag = 5;
+	while (LoopKey("Sequence",prevProdOpr,3,found)) begin
+	  if (prevProdOpr.ProdNr!=curProdOpr.ProdNr) then begin found = false; end;
+	  if (prevProdOpr.Sequence!=(curProdOpr.Sequence - 1)) then begin found = false; end;
+	  if (prevProdOpr.PRStatusFlag!=5) then begin found = false; end;
+    if (found) then begin
+		  rwcnt = MatRowCnt(prevProdOpr);
+		  for (i=0;i<rwcnt;i=i+1) begin
+		    MatRowGet(prevProdOpr,i,prevProdOprw);
+		    if (prevProdOprw.Item==item) then begin
+			    switch (prevProdOpr.RowsHoldActualQty) begin
+			      case 1: res = res + prevProdOprw.OutQty;
+			      otherwise res = res + prevProdOprw.OutQty*prevProdOpr.Qty;
+			    end;		      
+		    end;
+		  end;
+		end;
+  end;
+  */
+  ActualQtyProduced = res;
+  return;
+end;
+
+global
+function Boolean TestMachineBelongsGroup(string machine,string machinegroup)
+begin
+  Boolean res;
+  Integer rwcnt,i;
+  record MachineGroupsBlock MGb;
+  row MachineGroupsBlock MachineGroupsrw;
+  
+  BlockLoad(MGb);
+  rwcnt = MatRowCnt(MGb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(MGb,i,MachineGroupsrw);
+    if (SetInSet(UpperCase(machine),MachineGroupsrw.DefStr)) then begin
+      if (machinegroup==MachineGroupsrw.Code) then begin
+        res = true;
+        goto LTestMachineBelongsGroup;
+      end;
+    end;
+  end;
+LTestMachineBelongsGroup:;  
+  TestMachineBelongsGroup = res;
+  return;
+end;
+
+global
+updating function LongInt ProdOperationVcRecordCheck(var record ProdOperationVc ProdOpr,record ProdOperationVc ProdOp2r,LongInt stat,LongInt check)
+BEGIN
+  LongInt res;
+  record MainStockBlock MSb;
+  record INVc INr;
+  record ItemStatusVc ISr;
+  row ProdOperationVc ProdOprw;
+  row ProdOperationVc ProdOp2rw;
+  record TRVc gTRp;
+  Integer i,rwcnt,j,cnt;
+  Integer insertmode,updatemode;
+  Integer errcode;
+  LongInt sernr;
+  LongInt oldnr,newnr;
+  Boolean gentrans;
+  Boolean transf;
+  string 255 location,tstr,errstr;
+  val t,prev,qty;
+  record StandProblemVc SPr;
+  record LocationVc Locr;
+  Integer cursequenceoperations;
+  record ProdAccBlock PAb;
+  record ProdSettingsBlock PSb;
+  record ProdOperationVc lProdOpr;
+  record ProdVc Prodr;
+  Boolean unokf;
+  transaction string 255 gRuniningMaint;
+  
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  oldnr = ProdOpr.SerNr;
+  BlockLoad(MSb);
+  BlockLoad(PAb);
+  BlockLoad(PSb);
+  location = ProdOpr.Location;
+  if (blank(location)) then begin
+    location = MSb.MainStock;
+  end;
+  transf = false;
+  if ((ProdOpr.PRStatusFlag==3) or (ProdOpr.PRStatusFlag==5)) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if ((ProdOp2r.PRStatusFlag!=3) and (ProdOp2r.PRStatusFlag!=5)) then begin transf = true; end;
+    end;
+  end;
+   if (stat==updatemode) then begin
+    if (ProdOpr.SerNr<=0) and (ProdOp2r.PRStatusFlag==0) then begin
+      ProdOpr.SerNr = ProdOp2r.SerNr;
+    end;
+  end;     
+  if (ProdOpr.PRStatusFlag==0) then begin
+    if (stat==updatemode) then begin
+      if (ProdOp2r.PRStatusFlag!=0) then begin unokf = true; end;
+    end;
+  end;
+  if (ProdOpr.PRStatusFlag==2) then begin
+    if (stat==updatemode) then begin
+      if (ProdOp2r.PRStatusFlag>2) then begin unokf = true; end;
+    end;
+  end;
+  if (ProdOpr.PRStatusFlag==4) then begin
+    if (stat==updatemode) then begin
+      if (ProdOp2r.PRStatusFlag>3) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    if (ProdOp2r.PRStatusFlag==3) or (ProdOp2r.PRStatusFlag==4) or (ProdOp2r.PRStatusFlag==5) then begin
+      errcode = IsUnOKAllowed_ProdOperationVc(ProdOpr);
+      if (errcode!=0) then begin
+        RecordCheckError(errcode,"",-1,"StartDate");      
+        res = -1; 
+      end;
+      goto LProdOperationVcRecordCheck;
+    end;
+    if (ProdOp2r.PRStatusFlag>ProdOpr.PRStatusFlag) then begin 
+      RecordCheckError(22078,"",-1,"StartDate");      
+      res = -1; 
+      goto LProdOperationVcRecordCheck;
+    end;
+  end;  
+  
+  if (ProdOp2r.PRStatusFlag==3) or (ProdOp2r.PRStatusFlag==5) or (ProdOp2r.PRStatusFlag==4) then begin
+    goto LProdOperationVcRecordCheck;
+  end;
+  if (ProdOpr.SerNr<=0) then begin
+    ProdOpr.SerNr = NextSerNr("ProdOperationVc",ProdOpr.ProdDate,-1,false,"");
+  end;
+  if (SerNrTestProdOperationVc(ProdOpr.SerNr,ProdOpr.ProdDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1; 
+    goto LProdOperationVcRecordCheck;
+  end;  
+  if (Date2Test("ProdOperationVc",ProdOpr.ProdDate,"ProdDate",-1)==false) then begin
+    res = -1;
+    goto LProdOperationVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,ProdOpr.ProdDate,"ProdDate",-1)) then begin
+    res = -1;
+    goto LProdOperationVcRecordCheck;
+  end;
+  Prodr.SerNr = ProdOpr.ProdNr;
+  if (ReadFirstMain(Prodr,1,true)) then begin
+  end;
+  if (check!=0) and (transf) then begin
+    if (ProdOpr.Qty==0) then begin
+      RecordCheckError(1058,"",-1,"Qty");      
+      res = -1; 
+      goto LProdOperationVcRecordCheck;
+    end;
+    if (ProdOpr.ActualQty<=0) then begin
+      RecordCheckError(1058,"",-1,"ActualQty");      
+      res = -1; 
+      goto LProdOperationVcRecordCheck;
+    end;
+  end;
+  if (ProdOpr.StartDate>ProdOpr.ProdDate) then begin
+    RecordCheckError(20851,"",-1,"StartDate");      
+    res = -1; 
+    goto LProdOperationVcRecordCheck;
+  end;
+  if (ProdOpr.PRStatusFlag!=kPRStatusCreated and  check) then begin
+    cursequenceoperations = Nr_SequenceProdOperations(ProdOpr);
+    if (cursequenceoperations>1) or (PSb.CompleteSequence!=0) then begin
+	    if (PrevOperationInSequenceOKed(ProdOpr)==false) then begin//needed  ? 
+	      RecordCheckError(20774,"",-1,"StartDate");      
+	      res = -1; 
+	      goto LProdOperationVcRecordCheck;
+	    end;
+	  end;
+  end;
+  if (check) then begin
+	  if (ProdOpr.ActualQty>ProdOpr.Qty) then begin
+	    RecordCheckError(1733,"",-1,"ActualQty");      
+	    res = -1; 
+	    goto LProdOperationVcRecordCheck;
+	  end;
+    qty = ProdOpr.ActualQty; 
+	  qty = qty + ActualQtyProduced(ProdOpr.ProdNr,ProdOpr.Sequence,ProdOpr.SubSequence,ProdOpr.SerNr);
+	  if (qty>Prodr.Qty) then begin
+	    RecordCheckError(1733,"",-1,"ActualQty");      
+	    res = -1; 
+	    goto LProdOperationVcRecordCheck;
+	  end;
+	  if (nonblank(ProdOpr.MachineGroup)) then begin
+      if (TestMachineBelongsGroup(ProdOpr.Machine,ProdOpr.MachineGroup)==false) then begin
+	      RecordCheckError(1750," " & ProdOpr.MachineGroup,-1,"Machine");      
+	      res = -1; 
+  	    goto LProdOperationVcRecordCheck;
+	    end;
+	  end;
+	end;
+  if (nonblank(location)) then begin
+    Locr.Code = location;
+    if (ReadFirstMain(Locr,1,true)==false) then begin
+      RecordCheckError(1120,location,-1,"Location");      
+      res = -1; 
+      goto LProdOperationVcRecordCheck;
+    end;
+    if (Locr.RequirePos!=0) then begin
+      RecordCheckError(1120,location,-1,"Location");      
+      res = -1; 
+      goto LProdOperationVcRecordCheck;
+    end;
+  end;
+  rwcnt = MatRowCnt(ProdOpr);
+  for (i = 0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdOpr,i,ProdOprw);
+    if (nonblank(ProdOprw.Item)) then begin
+      if (ReadFirstItem(ProdOprw.Item,INr,false,false)==false) then begin
+        RecordCheckError(1120,ProdOprw.Item,i,"Item");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+      if (INr.Terminated==1) then begin
+        RecordCheckError(1266,ProdOprw.Item,i,"Item");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+      switch (ProdOprw.Discarded) begin
+        case 1:
+          if (ProdOprw.InQty!=0) then begin
+		        RecordCheckError(1733,"",i,"InQty");      
+		        res = -1; 
+		        goto LProdOperationVcRecordCheck;
+          end;
+          if (ProdOprw.OutQty<=0) then begin
+		        RecordCheckError(20773,"",i,"OutQty");      
+		        res = -1; 
+		        goto LProdOperationVcRecordCheck;
+          end;
+          if (blank(ProdOprw.StandProblem)) then begin
+		        RecordCheckError(20761,"",i,"StandProblem");      
+		        res = -1; 
+		        goto LProdOperationVcRecordCheck;
+		      end else begin
+					  SPr.Code = ProdOprw.StandProblem;
+					  if (ReadFirstMain(SPr,1,true)==false) then begin
+			        RecordCheckError(1290,"",i,"StandProblem");      
+			        res = -1; 
+			        goto LProdOperationVcRecordCheck;
+					  end;
+		      end;
+      end;
+      if (ProdOprw.OutQty>0) then begin
+        if (INr.ItemType==kItemTypeStructured) then begin
+          RecordCheckError(1826," " & ProdOprw.Item,i,"Item");      
+          res = -1; 
+          goto LProdOperationVcRecordCheck;
+        end;
+        if (INr.ItemType==kItemTypeService) then begin
+          RecordCheckError(1954," " & ProdOprw.Item,i,"Item");      
+          res = -1; 
+          goto LProdOperationVcRecordCheck;
+        end;
+      end;
+      if (ProdOprw.OutQty<0) then begin
+        RecordCheckError(1574,"",i,"OutQty");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+      if (ProdOprw.InQty>0) then begin
+        if (INr.ItemType==kItemTypeStructured) then begin
+          RecordCheckError(1826," " & ProdOprw.Item,i,"Item");      
+          res = -1; 
+          goto LProdOperationVcRecordCheck;
+        end;
+
+        if (IsPhantomItem(INr)) then begin
+          qty = QtyProduced(ProdOpr,ProdOprw.Item);
+          if (qty<ProdOprw.InQty) then begin
+            RecordCheckError(20778," " & qty,i,"InQty");      
+            res = -1; 
+            goto LProdOperationVcRecordCheck;
+          end;
+        end;
+
+      end;
+      if (ProdOprw.InQty<0) then begin
+        RecordCheckError(1574,"",i,"InQty");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+      if (StockRecordForLocationAllowed("ProdOperationVc",ProdOpr.Location,ProdOprw.Item,ProdOpr.ProdDate,ProdOpr.PRStatusFlag,errcode,errstr)==false) then begin
+        RecordCheckError(errcode,errstr,i,"ArtCode");      
+        res = -1;
+        goto LProdOperationVcRecordCheck;
+      end;
+      if (INr.ItemType==kItemTypeStocked) then begin
+        if (CheckSerialStatus(ProdOprw.Item,ProdOprw.SerialNr,tstr)==2) then begin
+          RecordCheckError(2210," " & tstr,i,"SerialNr");      
+          res = -1; 
+          goto LProdOperationVcRecordCheck;
+        end;
+      end;
+      if (check and transf) then begin
+        if ((INr.SerNrf>0) and (INr.SerNrf<3)) then begin
+          if (IsSerialNrCorrect(ProdOprw.SerialNr)==false) then begin
+            RecordCheckError(24154,ProdOprw.SerialNr,i,"SerialNr");      
+            res = -1; 
+            goto LProdOperationVcRecordCheck;
+          end;
+          if (MSb.NoSerOnPU==0) then begin
+            if ((blank(ProdOprw.SerialNr)) and (ProdOprw.OutQty!=0)) then begin
+              RecordCheckError(1239,"",i,"SerialNr");      
+              res = -1; 
+              goto LProdOperationVcRecordCheck;
+            end;
+          end;
+          if (ProdOprw.InQty!=0) then begin  // check if ser nr. exists 
+            if (INr.SerNrf==1) then begin
+			        switch (ProdOpr.RowsHoldActualQty) begin
+			          case 1: prev = ProdOprw.InQty;
+			          otherwise prev = ProdOprw.InQty*ProdOpr.ActualQty;
+			        end;
+              if (prev>1) then begin
+                RecordCheckError(1242,"",i,"SerialNr");      
+                res = -1; 
+                goto LProdOperationVcRecordCheck;
+              end;
+              for (j=0;j<i;j=j+1) begin
+                MatRowGet(ProdOpr,j,ProdOp2rw);
+                if ((ProdOprw.Item==ProdOp2rw.Item) and (ProdOprw.SerialNr==ProdOp2rw.SerialNr)) then begin
+                  RecordCheckError(1242,"",i,"SerialNr");      
+                  res = -1; 
+                  goto LProdOperationVcRecordCheck;
+                end;
+              end;
+			        switch (ProdOpr.RowsHoldActualQty) begin
+			          case 1: t = ProdOprw.InQty;
+			          otherwise t = ProdOprw.InQty*ProdOpr.ActualQty;
+			        end;
+              if (SerialNrAvail(ProdOprw.Item,ProdOprw.SerialNr,location,t)==false) then begin
+                RecordCheckError(1240,"",i,"SerialNr");      
+                res = -1; 
+                goto LProdOperationVcRecordCheck;
+              end;
+			        switch (ProdOpr.RowsHoldActualQty) begin
+			          case 1: t = ProdOprw.InQty;
+			          otherwise t = ProdOprw.InQty*ProdOpr.ActualQty;
+			        end;
+              if (SerialNrAvail(ProdOprw.Item,ProdOprw.SerialNr,location,t)==false) then begin
+                RecordCheckError(1240,"",i,"SerialNr");      
+                res = -1; 
+                goto LProdOperationVcRecordCheck;
+              end;			        
+            end else begin
+              prev = 0;
+              for (cnt=0;cnt<i;cnt=cnt+1) begin
+                MatRowGet(ProdOpr,cnt,ProdOp2rw);
+                if ((ProdOp2rw.Item==ProdOprw.Item) and (ProdOp2rw.SerialNr==ProdOprw.SerialNr)) then begin
+					        switch (ProdOpr.RowsHoldActualQty) begin
+					          case 1: prev = prev + ProdOp2rw.InQty;
+					          otherwise prev = prev + ProdOp2rw.InQty*ProdOpr.ActualQty;
+					        end;
+                end;
+              end;
+			        switch (ProdOpr.RowsHoldActualQty) begin
+			          case 1: prev = prev + ProdOprw.InQty;
+			          otherwise prev = prev + ProdOprw.InQty*ProdOpr.ActualQty;
+			        end;              
+              if (SerialNrAvail(ProdOprw.Item,ProdOprw.SerialNr,location,prev)==false) then begin
+                RecordCheckError(1240,"",i,"SerialNr");      
+                res = -1; 
+                goto LProdOperationVcRecordCheck;
+              end;
+            end;               
+          end;
+          if (ProdOprw.OutQty!=0) then begin  // check if ser nr. exists 
+            if (INr.SerNrf==1) then begin // serial nr checking 
+              if (SerialNrAvail2(ProdOprw.Item,ProdOprw.SerialNr,1)==true) then begin //We cannot ProdOperationuce a item if at least one exists in stock            
+                RecordCheckError(1241,"",i,"SerialNr");      
+                res = -1; 
+                goto LProdOperationVcRecordCheck;
+              end;
+              if (MSb.NoSerOnPU==0) then begin   
+					      switch (ProdOpr.RowsHoldActualQty) begin
+					        case 1: t = ProdOprw.OutQty;
+					        otherwise t = ProdOprw.OutQty*ProdOpr.ActualQty;
+					      end;
+                if (t>1) then begin
+                  RecordCheckError(1242,"",i,"SerialNr");      
+                  res = -1; 
+                  goto LProdOperationVcRecordCheck;
+                end;
+              end;
+            end;
+          end;
+        end;        
+        if (MSb.dontAllowOvership==1) then begin
+          if (INr.ItemType==kItemTypeStocked) then begin
+	          qty = 0;
+	          for (j=0;j<i;j=j+1) begin
+	            MatRowGet(ProdOpr,j,ProdOp2rw);
+	            if (ProdOp2rw.Item==ProdOprw.Item) then begin
+					      switch (ProdOpr.RowsHoldActualQty) begin
+					        case 1: qty = qty + ProdOp2rw.InQty;
+					        otherwise qty = qty + ProdOp2rw.InQty*ProdOpr.ActualQty;
+					      end;	              
+	            end;
+	          end;
+			      switch (ProdOpr.RowsHoldActualQty) begin
+			        case 1: qty = qty + ProdOprw.InQty;
+			        otherwise qty = qty + ProdOprw.InQty*ProdOpr.ActualQty;
+			      end;	              
+	          
+	          FindStockValue(ProdOprw.Item,location,ISr);
+	          if (ISr.Instock<qty) then begin
+	            RecordCheckError(1247,"",i,"InQty");      
+	            res = -1; 
+	            goto LProdOperationVcRecordCheck;
+	          end;
+	        end;
+			  end;
+        if (MSb.requireLocation!=0) then begin
+          if (blank(ProdOpr.Location)) then begin
+            RecordCheckError(1058,ProdOpr.Location,-1,"Location");      
+            res = -1; 
+            goto LProdOperationVcRecordCheck;
+          end;
+        end;
+      end;
+    end else begin
+      if (ProdOprw.InQty!=0) then begin
+        RecordCheckError(1058,"",i,"Item");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+      if (ProdOprw.OutQty!=0) then begin
+        RecordCheckError(1058,"",i,"Item");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+    end;
+  end;
+  if (check!=0) then begin
+    if (stat==updatemode) then begin
+      SetProdOperationTime(ProdOpr,ProdOp2r,true);
+      ProdOperCalcItemCost(ProdOpr,ProdOp2r,true);
+    end else begin
+      SetProdOperationTime(ProdOpr,ProdOp2r,false);
+      ProdOperCalcItemCost(ProdOpr,ProdOp2r,false);
+    end;      
+    ProdOperationFillFIFO(ProdOpr,true);
+  end;
+  if (transf) then begin
+    if (stat==updatemode) then begin
+      sernr = ProdOp2r.SerNr;
+    end;
+    if (check>0) then begin
+      if ((MSb.Chronology!=0) and 
+          (ExistStockTrans(location,ProdOpr.ProdDate,errcode,errstr,"ProdOperationVc", sernr,MSb)==true)) then begin
+        RecordCheckError(errcode,errstr,-1,"ProdDate");      
+        res = -1; 
+        goto LProdOperationVcRecordCheck;
+      end;
+    end;
+    if (CanOKStockRecord(errcode)==false) then begin
+      RecordCheckError(errcode,"",-1,"SerNr");      
+      res = -1; 
+      goto LProdOperationVcRecordCheck;
+    end;
+  end;
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+    if (PAb.ProdTransaction==0) then begin
+	    errcode = MakeTransFromProdOperation(gTRp,ProdOpr,false);
+	    if (errcode!=0) then begin
+	      RecordCheckError(errcode,"",-1,"SerNr");      
+	      res = -1; 
+	      goto LProdOperationVcRecordCheck;
+	    end;
+	    if ((gTRp.Number>0) and (gTRp.IntYc==ProdOperationYc)) then begin
+        switch (gRuniningMaint) begin    
+          case "RecalcStockMn":
+            UpdateTrans_Stock(gTRp);          
+          otherwise
+            SaveTrans(gTRp);
+        end;
+	    end;    
+	  end;
+  end;
+LProdOperationVcRecordCheck:;
+  if (res!=0) then begin
+    ProdOpr.SerNr = oldnr;
+  end;
+  ProdOperationVcRecordCheck = res;
+  RETURN;
+END;

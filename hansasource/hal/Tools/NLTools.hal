@@ -1,0 +1,992 @@
+external function string 60 RemoveObjectFromObjectList(string,string);
+external procedure MulM4OneRate(val,val,var val,roundmode,Boolean);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure GetFullCurncyPLConsolidationRate(var string,Date,var val,var val,var val,var val,var val);
+external procedure GetFullCurncyBalConsolidationRate(var string,Date,var val,var val,var val,var val,var val);
+external function Integer TypeOfCurncy(var string,var Integer);
+external procedure SplitEclass(string,var Array string);
+external function val DivWithRateToBase1(string,Date,val,roundmode);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function Integer CountObjects(string);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure GetAccDaughtersDCBalance(string,string,Date,Integer,Integer,Integer,string,var val,var val);
+external function Boolean  EobjInEobj(string,string);
+external function val FindAccBalance(string,string,date,record ObjBalVc,Integer,Integer,Integer,string,Integer);
+
+function
+Boolean IncludeSim(Integer rowsimstat,Integer simf)
+begin
+  Boolean res;
+  
+  res = false;
+  if (simf==0) then begin end;
+  if (simf==1) then begin
+    if ((rowsimstat==0) or (rowsimstat==3) or (rowsimstat==4)) then begin
+      res = true;
+    end;
+  end;
+  if (simf==2) then begin
+    if (rowsimstat==3) then begin
+      res = true;
+    end;
+  end;
+  if (simf==3) then begin
+    if ((rowsimstat==3) or (rowsimstat==4)) then begin
+      res = true;
+    end;
+  end;
+  IncludeSim = res;
+  return;
+end;
+
+global
+procedure GetConsolidationRate(string accstr,string curcode,Date dp,var val from,var val to1,var val to2,var val base1,var val base2)
+begin
+  record AccVc Accr;
+  record ConsolidationBlock Consb;
+  Integer oldcomp;
+
+  BlockLoad(Consb);
+  Accr.AccNumber = accstr;
+  ReadFirstMain(Accr,1,true);
+
+  oldcomp = CurrentCompany;  
+  if (SetCompanyCode(Consb.MotherCode,false)) then begin
+    if (Accr.AccType==kAccTypeAsset) or (Accr.AccType==kAccTypeLiability) or (Accr.AccType==kAccTypeEquity) then begin
+      GetFullCurncyBalConsolidationRate(curcode,dp,from,to1,to2,base1,base2);
+    end;
+    if (Accr.AccType==kAccTypeIncome) or (Accr.AccType==kAccTypeExpense) then begin
+      GetFullCurncyPLConsolidationRate(curcode,dp,from,to1,to2,base1,base2);
+    end;
+  end;
+  ResetCompany(oldcomp);
+  return;
+end;
+
+global
+procedure TransAccTurnover(string accstr,string pobjstr,Date sdp,Date edp,Integer simf,Integer basecurncy,
+                           Integer crncy,string crncycode,string compcode,var val dvp,var val cvp)
+BEGIN
+  record MainVc mainr;
+  record TRVc TRr;
+  row TRVc TRrw;
+  record FBVc FBr;
+  row FBVc FBrw;
+  record SMVc SMr;
+  row SMVc SMrw;
+  record RegArchiveDetailVc RADr;
+  record BaseCurBlock bascur;  
+  Boolean TrHs,skipf,testf;
+  Integer i,rwcnt;
+  val fr,to1,to2,br1,br2;
+  val curdv,curcv,v;
+  Array string 20 objsarrs;
+  Integer j,oldstyle;
+  Boolean allcombfound;
+  record ObjBalVc ObjBalr;
+  string 255 objstr,vatcode;
+  transaction Integer mockedobjfromvatcode;
+  
+  BlockLoad(bascur);
+  if (basecurncy==kReportBCOneConsolidationRate) then begin
+    GetConsolidationRate(accstr,bascur.BaseCur1,edp,fr,to1,to2,br1,br2);
+    goto LTransactions;
+  end;
+  objstr = pobjstr;
+  if (mockedobjfromvatcode) then begin
+    if (Right(objstr,2)=="::") then begin
+      vatcode = Left(objstr,len(objstr)-2);
+      objstr = "";
+    end;
+  end;
+
+  allcombfound = true;
+  SplitEclass(objstr,objsarrs);  
+  while (nonblank(objsarrs[j])) begin
+    if (mockedobjfromvatcode and blank(vatcode)) then begin
+      if (Right(objsarrs[j],2)=="::") then begin
+        vatcode = Left(objsarrs[j],len(objsarrs[j])-2);
+        objstr = RemoveObjectFromObjectList(objstr,objsarrs[j]);
+      end;
+    end;
+    if (allcombfound) then begin
+      ObjBalr.AccNumber = accstr;
+      ObjBalr.Object = objsarrs[j];
+      if (ReadFirstMain(ObjBalr,2,true)==false) then begin
+        allcombfound = false;
+      end;
+    end;
+    j = j + 1;
+  end;
+  if (allcombfound==false) then begin
+    goto LTransAccTurnover;
+  end;
+LTransactions:;
+  mainr.AccNumber = accstr;
+  mainr.TransDate = sdp;
+  TrHs = true;
+  while (LoopMain(mainr,2,TrHs)) begin
+    if (mainr.TransDate>edp) then begin TrHs = false; end;  
+    if (TrHs) then begin
+      if (mainr.AccNumber<>accstr) then begin TrHs = false; end;
+    end;      
+    if (TrHs) then begin
+      if (mainr.FileName=="TRVc") then begin
+        TRr.Number = mainr.TransNr;
+        TRr.IntYc = mainr.IntYc;
+          if (ReadFirstMain(TRr,0,true)) then begin
+            if (mainr.TransDate==TRr.TransDate) then begin
+              rwcnt = MatRowCnt(TRr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(TRr,i,TRrw);
+                if (TRrw.stp==1) then begin
+                  if (TRrw.ovst==0) then begin
+                    if (TRrw.AccNumber==accstr) then begin
+                      skipf = false;                      
+                      if (objstr==";;;") then begin
+                        if (TRrw.Reconsf==0) then begin skipf = true; end;
+                      end else begin
+                        if (EobjInEobj(objstr,TRrw.Objects)==false) then begin skipf = true; end;
+                      end;
+                      if (nonblank(vatcode)) then begin
+                        if (SetInSet(vatcode,TRrw.VATCode)==false) then begin skipf = true; end;
+                      end;
+                      if (nonblank(compcode)) then begin
+                        if (TRrw.CompCode!=compcode) then begin skipf = true; end;
+                      end;
+                      if (skipf==false) then begin
+                        if (blank(crncycode)) then begin
+                          if (crncy==0) then begin
+                            switch (basecurncy) begin
+                              case kReportBCOne:
+                                dvp = dvp + TRrw.DebVal;
+                                cvp = cvp + TRrw.CredVal;
+                              case kReportBCTwo:
+                                dvp = dvp + TRrw.DebVal2;
+                                cvp = cvp + TRrw.CredVal2;
+                              case kReportBCOneConsolidationRate:
+                                MulM4OneRate(TRrw.DebVal,(to1/fr)*100,v,DefaultCurRoundOff,true);
+                                dvp = dvp + v;
+                                MulM4OneRate(TRrw.CredVal,(to1/fr)*100,v,DefaultCurRoundOff,true);
+                                cvp = cvp + v;
+/*
+                                dvp = dvp + MulRateToBase1(bascur.BaseCur1,TRrw.DebVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                                cvp = cvp + MulRateToBase1(bascur.BaseCur1,TRrw.CredVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+*/
+                            end;
+                          end;
+                          if (crncy==2) then begin
+                            dvp = dvp + TRrw.CurDebVal;
+                            cvp = cvp + TRrw.CurCredVal;
+                          end;
+                        end else begin                          
+                          if (crncycode==TRrw.Curncy) then begin
+                            switch (TypeOfCurncy(crncycode,oldstyle)) begin
+                              case 0:
+                                dvp = dvp + TRrw.CurDebVal;
+                                cvp = cvp + TRrw.CurCredVal;
+                              case 1:
+                                dvp = dvp + TRrw.DebVal;
+                                cvp = cvp + TRrw.CredVal;
+                              case 2:
+                                dvp = dvp + TRrw.DebVal2;
+                                cvp = cvp + TRrw.CredVal2;
+                            end;
+                          end else begin
+/*when curency specified we shouldn't include transactions in diffrent currencies JAREK*/
+//                            curdv = DivWithRateToBase1(crncycode,TRr.TransDate,TRrw.DebVal,DefaultCurRoundOff);
+//                            curcv = DivWithRateToBase1(crncycode,TRr.TransDate,TRrw.CredVal,DefaultCurRoundOff);
+//                            dvp = dvp + curdv;
+//                            cvp = cvp + curcv;
+                          end;
+                        end;
+                      end;                        
+                    end;
+                  end;
+                end;
+              end;
+            end;
+          end;
+      end;
+      if (mainr.FileName=="SMVc") then begin
+        if (simf<>0) then begin
+          SMr.SerNr = mainr.TransNr;
+          if (ReadFirstMain(SMr,0,true)) then begin
+            if (mainr.TransDate==SMr.TransDate) then begin
+              rwcnt = MatRowCnt(SMr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(SMr,i,SMrw);
+                if (SMrw.AccNumber==accstr) then begin
+                  if (IncludeSim(SMrw.RowSimStat,simf)) then begin
+                    if (EobjInEobj(objstr,SMrw.Objects)) then begin
+                      if (blank(crncycode)) then begin
+                        switch (basecurncy) begin
+                          case kReportBCOne:
+                            dvp = dvp + SMrw.DebVal;
+                            cvp = cvp + SMrw.CredVal;
+                          case kReportBCTwo:
+                            dvp = dvp + SMrw.DebVal2;
+                            cvp = cvp + SMrw.CredVal2;
+                          case kReportBCOneConsolidationRate:
+                            MulM4OneRate(SMrw.DebVal,(to1/fr)*100,v,DefaultCurRoundOff,true);
+                            dvp = dvp + v;
+                            MulM4OneRate(SMrw.CredVal,(to1/fr)*100,v,DefaultCurRoundOff,true);
+                            cvp = cvp + v;
+/*
+                            dvp = dvp + MulRateToBase1(bascur.BaseCur1,SMrw.DebVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                            cvp = cvp + MulRateToBase1(bascur.BaseCur1,SMrw.CredVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+*/
+                        end;
+                      end else begin
+                        if (crncycode==SMrw.CurncyCode) then begin
+                          dvp = dvp + SMrw.CurDebVal;
+                          cvp = cvp + SMrw.CurCredVal;
+                        end else begin
+                          curdv = DivWithRateToBase1(crncycode,SMr.TransDate,SMrw.DebVal,DefaultCurRoundOff);
+                          curcv = DivWithRateToBase1(crncycode,SMr.TransDate,SMrw.CredVal,DefaultCurRoundOff);
+                          dvp = dvp + curdv;
+                          cvp = cvp + curcv;
+                        end;
+                      end;                  
+/*                    
+                      if (basecurncy==0) then begin
+                        dvp = dvp + SMrw.DebVal;
+                        cvp = cvp + SMrw.CredVal;
+                      end else begin
+//                        curdv = MulWithRateToBase1(bascur.BaseCur1,SMr.TransDate,SMrw.DebVal,DefaultCurRoundOff);                      
+//                        curcv = MulWithRateToBase1(bascur.BaseCur1,SMr.TransDate,SMrw.CredVal,DefaultCurRoundOff);
+                        dvp = dvp + SMrw.DebVal2;
+                        cvp = cvp + SMrw.CredVal2;
+                      end;
+*/                    
+                    end;
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+      if (mainr.FileName=="FBVc") then begin
+        FBr.SerNr = mainr.TransNr;
+        if (ReadFirstMain(FBr,0,true)) then begin
+          if (mainr.TransDate==FBr.TransDate) then begin
+            testf = true;
+            if (blank(objstr)) then begin//it should take FB without object only
+              if (nonblank(FBr.Objects)) then begin testf = false; end;
+            end;
+            if (EobjInEobj(objstr,FBr.Objects)==false) then begin testf = false; end;
+            if (testf) then begin
+              rwcnt = MatRowCnt(FBr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(FBr,i,FBrw);
+                if (FBrw.AccNumber==accstr) then begin
+                  if (blank(crncycode)) then begin
+                      switch (basecurncy) begin
+                        case kReportBCOne:
+                          dvp = dvp + FBrw.DebVal;
+                          cvp = cvp + FBrw.CredVal;
+                        case kReportBCTwo:
+                          dvp = dvp + FBrw.Deb2Val;
+                          cvp = cvp + FBrw.Cred2Val;
+                        case kReportBCOneConsolidationRate:
+                          MulM4OneRate(FBrw.DebVal,(to1/fr)*100,v,DefaultCurRoundOff,true);
+                          dvp = dvp + v;
+                          MulM4OneRate(FBrw.CredVal,(to1/fr)*100,v,DefaultCurRoundOff,true);
+                          cvp = cvp + v;
+/*
+                          dvp = dvp + MulRateToBase1(bascur.BaseCur1,FBrw.DebVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                          cvp = cvp + MulRateToBase1(bascur.BaseCur1,FBrw.CredVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+*/
+                      end;
+                  end else begin
+                    if (crncycode==FBrw.CurncyCode) then begin
+                      dvp = dvp + FBrw.CurDebVal;
+                      cvp = cvp + FBrw.CurCredVal;
+                      if (FBrw.CurDebVal==0) and (FBrw.CurCredVal==0) then begin
+                        curdv = DivWithRateToBase1(crncycode,FBr.TransDate,FBrw.DebVal,DefaultCurRoundOff);
+                        curcv = DivWithRateToBase1(crncycode,FBr.TransDate,FBrw.CredVal,DefaultCurRoundOff);
+                        dvp = dvp + curdv;
+                        cvp = cvp + curcv;
+                      end;
+                    end else begin
+//if crncycode diffrent than FBrw.CurncyCode ? 
+               
+//                      curdv = DivWithRateToBase1(crncycode,FBr.TransDate,FBrw.DebVal,DefaultCurRoundOff);
+//                      curcv = DivWithRateToBase1(crncycode,FBr.TransDate,FBrw.CredVal,DefaultCurRoundOff);
+//                      dvp = dvp + curdv;
+//                      cvp = cvp + curcv;
+                    end;
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+      if (mainr.FileName=="RegArchiveDetailVc") then begin
+        RADr.SerNr = mainr.TransNr;
+        if (ReadFirstMain(RADr,0,true)) then begin
+          if (mainr.TransDate==RADr.TransDate) then begin
+            testf = true;
+            if (blank(objstr)) then begin
+              if (nonblank(RADr.KeyTwo)) then begin testf = false; end;
+            end;
+            if (EobjInEobj(objstr,RADr.KeyTwo)==false) then begin testf = false; end;
+            if (testf) then begin
+              if (RADr.KeyOne==accstr) then begin
+                if (blank(crncycode)) then begin
+                    if (basecurncy==0) then begin
+                      dvp = dvp + RADr.dv;
+                      cvp = cvp + RADr.cv;
+                    end else begin
+                      dvp = dvp + RADr.dv2;
+                      cvp = cvp + RADr.cv2;
+                    end;
+                end else begin
+                  if (crncycode==RADr.ColName) then begin
+                    dvp = dvp + RADr.dcv;
+                    cvp = cvp + RADr.ccv;
+                  end else begin
+                    curdv = DivWithRateToBase1(crncycode,RADr.TransDate,RADr.dv,DefaultCurRoundOff);
+                    curcv = DivWithRateToBase1(crncycode,RADr.TransDate,RADr.cv,DefaultCurRoundOff);
+                    dvp = dvp + curdv;
+                    cvp = cvp + curcv;
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+LTransAccTurnover:;
+  RETURN;
+END;
+
+global
+procedure GetAccDCBalance(string accstr,string objstr,Date bdp,record ObjBalVc ObjBalr,
+                         Integer simf,Integer basecurncy,Integer crncy,string crncycode,var val dvp,var val cvp,Integer IncDaughter)
+BEGIN
+  Integer bm;
+  val dv,cv;
+  Date nbd,ltd;
+  Integer ocnt;
+  string 20 curncy;
+  record BaseCurBlock bascur;  
+  val fr,to1,to2,br1,br2;
+  transaction string 255 gConsolidationDaughterCompany;
+
+  nbd = AddYear(nbd,1980);
+  bm = 1 - GetMonth(nbd);
+  nbd = AddMonth(nbd,bm);
+  bm = 1 - GetDay(nbd);
+  nbd = AddDay(nbd,bm);
+  
+  dvp = 0;
+  cvp = 0;
+  ocnt = CountObjects(objstr);
+
+  if (blankdate(bdp)) then begin goto LIncDaughter; end;
+  if ((nonblank(gConsolidationDaughterCompany)) and (StringToInt(gConsolidationDaughterCompany)!=CurrentCompany))  then begin goto LIncDaughter; end;
+  if (ocnt>1) then begin goto L8; end;
+  if (nonblank(crncycode)) then begin goto L8; end;
+  if (blank(ObjBalr.AccNumber)) then begin goto L8; end;
+  if (simf>1) then begin goto L8; end;
+//  if (basecurncy==kReportBCOneConsolidationRate) then begin goto L8; end;
+  ltd = bdp;
+  //if (GetDay(ltd)!=DaysInMonth(ltd.year,ltd.month)) then begin     
+  //  goto L8;
+  //end;
+  nbd = AddDay(bdp,1);
+
+  if (GetDay(nbd)<>1) then begin ltd = AddMonth(bdp,-1); end;
+
+/*  
+when TransAccTurnover dates should not be changed
+
+  if (blankdate(bdp)) then begin goto LIncDaughter; end;
+  if ((nonblank(gConsolidationDaughterCompany)) and (StringToInt(gConsolidationDaughterCompany)!=CurrentCompany))  then begin goto LIncDaughter; end;
+  ltd = bdp;
+  nbd = AddDay(bdp,1);
+  if (GetDay(nbd)<>1) then begin ltd = AddMonth(bdp,-1); end;
+
+  if (ocnt>1) then begin goto L8; end;
+  if (nonblank(crncycode)) then begin goto L8; end;
+  if (blank(ObjBalr.AccNumber)) then begin goto L8; end;
+  if (simf>1) then begin goto L8; end;
+//  if (basecurncy==kReportBCOneConsolidationRate) then begin goto L8; end;
+  ltd = bdp;
+  //if (GetDay(ltd)!=DaysInMonth(ltd.year,ltd.month)) then begin     
+  //  goto L8;
+  //end;
+  nbd = AddDay(bdp,1);
+  if (GetDay(nbd)<>1) then begin ltd = AddMonth(bdp,-1); end;
+*/
+
+  if (simf<>0) then begin
+    dv = GetBalance(ObjBalr,"simdebit",ltd);
+    cv = GetBalance(ObjBalr,"simcredit",ltd);
+  end;
+  if (basecurncy==kReportBCOneConsolidationRate) then begin 
+    BlockLoad(bascur);
+    dvp = GetBalance(ObjBalr,"transdebit",ltd);
+    cvp = GetBalance(ObjBalr,"transcredit",ltd);
+    if ((simf<>0) and (GetDay(nbd)==1)) then begin
+      dvp = dvp + dv;
+      cvp = cvp + cv;
+    end;
+    GetConsolidationRate(accstr,bascur.BaseCur1,bdp,fr,to1,to2,br1,br2);
+    MulM4OneRate(dvp,(to1/fr)*100,dvp,DefaultCurRoundOff,true);
+    MulM4OneRate(cvp,(to1/fr)*100,cvp,DefaultCurRoundOff,true);
+  end else begin
+    if (nonblank(crncycode)) then begin
+      nbd = bdp;
+      bm = 1 - GetDay(nbd);
+      nbd = AddDay(nbd,bm);//nbd.day = 1
+      dvp = GetBalance(ObjBalr,"transdebit",ltd);
+      cvp = GetBalance(ObjBalr,"transcredit",ltd);
+      if ((simf<>0) and (GetDay(nbd)==1)) then begin
+        dvp = dvp + dv;
+        cvp = cvp + cv;
+      end;
+      dvp = DivWithRateToBase1(crncycode,nbd,dvp,DefaultCurRoundOff);
+      cvp = DivWithRateToBase1(crncycode,nbd,cvp,DefaultCurRoundOff);
+    end else begin
+      if (basecurncy==1) then begin
+        dvp = GetBalance(ObjBalr,"transdebit2",ltd);
+        cvp = GetBalance(ObjBalr,"transcredit2",ltd);
+      end else begin
+        dvp = GetBalance(ObjBalr,"transdebit",ltd);
+        cvp = GetBalance(ObjBalr,"transcredit",ltd);
+      end;
+      if ((simf<>0) and (GetDay(nbd)==1)) then begin
+        if (basecurncy==1) then begin                
+          curncy = "";
+          BlockLoad(bascur);
+          curncy = bascur.BaseCur2;
+          dv = DivWithRateToBase1(curncy,nbd,dv,DefaultCurRoundOff);
+          cv = DivWithRateToBase1(curncy,nbd,cv,DefaultCurRoundOff);
+        end;
+        dvp = dvp + dv;
+        cvp = cvp + cv;
+      end;
+    end;
+  end;
+  if (GetDay(nbd)==1) then begin goto LIncDaughter; end;  
+  nbd = bdp;
+  bm = 1 - GetDay(nbd);
+  nbd = AddDay(nbd,bm);//nbd.day = 1
+L8:;
+  TransAccTurnover(accstr,objstr,nbd,bdp,simf,basecurncy,crncy,crncycode,"",dv,cv);
+  dvp = dvp + dv;
+  cvp = cvp + cv;
+LIncDaughter:;
+  if (IncDaughter<>0) then begin
+    GetAccDaughtersDCBalance(accstr,objstr,bdp,simf,basecurncy,crncy,crncycode,dvp,cvp);
+  end;
+  RETURN;
+END;
+
+global
+procedure GetAccBalance(string accstr,string objstr,Date bdp,record ObjBalVc ObjBalr,Integer simf,Integer basecurncy,
+                        Integer crncy,string crncycode,Integer IncDaughter,var val vp)
+BEGIN
+  val dv,cv;
+    
+  GetAccDCBalance(accstr,objstr,bdp,ObjBalr,simf,basecurncy,crncy,crncycode,dv,cv,IncDaughter);
+  vp = dv - cv;
+  RETURN;
+END;
+
+global
+procedure GetAccStartBalance3(var val vp,string accstr,string objstr,Date bdp,var record ObjBalVc ObjBalp,Integer simf,Integer basecurncy,string crncycode)
+BEGIN
+  Date sbd;
+  
+  sbd = AddDay(bdp,-1);
+  vp = FindAccBalance(accstr,objstr,sbd,ObjBalp,simf,basecurncy,0,crncycode,0);
+  RETURN;
+END;
+
+global
+procedure GetAccStartBalance2(record ObjBalVc ObjBalr,Date bdp,string colname,var val vp)
+BEGIN
+  Date sbd;
+  
+  sbd = AddDay(bdp,-1);
+  vp =  GetBalance(ObjBalr,colname,sbd);  
+  RETURN;
+END;
+
+global
+procedure GetAccStartBalance(string AccNumber,string objtemp,Date bdp,record ObjBalVc ObjBalr,Integer simf,Integer basecurncy,string crncycode,Integer IncDaughter,var val vp)
+BEGIN
+  Date sbd;
+    
+  sbd = AddDay(bdp,-1);
+  GetAccBalance(AccNumber,objtemp,sbd,ObjBalr,simf,basecurncy,0,crncycode,IncDaughter,vp);
+  RETURN;
+END;
+
+global
+procedure GetAccDCStartBalance(string accstr,string objstr,Date bdp,record ObjBalVc ObjBalr,Integer simf,Integer basecurncy,string crncycode,Integer IncDaughter,var val dvp,var val cvp)
+BEGIN
+  Date sbd;
+  
+  sbd = AddDay(bdp,-1);
+  GetAccDCBalance(accstr,objstr,sbd,ObjBalr,simf,basecurncy,0,crncycode,dvp,cvp,IncDaughter);
+  RETURN;
+END;
+
+procedure TransAccTurnoverDaughters(string accstr,string objstr,Date sdp,Date edp,Integer simf,Integer basecurncy,
+                                   Integer crncy,string crncycode,var val dvp,var val cvp)
+BEGIN
+  record DaughterCompBlock DaughterCompRec;
+  row DaughterCompBlock DaughterComprw;
+  record ConsolidationBlock cr;
+  Integer i,rwcnt;
+  Integer oldcomp;
+  Date lsdp,ledp;
+
+  oldcomp = CurrentCompany;  
+  BlockLoad(DaughterCompRec);
+  rwcnt = MatRowCnt(DaughterCompRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(DaughterCompRec,i,DaughterComprw);
+    if (SetCompanyCode(DaughterComprw.CompCode,false)) then begin
+      BlockLoad(cr);
+      lsdp = sdp;
+      ledp = edp;
+      if (nonblankdate(DaughterComprw.StartDate)) then begin
+        if (lsdp<DaughterComprw.StartDate) then begin lsdp = DaughterComprw.StartDate; end;
+      end;
+      if (nonblankdate(DaughterComprw.EndDate)) then begin
+        if (ledp>DaughterComprw.EndDate) then begin ledp = DaughterComprw.EndDate; end;
+      end;
+      TransAccTurnover(accstr,objstr,lsdp,ledp,simf,cr.ConsCrncy,0,crncycode,"",dvp,cvp);
+    end;  
+  end;
+  ResetCompany(oldcomp);
+  return;
+end;         
+
+global
+procedure GetAccDCTurnover(string accstr,string objstr,Date sdp,Date edp,record ObjBalVc ObjBalr,string crncycode,Integer simf,Integer basecurncy,
+                           Integer incdaughter,val dsbp,val csbp,var val dvp,var val cvp)
+BEGIN
+  val dv1,cv1,dv2,cv2;
+  Integer ocnt;
+  Boolean manyobjf;
+  
+  ocnt = CountObjects(objstr);
+  if (ocnt>1) then begin manyobjf = true; end;
+  if (nonblank(crncycode)) then begin manyobjf = true; end;
+  if (incdaughter==0) then begin    
+    if (blank(ObjBalr.AccNumber)) then begin//if (math==NIL) then goto L88;
+      manyobjf = true;
+    end;
+  end; 
+  if (manyobjf==false) then begin
+    if ((dsbp==BlankVal) or (csbp==BlankVal)) then begin
+      GetAccDCStartBalance(accstr,objstr,sdp,ObjBalr,simf,basecurncy,crncycode,incdaughter,dv1,cv1);
+    end else begin
+      dv1 = dsbp;
+      cv1 = csbp;
+    end;
+    GetAccDCBalance(accstr,objstr,edp,ObjBalr,simf,basecurncy,0,crncycode,dv2,cv2,incdaughter);
+    dvp = dv2 - dv1;
+    cvp = cv2 - cv1;
+  end else begin
+    TransAccTurnover(accstr,objstr,sdp,edp,simf,basecurncy,0,crncycode,"",dv1,cv1);
+    dvp = dv1;
+    cvp = cv1;
+// This should work.
+    if (IncDaughter<>0) then begin
+      TransAccTurnoverDaughters(accstr,objstr,sdp,edp,simf,basecurncy,0,crncycode,dvp,cvp);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure GetAccTurnover(string accstr,string objstr,Date sdp,Date edp,record ObjBalVc ObjBalr,string crncycode,Integer simf,Integer basecurncy,Integer IncDaughter,var val sbp,var val vp)
+BEGIN
+  val v1,v2;
+  val dv,cv;
+  Integer ocnt;
+  Boolean manyobjf;
+
+  ocnt = CountObjects(objstr);
+  if (ocnt>1) then begin manyobjf = true; end;
+  if (nonblank(crncycode)) then begin manyobjf = true; end;
+  if (blank(accstr)) then begin
+    if (ocnt==1) then begin  
+      goto LGetAccTurnover; 
+    end;
+    manyobjf = true;
+  end;
+  if (manyobjf==false) then begin
+    if (blank(sbp)) then begin
+      GetAccStartBalance(accstr,objstr,sdp,ObjBalr,simf,basecurncy,crncycode,IncDaughter,v1);
+    end else begin
+      v1 = sbp;
+    end;
+    GetAccBalance(accstr,objstr,edp,ObjBalr,simf,basecurncy,0,crncycode,IncDaughter,v2);
+    vp = v2 - v1;
+  end else begin  
+    TransAccTurnover(accstr,objstr,sdp,edp,simf,basecurncy,0,crncycode,"",dv,cv);
+    vp = dv - cv;
+  end;  
+LGetAccTurnover:;
+  RETURN;
+END;
+
+global
+function Boolean GetTSAcc(string artcode,string emcode,var string wipacc,var string balacc,var string costacc)
+BEGIN
+  Boolean res;
+  record INVc INr;
+  record ITVc ITr;
+  record UserVc Userr;
+  record PRAccBlock PRAccRec;
+  
+  wipacc = "";
+  balacc = "";
+  costacc = "";
+  BlockLoad(PRAccRec);
+  Userr.Code = emcode;
+  if (ReadFirstMain(Userr,1,true)) then begin    
+    costacc = Userr.CostAcc;
+  end;
+  INr.Code = artcode;
+  if (ReadFirstMain(INr,1,true)) then begin    
+    ITr.Code = INr.Group;
+    if (ReadFirstMain(ITr,1,true)) then begin
+      wipacc = ITr.WIPAcc;
+    end;
+    if (blank(wipacc)) then begin
+      switch (INr.ItemType) begin      
+        case 0: wipacc = PRAccRec.MaterialWIPAcc;
+        case 3: wipacc = PRAccRec.ServiceWIPAcc;
+      end;
+    end;
+    if (blank(costacc)) then begin
+      switch (INr.ItemType) begin      
+        case 0: 
+          if (INr.ItemMaterial!=0) then begin
+            costacc = PRAccRec.MaterialCostAcc;
+          end else begin
+            costacc = PRAccRec.PlainCostAcc;
+          end;
+        case 3: costacc = PRAccRec.ServiceCostAcc;
+      end;
+    end;
+    switch (INr.ItemType) begin      
+      case 0: balacc = PRAccRec.MaterialBalAcc;
+      case 3: balacc = PRAccRec.ServiceBalAcc;
+    end;    
+    res = true;
+  end;  
+  GetTSAcc = res;
+  RETURN;
+END;
+
+global
+procedure AddObj(String a, var string tstr)
+begin
+  record ObjVc Objr;
+  String 20 UnitObj;
+  integer frPos,toPos,i;
+
+  if blank(tstr) then begin 
+    tstr = a;
+  end else begin  
+    Objr.Code = a; UnitObj=""; frPos=0; toPos=0;
+    for (i=0;i<=len(a);i=i+1) begin   
+      if (CharacterMatch(a,",",i)) begin
+        toPos = i - frPos;
+        UnitObj = Mid(a,frPos,toPos-1);
+        frPos = i;
+        Objr.Code = UnitObj;
+        if (ReadFirstMain(Objr,1,true)) then begin
+          if (len(tstr)>0) then begin
+            if (setinset(UnitObj,tstr)==false) then begin
+              tstr = tstr & "," & Objr.Code;
+            end;
+          end else begin
+            tstr = Objr.Code;
+          end;
+        end;
+      end;
+      if (i==len(a)) then begin
+        toPos = i - frPos;
+        UnitObj = Mid(a,frPos,toPos);
+        Objr.Code = UnitObj;
+        if (ReadFirstMain(Objr,1,true)) then begin
+          if (len(tstr)>0) then begin
+            if (setinset(UnitObj,tstr)==false) then begin
+              tstr = tstr & "," & Objr.Code;
+            end;
+          end else begin
+            tstr = Objr.Code;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+function Boolean ConvertNLTrans_VIVc(record TRVc TRr,record OPrsVc OPrsr,record CUVc VEr,Boolean addsum,var record VIVc VIr)
+begin
+  Boolean res,testf;
+  row TRVc TRrw;
+  row TRVc foundTRrw;
+  Integer i,rwcnt;
+  record VIVc lVIr;
+  
+  if (OPrsr.VINr>0) then begin
+//    goto LConvertNLTrans_VIVc;
+//why ? 
+  end;
+  if (OPrsr.VINr>0) then begin
+    lVIr.SerNr = OPrsr.VINr;
+    if (ReadFirstMain(lVIr,1,true)) then begin
+      goto LConvertNLTrans_VIVc;
+    end;
+  end;
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    testf = true;
+    if (TRrw.ovst!=0) then begin testf = false; end;
+    if (TRrw.SerNr!=OPrsr.VINr) then begin testf = false; end;
+    if (TRrw.Typ!=kTransactionRowTypeSupplier) then begin testf = false; end;
+    if ((TRrw.DebVal-TRrw.CredVal)>0) then begin testf = false; end;
+    if (TRrw.DebVal<0) then begin testf = false; end;
+    if (testf) then begin
+      res = true;
+      CopyRow(TRr,TRrw,foundTRrw);
+      i = rwcnt;
+    end;
+  end;
+
+  if (res) then begin
+    VIr.SerNr = OPrsr.VINr;
+    VIr.VECode = OPrsr.VECode;
+    VIr.VEName = VEr.Name;
+    VIr.DueDate = foundTRrw.DueDate;
+    VIr.TransDate = OPrsr.TransDate;
+    VIr.InvDate = OPrsr.TransDate;
+    VIr.APAcc = OPrsr.AccNr;
+    VIr.InvType = kInvoiceTypeNormal;
+    VIr.OKFlag = 1;
+    VIr.CurncyCode = foundTRrw.Curncy;
+    VIr.FrRate = foundTRrw.FrRate;
+    VIr.ToRateB1 = foundTRrw.ToRateB1;
+    VIr.ToRateB2 = foundTRrw.ToRateB2;
+    VIr.BaseRate1 = foundTRrw.BaseRate1;
+    VIr.BaseRate2 = foundTRrw.BaseRate2;
+    if (addsum) then begin
+      VIr.PayVal = TRrw.CredVal - TRrw.DebVal;
+    end;
+  end;
+LConvertNLTrans_VIVc:;  
+  ConvertNLTrans_VIVc = res;
+  return;
+end;
+
+global
+function Boolean ConvertNLTrans_IVVc(record TRVc TRr,record IPrsVc IPrsr,record CUVc CUr,Boolean addsum,var record IVVc IVr)
+begin
+  Boolean res,testf;
+  row TRVc TRrw;
+  row TRVc foundTRrw;
+  Integer i,rwcnt;
+  record IVVc lIVr;
+  
+  RecordClear(IVr);
+  if (IPrsr.IVNr>0) then begin
+    goto LConvertNLTrans_IVVc;
+  end;
+/*  
+  if (IPrsr.IVNr>0) then begin
+    lIVr.SerNr = IPrsr.IVNr;
+    if (ReadFirstMain(lIVr,1,true)) then begin
+      goto LConvertNLTrans_VIVc;
+    end;
+  end;
+*/  
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    testf = true;
+    if (TRrw.ovst!=0) then begin testf = false; end;
+    if (TRrw.SerNr!=IPrsr.IVNr) then begin testf = false; end;
+    if (TRrw.Typ!=kTransactionRowTypeCustomer) then begin testf = false; end;
+    if ((TRrw.DebVal-TRrw.CredVal)<0) then begin testf = false; end;
+    if (testf) then begin
+      res = true;
+      CopyRow(TRr,TRrw,foundTRrw);
+      i = rwcnt;
+    end;
+  end;
+  if (res) then begin
+    IVr.SerNr = IPrsr.IVNr;
+    IVr.CustCode = IPrsr.CustCode;
+    IVr.Addr0 = CUr.Name;
+    IVr.PayDate = IPrsr.CustDate;
+    IVr.TransDate = IPrsr.TransDate;
+    IVr.InvDate = IPrsr.TransDate;
+    IVr.ARAcc = IPrsr.AccNr;
+    IVr.InvType = kInvoiceTypeNormal;
+    IVr.OKFlag = 1;
+    IVr.CurncyCode = foundTRrw.Curncy;
+    IVr.FrRate = foundTRrw.FrRate;
+    IVr.ToRateB1 = foundTRrw.ToRateB1;
+    IVr.ToRateB2 = foundTRrw.ToRateB2;
+    IVr.BaseRate1 = foundTRrw.BaseRate1;
+    IVr.BaseRate2 = foundTRrw.BaseRate2;
+    if (addsum) then begin
+      IVr.Sum4 = TRrw.DebVal - TRrw.CredVal;
+    end;
+  end;
+LConvertNLTrans_IVVc:;  
+  ConvertNLTrans_IVVc = res;
+  return;
+end;
+
+global
+function Boolean ConvertPurgeNLTrans_IVVc(record PurgeTRVc PurgeTRr,record IPrsVc IPrsr,record CUVc CUr,Boolean addsum,var record IVVc IVr)
+begin
+  Boolean res,testf;
+  Integer i,rwcnt;
+  
+  RecordClear(IVr);
+  if (IPrsr.IVNr>0) then begin
+    goto LConvertPurgeNLTrans_IVVc;
+  end;
+
+  testf = true;
+  if (PurgeTRr.SerNr!=IPrsr.IVNr) then begin testf = false; end;
+  if (PurgeTRr.Typ!=kTransactionRowTypeCustomer) then begin testf = false; end;
+  if ((PurgeTRr.DebVal-PurgeTRr.CredVal)<0) then begin testf = false; end;
+  if (testf) then begin
+    res = true;
+  end;
+  if (res) then begin
+    IVr.SerNr = IPrsr.IVNr;
+    IVr.CustCode = IPrsr.CustCode;
+    IVr.Addr0 = CUr.Name;
+    IVr.PayDate = IPrsr.CustDate;
+    IVr.TransDate = IPrsr.TransDate;
+    IVr.InvDate = IPrsr.TransDate;
+    IVr.ARAcc = IPrsr.AccNr;
+    IVr.InvType = kInvoiceTypeNormal;
+    IVr.OKFlag = 1;
+    IVr.CurncyCode = PurgeTRr.Curncy;
+    IVr.FrRate = PurgeTRr.FrRate;
+    IVr.ToRateB1 = PurgeTRr.ToRateB1;
+    IVr.ToRateB2 = PurgeTRr.ToRateB2;
+    IVr.BaseRate1 = PurgeTRr.BaseRate1;
+    IVr.BaseRate2 = PurgeTRr.BaseRate2;
+    if (addsum) then begin
+      IVr.Sum4 = PurgeTRr.DebVal - PurgeTRr.CredVal;
+    end;
+  end;
+LConvertPurgeNLTrans_IVVc:;  
+  ConvertPurgeNLTrans_IVVc = res;
+  return;
+end;
+
+/*
+global
+procedure TransAccReconcilledTurnover(string accstr,string objstr,Date sdp,Date edp,Integer basecurncy,
+                           Integer crncy,string crncycode,string compcode,var val dvp,var val cvp)
+begin
+  record TRVc TRr;
+  row TRVc TRrw;
+  row BankRecVc brrw;
+  Boolean TrHs,testf,skipf;
+  string 255 ckey;
+  Integer i,rwcnt;
+  Integer oldstyle;
+  val v;
+  string 255 tstr;
+  
+  ckey = "AccNumberReconsf:" & accstr;
+  TRr.TransDate = sdp;
+  TrHs = true;
+
+Trace("ckey " & ckey," accstr " & accstr);      
+
+  while (LoopKey(ckey,TRr,2,TrHs)) begin
+    if (TRr.TransDate>edp) then begin TrHs = false; end;
+    if (TrHs) then begin
+      rwcnt = MatRowCnt(TRr);
+Trace("TRr.Number " & TRr.Number," TRr.IntYc " & TRr.IntYc);      
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(TRr,i,TRrw);
+                if (TRrw.stp==1) then begin
+                  if (TRrw.ovst==0) then begin
+                    if (TRrw.AccNumber==accstr) then begin
+                      skipf = false;                      
+                      if (objstr==";;;") then begin
+                        if (TRrw.Reconsf==0) then begin skipf = true; end;
+                      end else begin
+                        if (EobjInEobj(objstr,TRrw.Objects)==false) then begin skipf = true; end;
+                      end;
+                      if (nonblank(compcode)) then begin
+                        if (TRrw.CompCode!=compcode) then begin skipf = true; end;
+                      end;
+                      if (skipf==false) then begin
+                        if (blank(crncycode)) then begin
+                          if (crncy==0) then begin
+                            switch (basecurncy) begin
+                              case kReportBCOne:
+                                dvp = dvp + TRrw.DebVal;
+                                cvp = cvp + TRrw.CredVal;
+                              case kReportBCTwo:
+                                dvp = dvp + TRrw.DebVal2;
+                                cvp = cvp + TRrw.CredVal2;
+                            end;
+                          end;
+                          if (crncy==2) then begin
+                            dvp = dvp + TRrw.CurDebVal;
+                            cvp = cvp + TRrw.CurCredVal;
+                          end;
+                        end else begin                          
+                          if (crncycode==TRrw.Curncy) then begin
+                            switch (TypeOfCurncy(crncycode,oldstyle)) begin
+                              case 0:
+                                dvp = dvp + TRrw.CurDebVal;
+                                cvp = cvp + TRrw.CurCredVal;
+                              case 1:
+                                dvp = dvp + TRrw.DebVal;
+                                cvp = cvp + TRrw.CredVal;
+                              case 2:
+                                dvp = dvp + TRrw.DebVal2;
+                                cvp = cvp + TRrw.CredVal2;
+                            end;
+                          end else begin
+//                            curdv = DivWithRateToBase1(crncycode,TRr.TransDate,TRrw.DebVal,DefaultCurRoundOff);
+//                            curcv = DivWithRateToBase1(crncycode,TRr.TransDate,TRrw.CredVal,DefaultCurRoundOff);
+//                            dvp = dvp + curdv;
+//                            cvp = cvp + curcv;
+                          end;
+                        end;
+                      end;                        
+                    end;
+                  end;
+                end;
+              end;
+              
+    end;
+  end;
+LDo_RefreshBRPost_AllNotReconciled:;  
+  return;
+end;
+*/

@@ -1,0 +1,1079 @@
+external function Boolean AddEMailRecipientsToMailQueue(var record EMailQueVc,string,string,integer);
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external function Integer InString2(string,string);
+external procedure ExtractObj(string,var Integer,var string);
+external function Integer GetCodeFromCompanyCode(Integer);
+external updating procedure StoreReceivedRegister(string,string,string,string,string,string,Integer,Date,Time,string,LongInt,Integer);
+external updating procedure CallStoreActFromLetVc(record LetVc);
+external procedure GetLetterSelection(record LetVc,var Integer);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external function Boolean InterNetAddrTest(string);
+external procedure GetCurUser(var record UserVc);
+external procedure HTNr(Integer,Integer,LongInt,LongInt,var string);
+external procedure SplitEclass(string,var Array string);
+external function Integer SclassInEclass(Array string,string);
+//external procedure CheckFlush(var Integer,Integer);
+
+procedure FindTelephoneNumber(string contactp,string custcode,string custphone,var string res)
+BEGIN
+  record CUVc ContactCUr;
+
+  res = "";
+  if (FindCustomerRelation(custcode,contactp,ContactCUr)) then begin
+    res = ContactCUr.Phone;
+    if (blank(res)) then begin
+      res = ContactCUr.Mobile;
+    end;      
+    if (blank(res)) then begin
+      res = custphone;
+    end;  
+  end else begin
+    res = custphone;
+  end;
+  RETURN;
+END;
+
+procedure PrintLetterDoc(record LetVc Letp,Boolean printprevf)
+begin
+  if (PrintDocument(Letp,"LetForm",printprevf)) then begin
+    if (printprevf==false) then begin
+      Letp.Printdf = 1;
+    end;
+  end;
+  RETURN;
+END;
+
+// FindUserInMailbox removed from this file
+
+procedure CopyMailLinksToLet(record LetVc Letp,record EMailQueVc EMQp)
+BEGIN
+/*
+  record RLinkVc rlr;
+  Boolean Vws,testf;
+  str255 rlinkorg,rlinkemq;
+  Boolean firstto;
+  string 255 curuserrecidstr;
+
+  firstto = true;
+  ClearM4Mem(&rlr,sizeof(RLinkView));
+  CurUserRecordIdStr(curuserrecidstr);
+  BuildRecordIdStr(fnr,gCompanyNr,dpr,rlinkorg);
+  BuildRecordIdStr(EMailQueVc,gCompanyNr,EMQp,rlinkemq);
+  strpcpy(rlr.FromRecidStr,rlinkorg);
+  LLoop1 = -1;
+  Vws = true;
+  while (m4_LoopMain(RLinkVc,&rlr,1,Vws,&LLoop1)) begin
+    if (strpeq(rlr.FromRecidStr,rlinkorg)==false) then Vws = false;
+    if (Vws) then begin
+      RLinkPost(rlinkemq,rlr.ToRecidStr,rlr.Comment);
+    end;
+  end;
+  LLoop1 = -1;
+  ClearM4Mem(&rlr,sizeof(RLinkView));
+  strpcpy(rlr.ToRecidStr,rlinkorg);
+  Vws = true;
+  while (m4_LoopCKey(RLinkVc,"ToRecKey",&rlr,1,Vws,&LLoop1)) begin
+    if (strpeq(rlr.ToRecidStr,rlinkorg)==false) then Vws = false;
+    if (Vws) then begin
+      testf = true;
+      if (strpeq(rlr.FromRecidStr,curuserrecidstr)) then testf = false;
+      if (testf) then begin
+        RLinkPost(rlr.FromRecidStr,rlinkemq,rlr.Comment);
+      end;
+    end;
+  end;
+*/
+  RETURN;
+END;
+
+function Boolean CheckAttachedFilesSize(record LetVc Letp)
+BEGIN
+  Boolean res;
+  record EmailBlock EmailRec;
+  record RLinkVc RLr;
+  record Attach2Vc Attach2r;
+  Integer filenr;
+    
+  res = true;
+  BlockLoad(EmailRec);
+  if (EmailRec.MaxFileSize<=0) then begin
+    goto LCheckAttachedFilesSize;
+  end;
+  filenr = 1;
+  while (ReadRecordLink(Letp,filenr,Attach2r,RLr)) begin
+    if ((nonblank(Attach2r.FileName)) and (Attach2r.Uploading==0)) then begin
+      if (Attach2r.FileSize>EmailRec.MaxFileSize) then begin
+        res = false;
+        goto LCheckAttachedFilesSize;
+      end;
+    end;
+    filenr = filenr + 1;
+  end;
+LCheckAttachedFilesSize:;  
+  CheckAttachedFilesSize = res;
+  RETURN;
+END;
+
+global
+updating procedure SendLetEMail2(record LetVc Letp,string cucode)
+begin
+  record EmailBlock emailblock;
+//  record EMailQueVc testemqrp;
+  record EMailQueVc emqrp;
+  row EMailQueVc emarw;
+  record UserVc Userr;
+  Boolean signf,signerfound;
+  string 255 tstr;
+  LongInt pos,l;
+  Integer i,emcnt,cscnt;
+  area a;
+  record RcVc RepSpec;
+  record LetVc Let2p;
+  
+  if (nonblank(Letp.ShortSign)) then begin
+    Userr.Code = Letp.ShortSign;
+    if (ReadFirstMain(Userr,1,true)) then begin
+      if (nonblank(Userr.emailAddr)) then begin
+        signerfound = true;
+      end;
+    end;
+  end;
+  if (signerfound==false) then begin
+    GetCurUser(Userr);
+  end;
+  RepSpec.f1 = cucode;
+  RepSpec.f2 = Userr.Code;
+  BlockLoad(emailblock);
+  emarw.RowTyp = 1;
+  if (nonblank(Letp.ReplyToAddr)) then begin
+    emarw.AddrCode = Letp.ReplyToAddr;
+  end else begin
+    if (nonblank(Userr.emailAddr)) then begin
+      emarw.AddrCode = Userr.emailAddr;
+    end else begin
+      emarw.AddrCode = emailblock.UserIP;
+    end;
+  end;
+  MatRowPut(emqrp,0,emarw);
+  emarw.RowTyp = 0;
+  emarw.AddrCode = Letp.emailAddr;
+  MatRowPut(emqrp,1,emarw);
+  if (AddEMailRecipientsToMailQueue(emqrp,cucode,Letp.emailAddr,kMailLetter)==false) then begin
+  end;
+  
+  emqrp.Header = Letp.Header;
+  if (Letp.HtmlFlag==0) then begin
+    ParseTextField(a,Letp,RepSpec,"LetVcReplaceToken");
+    l = GetAreaLength(a);
+    pos = 0;
+    while (pos<l) begin
+      tstr = GetStringFromArea(a,pos,255);
+      AddToText(tstr,Let2p); 
+      pos = pos+255;
+    end;
+    cscnt = LineTextCnt(Let2p);
+    if (cscnt>0) then begin
+      for (i=0;i<cscnt;i=i+1) begin
+        tstr = LineTextGet(Let2p,i);
+        LineTextPut(emqrp,LineTextCnt(emqrp),tstr);
+      end;  
+    end;
+    LineTextPut(emqrp,LineTextCnt(emqrp),Letp.Greet);
+    LineTextPut(emqrp,LineTextCnt(emqrp),Letp.Signature);
+  end;
+  emqrp.SerNr = NextSerNr("EMailQueVc",Letp.TransDate,-1,false,""); //Letp.SerNr
+  emqrp.OrgSerNr = Letp.SerNr;
+  emqrp.FileName = "LetVc";
+  emqrp.TransDate = Letp.TransDate;
+  emqrp.TransTime = CurrentTime;
+  emqrp.HasFileAtt = 0;
+  emqrp.HasRecAtt = 0;
+  emqrp.Priority = 1;
+  emqrp.EMailSent = 0;
+  emqrp.Lifespan = 0;
+  emqrp.QueDate = CurrentDate;
+  emqrp.QueTime = CurrentTime;
+  emqrp.HtmlFlag = Letp.HtmlFlag;
+
+/*
+  testemqrp.SerNr = emqrp.SerNr;
+  testemqrp.QueDate = emqrp.QueDate;
+  testemqrp.QueTime = emqrp.QueTime;
+  testemqrp.Direction = emqrp.Direction;
+  while (ReadFirstMain(testemqrp,0,true)) begin
+    emqrp.QueTime = CurrentTime;
+  end;
+*/
+
+  if (CheckAttachedFilesSize(Letp)) then begin
+    if (RecordStore(emqrp,false)) then begin   end;
+    CopyRecordLinks(Letp,emqrp);
+    if (Letp.HtmlFlag==1) then begin
+      LineTextPutToHtmlRecord(emqrp,Letp.Greet,true,true);
+      LineTextPutToHtmlRecord(emqrp,Letp.Signature,true,true);
+      ParseHtmlField(emqrp,RepSpec,"EMailQueVcReplaceToken");
+    end;
+  end;
+  
+  
+  RETURN;
+END;
+
+global
+updating procedure SendLetEMail(record LetVc Letp)
+begin
+  SendLetEMail2(Letp,Letp.CustCode);
+end;
+
+procedure PrintOneLetter(record LetVc Letp,record CUVc CUp,Integer prtyp,Boolean printprevf,Array string emailaddr,var Integer emrw)
+BEGIN
+  string 255 tstr,t2;
+  Integer i;
+  
+  if (prtyp==0) then begin
+    if (printprevf==false) then begin
+      StartFormat(15);
+      OutString(0,"DblCUVc",Letp.CustCode,false);
+      OutString(80,0,Letp.Name,false);
+      OutString(180,0,Letp.CustCat,false);
+      OutString(240,0,Letp.Classification,false);
+      OutString(280,0,Letp.Contact,false);
+//      OutString(380,0,Letp.JobDesc,false);
+      tstr = Letp.Addr0;
+      FindTelephoneNumber(Letp.Contact,CUp.Code,CUp.Phone,t2);
+      Letp.Addr0 = t2;
+      OutString(380,0,Letp.Addr0,false);
+      Letp.Addr0 = tstr;
+      EndFormat;
+    end;
+  end;
+  if (prtyp==1) then begin
+    PrintLetterDoc(Letp,printprevf); //document
+    queued.StoreReceivedRegister(Letp.CustCode,Letp.emailAddr,"",Letp.Name,CUp.VATNr,CUp.RegNr1,GetCodeFromCompanyCode(CurrentCompany),CurrentDate,CurrentTime,"LetVc",Letp.SerNr,4);
+  end;
+  if (prtyp==2) then begin
+    for (i=0;i<emrw;i=i+1) begin
+      if (emailaddr[i]==Letp.emailAddr) then begin
+        goto LPrintOneLetter;
+      end;
+    end;
+    if (nonblank(Letp.emailAddr)) then begin
+      if (InterNetAddrTest(Letp.emailAddr)) then begin  
+        queued.SendLetEMail2(Letp,CUp.Code);//email
+        queued.StoreReceivedRegister(Letp.CustCode,Letp.emailAddr,"",Letp.Name,CUp.VATNr,CUp.RegNr1,GetCodeFromCompanyCode(CurrentCompany),CurrentDate,CurrentTime,"LetVc",Letp.SerNr,5);
+      end;
+    end;
+    emailaddr[emrw] = Letp.emailAddr;
+    emrw = emrw + 1;
+LPrintOneLetter:;
+  end;
+  if (prtyp==3) then begin
+    queued.CallStoreActFromLetVc(Letp);
+  end;
+  RETURN;
+END;
+
+global
+updating procedure LetVc_UpdatePrintdf(LongInt LetNr,Integer Printdf)
+begin
+  record LetVc Letr;
+  record LetVc oldLetr;
+
+  Letr.SerNr = LetNr;
+  if (ReadFirstMain(Letr,0,true)) then begin
+    RecordCopy(oldLetr,Letr);
+    Letr.Printdf = Printdf;
+    RecordUpdate(oldLetr,Letr,false);
+  end;
+  return;
+end;
+
+procedure DoLetContact(record LetVc origLetp,record LetVc Letp,record CUVc CUp,Integer secondkey,var Integer cnt,Integer prtyp,Boolean printprevf,Array string emailaddr,var Integer emrw,
+                                Array string acontactrelr,var Integer acrrw)
+BEGIN
+  record ContactRelVc ContactRelr;
+  record CUVc ContactCUr;
+  string 255 ljobdesc;
+  string 255 lcontact;
+  string 255 lfax;
+  Array string 20 ac;
+  Boolean CTs,testf,testprimaryccf;
+  Integer localcnt,Printdf;  
+  Integer i;
+  record LetVc oldLetr;
+
+  testprimaryccf = true;
+  RecordCopy(oldLetr,Letp);
+  localcnt = cnt;
+  SplitEclass(Letp.ContClass,ac);
+  lcontact = Letp.Contact;
+  lfax = Letp.Fax;
+  ljobdesc = Letp.JobDesc;
+  Letp.Contact = CUp.Person;
+  Letp.JobDesc = CUp.JobDesc;
+  if (blank(Letp.emailAddr)) then begin
+    Letp.emailAddr = CUp.eMail;
+  end;
+  
+  if (secondkey==0) then begin
+    Letp.Classification = CUp.Classification;
+    if (blank(lfax)) then begin
+      Letp.Fax = CUp.Fax;
+    end;
+    if (nonblank(ljobdesc)) then begin
+      if (CUp.JobDesc!=ljobdesc) then begin goto L88; end;
+    end;
+    PrintOneLetter(Letp,CUp,prtyp,printprevf,emailaddr,emrw);
+    Letp.Fax = lfax;
+    Letp.Classification = "";
+    localcnt = localcnt + 1;
+    goto LDoLetContact;
+  end;
+  if (secondkey==1) then begin
+    if (blank(Letp.Classification)) then begin
+      if (nonblank(Letp.ContClass)) then begin
+        if (SclassInEclass(ac,CUp.Classification)==0) then begin 
+          testprimaryccf = false;
+          goto L88;
+        end;
+        if (blank(CUp.Classification)) then begin
+          testprimaryccf = false;
+          goto L88;
+        end;
+      end;
+      if (prtyp==2) then begin
+        if (blank(CUp.eMail)) then begin
+          testprimaryccf = false;
+          goto L88;
+        end;
+      end;
+    end;    
+    switch (Letp.AllCont) begin
+      case kAllContAllContactPersons:
+        goto L88;
+      case kAllContPrimaryContactPerson:
+        goto L88;
+    end;
+    if (nonblank(ljobdesc)) then begin
+      if (CUp.JobDesc!=ljobdesc) then begin goto L88; end;
+    end;
+    
+    if (blank(lfax)) then begin
+      Letp.Fax = CUp.Fax;
+    end;
+    Letp.Classification = CUp.Classification;
+    Letp.Contact = CUp.Person;
+    Letp.JobDesc = CUp.JobDesc;
+    PrintOneLetter(Letp,CUp,prtyp,printprevf,emailaddr,emrw);
+    Letp.Fax = lfax;
+    Letp.Classification = "";
+    Letp.Contact = "";
+    Letp.JobDesc = "";
+    if (printprevf) then begin
+      goto LDoLetContact;
+    end;
+    localcnt = localcnt + 1;
+  end;
+  if (secondkey==2) then begin
+    if (blank(Letp.Classification)) then begin
+      if (nonblank(Letp.ContClass)) then begin
+        if (SclassInEclass(ac,CUp.Classification)==0) then begin
+          goto L88;
+        end;  
+      end;
+    end;    
+    if (CUp.JobDesc!=ljobdesc) then begin
+      goto L88;
+    end;  
+    if (blank(lfax)) then begin
+      Letp.Fax = CUp.Fax;
+    end;
+    Letp.Classification = CUp.Classification;
+    Letp.Contact = CUp.Person;
+    Letp.JobDesc = CUp.JobDesc;
+    PrintOneLetter(Letp,CUp,prtyp,printprevf,emailaddr,emrw);
+    Letp.Fax = lfax;
+    Letp.Classification = "";
+    Letp.Contact = "";
+    Letp.JobDesc = "";
+    if (printprevf) then begin
+      goto LDoLetContact;
+    end;
+    localcnt = localcnt + 1;
+  end;
+  if (secondkey==3) then begin
+    if (CUp.Person==lcontact) then begin
+      if (blank(lfax)) then begin
+        Letp.Fax = CUp.Fax;
+      end;
+      Letp.Classification = CUp.Classification;
+      Letp.Contact = CUp.Person;
+      Letp.JobDesc = CUp.JobDesc;
+      PrintOneLetter(Letp,CUp,prtyp,printprevf,emailaddr,emrw);
+      Letp.Fax = lfax;
+      Letp.Classification = "";
+      Letp.Contact = "";
+      Letp.JobDesc = "";
+      localcnt = localcnt + 1;
+      goto LDoLetContact;
+    end;
+  end;
+L88:;
+  ContactRelr.CustCode = Letp.CustCode;
+  CTs = true;
+  while (LoopKey("CompKey",ContactRelr,2,CTs)) begin
+    if (ContactRelr.CustCode!=Letp.CustCode) then begin CTs = false; end;
+    if (CTs) then begin
+      testf = true;
+      ContactCUr.Code = ContactRelr.ContactCode;
+      if (ReadFirstMain(ContactCUr,1,true)==false) then begin
+        testf = false;
+      end;
+      if (secondkey==0) then begin
+        if (nonblank(ljobdesc)) then begin
+          if (nonblank(ContactRelr.JobTitle)) then begin
+            if (ContactRelr.JobTitle!=ljobdesc) then begin testf = false; end;
+          end else begin
+            if (ContactCUr.JobDesc!=ljobdesc) then begin testf = false; end;
+          end;
+        end;
+      end;
+      if (secondkey==1) then begin
+        if (nonblank(ljobdesc)) then begin
+          if (nonblank(ContactRelr.JobTitle)) then begin
+            if (ContactRelr.JobTitle!=ljobdesc) then begin testf = false; end;
+          end else begin
+            if (ContactCUr.JobDesc!=ljobdesc) then begin testf = false; end;
+          end;
+        end;
+        if (nonblank(Letp.ContClass)) then begin
+          if (SclassInEclass(ac,ContactCUr.Classification)==0) then begin testf = false; end;
+//          if (blank(ContactCUr.Classification)) then begin
+//            testf = false;
+//          end;
+        end;  
+      end;
+      if (secondkey==2) then begin
+          if (nonblank(ContactRelr.JobTitle)) then begin
+            if (ContactRelr.JobTitle!=ljobdesc) then begin testf = false; end;
+          end else begin
+            if (ContactCUr.JobDesc!=ljobdesc) then begin testf = false; end;
+          end;
+        if (nonblank(Letp.ContClass)) then begin
+          if (SclassInEclass(ac,ContactCUr.Classification)==0) then begin testf = false; end;
+//          if (blank(ContactCUr.Classification)) then begin
+//            testf = false;
+//          end;
+        end;  
+      end;
+      if (secondkey==3) then begin
+        if (ContactCUr.Name!=lcontact) then begin testf = false; end;
+//        if (nonblank(Letp.ContClass)) then begin
+//          if (SclassInEclass(ac,ContactCUr.Classification)==0) then begin testf = false; end;
+//          if (blank(ContactCUr.Classification)) then begin
+//            testf = false;
+//          end;
+//        end;  
+      end;
+    end;
+    if (ContactRelr.Invalid!=0) then begin
+      testf = false;
+    end;
+    if (ContactCUr.blockedFlag<>0) then begin testf = false; end;
+    if (blank(Letp.Contact)) then begin
+      switch (prtyp) begin
+        case 0:
+          if (ContactCUr.NoLetterPosting!=0) then begin testf = false; end;
+        case 1:
+          if (ContactCUr.NoLetterPosting!=0) then begin testf = false; end;
+        case 2:
+          if (ContactCUr.NoMailPosting!=0) then begin testf = false; end;
+      end;
+    end;
+    if (testprimaryccf) then begin
+      switch (Letp.AllCont) begin
+        case kAllContAllContactPersons:
+        case kAllContPrimaryContactPerson:
+        otherwise
+          if (CUp.Person==ContactCUr.Name) then begin testf = false; end;
+      end;
+    end;
+    switch (Letp.AllCont) begin
+      case kAllContPrimaryContactPerson:
+        if (CUp.Person!=ContactCUr.Name) then begin testf = false; end;
+    end;
+    if (CTs==false) then begin testf = false; end;
+    if (testf) then begin
+      for (i=0;i<acrrw;i=i+1) begin
+        if (acontactrelr[i]==ContactCUr.Name) then begin
+          testf = false;
+          i = acrrw;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      acontactrelr[acrrw] = ContactCUr.Name;
+      acrrw = acrrw + 1;
+      Letp.JobDesc = ContactRelr.JobTitle;
+      Letp.Contact = ContactCUr.Name;
+      Letp.Classification = ContactCUr.Classification;
+      Letp.emailAddr = ContactCUr.eMail;
+      if (blank(lfax)) then begin
+        Letp.Fax = ContactCUr.Fax;
+      end;
+      if (blank(Letp.Fax)) then begin
+        Letp.Fax = CUp.Fax;
+      end;            
+      PrintOneLetter(Letp,CUp,prtyp,printprevf,emailaddr,emrw);
+      Letp.Fax = "";
+      Letp.Classification = "";
+      Letp.Contact = "";
+      Letp.JobDesc = "";
+      Letp.emailAddr = "";
+      if (printprevf) then begin CTs = false; end;
+      localcnt = localcnt + 1;
+    end;
+L888:;    
+  end;
+LDoLetContact:;
+  Letp.JobDesc = ljobdesc;
+  cnt = localcnt;
+  Printdf = Letp.Printdf;
+  RecordCopy(Letp,oldLetr);
+  if (prtyp==1) then begin
+    if (origLetp.Printdf!=Printdf) then begin
+      queued.LetVc_UpdatePrintdf(origLetp.SerNr,Printdf);
+/*
+Printdf
+      RecordCopy(oldLetr,origLetp);
+      origLetp.Printdf = Printdf;
+      RecordUpdate(oldLetr,origLetp,true);
+*/
+    end;
+  end;
+  RETURN;
+END;
+
+procedure FillCustInfo(var record LetVc Letp,var record CUVc CUr,string thecode)
+begin
+  RecordNew(CUr);
+  CUr.Code = thecode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    Letp.CustCode = CUr.Code;
+    Letp.CustCat = CUr.CustCat;
+    Letp.Name = CUr.Name;
+    Letp.emailAddr = CUr.eMail;
+    Letp.Fax = CUr.Fax;
+    Letp.Classification = CUr.Classification;
+    Letp.Contact = CUr.Person;
+    Letp.JobDesc = CUr.JobDesc;
+  end;
+end;
+
+function Integer UsePersColList(var record LetVc Letp,Integer prtyp,Boolean printprevf)
+begin
+  record PersColListVc PersColListr;
+  record CUVc CUr;
+  Boolean foundf,testf;
+  string 200 key;
+  Array string 60 emailaddr;
+  Integer emrw,fcnt;
+  Integer localcnt;
+  
+  localcnt = 0;
+  key = "Code:" & Letp.PersColCode;
+  foundf = true;
+  while (LoopKey(key,PersColListr,1,foundf)) begin
+    switch (PersColListr.FileName) begin
+      case "CUVc":
+        FillCustInfo(Letp,CUr,PersColListr.Code);
+        PrintOneLetter(Letp,CUr,prtyp,printprevf,emailaddr,emrw);
+        localcnt = localcnt + 1;
+/*
+      case "ContactVc":
+        FillCustInfo(Letp,CUr,PersColListr.Code);
+        Contactr.Company = PersColListr.Code;
+        Contactr.Name = PersColListr.Name;
+        if (ReadFirstMain(Contactr,2,true)) then begin
+          if (nonblank(Contactr.Fax)) then begin
+            Letp.Fax = Contactr.Fax;
+          end;
+          Letp.JobDesc = Contactr.JobDesc;
+          Letp.Contact = Contactr.Name;
+          Letp.Classification = Contactr.Classification;
+          Letp.emailAddr = Contactr.Email;
+          PrintOneLetter(Letp,CUr,prtyp,printprevf,emailaddr,emrw);
+          if (prtyp==2) then begin
+//            CheckFlush(fcnt,10);
+          end;
+          localcnt = localcnt + 1;
+        end;
+      case "ProfileVc":
+        RecordNew(CUr);
+        Profiler.Code = PersColListr.Code;
+        if (ReadFirstMain(Profiler,1,true)) then begin
+          CUr.Phone = Profiler.Phone;
+          Letp.GuestCode = Profiler.Code;
+          Letp.CustCode = Profiler.Code;
+          Letp.CustCat = "";
+          Letp.Name = "";
+          Letp.emailAddr = Profiler.eMail;
+          Letp.Fax = Profiler.Fax;
+          Letp.Classification = Profiler.Classification;
+          Letp.Contact = Profiler.Name;
+          Letp.JobDesc = Profiler.Profesion;
+          PrintOneLetter(Letp,CUr,prtyp,printprevf,emailaddr,emrw);
+          if (prtyp==2) then begin
+//            CheckFlush(fcnt,10);
+          end;
+          localcnt = localcnt + 1;
+        end;
+*/
+    end;
+  end;
+  UsePersColList = localcnt;
+  return;
+end;
+
+procedure AddToArr(string code,var array string resclass)
+begin
+  Integer i;
+  Boolean addedf;
+  
+  addedf = false;
+  i = 0;
+  while (nonblank(resclass[i]) and addedf==false) begin
+    if (resclass[i]==code) then begin
+      addedf = true;
+    end;
+    i = i + 1;
+  end;
+  if (addedf==false) then begin
+    resclass[i] = code;
+  end;
+  return;
+end;
+
+function Boolean SplitCatEclass(string Eclass,var array string resclass,var string frcat,var string tocat)
+BEGIN
+  Boolean res;
+  record CCatVc CCatr;
+  Array string 20 arescl;
+  string 5 afrcat,atocat;
+  Boolean foundf;
+  Integer i;
+  
+  res = false;
+  if (InString2(Eclass,",")>0) then begin
+    res = true;
+    SplitEclass(Eclass,arescl);
+    i = 0;
+    while (nonblank(arescl[i])) begin
+      afrcat = FirstInRange(arescl[i],5);
+      atocat = LastInRange(arescl[i],5);
+      ResetLoop(CCatr);
+      CCatr.Code = afrcat;
+      foundf = true;
+      while (LoopMain(CCatr,1,foundf)) begin
+        if (CCatr.Code<afrcat) then begin
+          foundf = false;
+        end;
+        if (CCatr.Code>atocat) then begin
+          foundf = false;
+        end;
+        if (foundf) then begin
+          AddToArr(CCatr.Code,resclass);
+        end;
+      end;
+      i = i + 1;
+    end;
+    frcat = "";
+    tocat = "";
+    i = 0;
+    while (nonblank(resclass[i])) begin
+      if (blank(frcat)) then begin
+        frcat = resclass[i];
+      end else begin
+        if (frcat>resclass[i]) then begin
+          frcat = resclass[i];
+        end;
+      end;
+      if (blank(tocat)) then begin
+        tocat = resclass[i];
+      end else begin
+        if (tocat<resclass[i]) then begin
+          tocat = resclass[i];
+        end;
+      end;
+      i = i + 1;
+    end;
+  end;
+  SplitCatEclass = res;
+  RETURN;
+END;
+
+function Boolean StringInEClass(string Eclass,var array string resclass)
+BEGIN
+  Boolean res;
+  Integer i;
+  
+  i = 0;
+  res = false;
+  while (nonblank(resclass[i]) and res==false) begin
+    if (Eclass==resclass[i]) then begin
+      res = true;
+    end;
+    i = i + 1;
+  end;
+  StringInEClass = res;
+  RETURN;
+END;
+
+
+global
+function Integer CustMainLet(record LetVc Letp,Integer secondkey,Integer prtyp,Boolean printprevf)
+BEGIN
+  Integer cnt;
+//  record ProfileVc Profiler;
+  record CUVc CUr;
+  string 20 frcu,tocu;
+  string 5 frcat,tocat;
+  string 255 ckey;
+  Integer keys;
+  Boolean CUs,testf,custsort,catsort,classexists,custfoundf,multicatf;
+  Array string 20 ac;
+  Array string 60 emailaddr;
+  Integer emrw,fcnt;
+  record LetVc origLetp;
+  Array string 20 alettmp;
+  Array string 20 aletcat;
+  Integer i;
+  Array string 100 acontactrelr;
+  Integer acrrw;
+  
+  if (blank(Letp.CustCode)) then begin // If you want all, put *
+    if (prtyp!=0) then begin
+      MessageBox(22068,""); 
+      goto LCustMainLet;
+    end;
+  end;
+  if (Letp.CustCode=="*") then begin // If you put * (meaning you want all) I remove it while printing for old code to work.
+    Letp.CustCode = "";
+  end;
+  RecordCopy(origLetp,Letp);
+  if (nonblank(Letp.PersColCode)) then begin
+    cnt = UsePersColList(Letp,prtyp,printprevf);
+  end else begin
+  custfoundf = false;
+  frcu = FirstInRange(Letp.CustCode,20);
+  tocu = LastInRange(Letp.CustCode,20);
+  if (Letp.CustCode=="*") then begin
+    frcu = "";
+    tocu = "";
+  end;
+  frcat = FirstInRange(Letp.CustCat,5);
+  tocat = LastInRange(Letp.CustCat,5);
+  if (nonblank(Letp.Classification)) then begin
+    SplitEclass(Letp.Classification,ac);
+    classexists = true;
+  end;
+  if (nonblank(Letp.CustCat)) then begin
+    if (SplitCatEclass(Letp.CustCat,aletcat,frcat,tocat)) then begin
+      multicatf = true;
+    end;
+  end;
+  if (nonblank(Letp.CustCode)) then begin
+    CUr.Code = frcu;
+    ckey = "Code";
+    keys = 1;
+    custsort = true;
+  end else begin
+    CUr.CustCat = frcat;
+    CUr.Code = "";
+    keys = 1;
+    ckey = "Group";
+    catsort = true;
+  end;
+LLoopCU:;
+  ResetLoop(CUr);
+  CUs = true;
+  while (LoopKey(ckey,CUr,keys,CUs)) begin
+    testf = true;
+    if (custsort) then begin
+      if (nonblank(tocu)) then begin
+        if (CUr.Code>tocu) then begin CUs = false; end;
+      end;  
+    end else begin
+      if (catsort) then begin
+        if (nonblank(tocat)) then begin
+          if (CUr.CustCat>tocat) then begin CUs = false; end;
+        end;  
+      end;
+    end;    
+    if (nonblank(tocat)) then begin
+      if (CUr.CustCat>tocat) then begin testf = false; end;
+    end;
+    if (nonblank(frcat)) then begin
+      if (CUr.CustCat<frcat) then begin testf = false; end;
+    end;
+    if (nonblank(tocu)) then begin
+      if (CUr.Code>tocu) then begin testf = false; end;
+    end;
+    if (multicatf and testf) then begin
+      SplitEclass(CUr.CustCat,alettmp);
+      if (StringInEclass(CUr.CustCat,aletcat)==false) then begin testf = false; end;
+    end;
+    if (nonblank(frcu)) then begin
+      if (CUr.Code<frcu) then begin testf = false; end;
+    end;
+    if (blank(origLetp.CustCode) or (origLetp.CustCode=="*")) then begin
+      switch (prtyp) begin
+        case 0:
+          if (CUr.NoLetterPosting!=0) then begin testf = false; end;
+        case 1:
+          if (CUr.NoLetterPosting!=0) then begin testf = false; end;
+        case 2:
+          if (CUr.NoMailPosting!=0) then begin testf = false; end;
+      end;
+    end;
+    if (CUr.blockedFlag!=0) then begin testf = false; end;
+    if (CUs==false) then begin testf = false; end;
+    if (classexists) then begin
+      if (SclassInEclass(ac,CUr.Classification)==0) then begin testf = false; end;
+    end;  
+//    if (CUr.CUType==0) then begin testf = false; end;// we must have possibility to send it for all
+    if (CUr.NoLetterPosting!=0) and (frcu!=tocu) and (nonblank(tocu)) then begin testf = false; end;
+    if (testf==true) then begin
+      Letp.CustCode = CUr.Code;
+      Letp.CustCat = CUr.CustCat;
+      Letp.Name = CUr.Name;
+      DoLetContact(origLetp,Letp,CUr,secondkey,cnt,prtyp,printprevf,emailaddr,emrw,acontactrelr,acrrw);
+      if (prtyp!=0) then begin
+        if (printprevf) then begin CUs = false; end;
+      end;
+      custfoundf = true;
+    end;
+  end;    
+  end;
+/*
+  if ((custfoundf==false) and (nonblank(frcu))) then begin
+    Profiler.Code = frcu;
+    CUs = true;
+    while (LoopMain(Profiler,1,CUs)) begin
+      if (Profiler.Code>tocu) then begin
+        CUs = false;
+      end;
+      if (CUs) then begin
+        Letp.GuestCode = Profiler.Code;
+        Letp.Contact = Profiler.FirstName & " " & Profiler.LastName;
+        Letp.emailAddr = Profiler.Email;
+        Letp.JobDesc = Profiler.Profesion;
+        PrintOneLetter(Letp,CUr,prtyp,printprevf,emailaddr,emrw);
+        if (prtyp==2) then begin
+          CheckFlush(fcnt,10);
+        end;
+        cnt = cnt + 1;
+      end;
+    end;
+  end;
+*/
+LCustMainLet:;
+  CustMainLet = cnt;
+  RETURN;
+END;
+
+global
+procedure LetterHeader(record RcVc RepSpec,record LetVc Letp,Boolean printprevf)
+BEGIN
+  if (printprevf==false) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(7101),false);
+    OutLongInt(40,0,Letp.SerNr,false);
+    OutString(160,0,USetStr(7107),false);
+    OutString(210,0,Letp.Signature,false);
+    OutString(300,0,USetStr(7103),false);
+    OutString(370,0,Letp.DocName,false);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(7105),false);
+    OutDate(40,0,Letp.TransDate,false);
+    OutString(160,0,USetStr(7106),false);
+    OutString(210,0,Letp.TransTime,false);
+    OutString(300,0,USetStr(7104),false);
+    OutString(370,0,Letp.LangCode,false);
+    EndFormat;
+    Gray_Divider(0,1);
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,Letp.Header,false);
+    EndFormat;
+    StartFormat(15);
+    EndFormat;
+    if (RepSpec.flags[1]==1) then begin
+      if (Letp.HtmlFlag!=0) then begin
+        OutHtmlAsText(0,85,Letp);
+      end else begin
+        OutText(0,85,Letp);
+      end;
+    end;
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,Letp.Greet,false);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,Letp.Signature,false);
+    EndFormat;
+    StartFormat(15);
+    EndFormat;
+    Gray_Divider(0,1);
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(7109),false);
+    EndFormat;
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(0,0,USetStr(7110),false);
+    OutString(180,0,USetStr(7111),false);
+    OutString(240,0,USetStr(7112),false);
+    OutString(280,0,USetStr(7113),false);
+    //OutString(380,0,USetStr(7114),false);
+    OutString(380,0,USetStr(7119),false);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  RETURN;
+END;
+
+// GetLetterSelection was removed
+
+global
+procedure LetInfoRn(record RcVc RepSpec)
+BEGIN
+  record LetVc Letr;
+  LongInt afr,ato;
+  Integer keys,rw;
+  Boolean TrHs,testf;
+  string 255 tstr;
+  Integer lett,cnt;
+
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  StartReportJob(USetStr(7100));
+  rw = 1;
+  HTNr(7115,7101,afr,ato,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.f2)) then begin
+    tstr = USetStr(6684);
+    tstr = tstr & ":";
+    tstr = tstr & RepSpec.f2;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f3)) then begin
+    tstr = USetStr(6686);
+    tstr = tstr & ":";
+    tstr = tstr & RepSpec.f3;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.Stext,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  EndHeader;
+  Letr.SerNr = afr;
+  TrHs = true;
+  while (LoopMain(Letr,1,TrHs)) begin
+    testf = true;
+    if (TrHs) then begin
+      if (ato!=-1) then begin
+        if (Letr.SerNr>ato) then begin
+          TrHs = false;
+        end;
+      end;    
+    end;
+    if (TrHs==false) then begin testf = false; end;
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f2)) then begin
+        if (Letr.ShortSign!=RepSpec.f2) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f3)) then begin
+        if (Letr.CustCode!=RepSpec.f3) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if (Letr.CustCode!="*") then begin
+          testf = ContactInGroupClass(Letr.CustCode,RepSpec.f4,RepSpec.Stext,"CUST","","");
+        end;
+      end;      
+      if (testf) then begin
+        GetLetterSelection(Letr,keys);
+        LetterHeader(RepSpec,Letr,false);
+        lett = CustMainLet(Letr,keys,0,false);
+        cnt = cnt + lett;
+        StartFormat(15);
+        EndFormat;
+        Black_Divider(0,1);
+        StartFormat(15);
+        EndFormat;
+      end;
+    end; 
+  end;
+  StartFormat(15);
+  OutString(200,0,USetStr(7116),true);
+  OutLongInt(210,0,cnt,false);
+  EndFormat;
+  EndJob;
+  RETURN;
+END;
+
+global
+procedure PersColListRn(record RcVc RepSpec)
+BEGIN
+  record LetVc Letr;
+  record PersColVc PersColr;
+  Boolean TrHs,testf;
+  Integer lett,cnt;
+
+  PersColr.Code = RepSpec.Stext;
+  if (ReadFirstMain(PersColr,1,true)) then begin
+    StartReportJob(USetStr(7100));
+    EndHeader;
+    StartFormat(15);
+    OutString(0,0,PersColr.Code,false);
+    OutString(100,0,PersColr.Comment,false);
+    EndFormat;
+    Gray_Divider(0,1);
+    RecordNew(Letr);
+    Letr.PersColCode = PersColr.Code;
+    cnt = CustMainLet(Letr,0,0,false);
+    StartFormat(15);
+    EndFormat;
+    Black_Divider(0,1);
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(200,0,USetStr(7116),true);
+    OutLongInt(210,0,cnt,false);
+    EndFormat;
+    EndJob;
+  end;
+  RETURN;
+END;

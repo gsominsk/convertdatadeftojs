@@ -1,0 +1,368 @@
+external function val FindVAT(string,val,Integer,Integer);
+external function val HoursDiff(Date,Time,Date,Time);
+external procedure ExtractObj(string,var Integer,var string);
+
+global
+procedure SplitEclass(string Eclass,var Array string resclass)
+BEGIN
+  Integer i,j,k;
+  Integer nobs;
+  Integer pos;
+  Array string 20 objs;
+  string 255 tstr,t2;
+
+  for (i=0 ; i<40 ; i=i+1) begin
+    objs[i] = "";
+    resclass[i] = "";
+  end;
+  pos = 0;
+  for (i = 0 ; i<40 ; i=i+1) begin
+    ExtractObj(Eclass,pos,tstr);
+    if (nonblank(tstr)) then begin
+      objs[i] = tstr;
+      nobs = nobs + 1;
+    end else begin
+      goto L33SplitEclass;
+    end;
+  end;
+L33SplitEclass:;
+  
+  for (i=0;i<nobs;i=i+1) begin
+    for (j=0;j<i;j=j+1) begin
+      tstr = objs[i];
+      t2 = resclass[j];
+      if (tstr<t2) then begin
+        goto L44SplitEclass;
+      end;  
+    end;
+L44SplitEclass:;
+    for (k=i;k>=j;k=k-1) begin
+      resclass[k+1] = resclass[k];
+    end;
+    resclass[j] = objs[i];
+  end;
+  RETURN;
+END;
+
+global
+function Integer SclassInEclass(Array string a,string c)
+BEGIN
+  Integer res;
+  Integer i,j,res2;
+  Array string 20 b;
+  string 20 t1,t2;
+  
+  res = 1;
+  SplitEclass(c,b);
+  for (i = 0; i<20; i=i+1) begin
+    if (nonblank(a[i])) then begin
+      res2 = 0;
+      for (j = 0 ; j<20; j=j+1) begin
+        t1 = a[i];
+        t2 = b[j];
+        if (t1==t2) then begin res2 = 1; end;
+      end;
+      if (res2==0) then begin res = 0; end;
+    end;
+  end;
+  SclassInEclass = res;
+  RETURN;
+END;
+
+global
+procedure FindAccSD(Date curdate,var Date AccumStartDate,var Boolean resUseAccum)
+BEGIN
+  record YearBlock YearRec;
+  row YearBlock YearRecrw;
+  Integer i,rwcnt;
+
+  BlockLoad(YearRec);
+  rwcnt = MatRowCnt(YearRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(YearRec,i,YearRecrw);
+    if (DateInRange(curdate,YearRecrw.StartDate,YearRecrw.EndDate)) then begin
+      AccumStartDate = YearRecrw.StartDate;
+      goto L22FindAccSD;
+    end;
+  end;  
+L22FindAccSD:;
+  if (AccumStartDate<>curdate) then begin
+    if (nonblankdate(AccumStartDate)) then begin
+      resUseAccum = true;
+    end;
+  end;
+
+  RETURN;
+END;
+
+global
+procedure NLObjHeader(record ObjVc OBp)
+BEGIN
+  StartFormat(15);
+  OutString(0,0,USetStr(2512),false);
+  OutString(40,0,OBp.Code,false);
+  OutString(120,0,OBp.Comment,false);
+  EndFormat;
+  Black_Divider(0,1);
+  RETURN;
+END;
+
+global
+procedure MockObjFromVATCode(string vc,var string res)
+begin
+  res = vc;
+  res = res & "::";
+  return;
+end;
+
+global
+procedure UnMockObjFromVATCode(string vc,var string res)
+begin
+  res = vc;
+  if (Right(vc,2)=="::") then begin
+    res = Left(vc,len(vc)-2);
+  end;
+  return;
+end;
+
+global
+procedure BFSumup(var record BFVc BFp)
+BEGIN
+  Integer i,rwcnt;
+  row BFVc BFrw;
+  val sv;
+  
+  sv = blankval;
+  rwcnt = MatRowCnt(BFp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(BFp,i,BFrw);
+    sv = sv + BFrw.crvval;
+  end;
+  BFp.Sum = sv;
+  RETURN;
+END;
+
+global
+procedure OutRegisterTag(string filename)
+BEGIN
+  string 255 tstr;
+  
+  tstr = GetRegisterTag(filename);
+  ExportString(tstr);  
+  RETURN;
+END;
+
+global
+procedure GetAccountDescription2(string accnumber,string language,var string res)
+BEGIN
+  record AccVc Accr;
+  row AccVc Accrw;
+  Integer i,rwcnt;
+  record CYBlock CYr;
+  
+  Accr.AccNumber = accnumber;
+  if (ReadFirstMain(Accr,1,true)) then begin
+    res = Accr.Comment;
+    if (nonblank(language)) then begin           
+      rwcnt = MatRowCnt(Accr);
+      for (i=0; i<rwcnt ;i=i+1) begin
+        MatRowGet(Accr,i,Accrw);
+        if (Accrw.LangCode==language) then begin
+          if (nonblank(Accrw.Text)) then begin
+            res = Accrw.Text;
+          end;  
+          goto LGetAccDesc2;
+        end;
+      end;  
+    end;
+    BlockLoad(CYr);    
+    if (CYr.AccInCompLang!=0) then begin
+      rwcnt = MatRowCnt(Accr);
+      for (i=0; i<rwcnt ;i=i+1) begin
+        MatRowGet(Accr,i,Accrw);
+        if (Accrw.LangCode==CYr.LangCode) then begin
+          if (nonblank(Accrw.Text)) then begin
+            res = Accrw.Text;
+          end;  
+          goto LGetAccDesc2;
+        end;
+      end;  
+    end;
+  end;  
+LGetAccDesc2:;  
+  RETURN;
+END;
+
+global
+procedure GetSalesGroup(string salesman,var string salesgroup)
+BEGIN
+  record UserVc Userr;
+
+  salesgroup = "";
+  Userr.Code = salesman;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    salesgroup = Userr.SalesGroup;
+  end;
+  RETURN;
+END;
+
+global
+procedure GetPayModeText(string paydeal,var string res)
+BEGIN
+  Integer i,mrwcnt;
+  row PMBlock pmrw;
+  record PMBlock PMRec;
+
+  BlockLoad(PMRec);
+  mrwcnt = MatRowCnt(PMRec);;
+  for (i = 0; i<mrwcnt; i=i+1) begin
+    MatRowGet(PMRec,i,pmrw);
+    if (pmrw.Code==paydeal) then begin 
+      res = pmrw.Comment;
+      goto LGetPayModeText;
+    end;
+  end;
+LGetPayModeText:;
+  RETURN;
+END;
+
+global
+procedure GetVATProcAndComment(string vatc,Integer InclExcl, Var val VATproc,var string comment)
+begin
+  record VATCodeBlock vcb;
+  row VATCodeBlock vcbrow;
+  integer rwcnt,i;
+
+  comment = "";
+  BlockLoad(vcb);
+  rwcnt = MatRowCnt(vcb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(vcb,i,vcbrow);
+    if (vcbrow.VATCode==vatc) then begin
+      if (InclExcl!=0) then begin
+         VATproc  =  vcbrow.ExVatpr;
+      end else begin
+         VATproc  =  vcbrow.IncVatpr;
+      end;
+      comment = vcbrow.Comment;
+    end;
+  end;
+  return;
+end;
+
+global
+Function Boolean FindProjContractSales(string prcode,string item,Date frdat,Date todat,var record SMVc SMr,var val sumtime,var val sumpurch,var val summater,var val sumstock,
+                                       var val costtime,var val costpurch,var val costmater,var val coststock)
+begin
+  record COIVVc COIVr;
+  record COVc COr;
+  record IVVc IVr;
+  record INVc INr;
+  row IVVc IVrw;
+  Boolean res;
+  Boolean foundf,testf;
+  Boolean cofoundf;
+  val invsum;
+  Integer rwcnt,i;
+
+  res = false;
+  sumtime = 0;
+  sumpurch = 0;
+  summater = 0;
+  sumstock = 0;
+  costtime = 0;
+  costpurch = 0;
+  costmater = 0;
+  coststock = 0;
+  COr.PRCode = prcode;
+  cofoundf = true;
+  while (LoopKey("PRCode",COr,1,cofoundf)) begin
+    if (COr.PRCode<>prcode) then begin cofoundf = false; end;
+    if (cofoundf) then begin
+      COIVr.CONr = COr.SerNr;
+      COIVr.COChildNr = COr.ChildSerNr;
+      foundf = true;
+      ResetLoop(COIVr);
+      while (LoopMain(COIVr,2,foundf)) begin
+        if ((COIVr.CONr<>COr.SerNr) or (COIVr.COChildNr<>COr.ChildSerNr)) then begin
+          foundf = false;
+        end;
+        testf = foundf;
+        if (COIVr.Type!=0) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          IVr.SerNr = COIVr.IVNr;
+          if (ReadFirstMain(IVr,1,true)) then begin
+            if ((IVr.OKFlag<>0) and (IVr.Invalid==0)) then begin
+              rwcnt = MatRowCnt(IVr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(IVr,i,IVrw);
+                if (nonblank(IVrw.ArtCode)) then begin
+                  invsum = FindVAT(IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT);
+                  INr.Code = IVrw.ArtCode;
+                  if (ReadFirstMain(INr,1,true)) then begin
+                    if (INr.ItemType==0) then begin
+                      if (INr.ItemMaterial==0) then begin
+                        sumpurch = sumpurch + IVrw.Sum;
+                        costpurch = costpurch + IVrw.BasePrice;
+                        if (IVr.InclVAT!=0) then begin
+                          sumpurch = sumpurch - invsum;
+                        end;
+                      end else begin
+                        summater = summater + IVrw.Sum;
+                        costmater = costmater + IVrw.BasePrice;
+                        if (IVr.InclVAT!=0) then begin
+                          summater = summater - invsum;
+                        end;                        
+                      end;
+                    end;
+                    if (INr.ItemType==1) then begin
+                      sumstock = sumstock + IVrw.Sum;
+                      coststock = coststock + IVrw.BasePrice;
+                      if (IVr.InclVAT!=0) then begin
+                        sumstock = sumstock - invsum;
+                      end;                        
+                    end;
+                    if (INr.ItemType==2) then begin
+                    end;
+                    if (INr.ItemType==3) then begin
+                      sumtime = sumtime + IVrw.Sum;
+                      costtime = costtime + IVrw.BasePrice;
+                      if (IVr.InclVAT!=0) then begin
+                        sumtime = sumtime - invsum;
+                      end;                                              
+                    end;
+                  end else begin
+                    sumtime = sumtime + IVrw.Sum; // ???
+                    costtime = costtime + IVrw.BasePrice;
+                    if (IVr.InclVAT!=0) then begin
+                      sumtime = sumtime - invsum;
+                    end;                                                                  
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+      res = true;
+    end;
+  end;
+  FindProjContractSales = res;
+  return;
+end;
+
+global
+procedure MockObjFromCompCode(string compcode,var string res,Integer ve)
+BEGIN
+  res = compcode;
+  res = res & "::";
+  if (ve==2) then begin
+    res = res & "S";
+  end;;
+  if (ve==1) then begin
+    res = res & "C";
+  end;      
+  RETURN;
+END;

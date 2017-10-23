@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fTRLock: { public: true, type: 'DATE' },
+     fTRWarn: { public: true, type: 'DATE' },
+     fTRNoPrel: { public: true, type: 'DATE' },
+     fOtherLock: { public: true, type: 'DATE' },
+     fOtherWarn: { public: true, type: 'DATE' },
+     fDeleteBeforeDate: { public: true, type: 'DATE' },
+     fPLLock: { public: true, type: 'DATE' },
+     fPLWarn: { public: true, type: 'DATE' },
+     fSLLock: { public: true, type: 'DATE' },
+     fSLWarn: { public: true, type: 'DATE' },
+     fWarnOldRecords: { public: true, type: 'INTEGER' },
+     fActLock: { public: true, type: 'DATE' },
+     fActWarn: { public: true, type: 'DATE' },
+     fWarnFutureDate: { public: true, type: 'INTEGER' },
+     fDisallowFutureDate: { public: true, type: 'INTEGER' } } }

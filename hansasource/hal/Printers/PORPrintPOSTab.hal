@@ -1,0 +1,620 @@
+external function val CalculateDiscountPercentage(val,val,val);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+
+
+procedure PutSpecChar(var string tstr,var string res,Integer i,string ch)
+BEGIN
+  string 255 tstr2;
+  
+  res = Left(tstr,i);  
+  res = res & ch;
+  tstr2 = Right(tstr,len(tstr)-i-1);
+  res = res & tstr2;
+  tstr = res;
+  RETURN;
+END;
+    
+procedure ConvertNorwegianChars(string instr,var string res)
+BEGIN
+  string 255 tstr,tstr2;
+  string 1 ch;
+  Integer i;
+  
+  tstr = instr;
+  res = instr;
+  for (i=0;i<len(instr);i=i+1) begin
+    ch = Mid(instr,i,1);
+    if (ch==chr(229)) then begin
+      PutSpecChar(tstr,res,i,"}");   
+      goto LFOR; 
+    end;
+    if (ch==chr(248)) then begin
+      PutSpecChar(tstr,res,i,"|");    
+      goto LFOR; 
+    end;
+    if (ch==chr(230)) then begin
+      PutSpecChar(tstr,res,i,"{");    
+      goto LFOR; 
+    end;
+    if (ch==chr(197)) then begin
+      PutSpecChar(tstr,res,i,"]");    
+      goto LFOR; 
+    end;
+    if (ch==chr(216)) then begin
+      PutSpecChar(tstr,res,i,"\\");    
+      goto LFOR; 
+    end;
+    if (ch==chr(198)) then begin
+      PutSpecChar(tstr,res,i,"[");    
+      goto LFOR; 
+    end;
+LFOR:;
+  end;
+  RETURN;
+END;
+
+function val GetVATCodePrc(string vatcode)
+BEGIN
+  record VATCodeBlock VATRec;
+  row VATCodeBlock vatrw;
+  Integer i,rwcnt;
+  val res;
+  BlockLoad(VATRec);  
+  res = 0;
+  rwcnt = MatRowCnt(VATRec);  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATRec,i,vatrw);
+    if (vatrw.VATCode==vatcode) then begin
+      res = vatrw.ExVatpr;
+      i = rwcnt;
+    end;  
+  end;
+  GetVATCodePrc = res;
+  RETURN;
+END;
+
+procedure FindVATpr(string VATCode, var val VATpr)
+begin
+  record VATCodeBlock VATr;
+  row VATCodeBlock VATrw;
+  Integer i, rwcnt;
+
+  BlockLoad(VATr);
+  rwcnt = MatRowCnt(VATr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw);
+    if(VATCode == VATrw.VATCode) then begin
+      if(nonblank(VATrw.ExVatpr)) then begin
+         VATpr = VATrw.ExVatpr;
+      end
+      else begin
+         VATpr = VATrw.IncVatpr;
+      end;
+      goto LFindVATpr;
+    end;
+  end;
+  LFindVATpr:;
+  return;
+end; 
+
+global
+updating procedure PORPOSPrintOut()
+begin
+  record IVCashVc CashR;
+  record IVCashVc oldCashR;
+  record MachineCashVc MCr;
+  record SysFormatBlock SysFormatRec;
+  Row IVCashVc Cashrw;
+  record SMVc SMr;
+  row SMVc SMrw;
+  record INVc INr;
+  record CYBlock CYr;
+  record CashPrintBlock CPr;
+  record BaseCurBlock bascur;
+  Integer i,rwcnt,res;
+  string 10 FontBold,FontNormal,FormFeed,CutPaper,RAlign,LAlign,CAlign,FontDblSize,FontNormalSize;
+  string 10 InitPrinter,CharSet,TAB,NLINE,PrinterOn,PrinterOff,KickOff,PrintMode;
+  string 10 ClearScr;
+  string 255 tstr,tstr2,tstr3,tstr4,tstr_;
+  Integer wn,vatcnt;
+  val eursum,t;
+
+  val PayVal1, PayVal2, PayValNum, PayTotal;
+  val VATpr;
+
+  string 40 PayCode1, PayCode2, PayComment1, PayComment2;
+  record PMBlock PMRec;
+  row PMBlock PMRecrw;
+  record UserVc Userr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,CashR);
+  
+
+  
+  res = OpenComPort(0,"COM1",9600,-1,8,0,kFlowControlDefault);
+  if ((CashR.OKFlag==0) or (CashR.Prntdf!=0) or (res == 0)) then begin
+    goto LPOSPrintOut;
+  end;
+  BlockLoad(SysFormatRec);
+  BlockLoad(CYr);
+  BlockLoad(CPr);
+  BlockLoad(bascur);
+  RecordNew(SMr);
+  SetupVATBase(SMr,vatcnt);
+  PrinterOn = chr(27) & chr(61) & chr(1); //ESC = 1
+  PrinterOff = chr(27) & chr(61) & chr(2); //ESC = 2
+  PrintMode  = chr(27) & chr(33) & chr(49);//ESC ! 0
+//  PrinterOff = chr(27) & chr(33) & chr(48);//ESC ! 1
+  FontDblSize = chr(27) & chr(77) & chr(48); //ESC M 0
+  FontNormalSize   = chr(27) & chr(77) & chr(49); //ESC M 1
+  FontNormal   = chr(27) & chr(69) & chr(48); //ESC E 1
+  FontBold = chr(27) & chr(69) & chr(49); //ESC E 0
+  InitPrinter = chr(27) & chr(64);//ESC @
+  CharSet = chr(27) & chr(82) & chr(9);//ESC R 9 - Norway
+  CutPaper = chr(27) & chr(105);//ESC i
+  KickOff = chr(27) & chr(112) & chr(0) & chr(25) & chr(250);//ESC p 
+  TAB = "    ";//chr(9)
+  NLINE = chr(10);
+  LAlign     = chr(27) & chr(97) & chr(48);
+  CAlign     = chr(27) & chr(97) & chr(49);
+  RAlign     = chr(27) & chr(97) & chr(50);
+  FormFeed   = chr(10) & chr(10) & chr(10) & chr(10);
+  
+//  if (SetExportCodepage("CP437")==false) then begin
+//    LogText(0,"Failed to set codepage CP437");
+//  end;
+
+  res = OutComPort(0,PrinterOn);
+  res = OutComPort(0,PrintMode);
+
+  res = OutComPort(0,InitPrinter);
+  res = OutComPort(0,CharSet);
+  
+  PayTotal = 0;
+  
+  PayVal1 = StringToVal(CashR.RecValue,M4Val);
+  PayVal2 = StringToVal(CashR.RecValue2,M4Val);
+  PayValNum = StringToVal(CashR.CashValue,M4Val);
+
+  
+  if(nonblank(CashR.RecValue)) then begin
+     PayTotal = PayTotal + PayVal1;
+  end;
+  
+  if(nonblank(CashR.RecValue2)) then begin
+     PayTotal = PayTotal + PayVal2;
+  end;
+
+  if(nonblank(CashR.CashValue)) then begin
+     PayTotal = PayTotal + PayValNum;
+  end;
+
+  
+  if(PayTotal < CashR.Sum4) then begin
+     MessageBox(0, "Introduzir Pagamento");
+     MessageBox(0, ValToString(PayVal1,M4Val, "", "",2));
+     MessageBox(0, ValToString(PayVal2,M4Val, "", "",2));
+     MessageBox(0, ValToString(PayValNum,M4Val, "", "",2));
+     goto LPOSPrintOut;
+  end;
+    
+
+  res = OutComPort(0,CAlign);
+  res = OutComPort(0,chr(28)&chr(112)&chr(1)&chr(0));//print the logos
+  res = OutComPort(0,NLINE);
+  
+  ConvertNorwegianChars(CYr.CompName,tstr);  
+  
+  res = OutComPort(0,CAlign & FontDblSize & FontBold);
+  res = OutComPort(0,tstr & NLINE);
+
+  res = OutComPort(0,FontNormal & FontNormalSize & CAlign);  
+
+  if (nonblank(CYr.Addr0)) then begin
+    ConvertNorwegianChars(CYr.Addr0,tstr);  
+    res = OutComPort(0,tstr & NLINE);
+  end;  
+  if (nonblank(CYr.Addr1)) then begin
+    ConvertNorwegianChars(CYr.Addr1,tstr);  
+    res = OutComPort(0,tstr & NLINE);
+  end;  
+  if (nonblank(CYr.Addr2)) then begin
+    ConvertNorwegianChars(CYr.Addr2,tstr);  
+    res = OutComPort(0,tstr & NLINE);
+  end;  
+  if (nonblank(CYr.Addr3)) then begin
+    ConvertNorwegianChars(CYr.Addr3,tstr);  
+    res = OutComPort(0,tstr & NLINE);
+  end;  
+  if (nonblank(CYr.Addr4)) then begin
+    ConvertNorwegianChars(CYr.Addr4,tstr);  
+    res = OutComPort(0,tstr & NLINE);
+  end;  
+
+  res = OutComPort(0,CAlign & FontDblSize & FontBold);
+
+  tstr = USetStr(13532) & " " & CYr.Phone;
+  res = OutComPort(0,tstr & NLINE);
+
+  tstr = USetStr(7229) & " " & CYr.VATNr;
+  res = OutComPort(0,tstr & NLINE);
+
+  res = OutComPort(0,FontBold & FontNormalSize & CAlign);  
+  
+  tstr = CYr.OrgNr2;
+  res = OutComPort(0,tstr & NLINE);
+
+  if(nonblank(CPr.Head0)) then begin
+    ConvertNorwegianChars(CPr.Head0,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Head1)) then begin
+    ConvertNorwegianChars(CPr.Head1,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Head2)) then begin
+    ConvertNorwegianChars(CPr.Head2,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Head3)) then begin
+    ConvertNorwegianChars(CPr.Head3,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Head4)) then begin
+    ConvertNorwegianChars(CPr.Head3,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  
+  res = OutComPort(0,NLINE);
+
+  MCr.Code = "PT01";
+  if(ReadFirstMain(MCr,1,true)) then begin end;
+
+  res = OutComPort(0,FontNormal & FontNormalSize & CAlign);  
+
+  if(nonblank(MCr.Head0)) then begin
+    ConvertNorwegianChars(MCr.Head0,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Head1)) then begin
+    ConvertNorwegianChars(MCr.Head1,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Head2)) then begin
+    ConvertNorwegianChars(MCr.Head2,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Head3)) then begin
+    ConvertNorwegianChars(MCr.Head3,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Head4)) then begin
+    ConvertNorwegianChars(MCr.Head4,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  
+  res = OutComPort(0,CAlign & FontDblSize & FontBold);
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,FontNormalSize & FontNormal & LAlign);
+  res = OutComPort(0,tstr & NLINE);
+
+  
+  tstr = USetStr(1804) & " " & CashR.SerNr;
+  res = OutComPort(0,CAlign & FontDblSize & FontBold & CALign);
+  res = OutComPort(0,tstr & NLINE);
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,FontNormalSize & FontNormal & LAlign);
+  res = OutComPort(0,tstr & NLINE);
+
+  M4PadString(USetStr(13515) & ":",56,"_",false,tstr);
+  res = OutComPort(0,LAlign);
+  res = OutComPort(0,tstr & NLINE);
+
+  M4PadString(USetStr(10037) & ":",56,"_",false,tstr);
+  res = OutComPort(0,tstr & NLINE);
+
+  M4PadString(USetStr(7229) & ":",56,"_",false,tstr);
+  res = OutComPort(0,tstr & NLINE);
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,tstr & NLINE);
+
+  tstr = USetStr(12945);
+  M4PadString(tstr,9," ",true,tstr3);
+
+  tstr = USetStr(12752);
+  M4PadString(tstr,7," ",true,tstr2);
+  tstr3 = tstr2 & " " & tstr3;
+
+  tstr = USetStr(12410);
+//  tstr = "Preco";
+  M4PadString(tstr,9," ",true,tstr2);
+  tstr3 = tstr2 & " " & tstr3;
+
+  tstr = USetStr(12004);
+  M4PadString(tstr,4," ",true,tstr2);
+  tstr3 = tstr2 & " " & tstr3;
+
+  tstr = USetStr(2356);
+  M4PadString(tstr,6," ",true,tstr2);
+  tstr3 = tstr2 & " " & tstr3;
+
+  tstr = USetStr(12002);
+  M4PadString(tstr,16," ",false,tstr2);
+  tstr3 = tstr2 & " " & tstr3;
+
+  res = OutComPort(0,tstr3 & NLINE);
+
+  rwcnt = MatRowCnt(CashR);
+  for (i=0;i<rwcnt;i=i+1) begin
+
+     MatRowGet(CashR,i,Cashrw);
+     
+     if(blank(Cashrw.ArtCode)) then begin
+        goto rowsLoop01;
+     end;
+     
+     AddVATBase(SMr,Cashrw.VATCode,Cashrw.Sum,blankval,vatcnt,CashR.InclVAT,CashR.NoTAXonVAT);
+     INr.Code = Cashrw.ArtCode;
+     if (ReadFirstMain(INr,1,true)==false) then begin
+       INr.Unittext = "";
+     end;
+
+
+     ConvertNorwegianChars(Cashrw.Spec,tstr);
+     res = OutComPort(0,tstr & NLINE);
+
+
+     tstr = Cashrw.Sum;
+     M4PadString(tstr,9," ",true,tstr3);
+
+     if (nonblank(Cashrw.vRebate)) then begin
+        tstr = ValToString(CalculateDiscountPercentage(Cashrw.Quant,Cashrw.Price,Cashrw.Sum),M4Val,"",SysFormatRec.decimalPt,0) & "%";   
+      end
+     else begin
+        tstr = "";
+     end;
+     M4PadString(tstr,7," ",true,tstr2);
+     tstr3 = tstr2 & " " & tstr3;
+
+     tstr = Cashrw.Price;
+     M4PadString(tstr,9," ",true,tstr2);
+     tstr3 = tstr2 & " " & tstr3;
+        
+     tstr = ValToString(Cashrw.Quant,M4UVal,"","",0);
+     M4PadString(tstr,4," ",true,tstr2);
+     tstr3 = tstr2 & " " & tstr3;
+
+/*
+     ConvertNorwegianChars(INr.Unittext,tstr);    
+     tstr4 = tstr4 & tstr;
+     M4PadString(tstr4,7," ",true,tstr);
+     tstr4 = tstr;     
+     
+     tstr = CashR.CurncyCode; 
+     M4PadString(tstr,5," ",true,tstr3);
+     tstr4 = tstr3 & " " & tstr4; 
+*/     
+     
+
+     FindVATpr(Cashrw.VATCode,VATpr);
+     tstr = ValToString(VATpr/100,M4Val,"",SysFormatRec.decimalPt,0) & "%";   
+     M4PadString(tstr,6," ",true,tstr2);
+     tstr3 = tstr2 & " " & tstr3;
+
+/*     
+     ConvertNorwegianChars(Cashrw.ArtCode,tstr);
+     M4PadString(tstr,16," ",false,tstr2);
+     tstr3 = tstr2 & " " & tstr3;
+*/
+   
+     
+     tstr4 = tstr3;
+
+     if ((len(Cashrw.ArtCode)+1+len(tstr4))>56) then begin
+       res = OutComPort(0,LAlign);
+       ConvertNorwegianChars(Cashrw.ArtCode,tstr);
+       res = OutComPort(0,tstr & NLINE);
+       res = OutComPort(0,LAlign);
+       tstr = tstr4;
+       M4PadString(tstr,56," ",true,tstr4);
+       res = OutComPort(0,tstr4 & NLINE);
+     end else begin
+       ConvertNorwegianChars(Cashrw.ArtCode,tstr);
+       M4PadString(tstr,16," ",false,tstr2);
+       tstr = tstr2 & " " & tstr4;
+       res = OutComPort(0,LAlign);
+       res = OutComPort(0,tstr & NLINE);
+     end;  
+
+     tstr = "";
+     tstr2 = "";
+     tstr3 = "";
+     tstr4 = "";
+     
+     rowsLoop01:;
+  end;
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,tstr & NLINE);
+  res = OutComPort(0,LAlign);
+
+
+  tstr = USetStr(12407);
+  res = OutComPort(0,FontBold & LALign & tstr & NLINE);
+  M4PadString(CashR.Sum4,12," ",true,tstr2);  
+  tstr = USetStr(5234) & " " & CashR.CurncyCode & tstr2; 
+  M4PadString(tstr,56," ",true,tstr2);    
+  res = OutComPort(0,FontBold & LAlign & tstr2 & NLINE);
+
+  M4PadString(CashR.CashValue + CashR.RecValue + CashR.RecValue2,12," ",true,tstr2);  
+  tstr = USetStr(2928) & " " & CashR.CurncyCode & tstr2; 
+  M4PadString(tstr,56," ",true,tstr2);     
+  res = OutComPort(0,FontBold & tstr2 & NLINE);  
+  
+  M4PadString(CashR.RetValue,12," ",true,tstr2);  
+  tstr = USetStr(9589) & " " & CashR.CurncyCode & tstr2;
+  M4PadString(tstr,56," ",true,tstr2);     
+  res = OutComPort(0,FontBold & tstr2 & NLINE);
+    
+  res = OutComPort(0,NLINE);
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,LAlign);
+  res = OutComPort(0,tstr & NLINE);
+
+  if(nonblank(CashR.CashValue)) then begin
+    tstr = "";
+    tstr2 = USetStr(12408);
+    M4PadString(CashR.CashValue,56 - len(tstr2)," ",true,tstr);
+    tstr2 = tstr2 & tstr;    
+    res = OutComPort(0,LAlign & tstr2 & NLINE);  
+  end;
+  
+  PayCode1 = CashR.PayDeal;
+  PayVal1 = CashR.RecValue;
+  
+  PayCode2 = CashR.PayDeal2;
+  PayVal2 = CashR.RecValue2;
+  
+  BlockLoad(PMRec);
+  rwcnt = MatRowCnt(PMRec);  
+  for(i = 0; (i < rwcnt) AND (nonblank(PayCode1) OR nonblank(PayCode2)); i = i + 1) begin
+     MatRowget(PMRec,i,PMRecrw);
+   
+     if(PMRecrw.Code == PayCode1) then begin
+        PayComment1 = PMRecrw.Comment;
+     end;
+     
+     if(PMRecrw.Code == PayCode2) then begin
+        PayComment2 = PMRecrw.Comment;
+     end;
+  
+  end;
+
+  if(nonblank(CashR.RecValue)) then begin
+    if(blank(PayComment1)) then begin
+      PayComment1 = CashR.PayDeal;
+    end;
+    tstr = "";
+    tstr2 = PayComment1;
+    M4PadString(CashR.RecValue,56 - len(tstr2)," ",true,tstr);
+    tstr2 = tstr2 & tstr;    
+    res = OutComPort(0,LAlign & tstr2 & NLINE);      
+  end;
+
+  if(nonblank(CashR.RecValue2)) then begin
+    if(blank(PayComment2)) then begin
+      PayComment2 = CashR.PayDeal2;
+    end;
+    tstr = "";
+    tstr2 = PayComment2;
+    M4PadString(CashR.RecValue2,56 - len(tstr2)," ",true,tstr);
+    tstr2 = tstr2 & tstr;    
+    res = OutComPort(0,LAlign & tstr2 & NLINE);      
+  end;
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,tstr & NLINE & NLINE);
+
+  res = OutComPort(0,FontBold & FontNormalSize & LAlign);
+
+  tstr2 = DateToString(CashR.TransDate,"DD.MM.YYYY");
+  tstr = CashR.TransTime;
+  M4PadString(tstr,56-len(tstr2)," ",true,tstr);
+  tstr = tstr2 & tstr;  
+  res = OutComPort(0,tstr & NLINE);
+
+  res = OutComPort(0,FontNormal & FontNormalSize);
+    
+  Userr.Code = CashR.SalesMan;
+  if(ReadFirstMain(Userr,1,true) == false) then begin
+     Userr.Name = "";
+  end;  
+  ConvertNorwegianChars(Userr.Name,tstr);      
+  tstr2 = USetStr(9328) & ": " & tstr;
+  tstr = USetStr(1674) & ": " & CashR.LocalMachineCode;
+  M4PadString(tstr,56-len(tstr2)," ",true,tstr);
+  tstr = tstr2 & tstr;  
+  res = OutComPort(0,tstr & NLINE);
+
+  M4PadString("",56,"-",false,tstr);
+  res = OutComPort(0,tstr & NLINE);
+
+  res = OutComPort(0,FontBold & FontNormalSize & CAlign);  
+
+  if(nonblank(CPr.Foot0)) then begin
+    ConvertNorwegianChars(CPr.Foot0,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Foot1)) then begin
+    ConvertNorwegianChars(CPr.Foot1,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Foot2)) then begin
+    ConvertNorwegianChars(CPr.Foot2,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Foot3)) then begin
+    ConvertNorwegianChars(CPr.Foot3,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(CPr.Foot4)) then begin
+    ConvertNorwegianChars(CPr.Foot3,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+
+  res = OutComPort(0,NLine & FontNormal);
+
+  if(nonblank(MCr.Foot0)) then begin
+    ConvertNorwegianChars(MCr.Foot0,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Foot1)) then begin
+    ConvertNorwegianChars(MCr.Foot1,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Foot2)) then begin
+    ConvertNorwegianChars(MCr.Foot2,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Foot3)) then begin
+    ConvertNorwegianChars(MCr.Foot3,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+  if(nonblank(MCr.Foot4)) then begin
+    ConvertNorwegianChars(MCr.Foot4,tstr);
+    res = OutComPort(0,tstr & NLINE);
+  end;
+
+
+  res = OutComPort(0,NLINE);
+
+  res = OutComPort(0,FormFeed);
+  res = OutComPort(0,CutPaper);
+  res = OutComPort(0,KickOff);
+  if (res!=0) then begin
+    CashR.Prntdf = 1;
+    if (RecordStore(CashR,true)) then begin end; 
+    PutWindowRecord(wn,CashR);   
+  end;
+  
+// This is for communicating with the Screen
+//  if (nonblank(CPr.Foot4)) then begin 
+//    ClearScr   = chr(12);
+//    res = OutComPort(0,PrinterOff);
+//    res = OutComPort(0,ClearScr);
+//    res = OutComPort(0,CharSet);
+//    ConvertNorwegianChars(CPr.Foot4,tstr);      
+//    res = OutComPort(0,tstr);  
+//  end;  
+    
+ LPOSPrintOut:;
+  res = CloseComPort(0);
+  return;
+end;

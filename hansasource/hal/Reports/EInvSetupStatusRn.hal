@@ -1,0 +1,363 @@
+external function Boolean IsHansaWorldCustomer(string);
+external function Boolean CheckInternetEnabler();
+external function Integer GetCodeFromCompanyCode(Integer);
+
+function string 255 GetDefaultEBehaveString(Integer DefaultEBehave)
+begin
+  string 255 res;
+  
+  switch (DefaultEBehave) begin
+    case 0: res = "Send nothing";
+    case 1: res = "Send what can be sent, normal printing";
+    case 2: res = "Send what can be sent, printing sent ones causes copy on printout";
+    case 3: res = "Send everything";
+  end;
+  
+  GetDefaultEBehaveString = res;
+end;
+
+function string 255 GetEIbSettingString(Integer set)
+begin
+  string 255 res;
+  
+  switch (set) begin
+    case 0: res = "Default";
+    case 1: res = "Active";
+  end;
+  
+  GetEIbSettingString = res;
+end;
+
+function string 255 GetRcvInvoicePrefString(Integer RcvInvoicePref)
+begin
+  string 255 res;
+  
+  switch (RcvInvoicePref) begin
+    case kEInvoiceRcvPreferenceDefault:    res = "Default";
+    case kEInvoiceRcvPreferenceElectronic: res = "Electronic Invoice";
+    case kEInvoiceRcvPreferencePaper:      res = "Paper Invoice";
+    case kEInvoiceRcvPreferenceEMail:      res = "Email";
+    case kEInvoiceRcvPreferenceNone:       res = "No Receiving";
+  end;
+  
+  GetRcvInvoicePrefString = res;
+end;
+
+function string 255 GetRegAtPartnerString(Integer RegAtPartner)
+begin
+  string 255 res;
+  
+  switch (RegAtPartner) begin
+    case 0: res = "Not Registered";
+    case 1: res = "In Progress";
+    case 2: res = "Registered";
+  end;
+  
+  GetRegAtPartnerString = res;
+end;
+
+global
+procedure EInvSetupStatusRn(record RcVc RepSpec)
+begin
+  record CompaniesBlock Compb;
+  row CompaniesBlock Comprw;
+  record DBERecordsBlock DBERb;
+  record EInvoiceBlock EIb;
+  record EnabServerBlock ESb;
+  record ServiceCacheVc SCr;
+  record CUVc CUr;
+  record EInvoiceQueVc EInvoiceQuer;
+  record InternetEnablerBlock IEb;
+  record IVVc IVr;
+  Boolean foundf,firstf,TrHs;
+  string 255 tstr;
+  Integer rwcnt,i,compcode;
+  
+  BlockLoad(Compb);
+  BlockLoad(DBERb);
+  BlockLoad(EIb);
+  BlockLoad(ESb);
+  BlockLoad(IEb);
+  StartReportJob("Electronic Invoice Setup Status");
+  EndHeader;
+  
+  SetRepCol(2,20);
+  SetRepCol(3,180);
+  SetRepCol(4,380);
+  SetRepCol(5,40);
+  SetRepCol(6,220);
+  
+  StartFormat(15);
+  OutString(0,0,"Lookup Server",false);
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  tstr = ESb.LookupServIP & ":";
+  if (ESb.LookupServPort<0) then begin
+    tstr = tstr & ESb.LookupServHTTPPort;
+  end else begin
+    tstr = tstr & ESb.LookupServPort;
+  end;
+  OutString(2,0,tstr,false);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  
+  SCr.Code = "SENDEINVOICE2";
+  foundf = ReadFirstMain(SCr,1,true);
+  if (foundf==false) then begin
+    SCr.Code = "SENDEINVOICE";
+    foundf = ReadFirstMain(SCr,1,true);
+  end;
+  StartFormat(15);
+  OutString(0,0,"Service",false);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Code",false);
+  OutString(3,0,"Address",false);
+  OutString(4,0,"Partner",false);
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  if (foundf) then begin
+    OutString(2,0,SCr.Code,false);
+    tstr = SCr.ServiceHost & ":";
+    if (SCr.ServicePort<0) then begin
+      tstr = tstr & SCr.ServiceHTTPPort;
+    end else begin
+      tstr = tstr & SCr.ServicePort;
+    end;
+    OutString(3,0,tstr,false);
+    OutString(4,0,SCr.Partner,false);
+  end else begin
+    OutString(2,0,"Service not found",false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  
+  StartFormat(15);
+  OutString(0,0,"Electronic Invoices Setting",false);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (EIb.StopEInvoices!=0) then begin
+    StartFormat(15);
+    OutString(2,0,"Stopped: " & EIb.StopReason,false);
+    EndFormat;
+    StartFormat(15);
+    EndFormat;
+  end;
+  StartFormat(15);
+  OutString(2,0,"Send and Receive Documents Default:",false);
+  OutString(3,0,GetDefaultEBehaveString(EIb.DefaultEBehave),false);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Send Electronic Invoices:",false);
+  OutString(3,0,GetEIbSettingString(EIb.OutEInvoices),false);
+  if (TaskExists("SendEInvoice")) then begin
+    OutString(4,0,"Running",false);
+  end else begin
+    OutString(4,0,"Stopped",false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  OutString(5,0,"Register at Partner:",false);
+  OutString(3,0,GetRegAtPartnerString(EIb.RegAtPartner),false);
+  EndFormat;
+  StartFormat(15);
+  OutString(5,0,"Send to:",false);
+  if (EIb.WhomEInvoices==0) then begin
+    OutString(3,0,"All Customers",false);
+  end else begin
+    firstf = true;
+    while (LoopMain(CUr,1,true)) begin
+      if (CUr.eInvStop==0) then begin
+        if (firstf) then begin
+          firstf = false;
+        end else begin
+          EndFormat;
+          StartFormat(15);
+        end;
+        OutString(3,0,CUr.Code,false);
+        OutString(6,0,CUr.Name,false);
+      end;
+    end;
+  end;
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Receive Electronic Invoices:",false);
+  OutString(3,0,GetEIbSettingString(EIb.RcvEInvoices),false);
+  if (TaskExists("ReceiveEInvoice")) then begin
+    OutString(4,0,"Running",false);
+  end else begin
+    OutString(4,0,"Stopped",false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  OutString(5,0,"Receive Preference:",false);
+  OutString(3,0,GetRcvInvoicePrefString(EIb.RcvInvoicePref),false);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Send Electronic Payments:",false);
+  OutString(3,0,GetEIbSettingString(EIb.OutEPayments),false);
+  if (TaskExists("SendEPayment")) then begin
+    OutString(4,0,"Running",false);
+  end else begin
+    OutString(4,0,"Stopped",false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Send Direct Debit:",false);
+  OutString(3,0,GetEIbSettingString(EIb.OutEDirDebt),false);
+  if (TaskExists("SendEDirectDebit")) then begin
+    OutString(4,0,"Running",false);
+  end else begin
+    OutString(4,0,"Stopped",false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Send Electronic VAT Declarations:",false);
+  OutString(3,0,GetEIbSettingString(EIb.OutEVat),false);
+  if (TaskExists("GetEVATDeclarationStatuses")) then begin
+    OutString(4,0,"Running",false);
+  end else begin
+    OutString(4,0,"Stopped",false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  
+  StartFormat(15);
+  OutString(0,0,"Electronic Invoices Queue",false);
+  EndFormat;
+  Gray_Divider(0,1);
+  firstf = true;
+  TrHs = true;
+  EInvoiceQuer.Status = 0;
+  while (LoopKey("Status",EInvoiceQuer,1,TrHs)) begin
+    if (EInvoiceQuer.Status!=0) then begin TrHs = false; end;
+    foundf = TrHs;
+    if (EInvoiceQuer.FileName!="IVVc") then begin foundf = false; end;
+    if (foundf) then begin
+      IVr.SerNr = EInvoiceQuer.RecSerNr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        if (EIb.WhomEInvoices!=0) then begin
+          CUr.Code = IVr.CustCode;
+          if (ReadFirstMain(CUr,1,true)) then begin
+            if (CUr.eInvStop==0) then begin
+              firstf = false;
+              StartFormat(15);
+              OutString(2,0,"Unsent Invoice in Electronic Invoices Queue:",false);
+              OutLongInt(3,0,EInvoiceQuer.RecSerNr,false);
+              EndFormat;
+            end else begin
+              firstf = false;
+              StartFormat(15);
+              OutString(2,0,"Problem record in Electronic Invoices Queue:",false);
+              OutLongInt(3,0,EInvoiceQuer.RecSerNr,false);
+              EndFormat;
+              StartFormat(15);
+              OutString(5,0,"Customer in Electronic Invoices Customer Data should not receive Electronic Invoices:",false);
+              EndFormat;
+              StartFormat(15);
+              OutString(3,0,IVr.CustCode,false);
+              OutString(6,0,IVr.Addr0,false);
+              EndFormat;
+            end;
+          end else begin
+            firstf = false;
+            StartFormat(15);
+            OutString(2,0,"Problem record in Electronic Invoices Queue:",false);
+            OutLongInt(3,0,EInvoiceQuer.RecSerNr,false);
+            EndFormat;
+            StartFormat(15);
+            OutString(5,0,"Customer not in Electronic Invoices Customer Data:",false);
+            EndFormat;
+            StartFormat(15);
+            OutString(3,0,IVr.CustCode,false);
+            OutString(6,0,IVr.Addr0,false);
+            EndFormat;
+          end;
+        end else begin
+          firstf = false;
+          StartFormat(15);
+          OutString(2,0,"Unsent Invoice in Electronic Invoices Queue:",false);
+          OutLongInt(3,0,EInvoiceQuer.RecSerNr,false);
+          EndFormat;
+        end;
+      end else begin
+        firstf = false;
+        StartFormat(15);
+        OutString(2,0,"Problem record in Electronic Invoices Queue:",false);
+        OutLongInt(3,0,EInvoiceQuer.RecSerNr,false);
+        EndFormat;
+        StartFormat(15);
+        OutString(5,0,"Non-existant Invoice",false);
+        EndFormat;
+      end;
+    end;
+  end;
+  if (firstf) then begin
+    StartFormat(15);
+    OutString(2,0,"No problems in Electronic Invoices Queue",false);
+    EndFormat;
+  end;
+  StartFormat(15);
+  EndFormat;
+  
+  StartFormat(15);
+  OutString(0,0,"Company & Enabler",false);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Code",false);
+  EndFormat;
+  Gray_Divider(0,1);
+  tstr = "";
+  if (IsHansaWorldCustomer(IEb.CustomerCode)==false) then begin
+    if (DBERb.DBStatus!=1) then begin
+      tstr = USetStr(20236);
+    end;
+    compcode = IEb.RegInCountry;
+  end else begin
+    compcode = GetCodeFromCompanyCode(CurrentCompany);
+  end;
+  if (blank(tstr) and CheckInternetEnabler==false) then begin
+    tstr = USetStr(20242);
+  end;
+  StartFormat(15);
+  OutLongInt(2,0,compcode,false);
+  if (nonblank(tstr)) then begin
+    OutString(3,0,"Error: " & tstr,false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  
+  StartFormat(15);
+  OutString(0,0,"Companies Block",false);
+  EndFormat;
+  StartFormat(15);
+  OutString(2,0,"Code",false);
+  OutString(3,0,"Name",false);
+  OutString(4,0,"TCP/IP",false);
+  EndFormat;
+  Gray_Divider(0,1);
+  rwcnt = MatRowCnt(Compb);
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(Compb,i,Comprw);
+    OutString(2,0,Comprw.CompCode,false);
+    OutString(3,0,Comprw.CompName,false);
+    OutString(4,0,Comprw.TCPIP,false);
+  end;
+  EndJob;
+end;

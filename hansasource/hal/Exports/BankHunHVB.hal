@@ -1,0 +1,179 @@
+external function Boolean GetPMRow(string,var row PMBlock);
+external procedure NewLineExport();
+
+function string 255 BankAccount(string paymode)
+begin
+  string 255 res;
+  record BankVc Bankr;
+  row PMBlock PMrw;
+
+  if (nonblank(paymode)) then begin
+    GetPMRow(paymode,PMrw);
+    Bankr.Code = PMrw.BankCode;
+    if (ReadFIrstMain(Bankr,1,true)) then begin
+      res = Bankr.Nr2;
+    end;
+  end;
+  BankAccount = res;
+  return;
+end;
+
+procedure BankExpHunHVBHeader(record OPVc OPr,record BankFileBlock bfr,var LongInt appsernr)
+begin
+  record CYBlock CYb;
+  string 255 tstr,headerourbankacc;
+  
+  appsernr = bfr.LastSerNr;
+  if (appsernr<=0) or (appsernr>999999) then begin
+    appsernr = 1;
+  end;
+  BlockLoad(CYb);
+  headerourbankacc = OPr.BankAcc;
+  if (blank(headerourbankacc)) then begin headerourbankacc = BankAccount(OPr.PayMode); end;  
+  if (blank(headerourbankacc)) then begin headerourbankacc = CYb.Bank1; end;
+  ExportPadString("23",2," ",true);
+  tstr = StripNonDigits(headerourbankacc);
+  ExportPadString(tstr,24," ",false);          
+  ExportPadString("HUF",3," ",true);
+  ExportPadString("1",1," ",true);
+  ExportPadString("0",1," ",true);
+  tstr = DateToString(CurrentDate,"YYYYMMDD");
+  ExportPadString(tstr,8," ",true);          
+  ExportPadString("",217," ",true);          
+  NewLineExport;
+  return;
+end;
+
+procedure BankExpHunHVBEnd(LongInt rowsernr,val PGSum,val bankaccchecksum,val rowsernrchecksum)
+begin
+  string 255 tstr;
+  
+  ExportPadString("63",2," ",true);
+  tstr = StringToVal(rowsernrchecksum,M4UVal);
+  tstr = Left(tstr,len(tstr)-3);
+  ExportPadString(tstr,6,"0",true);
+  tstr = StringToVal(bankaccchecksum,M4UVal);
+  tstr = Left(tstr,len(tstr)-3);
+  ExportPadString(tstr,24," ",false);          
+  ExportPadString("",134," ",true);          
+  tstr = ValToString(PGSum,M4Val,"","",0);
+  ExportPadString(tstr,15,"0",true);          
+  ExportPadString("",75," ",true);          
+  NewLineExport;
+  return;
+end;
+
+global
+procedure BankExpHunHVB(record BankFileBlock bfr,record RcVc RepSpec,record OPVc OPr,var LongInt appsernr,var LongInt rowsernr,var val PGSum)
+begin
+  Integer i,j,rwcnt;
+  row OPVc OPrw;
+  row OPVc OPrw2;
+  Boolean testf;
+  record VIVc VIr;
+  record CUVc VEr;
+  val t;
+  string 255 tstr;
+  Boolean headerf,endexpf;
+  string 255 lastvecode,lastbankacc;
+  record BaseCurBlock BCb;
+  val bankaccchecksum,rowsernrchecksum;
+  
+  BlockLoad(BCb);
+  headerf = true;
+  rowsernr = 0;
+  rwcnt = MatRowCnt(OPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPr,i,OPrw);
+    testf = true;
+    if (OPrw.ovst!=0) then begin testf = false; end;
+    if (OPrw.stp!=1) then begin testf = false; end;
+    if (OPrw.BankCurncy!=BCb.BaseCur1) then begin testf = false; end;
+    if (OPrw.VISerNr>0) then begin
+      VIr.SerNr = OPrw.VISerNr;
+      if (ReadFirstMain(VIr,1,true)==false) then begin
+        testf = false;
+      end;
+    end;
+    if (VIr.Invalid!=0) then begin testf = false; end;
+    if (OPrw.BankVal<0) then begin testf = false; end;
+    if (testf==true) then begin
+      for (j=0;j<i;j=j+1) begin
+        MatRowGet(OPr,j,OPrw2);
+        testf = true;
+        If (OPrw2.ovst!=0) then begin testf = false; end;
+        If (OPrw2.stp!=1) then begin testf = false; end;
+        if (OPrw2.BankVal<0) then begin testf = false; end;
+        if (OPrw2.VECode==OPrw.VECode) then begin testf = false; end;
+        if (OPrw2.BankCurncy!=BCb.BaseCur1) then begin testf = false; end;
+        if (testf==false) then begin
+          j = i;
+        end;
+      end;
+    end;
+    if (testf==true) then begin
+      endexpf = false;
+      t = OPrw.BankVal;
+      for (j=i+1;j<rwcnt;j=j+1) begin
+        MatRowGet(OPr,j,OPrw2);
+        testf = true;
+        If (OPrw2.ovst!=0) then begin testf = false; end;
+        If (OPrw2.stp!=1) then begin testf = false; end;
+        if (OPrw2.BankVal<0) then begin testf = false; end;
+        if (OPrw2.VECode!=OPrw.VECode) then begin testf = false; end;
+        if (OPrw2.BankCurncy!=BCb.BaseCur1) then begin testf = false; end;
+        if (testf==true) then begin
+          t = t + OPrw2.BankVal;
+        end;
+      end;
+      if (headerf) then begin
+        BankExpHunHVBHeader(OPr,bfr,appsernr);
+        headerf = false;
+      end;
+      PGSum = PGSum + t;
+      rowsernr = rowsernr + 1;
+      if (appsernr<=0) or (appsernr>999999) then begin
+        appsernr = 0;
+      end;
+      VEr.Code = VIr.VECode;
+      ReadFirstMain(VEr,1,true);
+      ExportPadString("43",2," ",true);
+      ExportPadString(appsernr,6,"0",true);
+      rowsernrchecksum = rowsernrchecksum + appsernr;
+      appsernr = appsernr + 1;
+      tstr = StripNonDigits(OPrw.BankAcc);
+      bankaccchecksum = bankaccchecksum + StringToVal(tstr,M4UVal);
+      ExportPadString(tstr,24," ",false);          
+      ExportPadString(VEr.Name,32," ",false);          
+      ExportPadString("",6," ",true);          
+      ExportPadString("",32," ",true);          
+      ExportPadString("",32," ",true);          
+      ExportPadString("",32," ",true);    
+      tstr = ValToString(t,M4Val,"","",0);
+      ExportPadString(tstr,15,"0",true);          
+      ExportPadString(OPrw.BankCurncy,3," ",false);          
+      tstr = DateToString(OPr.TransDate,"YYYYMMDD");
+      ExportPadString(tstr,8," ",true);          
+      ExportPadString("",3," ",true);    
+      ExportPadString("",2," ",true);    
+      ExportPadString("",7," ",true);    
+      ExportPadString("",3,"0",true);    
+      ExportPadString("",3,"0",true);    
+      ExportPadString("",46," ",true);    
+      NewLineExport;
+      lastbankacc = OPrw.BankAcc;
+      if (nonblank(lastvecode)) then begin
+      if (lastvecode!=OPrw.VECode) then begin
+        BankExpHunHVBEnd(rowsernr,PGSum,bankaccchecksum,rowsernrchecksum);
+        endexpf = true;
+        bankaccchecksum = 0;
+        rowsernrchecksum = 0;
+      end;
+      end;
+    end;
+  end;
+  if (endexpf==false) then begin
+    BankExpHunHVBEnd(rowsernr,PGSum,bankaccchecksum,rowsernrchecksum);
+  end;
+  return;
+end;

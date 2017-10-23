@@ -1,0 +1,288 @@
+external procedure GetSDStockAcc(Integer,string,string,string,string,string,var string,var string);
+external procedure MidStatRestDefaults(var record RcVc);
+external function string 255 FindINObjects(string,string);
+external procedure CheckFlush(var Integer,Integer);
+external procedure SDSumUp(var record SDVc);
+
+procedure SDExpandRecepy(record INVc INp,var record SDVc SDrecr,Integer multilev,val qtyp)
+begin
+  Integer i,recrwcnt;
+  record INVc IN2r;
+  record RecVc Recr;
+  row RecVc Recrw;
+  row SDVc SDrw;
+  val in,out,ord;
+
+  Recr.Code = INp.Recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    recrwcnt = MatRowCnt(Recr);
+    for (i=0;i<recrwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      IN2r.Code = Recrw.Item;
+      if (ReadFirstMain(IN2r,1,true)) then begin
+        if (Recrw.Item!=INp.Code) then begin
+          if (Recrw.InQty>=0) then begin
+            in = qtyp*Recrw.InQty;
+            out = qtyp*Recrw.OutQty;
+            if ((multilev==1) and (nonblank(IN2r.Recepy)) and (IN2r.ItemType==2)) then begin
+              SDExpandRecepy(IN2r,SDrecr,multilev,in);
+            end else begin
+              if (IN2r.ItemType==1) then begin
+                ClearRow(SDrecr,SDrw,1);
+                SDrw.ArtCode = IN2r.Code;
+                SDrw.Qty = in;
+                MatRowPut(SDrecr,MatRowCnt(SDrecr),SDrw);
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure SDPasteArtCode(var record SDVc SDr,string objects,record INVc INr,record AccBlock ARb,record CostAccBlock CAb,record MainStockBlock MSb,var Integer pos)
+BEGIN
+  row SDVc SDrw;
+  Boolean foundf;
+  Integer rwcnt,i;
+  string 255 locobjstr;
+  string 255 stockacc;
+  
+  foundf = false;
+  GetSDStockAcc(CAb.ItemGroupAccounts,SDrw.Location,SDr.Location,MSb.MainStock,INr.Group,ARb.StockAcc,stockacc,locobjstr);
+  rwcnt = MatRowCnt(SDr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDr,i,SDrw);
+    if (SDrw.ArtCode==INr.Code) and (SDrw.Objects==objects) and  (SDrw.CostAcc==stockacc) then begin
+      pos = i;
+      i = rwcnt;
+      foundf = true;
+    end;
+  end;
+  if (foundf==false) then begin
+    ClearRow(SDr,SDrw,1);
+    SDrw.ArtCode = INr.Code;
+    if ((INr.ItemType==2) and (nonblank(INr.Recepy))) then begin
+      SDrw.Recepy = INr.Recepy;
+    end else begin
+      SDrw.Recepy = "";
+    end;  
+    SDrw.Coefficient = INr.UnitCoefficient;
+    SDrw.ArtCode = INr.Code;
+    SDrw.Spec = INr.Name;
+    SDrw.Qty = BlankVal;
+    SDrw.BasePrice = INr.UPrice1;
+    SDrw.Objects = FindINObjects(INr.Objects,INr.Group);
+    SDrw.CostAcc = stockacc;
+    SDrw.Objects = objects;
+    MatRowPut(SDr,pos,SDrw);
+  end;
+  RETURN;            
+END;
+
+procedure SDPasteQty(var record SDVc SDr,record INVc INr,Integer pos,val qty)
+begin
+  row SDVc SDrw;
+  
+  MatRowGet(SDr,pos,SDrw);
+  SDrw.Qty = SDrw.Qty + qty;
+  MatRowPut(SDr,pos,SDrw);
+  if (SDrw.Qty==0) then begin
+    MatRowDelete(SDr,pos);
+  end;
+  return;            
+end;
+            
+updating procedure BarGenAddtoSD(record RcVc RepSpec,string location,string objects,var record SDVc SDr,record INVc INr,val qty, var Integer flushcnt)
+BEGIN
+  record SDVc SDrecr;
+  record INVc IN2r;
+  row SDVc SDrw;
+  Integer rwcnt,recrwcnt,i;
+  record SDVc oldSDr;
+  record AccBlock ARb;
+  record CostAccBlock CAb;
+  record MainStockBlock MSb;
+  
+  BlockLoad(ARb);
+  BlockLoad(CAb);
+  BlockLoad(MSb);
+  recrwcnt = 0;
+  if ((INr.ItemType==2) and (nonblank(INr.Recepy))) then begin
+    RecordNew(SDrecr);
+    SDExpandRecepy(INr,SDrecr,1,qty);
+    recrwcnt = MatRowCnt(SDrecr);
+  end;
+  rwcnt = MatRowCnt(SDr);
+  if ((rwcnt + recrwcnt)>=180) then begin
+    SDr.SerNr = NextSerNr("SDVc",SDr.TransDate,-1,false,"");  
+    SDSumUp(SDr);
+    SDr.Location = location;
+    if (RecordStore(SDr,false)) then begin
+      if (RepSpec.flags[1]!=0) then begin
+        RecordCopy(oldSDr,SDr);
+        SDr.OKFlag = 1;
+        RecordUpdate(oldSDr,SDr,true);
+      end;
+    end;
+    CheckFlush(flushcnt,10);
+    RecordNew(SDr);
+    rwcnt = 0;    
+  end;
+  if (recrwcnt>0) then begin
+    for (i=0;i<recrwcnt;i=i+1) begin
+      MatRowGet(SDrecr,i,SDrw);
+      IN2r.Code = SDrw.ArtCode;
+      if (ReadFirstMain(IN2r,1,true)) then begin
+        rwcnt = MatRowCnt(SDr);
+        SDPasteArtCode(SDr,objects,IN2r,ARb,CAb,MSb,rwcnt);
+        SDPasteQty(SDr,IN2r,rwcnt,SDrw.Qty);
+      end;
+    end;
+  end else begin
+    SDPasteArtCode(SDr,objects,INr,ARb,CAb,MSb,rwcnt);
+    SDPasteQty(SDr,INr,rwcnt,qty);
+  end;
+  RETURN;
+END;
+
+updating procedure BarGenOneLocation(record RcVc RepSpec,string location)
+BEGIN
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+  record SDVc SDr;
+  record SDVc oldSDr;
+  record INVc INr;
+  Boolean testf;
+  Boolean TrHs;
+  Integer i,rwcnt,flushcnt,cnt;
+  val qty;
+
+  RecordNew(SDr);
+L22:;
+  TrHs = true;
+  RestAccr.StockMovFlag = 0;
+  RestAccr.Location = location;
+  RestAccr.TransDate = RepSpec.sStartDate;
+  ResetLoop(RestAccr);
+  while (LoopKey("StockMovFlag",RestAccr,3,TrHs)) begin
+    if (RestAccr.StockMovFlag<>0) then begin TrHs = false; end;
+    if (nonblank(location)) then begin
+      if (RestAccr.Location!=location) then begin TrHs = false; end;
+      if (DateInRange(RestAccr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin TrHs = false; end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (DateInRange(RestAccr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (RestAccr.Cashier<>RepSpec.AccStr) then begin testf = false; end;
+      end; 
+      if (nonblank(RepSpec.LastAcc)) then begin
+        if (RestAccr.MachineName<>RepSpec.LastAcc) then begin testf = false; end;
+      end; 
+      if (RestAccr.Closed==0) then begin testf = false; end;   
+      if (RestAccr.Invalid!=0) then begin testf = false; end;   
+      if (RestAccr.MergedToSerNr>=0) then begin testf = false; end;   
+      if (testf) then begin
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin 
+          MatRowGet(RestAccr,i,RestAccrw);
+          if (RestAccrw.ovst==0) then begin
+          switch (RestAccrw.stp) begin
+            case 1:
+              INr.Code = RestAccrw.ArtCode;
+              qty = RestAccrw.Quant;
+              if (ReadFirstMain(INr,1,true)) then begin
+                if (/*(INr.ItemType==0) or */(INr.ItemType==1) or (INr.ItemType==2)) then begin /* shouldn't be for Plain Items */
+                  BarGenAddtoSD(RepSpec,location,RestAccr.Objects,SDr,INr,qty,flushcnt);
+                  MaintTrace(INr.Code);
+                end;
+              end;
+/*
+            case kInvoiceRowTypeVoid:
+              INr.Code = RestAccrw.ArtCode;
+              qty = -RestAccrw.Quant;
+              if (ReadFirstMain(INr,1,true)) then begin
+                if ((INr.ItemType==1) or (INr.ItemType==2)) then begin // shouldn't be for Plain Items 
+                  BarGenAddtoSD(RepSpec,location,SDr,INr,qty,flushcnt);
+                  MaintTrace(INr.Code);
+                end;
+              end;
+*/
+          end;
+          end;
+        end;
+        if (rwcnt>0) then begin
+          RestAccr.StockMovFlag = 1;
+//          StockFileName = "SDVc";
+//          StockTransNr = SDr.SerNr;
+          if (RecordStore(RestAccr,true)) then begin
+            CheckFlush(flushcnt,10);
+//            goto L22; //why? crash bug when this is in for large number of bar tabs, any way it is very wrong isn't it
+          end;
+          StepBack(RestAccr);
+        end;
+      end;
+    end;
+  end;
+  if (MatRowCnt(SDr)>0) then begin
+    SDr.SerNr = NextSerNr("SDVc",SDr.TransDate,-1,false,"");  
+    SDSumUp(SDr);
+    SDr.Location = location;
+    if (SDr.SerNr>0) then begin
+      if (RecordStore(SDr,false)) then begin
+        if (RepSpec.flags[1]!=0) then begin
+          RecordCopy(oldSDr,SDr);
+          SDr.OKFlag = 1;
+          RecordUpdate(oldSDr,SDr,true);
+        end;
+      end;  
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure BarGenSDMn(record RcVc RepSpec)
+begin
+  record LocationVc Locationr;
+  Boolean found;
+
+  if (blank(RepSpec.FirstAcc)) then begin
+    BarGenOneLocation(RepSpec,"");
+    found = true;
+    while (LoopMain(Locationr,1,found)) begin
+      BarGenOneLocation(RepSpec,Locationr.Code);
+    end;
+  end else begin
+    found = true;
+    Locationr.Code = RepSpec.FirstAcc;
+    while (LoopMain(Locationr,1,found)) begin
+      if (Locationr.Code!=RepSpec.FirstAcc) then begin found = false; end;
+      if (found) then begin
+        BarGenOneLocation(RepSpec,Locationr.Code);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure MidStatRestMn(record RcVc RepSpec)
+begin
+  BarGenSDMn(RepSpec);
+  return;
+end;
+
+global
+updating procedure MidnightRestaurant()
+begin
+  record RcVc RepSpec;
+
+  ReportDefaults(RepSpec,"MidStatRestVClass");  
+  MidStatRestDefaults(RepSpec);
+  MidStatRestMn(RepSpec);
+  return;
+end;

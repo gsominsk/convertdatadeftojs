@@ -1,0 +1,959 @@
+external procedure GetAccAccrual(string,var string);
+external procedure AddWithholdingTaxesRows_IVVc(var record IVVc);
+external procedure AddPerceptionTaxesRows_IVVc(var record IVVc);
+external function roundmode SetRoundModeD(Integer);
+external procedure CalcPrice(val,val,val,var val,Integer);
+external procedure GetARAcc(string,var string);
+external procedure CheckFlush(var Integer,Integer);
+external procedure IVVc_PastePayDeal(var record IVVc,string,string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetPriceList(string,Date,Time,var string,var Integer);
+external function string 255 FindNextLegalSerNr(record IVVc,string);
+external procedure GetBaseCurncy(Integer,var string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure IVDchsum(var record IVVc,Integer);
+external procedure IVVc_PasteSalesMan(var record IVVc,string);
+
+function string 255 FindSiteName(string agrcode,string custcode)
+begin
+  string 255 res;
+  record DelAddrVc DelAddrr;
+  
+  res = "";
+  DelAddrr.DelCode = agrcode;
+  DelAddrr.CustCode = custcode;
+  if (ReadFirstMain(DelAddrr,2,true)) then begin
+    res = DelAddrr.Comment;
+  end else begin
+    DelAddrr.DelCode = agrcode;
+    DelAddrr.CustCode = "";
+    if (ReadFirstMain(DelAddrr,2,true)) then begin
+      res = DelAddrr.Comment;
+    end;
+  end;
+  FindSiteName = res;
+  return;
+end;
+
+procedure GetRentalItemVATCodeAndSalesAcc(string incode,Integer aexport,var string vatcode,var string salesacc)
+BEGIN
+  record INVc INr;
+  record ITVc ITr;
+  record AccBlock ARAccRec;
+  
+  vatcode = "";
+  salesacc = "";
+  INr.Code = incode;
+  if (ReadFirstMain(INr,1,true)) then begin end;
+  BlockLoad(ARAccRec);
+  if (true) then begin
+    switch (aexport) begin
+      case 4: vatcode = INr.VATCodeExp;
+      case 3: vatcode = INr.VATCodeEU;
+      case 2: vatcode = INr.VATCodeExp;
+      case 1: vatcode = INr.VATCodeEU;
+      otherwise vatcode = INr.VATCode;
+    end;
+    if (nonblank(vatcode)) then begin goto LGetItemSalesAcc; end;
+    if (nonblank(INr.RentGroup)) then begin
+      ITr.Code = INr.RentGroup;
+    end else begin
+      ITr.Code = INr.Group;
+    end;
+    if (ReadFirstMain(ITr,1,true)) then begin
+      switch (aexport) begin
+        case 4: vatcode = ITr.VATCodeExp;
+        case 3: vatcode = ITr.VATCodeEU;
+        case 2: vatcode = ITr.VATCodeExp;
+        case 1: vatcode = ITr.VATCodeEU;
+        otherwise vatcode = ITr.VATCodeDom;
+      end;
+    end;
+  end;
+  if (blank(vatcode)) then begin
+    switch (aexport) begin
+      case 4: vatcode = ARAccRec.VATCodeExp;
+      case 3: vatcode = ARAccRec.VATCodeEU;
+      case 2: vatcode = ARAccRec.VATCodeExp;
+      case 1: vatcode = ARAccRec.VATCodeEU;
+      otherwise vatcode = ARAccRec.VATCodeDom;
+    end;
+    if (blank(vatcode)) then begin
+      vatcode = ARAccRec.VATCodeDom;
+    end;      
+  end;
+LGetItemSalesAcc:;
+  switch (aexport) begin
+    case 4: salesacc = INr.ExpSalesAcc;
+    case 3: salesacc = INr.EUSalesAcc; 
+    case 2: salesacc = INr.ExpSalesAcc;
+    case 1: salesacc = INr.EUSalesAcc; 
+    otherwise salesacc = INr.SalesAcc;
+  end;  
+  if (nonblank(salesacc)) then begin goto LGetItemVATCodeAndSalesAcc; end;
+  if (nonblank(INr.RentGroup)) then begin
+    ITr.Code = INr.RentGroup;
+  end else begin
+    ITr.Code = INr.Group;
+  end;
+  if (ReadFirstMain(ITr,1,true)) then begin
+    switch (aexport) begin
+      case 4: salesacc = ITr.ExpSalesAcc;
+      case 3: salesacc = ITr.EUSalesAcc; 
+      case 2: salesacc = ITr.ExpSalesAcc;
+      case 1: salesacc = ITr.EUSalesAcc; 
+      otherwise salesacc = ITr.SalesAcc;
+    end;  
+  end;
+  if (nonblank(salesacc)) then begin goto LGetItemVATCodeAndSalesAcc; end;
+  switch (aexport) begin
+    case 4: salesacc = ARAccRec.ExpSalesAcc;
+    case 3: salesacc = ARAccRec.EUSalesAcc;
+    case 2: salesacc = ARAccRec.ExpSalesAcc;
+    case 1: salesacc = ARAccRec.EUSalesAcc;
+    otherwise salesacc = ARAccRec.DomSalesAcc;
+  end;
+  if (blank(salesacc)) then begin
+    salesacc = ARAccRec.DomSalesAcc;
+  end;
+LGetItemVATCodeAndSalesAcc:;
+  RETURN;
+END;
+
+procedure AddDetailedCharges(var record IVVc IVp,var Integer rwcnt,record RentChrgVc RentChrgr,record INVc INr,Integer usedisc,Integer addperiod)
+begin
+  val price;
+  string 20 vatcode,salesacc;
+  row IVVc IVrw;
+  val comqty;
+  val theqty;
+  string 10 accrual;
+  
+  comqty = RentChrgr.ItemQuant;
+  theqty = RentChrgr.Quant;
+  if (comqty<=0) then begin
+    comqty = 1;
+  end;
+  while (comqty>0) begin
+    ClearRow(IVp,IVrw,1);
+    IVrw.stp = kInvoiceRowTypeNormal;
+    IVrw.vRebate = RentChrgr.vRebate;
+    IVrw.OrdRow = -1;
+    IVrw.ArtCode = RentChrgr.Item;
+    IVrw.Quant = theqty;
+    IVrw.Objects = RentChrgr.Objects;
+    IVrw.CustOrdNr = RentChrgr.CustOrdNr;
+    IVrw.Price = RentChrgr.Price;
+    IVrw.Spec = RentChrgr.Spec;
+    if (addperiod==2) then begin
+      IVrw.Spec = IVrw.Spec & " (" & RentChrgr.FrDate & ":" & RentChrgr.ToDate & ")";
+    end;
+    price = IVrw.Price; 
+    CalcPrice(IVrw.BasePrice,IVrw.PriceFactor,IVrw.vRebate,price,usedisc);
+    IVrw.Price = price;  
+    CalcSum(IVrw.Quant,IVrw.Price,IVrw.PriceFactor,IVrw.vRebate,price,usedisc);
+    IVrw.Sum = price;
+    GetRentalItemVATCodeAndSalesAcc(RentChrgr.Item,IVp.ExportFlag,vatcode,salesacc);
+    IVrw.VATCode = RentChrgr.VATCode;
+    if (blank(IVrw.VATCode)) then begin
+      IVrw.VATCode = vatcode;
+    end;
+    IVrw.SalesAcc = salesacc;
+    GetAccAccrual(IVrw.SalesAcc,accrual);
+    IVrw.PeriodCode = accrual;
+    IVrw.PosCode = RentChrgr.Site;
+    IVrw.BasePrice = INr.InPrice;
+    IVrw.Perceptions = INr.Perceptions;
+    MatRowPut(IVp,rwcnt,IVrw);
+    IVDchsum(IVp,rwcnt);
+    rwcnt = rwcnt + 1;
+    comqty = comqty - 1;
+  end;
+  return;
+end;
+
+procedure AddChargesPerRentalRes(var record IVVc IVp,var Integer rwcnt,record RentChrgVc RentChrgr,record INVc INr,Integer usedisc,Integer addperiod,Integer useasqty)
+begin
+  val price;
+  string 20 vatcode,salesacc;
+  row IVVc IVrw;
+  val comqty;
+  val theqty;
+  val temp;
+  string 10 accrual;
+  
+  comqty = RentChrgr.ItemQuant;
+  theqty = RentChrgr.Quant;
+  if (comqty<=0) then begin
+    comqty = 1;
+  end;
+  switch (useasqty) begin
+    case 1:
+      temp = theqty;
+      theqty = comqty;
+      comqty = temp;
+    case 2:
+      theqty = theqty * comqty;
+      comqty = BlankVal;
+  end;
+  ClearRow(IVp,IVrw,1);
+  IVrw.stp = kInvoiceRowTypeNormal;
+  IVrw.vRebate = RentChrgr.vRebate;
+  IVrw.OrdRow = -1;
+  IVrw.ArtCode = RentChrgr.Item;
+  IVrw.Quant = theqty;
+  IVrw.Objects = RentChrgr.Objects;
+  IVrw.CustOrdNr = RentChrgr.CustOrdNr;
+  IVrw.Price = RentChrgr.Price;
+  if (comqty!=0) then begin
+    IVrw.Price = IVrw.Price * comqty;
+    IVrw.Spec = "" & ValToString(comqty,M4UVal,"","",0) & " ";
+  end;
+  IVrw.Spec = IVrw.Spec & RentChrgr.Spec;
+  if (addperiod==2) then begin
+    IVrw.Spec = IVrw.Spec & " (" & RentChrgr.FrDate & ":" & RentChrgr.ToDate & ")";
+  end;
+  price = IVrw.Price; 
+  CalcPrice(IVrw.BasePrice,IVrw.PriceFactor,IVrw.vRebate,price,usedisc);
+  IVrw.Price = price;  
+  CalcSum(IVrw.Quant,IVrw.Price,IVrw.PriceFactor,IVrw.vRebate,price,usedisc);
+  IVrw.Sum = price;
+  GetRentalItemVATCodeAndSalesAcc(RentChrgr.Item,IVp.ExportFlag,vatcode,salesacc);
+  IVrw.VATCode = RentChrgr.VATCode;
+  if (blank(IVrw.VATCode)) then begin
+    IVrw.VATCode = vatcode;
+  end;
+  IVrw.VATCode = vatcode;
+  IVrw.SalesAcc = salesacc;
+  GetAccAccrual(IVrw.SalesAcc,accrual);
+  IVrw.PeriodCode = accrual;
+  IVrw.PosCode = RentChrgr.Site;
+  IVrw.Perceptions = INr.Perceptions;
+  MatRowPut(IVp,rwcnt,IVrw);
+  rwcnt = rwcnt + 1;
+  return;
+end;
+
+procedure AddChargesPerAgreement(var record IVVc IVp,var Integer rwcnt,record RentChrgVc RentChrgr,record AgreementVc Agreementr,record INVc INr,Integer usedisc,Integer inclperiod)
+begin
+  val price;
+  string 20 vatcode,salesacc;
+  record DelAddrVc DelAddrr;
+  row IVVc IVrw;
+  val comqty;
+  val theqty;
+  val temp;
+  Integer i,foundrow;
+  string 10 accrual;
+  
+  comqty = RentChrgr.ItemQuant;
+  if (comqty<=0) then begin
+    comqty = 1;
+  end;
+  theqty = RentChrgr.Quant * comqty;
+  foundrow = -1;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVp,i,IVrw);
+    if (IVrw.OrdRow==Agreementr.SerNr) then begin
+      foundrow = i;
+      i = rwcnt;
+    end;
+  end;
+  if (foundrow==-1) then begin 
+    ClearRow(IVp,IVrw,1);
+    IVrw.stp = kInvoiceRowTypeNormal;
+    IVrw.OrdRow = Agreementr.SerNr;
+    IVrw.CustOrdNr = RentChrgr.CustOrdNr;
+    GetRentalItemVATCodeAndSalesAcc(RentChrgr.Item,IVp.ExportFlag,vatcode,salesacc);
+    IVrw.VATCode = RentChrgr.VATCode;
+    if (blank(IVrw.VATCode)) then begin
+      IVrw.VATCode = vatcode;
+    end;
+    IVrw.SalesAcc = salesacc;
+    GetAccAccrual(IVrw.SalesAcc,accrual);
+    IVrw.PeriodCode = accrual;
+    IVrw.Objects = RentChrgr.Objects;
+    DelAddrr.DelCode = Agreementr.Site;
+    DelAddrr.CustCode = Agreementr.CustCode;
+    if (ReadFirstMain(DelAddrr,2,true)==false) then begin
+      DelAddrr.DelCode = Agreementr.Site;
+      DelAddrr.CustCode = "";
+      if (ReadFirstMain(DelAddrr,2,true)==false) then begin
+        DelAddrr.Comment = "";
+      end;
+    end;
+    IVrw.Spec = "" & Agreementr.SerNr;
+    if (nonblank(DelAddrr.Comment)) then begin
+      IVrw.Spec = IVrw.Spec & ", " & DelAddrr.Comment;
+    end;
+    if (nonblank(Agreementr.InvComment)) then begin
+      IVrw.Spec = IVrw.Spec & ", " & Agreementr.InvComment;
+    end;
+    if (inclperiod!=0) then begin
+      IVrw.Spec = IVrw.Spec & " (" & RentChrgr.FrDate & ":" & RentChrgr.ToDate & ")";
+    end;
+    foundrow = rwcnt;
+    rwcnt = rwcnt + 1;
+  end;
+  CalcSum(theqty,RentChrgr.Price,IVrw.PriceFactor,RentChrgr.vRebate,price,usedisc);
+  IVrw.Sum = IVrw.Sum + price;
+  IVrw.PosCode = RentChrgr.Site;
+  IVrw.Perceptions = INr.Perceptions;
+  MatRowPut(IVp,foundrow,IVrw);
+  return;
+end;
+
+procedure AddEmptyLine(var record IVVc IVr,Integer addemptyline,string site,Integer oldfnam,var Integer rwcnt)
+begin
+  row IVVc IVrw;
+  
+  if (addemptyline!=0) then begin
+    if ((rwcnt>0) and (oldfnam==-1)) then begin
+      ClearRow(IVr,IVrw,1);
+      IVrw.Spec = " ";
+      IVrw.PosCode = site;
+      MatRowPut(IVr,rwcnt,IVrw);
+      rwcnt = rwcnt + 1;
+    end;
+  end;
+  return;
+end;
+
+procedure BuildIVFromAgreement(var record IVVc IVp,record AgreementVc Agreementr,string site)
+begin
+  record RentChrgVc RentChrgr;
+  record RentResVc RentResr;
+  record INVc OrigINr;
+  record INVc INr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  Boolean foundf,testf;
+  string 60 ckey;
+  record GeneralOptionBlock GenOptRec;
+  Integer oldfnam;
+  string 200 lastperiod,lastsite,lastorigitem,lastreservation,lastorderno;
+
+  oldfnam = -999;
+  BlockLoad(GenOptRec);
+  IVp.Objects = Agreementr.Objects;
+  rwcnt = MatRowCnt(IVp);
+  foundf = true;
+  RentChrgr.AgreementNr = Agreementr.SerNr;
+  RentChrgr.InvNr = -1;
+  if (Agreementr.GroupInvoice==0) then begin
+    ckey = "AgrInv";
+  end else begin
+    ckey = "AgrInvSite";
+  end;
+  ResetLoop(RentChrgr);
+  while(LoopKey(ckey,RentChrgr,2,foundf)) begin
+    testf = true;
+    if (RentChrgr.AgreementNr<>Agreementr.SerNr) then begin
+      foundf = false;
+    end;
+    if (RentChrgr.InvNr>-1) then begin
+      foundf = false;
+    end;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (RentChrgr.InvTime>0) then begin
+      if (Agreementr.AgreeStatus==0) then begin
+        testf = false;
+      end;
+    end;
+    if (nonblank(site)) then begin
+      if (site!=RentChrgr.Site) then begin
+        testf = false;
+      end;
+    end;
+    if ((RentChrgr.PONumber>0) and (RentChrgr.GRNumber<0)) then begin //Mikäli veloituksella on ostotilauksen numero mutta ei saap.toim numeroa, veloitus ei ole laskutuskelpoinen
+      testf = false;
+    end;
+    if (testf) then begin
+      if (oldfnam==-999) then begin
+        oldfnam = RentChrgr.FileName;
+      end;
+      OrigINr.Code = RentChrgr.OrigItem;
+      if (ReadFirstMain(OrigINr,1,true)==false) then begin
+        OrigINr.Name = "";
+      end;
+      INr.Code = RentChrgr.Item;
+      if (ReadFirstMain(INr,1,true)==false) then begin
+        INr.Name = "";
+      end;
+      if (Agreementr.InvoiceBase==0) then begin
+        AddEmptyLine(IVp,Agreementr.AddEmptyLine,RentChrgr.Site,oldfnam,rwcnt);
+      end;
+      if (RentChrgr.FileName>-1) then begin
+        if (oldfnam==-1) then begin
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec = USetStr(11402);
+          IVrw.PosCode = RentChrgr.Site;
+          MatRowPut(IVp,rwcnt,IVrw);
+          rwcnt = rwcnt + 1;
+        end;
+        AddDetailedCharges(IVp,rwcnt,RentChrgr,INr,GenOptRec.UseDiscount,0);
+      end else begin
+        RentResr.SerNr = RentChrgr.TransNr;
+        ReadFirstMain(RentResr,1,true);
+        if (Agreementr.IncludeSite!=0) then begin
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec = USetStr(11409) & ": " & Agreementr.SerNr;
+          if (nonblank(RentChrgr.Site)) then begin
+            IVrw.Spec = IVrw.Spec & ", " & USetStr(11408) & ": " & RentChrgr.Site & " " & FindSiteName(RentChrgr.Site,IVp.CustCode);
+          end;
+          IVrw.PosCode = RentChrgr.Site;
+          if (lastsite!=IVrw.Spec) then begin
+            AddEmptyLine(IVp,Agreementr.AddEmptyLine,RentChrgr.Site,oldfnam,rwcnt);
+            MatRowPut(IVp,rwcnt,IVrw);
+            rwcnt = rwcnt + 1;
+            lastsite = IVrw.Spec;
+          end;
+        end;
+        if (Agreementr.IncludeOriginalItem!=0) then begin
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec = RentChrgr.OrigItem & " " & OrigINr.Name;
+          IVrw.PosCode = RentChrgr.Site;
+          if (lastorigitem!=IVrw.Spec) then begin
+            AddEmptyLine(IVp,Agreementr.AddEmptyLine,RentChrgr.Site,oldfnam,rwcnt);
+            MatRowPut(IVp,rwcnt,IVrw);
+            rwcnt = rwcnt + 1;
+            lastorigitem = IVrw.Spec;
+          end;
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec = USetStr(11388) & ": " & RentChrgr.OrigSerialNr;
+          MatRowPut(IVp,rwcnt,IVrw);
+          rwcnt = rwcnt + 1;
+        end;
+        if (Agreementr.IncludePeriod==1) then begin
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec = USetStr(1144) & RentChrgr.FrDate & ":" & RentChrgr.ToDate;
+          IVrw.PosCode = RentChrgr.Site;
+          if (lastperiod!=IVrw.Spec) then begin
+            AddEmptyLine(IVp,Agreementr.AddEmptyLine,RentChrgr.Site,oldfnam,rwcnt);
+            MatRowPut(IVp,rwcnt,IVrw);
+            rwcnt = rwcnt + 1;
+            lastperiod = IVrw.Spec;
+          end;
+        end;
+// Do the new options with the same if (lastperiod!=IVrw.Spec) then begin thingie
+        if (Agreementr.InclCustOrdNr==1) then begin
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec = USetStr(8611) & " :" & RentResr.CustOrdNr;
+          IVrw.PosCode = RentChrgr.Site;
+          if (lastorderno!=IVrw.Spec) then begin
+            AddEmptyLine(IVp,Agreementr.AddEmptyLine,RentChrgr.Site,oldfnam,rwcnt);
+            MatRowPut(IVp,rwcnt,IVrw);
+            rwcnt = rwcnt + 1;
+            lastorderno = IVrw.Spec;
+          end;
+        end;
+        if (Agreementr.InclRentResNo==1) then begin
+          ClearRow(IVp,IVrw,1);
+          IVrw.Spec =  USetStr(11386) & " :" & RentResr.SerNr;
+          IVrw.PosCode = RentChrgr.Site;
+          if (lastreservation!=IVrw.Spec) then begin
+            AddEmptyLine(IVp,Agreementr.AddEmptyLine,RentChrgr.Site,oldfnam,rwcnt);
+            MatRowPut(IVp,rwcnt,IVrw);
+            rwcnt = rwcnt + 1;
+            lastreservation = IVrw.Spec;
+          end;
+        end;
+        switch (Agreementr.InvoiceBase) begin
+          case 0:
+            AddDetailedCharges(IVp,rwcnt,RentChrgr,INr,GenOptRec.UseDiscount,Agreementr.IncludePeriod);
+          case 1:
+            AddChargesPerRentalRes(IVp,rwcnt,RentChrgr,INr,GenOptRec.UseDiscount,Agreementr.IncludePeriod,Agreementr.UseAsQty);
+          case 2:
+            AddChargesPerAgreement(IVp,rwcnt,RentChrgr,Agreementr,INr,GenOptRec.UseDiscount,Agreementr.IncludePeriod);
+        end;
+      end;
+      oldfnam = RentChrgr.FileName;
+    end;
+  end;
+  return;
+end;
+
+procedure PasteAgreementToInv(var record IVVc IVp,record AgreementVc Agreementp,record CUVc InvToCUr)
+begin
+  val fr,to1,to2,br1,br2;
+  string 5 crncy;
+  string 255 tstr;
+
+  if (nonblank(InvToCUr.Code)) then begin
+    IVp.Addr0 = InvToCUr.Name;
+    IVp.Addr1 = InvToCUr.InvAddr0;
+    IVp.Addr2 = InvToCUr.InvAddr1;
+    IVp.Addr3 = InvToCUr.InvAddr2;
+    IVp.InvAddr3 = InvToCUr.InvAddr3;
+    IVp.InvAddr4 = InvToCUr.InvAddr4;
+    IVp.CustCat = InvToCUr.CustCat;
+    IVp.CustVATCode = InvToCUr.VATCode;
+    IVp.VATNr = InvToCUr.VATNr;
+    IVp.PayDeal = InvToCUr.PayDeal;
+  end else begin
+    IVp.Addr0 = Agreementp.Addr0;
+    IVp.Addr1 = Agreementp.Addr1;
+    IVp.Addr2 = Agreementp.Addr2;
+    IVp.Addr3 = Agreementp.Addr3;
+    IVp.InvAddr3 = Agreementp.InvAddr3;
+    IVp.InvAddr4 = Agreementp.InvAddr4;
+    IVp.CustCat = Agreementp.CustCat;
+    IVp.CustVATCode = Agreementp.CustVATCode;
+    IVp.VATNr = Agreementp.VATNr;
+    IVp.PayDeal = Agreementp.PayDeal;
+  end;
+  IVp.ClientContact = Agreementp.ClientContact;
+  IVp.Objects = Agreementp.Objects;
+  IVp.CurncyCode = Agreementp.CurncyCode;
+  crncy = IVp.CurncyCode;
+  GetFullCurncyRate(crncy,IVp.TransDate,fr,to1,to2,br1,br2);
+  IVp.CurncyCode = crncy;
+  IVp.FrRate = fr;
+  IVp.ToRateB1 = to1; 
+  IVp.ToRateB2 = to2;
+  IVp.BaseRate1 = br1;
+  IVp.BaseRate2 = br2;
+  IVp.SalesMan = Agreementp.SalesMan;
+  IVVc_PasteSalesMan(IVp,"");
+  IVp.LangCode = Agreementp.LangCode;
+  IVp.ShipDeal = Agreementp.ShipDeal;
+  IVp.ShipMode = Agreementp.ShipMode;
+  IVp.PriceList = Agreementp.PriceList;
+  IVp.RebCode = Agreementp.RebCode;
+  tstr = IVp.PriceList;
+  GetPriceList(IVp.CustCat,IVp.TransDate,IVp.TransTime,tstr,IVp.InclVAT);
+  IVp.PriceList = tstr;
+  IVp.Sorting = Agreementp.Sorting;
+  IVp.ShipAddr0 = Agreementp.ShipAddr0;
+  IVp.ShipAddr1 = Agreementp.ShipAddr1;
+  IVp.ShipAddr2 = Agreementp.ShipAddr2;
+  IVp.ShipAddr3 = Agreementp.ShipAddr3;
+  IVp.DelAddr3 = Agreementp.DelAddr3;
+  IVp.DelAddr4 = Agreementp.DelAddr4;
+  IVp.Phone = Agreementp.Phone;
+  IVp.Fax = Agreementp.Fax;
+  IVp.ExportFlag = Agreementp.ExportFlag;
+  IVVc_PastePayDeal(IVp,"","");
+  IVp.InvComment = Agreementp.InvComment;
+  IVp.UpdStockFlag = 0;
+//  IVp.InvoiceToCode = Agreementp.InvoiceToCode;
+  return;
+end;
+
+procedure SetupIVFromScratch(var record IVVc IVp,record AgreementVc Agreementp,string site,Date invdate)
+begin
+  record PLDefVc PLDefR;
+  record CUVc CUr;
+
+  RecordNew(IVp);
+  IVp.InvDate = invdate;
+  IVp.TransDate = invdate;
+  CUr.Code = Agreementp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    IVp.CustCode = CUr.InvoiceToCode;  
+    CUr.Code = CUr.InvoiceToCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+    end;
+  end;
+  if (blank(IVp.CustCode)) then begin
+    IVp.CustCode = Agreementp.CustCode;  
+  end;
+  PasteAgreementToInv(IVp,Agreementp,CUr);
+  IVp.InclVAT = Agreementp.InclVAT; 
+//  IVp.NoTAXonVAT = Agreementp.NoTAXonVAT; 
+//  IVp.TotalwoTAX = Agreementp.TotalwoTAX; 
+  IVp.DelAddrCode = site; 
+  PLDefR.Code = IVp.PriceList;
+  if (ReadFirstMain(PLDefR,1,true)) then begin
+    IVp.InclVAT = PLDefR.InclVAT;
+  end;
+  GetARAcc(IVp.CustCode,IVp.ARAcc);
+  return;
+end;
+
+function Boolean FindIVCust(var record IVVc IVp,record AgreementVc Agreementp,Date invdate)
+begin
+  record IVVc IVr;
+  Boolean TrHs,res;
+  
+  res = false;
+  IVr.OKFlag = 0;
+  IVr.CustCode = Agreementp.CustCode;
+  TrHs = true;
+  while (LoopKey("CustOKFlag",IVr,2,TrHs)) begin
+    if (IVr.OKFlag!=0) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      if ((IVr.InvDate==invdate) and (IVr.CustCode==Agreementp.CustCode)) then begin
+        RecordCopy(IVp,IVr);
+        res = true;
+        TrHs = false;
+      end;
+    end;
+  end;
+  FindIVCust = res;
+  return;
+end;
+
+function Boolean FindIVCustSite(var record IVVc IVp,record AgreementVc Agreementp,string site,Date invdate)
+begin
+  record IVVc IVr;
+  Boolean TrHs,res;
+  
+  res = false;
+  IVr.OKFlag = 0;
+  IVr.CustCode = Agreementp.CustCode;
+  TrHs = true;
+  while (LoopKey("CustOKFlag",IVr,2,TrHs)) begin
+    if (IVr.OKFlag!=0) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      if ((IVr.InvDate==invdate) and (IVr.CustCode==Agreementp.CustCode)) then begin
+        if (IVr.DelAddrCode==site) then begin
+          RecordCopy(IVp,IVr);
+          res = true;
+          TrHs = false;
+        end;
+      end;
+    end;
+  end;
+  FindIVCustSite = res;
+  return;
+end;
+
+procedure SetupIVFromAgreement(var record IVVc IVp,record AgreementVc Agreementp,Date invdate,var Boolean oldinvf)
+begin
+  oldinvf = false;
+  switch (Agreementp.GroupInvoice) begin
+    case 0:
+    case 1:
+      oldinvf = FindIVCust(IVp,Agreementp,invdate);
+    case 2:
+      oldinvf = FindIVCust(IVp,Agreementp,invdate);
+  end;
+  if (oldinvf==false) then begin
+    SetupIVFromScratch(IVp,Agreementp,Agreementp.Site,invdate);
+  end;
+  return;
+end;
+
+updating procedure UpdateCharges(record AgreementVc Agreementr,LongInt invnr,Date InvDate,var Integer flushcnt,Boolean maintf)
+begin
+  record RentChrgVc RentChrgr;
+  record RentChrgVc oldRentChrgr;
+  record RentResVc RentResr;
+  record RentResVc oldRentResr;
+  Boolean foundf,testf;
+  string 60 ckey;
+
+  foundf = true;
+  if (invnr==-1) then begin
+    foundf = false;
+  end;
+LUpdateCharges:;
+  RentChrgr.AgreementNr = Agreementr.SerNr;
+  RentChrgr.InvNr = -1;
+  if (Agreementr.GroupInvoice==0) then begin
+    ckey = "AgrInv";
+  end else begin
+    ckey = "AgrInvSite";
+  end;
+  ResetLoop(RentChrgr);
+  while(LoopKey(ckey,RentChrgr,2,foundf)) begin
+    testf = true;
+    if (RentChrgr.AgreementNr<>Agreementr.SerNr) then begin
+      foundf = false;
+    end;
+    if (RentChrgr.InvNr>-1) then begin
+      foundf = false;
+    end;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (RentChrgr.InvTime>0) then begin
+      if (Agreementr.AgreeStatus==0) then begin
+        testf = false;
+      end;
+    end;
+    if ((RentChrgr.PONumber>0) and (RentChrgr.GRNumber<0)) then begin //Mikäli veloituksella on ostotilauksen numero mutta ei saap.toim numeroa, veloitus ei ole laskutuskelpoinen
+      testf = false;
+    end;
+    if (testf) then begin
+      if ((RentChrgr.FileName==-1) and (RentChrgr.TransNr>-1)) then begin
+        RentResr.SerNr = RentChrgr.TransNr;
+        if (ReadFirstMain(RentResr,1,true)) then begin
+          RecordCopy(oldRentResr,RentResr);
+          RentResr.LastInvoiceDate = InvDate;
+          if (RecordUpdate(oldRentResr,RentResr,false)<>0) then begin
+          end;
+        end;
+      end;
+      RecordCopy(oldRentChrgr,RentChrgr);
+      RentChrgr.InvNr = invnr;
+      if (RecordUpdate(oldRentChrgr,RentChrgr,false)<>0) then begin
+      end;
+      if (maintf) then begin
+        CheckFlush(flushcnt,10);
+      end;
+      goto LUpdateCharges;
+    end;
+  end;
+  return;
+end;
+
+procedure AddPrepaymentRow(record RcVc RepSpec,var record IVVc IVp,LongInt AgreementNr)
+BEGIN
+  Integer rwcnt;
+  record ARPayVc ARPayr;
+  Boolean found,testf;
+  Date startdate,enddate;
+  row IVVc IVrw;
+  string 20 curcode;
+  val v,coff;
+  Integer keys;
+  
+  keys = 2;
+  if (RepSpec.UsedOnly==1) then begin
+    if (blank(RepSpec.Stext)) then begin
+      goto LAddPrepaymentRow;
+    end;
+  end else begin
+    keys = 1;
+  end;  
+  startdate = StringToDate(FirstInRange(RepSpec.Stext,10));
+  enddate = StringToDate(LastInRange(RepSpec.Stext,10));
+  rwcnt = MatRowCnt(IVp);  
+  found = true;
+  ARPayr.CustCode = IVp.CustCode;
+  ARPayr.PayDate = startdate;
+  while (LoopKey("CustPay",ARPayr,keys,found)) begin
+    if (ARPayr.CustCode!=IVp.CustCode) then begin
+      found = false;
+    end;
+    if (RepSpec.UsedOnly==1) then begin
+      if (ARPayr.PayDate>enddate) then begin
+        found = false;
+      end;
+    end;  
+    GetBaseCurncy(1,curcode);    
+    testf = true;    
+    if (ARPayr.CurncyCode!=IVp.CurncyCode) then begin
+      if ((blank(ARPayr.CurncyCode)) or (blank(IVp.CurncyCode))) then begin
+        if (ARPayr.CurncyCode!=curcode) then begin    
+         if (IVp.CurncyCode!=curcode) then begin    
+            testf = false;
+          end;  
+        end;
+      end;  
+    end;
+    if (AgreementNr<>ARPayr.CUPNr) then begin
+      testf = false;
+    end;
+    if (found and testf) then begin
+      ClearRow(IVp,IVrw,6);
+      if (ARPayr.RVal<=IVp.Sum4) then begin
+        v = ARPayr.RVal;
+      end else begin
+        v = IVp.Sum4;
+      end;
+      IVrw.CUPNr = ARPayr.CUPNr;
+      IVrw.Sum = v;
+      if (IVrw.Sum==ARPayr.RVal) then begin
+        IVrw.Price = ARPayr.VATVal;
+        IVrw.BasePrice = ARPayr.BookRVal;
+      end else begin
+        coff = IVrw.Sum/ARPayr.RVal;
+        IVrw.Price = ARPayr.VATVal*coff;
+        IVrw.BasePrice = ARPayr.BookRVal*coff;
+      end;
+      IVrw.Price = Round(IVrw.Price,SetRoundModeD(3));
+      IVrw.BasePrice = Round(IVrw.BasePrice,SetRoundModeD(3));
+      IVrw.Spec = USetStr(7812);
+      MatRowInsert(IVp,0,IVrw);
+    end;
+  end;  
+  IVSumup(IVp,true);  
+LAddPrepaymentRow:;  
+  return;
+end;
+
+function LongInt FindNextAgrInvNo(string department)
+begin
+  record RentDepBlock RentDepr;
+  row RentDepBlock RentDeprw;
+  Integer i,rwcnt;
+  LongInt oldser;
+  
+  oldser = -1;
+  BlockLoad(RentDepr);
+  rwcnt = MatRowCnt(RentDepr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentDepr,i,RentDeprw);
+    if (RentDeprw.Department==department) then begin
+      oldser = RentDeprw.TSerStart;
+    end;
+  end;
+  FindNextAgrInvNo = oldser;
+  return;
+end;
+
+updating procedure InsertNewRentalInvoice(record IVVc IVp,record AgreementVc Agreementp,var Integer flushcnt,Boolean maintf)
+begin
+  LongInt oldser;
+  string 255 tstr;
+  record CUVc CUr;
+
+  oldser = FindNextAgrInvNo(Agreementp.Department);
+  IVp.SerNr = NextSerNr("IVVc",IVp.TransDate,oldser,false,IVp.LangCode);  
+  CUr.Code = IVp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin end;
+//  IVp.OfficialSerNr = FindNextLegalSerNr(IVp,CUr.Classification); //POSN
+
+  if (IVp.SerNr<>-1) then begin
+    if (RecordInsert(IVp,false)) then begin end;
+    if (maintf) then begin
+      CheckFlush(flushcnt,10);
+    end;
+  end;
+  return;
+end;
+
+updating procedure CleanupAndSplitBySite(var record IVVc IVp,record AgreementVc Agreementr,Date invdate,var Integer flushcnt,Boolean maintf)
+begin
+  record IVVc IVr;
+  record IVVc oldIVr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  Boolean invfound;
+
+  rwcnt = MatRowCnt(IVp);
+  if (Agreementr.GroupInvoice==2) then begin
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(IVp,i,IVrw);
+      if (Agreementr.Site!=IVrw.PosCode) then begin
+        invfound = FindIVCustSite(IVr,Agreementr,IVrw.PosCode,invdate);
+        if (invfound==false) then begin
+          SetupIVFromScratch(IVr,Agreementr,IVrw.PosCode,invdate);
+        end;
+        MatRowPut(IVr,MatRowCnt(IVr),IVrw);
+        if (invfound==false) then begin
+          InsertNewRentalInvoice(IVr,Agreementr,flushcnt,maintf);
+        end else begin
+          if (RecordUpdate(oldIVr,IVr,false)<>0) then begin end;
+        end;
+        MatRowDelete(IVp,i);
+        i = i - 1;
+        rwcnt = MatRowCnt(IVp);
+      end;
+    end;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVp,i,IVrw);
+    IVrw.OrdRow = -1;
+    IVrw.PosCode = "";
+    MatRowPut(IVp,i,IVrw);
+  end;
+  AddPerceptionTaxesRows_IVVc(IVp);
+  AddWithholdingTaxesRows_IVVc(IVp);
+  IVSumup(IVp,true);
+  return;
+end;
+
+updating procedure BuildIVFromAgreement2(record RcVc RepSpec,var record IVVc IVp,record AgreementVc Agreementp,Date invdate,var Integer flushcnt,Boolean maintf)
+begin
+  record IVVc oldIVr;
+  LongInt rwcnt;
+  Boolean res,oldinvf;
+
+  SetupIVFromAgreement(IVp,Agreementp,invdate,oldinvf);
+  if (oldinvf) then begin
+    RecordCopy(oldIVr,IVp);
+  end;
+  BuildIVFromAgreement(IVp,Agreementp,RepSpec.LastAcc);
+  CleanupAndSplitBySite(IVp,Agreementp,invdate,flushcnt,maintf);
+  rwcnt = MatRowCnt(IVp);
+  AddPrepaymentRow(RepSpec,IVp,Agreementp.SerNr);
+  if (rwcnt>0) then begin
+    if (oldinvf==false) then begin
+      InsertNewRentalInvoice(IVp,Agreementp,flushcnt,maintf);
+    end else begin
+      if (RecordUpdate(oldIVr,IVp,false)<>0) then begin end;
+    end;
+    UpdateCharges(Agreementp,IVp.SerNr,IVp.InvDate,flushcnt,maintf);
+  end;
+  return;
+end;
+
+global
+updating procedure PasteAgreeInIV(var record IVVc IVp,LongInt ordnr)
+begin
+  record AgreementVc Agreementp;
+  record RcVc RepSpec;
+  Integer flushcnt;
+
+  RepSpec.UsedOnly = 0;
+  RepSpec.Stext = "";
+  Agreementp.SerNr = ordnr;
+  if (ReadFirstMain(Agreementp,1,true)) then begin
+    BuildIVFromAgreement2(RepSpec,IVp,Agreementp,CurrentDate,flushcnt,false);
+  end;
+  return;
+end;
+
+global
+updating procedure GenAgreeInvMn(record RcVc RepSpec)
+begin
+  record AgreementVc Agreementp;
+  record IVVc IVr;
+  LongInt frag,toag;
+  string 20 frcu,tocu;
+  Boolean foundf,testf;
+  Date invdate;
+  Integer flushcnt;
+
+  frag = FirstInRange(RepSpec.f1,10);
+  toag = LastInRange(RepSpec.f1,10);
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+  invdate = RepSpec.d1;
+  if (blankdate(invdate)) then begin
+    invdate = CurrentDate;
+  end;
+  Agreementp.SerNr = frag;
+  foundf = true;
+  while (LoopMain(Agreementp,1,foundf)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (Agreementp.SerNr>toag) then begin
+        foundf = false;
+      end;
+    end;
+    testf = true;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (nonblank(RepSpec.f2)) then begin
+      if ((Agreementp.CustCode<frcu) or (Agreementp.CustCode>tocu)) then begin
+        testf = false;
+      end;
+    end;
+    if (nonblank(RepSpec.ObjStr)) then begin
+      if (SetInSet(RepSpec.ObjStr,Agreementp.Objects)==false) then begin
+        testf = false;
+      end;
+    end;
+    if (nonblank(RepSpec.AccStr)) then begin
+      if (Agreementp.SalesMan!=RepSpec.AccStr) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      BuildIVFromAgreement2(RepSpec,IVr,Agreementp,invdate,flushcnt,true);
+    end;
+  end;
+  return;
+end;

@@ -1,0 +1,289 @@
+external procedure FinnishBankVal(var string,val);
+
+global
+function Boolean SendFactoringFilesToCustomer(string custcode)
+BEGIN
+  Boolean res;
+  record CUVc CUr;
+  
+  CUr.Code = custcode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    res = CUr.CustType==0;
+    res = CUr.NoFactoringFlag==0;
+  end;
+  SendFactoringFilesToCustomer = res;
+  RETURN;
+END;
+
+procedure CurncyCode(string CurncyCode, var string newCurncyCode)
+begin
+  if (blank(CurncyCode) or (CurncyCode=="NOK")) then begin
+    newCurncyCode = "01";
+  end;
+  if (CurncyCode=="CAD") then begin
+    newCurncyCode = "09";
+  end;
+  if (CurncyCode=="USD") then begin
+    newCurncyCode = "15";
+  end;
+  if (CurncyCode=="CHF") then begin
+    newCurncyCode = "34";
+  end;
+  if (CurncyCode=="DKK") then begin
+    newCurncyCode = "42";
+  end;
+  if (CurncyCode=="SEK") then begin
+    newCurncyCode = "44";
+  end;
+  if (CurncyCode=="ISK") then begin
+    newCurncyCode = "46";
+  end;
+  if (CurncyCode=="GBP") then begin
+    newCurncyCode = "72";
+  end;
+  if (CurncyCode=="SGD") then begin
+    newCurncyCode = "88";
+  end;
+  if (CurncyCode=="JPY") then begin
+    newCurncyCode = "90";
+  end;
+  if (CurncyCode=="AUD") then begin
+    newCurncyCode = "91";
+  end;
+  if (CurncyCode=="EUR") then begin
+    newCurncyCode = "93";
+  end;
+   return;
+end;
+
+procedure ExpFactHeaderNFNor(record RcVc RepSpec,record IVVc IVp,val debp,val credp,Integer typ)
+BEGIN
+  string 255 tstr;
+ 
+  ExportPadString("1",1,"",false);
+  ExportPadString(RepSpec.FirstVer,5,"0",true); //bunt id
+  ExportPadString(RepSpec.f3,4," ",false); //client id
+  ExportPadString("530",3," ",false); //support only for accounts within Norway
+  ExportPadString("D",1,"",false); //only support for Contract type D = Within Norway
+  ExportPadString("01",2,"",false); //Only support for client a/c in NOK
+  CurncyCode(RepSpec.CurncyCode,tstr);
+  ExportPadString(tstr,2, " ",false); 
+  ExportPadString(RepSpec.FirstVer,6,"0",true); //bunt id
+  if (RepSpec.ArtMode == 1) then begin //invoices
+    ExportPadString("1",1,"",false);
+  end;
+  if (RepSpec.ArtMode == 2) then begin  //credit invoices
+    ExportPadString("2",1,"",false);
+  end;     
+    tstr = DateToString(CurrentDate,"DDMMYY");
+  ExportPadString(tstr,6," ",false);     
+  if (RepSpec.ArtMode == 1) then begin //invoices
+    FinnishBankVal(tstr,debp);
+    ExportPadString(tstr,13,"0",true);
+  end;
+  if (RepSpec.ArtMode == 2) then begin //invoices
+    FinnishBankVal(tstr,credp);
+    ExportPadString(tstr,13,"0",true);
+  end;
+  ExportPadString("",46," ",false); //Filler             
+  NewLine;
+  RETURN;
+END;
+
+procedure ExpFactIVNor(record RcVc RepSpec,record IVVc IVp)
+BEGIN
+  string 255 tstr;
+  ExportPadString("2",1,"",false);
+  ExportPadString(RepSpec.FirstVer,5,"0",true); //bunt id
+  ExportPadString(IVp.CustCode,7,"0",true);
+  ExportPadString(IVp.SerNr,7,"0",true);
+  tstr = DateToString(IVp.InvDate,"DDMMYY");
+  ExportPadString(tstr,6," ",false);
+  tstr = DateToString(IVp.PayDate,"DDMMYY");
+  ExportPadString(tstr,6," ",false);
+  FinnishBankVal(tstr,IVp.Sum4);
+  ExportPadString(tstr,11,"0",true);
+  ExportPadString("",47," ",false); //Filler 
+  NewLine;
+ return;
+end;
+
+global
+procedure ExportNordeaFinans(var record RcVc RepSpec,var record FactoringBlock factp)
+BEGIN
+  record IVVc IVr;
+  Boolean TrHs;
+  string 20 fromcust,tocust;
+  Boolean testf;
+//  Integer bnr;
+  Integer cnt;
+  integer i;
+  val bsum,credsum;
+
+  RepSpec.FirstVer = factp.LastSerNr;
+//  bnr = 1;
+  cnt = 0;
+  if (SetExportCodepage("CP437")==false) then begin
+    LogText(0,"Failed to set codepage CP437");
+  end;
+  RepSpec.long1 = FirstInRange(RepSpec.f1,10);
+  RepSpec.long2 = LastInRange(RepSpec.f1,10);
+  fromcust = FirstInRange(RepSpec.f2,20);
+  tocust = LastInRange(RepSpec.f2,20);
+  if (RepSpec.ArtMode > 0) then begin
+    for (i=0;i<10;i=i+1) begin  //can do 10 * 999 invoices in one file
+      IVr.SerNr = RepSpec.long1;
+      IVr.InvDate = RepSpec.sStartDate;
+      TrHs = true;
+  //export of invoices
+      while (LoopKey("InvDate",IVr,2,TrHs)) begin
+        if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+          TrHs = false;
+        end;
+        if (TrHs) then begin
+          testf = true;
+          if (IVr.OKFlag == 0) then begin
+            testf = false;
+          end;
+          if (IVr.Invalid <> 0) then begin
+            testf = false;
+          end;
+          if (nonblank(RepSpec.f1)) then begin
+            if (IVr.SerNr>RepSpec.long2) then begin 
+              testf = false;
+            end;
+          end;            
+          if (nonblank(RepSpec.f1)) then begin
+            if (IVr.SerNr<RepSpec.long1) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.f2)) then begin
+            if ((IVr.CustCode<fromcust) or (IVr.CustCode>tocust)) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.ObjStr)) then begin
+            if (SETINSET(RepSpec.ObjStr,IVr.Objects)==false) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.CurncyCode)) then begin
+            if (IVr.CurncyCode!=RepSpec.CurncyCode) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.CurncyCode)) then begin
+            if (IVr.CurncyCode!=RepSpec.CurncyCode) then begin testf = false; end;
+          end;
+          if (blank(RepSpec.CurncyCode)) then begin
+            if (nonblank(IVr.CurncyCode)) then begin
+              if (IVr.CurncyCode <> "NOK") then begin    
+                testf = false;
+              end;
+            end;
+          end;
+          if (RepSpec.ArtMode == 1) then begin
+            if (IVr.InvType == kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              testf = false;
+            end;
+          end;
+          if (RepSpec.ArtMode == 2) then begin
+            if (IVr.InvType == kInvoiceTypeNormal or IVr.InvType==kInvoiceTypeNormalSpecialSales) then begin
+              testf = false;
+            end;
+          end;
+          if (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            testf = SendFactoringFilesToCustomer(IVr.CustCode);
+          end;
+          if (testf) then begin
+            if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              credsum = credsum + IVr.Sum4;
+            end else begin
+              bsum = bsum + IVr.Sum4;
+            end;
+            cnt = cnt + 1;
+            if (cnt == 999) then begin
+              goto L99;
+            end;  
+          end;  //Test
+        end;  //while
+      end; //TrHs
+L99:;
+      if ((bsum!=0) or (credsum!=0)) then begin
+        ExpFactHeaderNFNor(RepSpec,IVr,bsum,credsum,factp.Bank);
+      end;      
+      cnt = 0;
+      bsum = 0;
+      IVr.SerNr = RepSpec.long1;
+      IVr.InvDate = RepSpec.sStartDate;
+      TrHs = true;
+      ResetLoop(IVr);
+      while (LoopKey("InvDate",IVr,2,TrHs)) begin
+        if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+          TrHs = false;
+        end;
+        if (TrHs) then begin
+          testf = true;
+          if (IVr.OKFlag == 0) then begin
+            testf = false;
+          end;
+          if (IVr.Invalid <> 0) then begin
+            testf = false;
+          end;
+          if (nonblank(RepSpec.f1)) then begin
+            if (IVr.SerNr>RepSpec.long2) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.f1)) then begin
+            if (IVr.SerNr<RepSpec.long1) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.f2)) then begin
+            if ((IVr.CustCode<fromcust) or (IVr.CustCode>tocust)) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.ObjStr)) then begin
+            if (SetInSet(RepSpec.ObjStr,IVr.Objects)==false) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.CurncyCode)) then begin
+            if (IVr.CurncyCode!=RepSpec.CurncyCode) then begin testf = false; end;
+          end;
+          if (blank(RepSpec.CurncyCode)) then begin
+            if (nonblank(IVr.CurncyCode)) then begin
+              if (IVr.CurncyCode <> "NOK") then begin    
+                testf = false;
+              end;
+            end;
+          end;
+          if (RepSpec.ArtMode == 1) then begin
+            if (IVr.InvType == kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              testf = false;
+            end;
+          end;
+          if (RepSpec.ArtMode == 2) then begin
+            if (IVr.InvType == kInvoiceTypeNormal or IVr.InvType==kInvoiceTypeNormalSpecialSales) then begin
+              testf = false;
+            end;
+          end;
+          if (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+            testf = false;
+          end;
+
+          if (testf) then begin
+            testf = SendFactoringFilesToCustomer(IVr.CustCode);
+          end;
+          if (testf) then begin
+            ExpFactIVNor(RepSpec,IVr);
+            cnt = cnt + 1;
+            UserTrace(IVr.SerNr,M4Long);
+            if (cnt == 999) then begin
+              goto L88;
+            end;
+          end;  //testf
+        end;  //TrHs
+      end;  //while       
+L88:;
+      RepSpec.long1 = IVr.SerNr + 1;
+      RepSpec.sStartDate = IVr.TransDate;
+      if (RepSpec.long1 == 0) then begin
+        i = 11;
+      end;
+    end; //for
+  end;  //if
+  factp.LastDate = CurrentDate;
+  factp.LastSerNr = factp.LastSerNr + 1;
+  RETURN;
+END;

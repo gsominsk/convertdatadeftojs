@@ -1,0 +1,574 @@
+external procedure AutomatedSalesOrderly(string);
+external updating procedure InvalidatePlannedPayment(string,LongInt);
+external updating procedure DeletePlannedPayment(string,LongInt,LongInt);
+external updating procedure CLOutUpdatePlannedPayments(record CLOutVc);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure WarnFutureDate(Boolean,Date);
+external updating function LongInt UpdatePPOKNr(LongInt);
+external updating procedure StoreUnOKHistory(string,LongInt,Date,Time,string);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external updating procedure InvalidateTR(Integer,LongInt);
+external function Boolean DateWarned(Date,string);
+external function Boolean DateLocked(Date,string);
+external procedure PastePMInCLOut(var record CLOutVc);
+external procedure CLOutVc_PasteCorspCode(var record CLOutVc,Integer);
+external procedure SwapM4Val(var val,var val);
+external updating procedure CLOutUpdateStats(record CLOutVc,Boolean,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean DateWarned(Date,string);
+external function Boolean DateLocked(Date,string);
+
+global
+function Integer VICLOutOKed(LongInt cloutsernr,string filename,LongInt fsernr,var LongInt vinr,var val totsum4)
+BEGIN
+  Integer res;
+  Boolean TrHs;
+  record VIVc VIr;
+  record CLOutVIVc CLOutVIr;
+
+  totsum4 = blankval;
+  res = -1;
+  if ((filename=="VIVc") and (fsernr!=-1)) then begin
+    VIr.SerNr = fsernr;
+    if (ReadFirstMain(VIr,1,true)) then begin
+      if (VIr.OKFlag==0) then begin
+        res = 0;
+        vinr = VIr.SerNr;
+        goto LVICLOutOKed;
+      end;
+      res = 1;
+      totsum4 = totsum4 + VIr.PayVal;
+    end;
+  end else begin
+    TrHs = true;
+    CLOutVIr.CLOutNr = cloutsernr;
+    while (LoopMain(CLOutVIr,1,true)) begin
+      if (CLOutVIr.CLOutNr!=cloutsernr) then begin
+        TrHs = false;
+      end;
+      if (TrHs) then begin
+        if (CLOutVIr.FileName=="VIVc") then begin
+          VIr.SerNr = CLOutVIr.SerNr;
+          if (ReadFirstMain(VIr,1,true)) then begin
+            if (VIr.OKFlag==0) then begin
+              res = 0;
+              vinr = VIr.SerNr;
+              goto LVICLOutOKed;
+            end;
+            res = 1;
+            totsum4 = totsum4 + VIr.PayVal;        
+          end;
+        end;
+      end;
+    end;
+  end;
+LVICLOutOKed:;  
+  VICLOutOKed = res;
+  RETURN;
+END;
+
+global
+function Integer CheckCLOutAmount(LongInt clout,val payval,string curncy)
+BEGIN
+  Integer errcode;
+  record CLOutVc CLOutr;
+  
+  errcode = 0;
+  CLOutr.SerNr = clout;
+  if (ReadFirstMain(CLOutr,1,true)) then begin
+    if (CLOutr.FSerNr!=-1) then begin
+      if (CLOutr.Total!=payval) then begin
+        errcode = 2071;
+      end;
+    end;  
+  end;
+  CheckCLOutAmount = errcode;
+  RETURN;
+END;
+
+global
+function Boolean CLOutforVIRecordExists(LongInt vinr,string filename,var LongInt cloutser)
+BEGIN
+  Boolean res;
+  record CLOutVIVc CLOutVIr;
+  
+  CLOutVIr.SerNr = vinr;
+  CLOutVIr.FileName = filename;
+  res = ReadFirstMain(CLOutVIr,2,true);
+  cloutser = CLOutVIr.CLOutNr;
+  CLOutforVIRecordExists = res;
+  RETURN;
+END;
+
+global
+function LongInt CLOutVcRecordInvalidateTest(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  row CLOutVc CLOutrw;
+  Integer i,rwcnt;
+  record APPayHistVc APPayHistr;
+  record ARPayHistVc ARPayHistr;
+
+  res = 1;
+  if (UserCanAction("CLOutInvalid",true)==false) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LCLOutVcRecordInvalidateTest;
+  end;
+  if (CLOutr.Invalid!=0) then begin
+    res = 0;
+    goto LCLOutVcRecordInvalidateTest;
+  end;
+  if (CLOutr.OKFlag==0) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LCLOutVcRecordInvalidateTest;
+  end;
+  if (CLOutr.OKFlag!=0) then begin
+    if (DateLocked(CLOutr.TransDate,"CLOutVc")) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end else begin
+        MessageBox(34500,"");
+      end;
+      res = 0;
+      goto LCLOutVcRecordInvalidateTest;
+    end;
+    if (DateWarned(CLOutr.TransDate,"CLOutVc")) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+    end;
+  end;
+  rwcnt = MatRowCnt(CLOutr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CLOutr,i,CLOutrw);
+    if (CLOutrw.Type==4) then begin
+      APPayHistr.VEPNr = CLOutrw.TransNr;
+      APPayHistr.FileName = "CLOutVc";
+      APPayHistr.SerNr = CLOutr.SerNr;
+      if (ReadFirstMain(APPayHistr,0,true)) then begin
+        if (long3>0) then begin
+          MessageBox(1560,"");
+        end else begin
+          MessageBox(34500,"");
+        end;
+        res = 0;
+        goto LCLOutVcRecordInvalidateTest;
+      end;      
+    end;
+    if (CLOutrw.Type==5) then begin
+      ARPayHistr.CUPNr = CLOutrw.TransNr;
+      ARPayHistr.FileName = "CLOutVc";
+      ARPayHistr.SerNr = CLOutr.SerNr;
+      if (ReadFirstMain(ARPayHistr,0,true)) then begin
+        if (long3>0) then begin
+          MessageBox(1560,"");
+        end else begin
+          MessageBox(34500,"");
+        end;
+        res = 0;
+        goto LCLOutVcRecordInvalidateTest;
+      end;      
+    end;
+  end;
+  CLOutr.Invalid = 1;  
+LCLOutVcRecordInvalidateTest:;
+  CLOutVcRecordInvalidateTest = res;  
+  RETURN;
+END;
+
+procedure CLOutVcConvertB1ToB2(var record CLOutVc CLOutp,string curp,var val to1p,var val to2p,var val br1p,var val br2p)
+BEGIN    
+  SwapM4Val(br1p,br2p);
+  SwapM4Val(to1p,to2p);
+  RETURN;
+END;
+
+global
+function LongInt CLOutVcRecordImport(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  val t;
+  string 5 crncycode;
+  Boolean gBase1ToBase2,gToDualBase;
+  record ConvMasterBlock cvm;
+  record UserVc USr;
+
+  BlockLoad(cvm);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gToDualBase) then begin
+    crncycode = CLOutr.CurncyCode;
+    fr = CLOutr.FrRate;
+    to1 = CLOutr.ToRateB1;
+    to2 = CLOutr.ToRateB2;
+    br1 = CLOutr.BaseRate1;
+    br2 = CLOutr.BaseRate2;
+    t = CLOutr.Total;
+    ConvertToDualBase(crncycode,CLOutr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLOutr.Total = t;
+    fr = CLOutr.FrRate;
+    to1 = CLOutr.ToRateB1;
+    to2 = CLOutr.ToRateB2;
+    br1 = CLOutr.BaseRate1;
+    br2 = CLOutr.BaseRate2;
+    t = CLOutr.NetVal;
+    ConvertToDualBase(crncycode,CLOutr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLOutr.NetVal = t;
+    fr = CLOutr.FrRate;
+    to1 = CLOutr.ToRateB1;
+    to2 = CLOutr.ToRateB2;
+    br1 = CLOutr.BaseRate1;
+    br2 = CLOutr.BaseRate2;
+    t = CLOutr.VATVal;
+    ConvertToDualBase(crncycode,CLOutr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLOutr.VATVal = t;
+    fr = CLOutr.FrRate;
+    to1 = CLOutr.ToRateB1;
+    to2 = CLOutr.ToRateB2;
+    br1 = CLOutr.BaseRate1;
+    br2 = CLOutr.BaseRate2;
+    t = CLOutr.TAX1Sum;
+    ConvertToDualBase(crncycode,CLOutr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLOutr.TAX1Sum = t;
+    CLOutr.CurncyCode = crncycode;
+    CLOutr.FrRate = fr;
+    CLOutr.ToRateB1 = to1;
+    CLOutr.ToRateB2 = to2;
+    CLOutr.BaseRate1 = br1;
+    CLOutr.BaseRate2 = br2;
+  end;
+  if (gBase1ToBase2) then begin
+    crncycode = CLOutr.CurncyCode;
+    to1 = CLOutr.ToRateB1;
+    to2 = CLOutr.ToRateB2;
+    br1 = CLOutr.BaseRate1;
+    br2 = CLOutr.BaseRate2;
+    CLOutVcConvertB1ToB2(CLOutr,crncycode,to1,to2,br1,br2);
+    CLOutr.ToRateB1 = to1;
+    CLOutr.ToRateB2 = to2;
+    CLOutr.BaseRate1 = br1;
+    CLOutr.BaseRate2 = br2;
+  end;
+  if (blank(CLOutr.SalesGroup)) then begin
+    USr.Code = CLOutr.Person;
+    if (ReadFirstMain(USr,1,true)) then begin end;
+    CLOutr.SalesGroup = USr.SalesGroup;
+  end;
+  CLOutVcRecordImport = res;
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordImportAfter(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  if (CLOutr.OKFlag!=0 and CLOutr.Invalid==0) then begin
+    CLOutUpdateStats(CLOutr,false,true);
+  end;
+  CLOutVcRecordImportAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt CLOutVcRecordRemoveTest(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+  record VIVc VIr;
+  record MainCLBlock MCLb;
+
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (CLOutr.TransDate<=DBLockRec.DeleteBeforeDate) then begin
+    res = 1;
+    goto LCLOutVcRecordRemoveTest;
+  end;
+  if (CLOutr.OKFlag!=0) then begin
+    if (long3>0) then begin MessageBox(1560,""); end;
+    res = 0;
+    goto LCLOutVcRecordRemoveTest;
+  end;    
+  res = 1;
+  BlockLoad(MCLb);  
+  if ((MCLb.CashCollection!=0) and (CLOutr.OKFlag==0)) then begin
+    if ((CLOutr.FileName=="VIVc") and (CLOutr.FSerNr!=-1)) then begin
+      VIr.SerNr = CLOutr.FSerNr;
+      if (ReadFirstMain(VIr,1,true)) then begin
+        if (VIr.OKFlag!=0) then begin
+          if (long3>0) then begin
+            MessageBox(2075,VIr.SerNr);
+          end;  
+          res = 0;
+        end;
+      end;
+    end;  
+  end;    
+LCLOutVcRecordRemoveTest:;
+  CLOutVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+function LongInt CLOutVcRecordDefaults(var record CLOutVc CLOutp,record CLOutVc CLOut2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record MainCLBlock MCLb;
+  record APAccBlock APAb;
+  val fr,to1,to2,br1,br2;
+  string 10 curcode;
+  
+  BlockLoad(MCLb);
+  BlockLoad(APAb);
+  CLOutp.ARonTR = APAb.APonTR;
+  CLOutp.PayMode = MCLb.DefPM;
+  CLOutp.CorspCode = MCLb.DefCorspCode;
+  CLOutVc_PasteCorspCode(CLOutp,-1);
+  CLOutp.VATCode = MCLb.VATCode;
+  CLOutp.SerNr = -1;
+  CLOutp.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    CLOutp.SerNr = NextSerNr("CLOutVc",CLOutp.TransDate,-1,false,CLOutp.LangCode);
+  end;
+  PastePMInCLOut(CLOutp); 
+  curcode = CLOutp.CurncyCode;
+  GetFullCurncyRate(curcode,CLOutp.TransDate,fr,to1,to2,br1,br2);
+  CLOutp.CurncyCode = curcode;
+  CLOutp.FrRate = fr;
+  CLOutp.ToRateB1 = to1; 
+  CLOutp.ToRateB2 = to2;
+  CLOutp.BaseRate1 = br1;
+  CLOutp.BaseRate2 = br2;
+  CLOutp.OKFlag = 0;
+  CLOutp.ColFlag = 0;
+  CLOutp.FileName = "";
+  CLOutp.FSerNr = -1;  
+  if (Importing==false) then begin
+    if (DateLocked(CLOutp.TransDate,"CLOutVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(CLOutp.TransDate,"CLOutVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;    
+  end;
+  CLOutVcRecordDefaults = res;  
+  RETURN;
+end;
+
+global
+function LongInt CLOutVcRecordDuplicate(var record CLOutVc CLOutp,record CLOutVc CLOut2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  string 5 crncy;
+  record MainCLBlock MCLb;
+
+  CLOutp.SerNr = -1;
+  if (SingleUserMode) then begin
+    CLOutp.SerNr = NextSerNr("CLOutVc",CLOutp.TransDate,-1,false,CLOutp.LangCode);
+  end;  
+  CLOutp.OKFlag = 0;
+  CLOutp.ColFlag = 0;
+  CLOutp.Invalid = 0;
+  CLOutp.FileName = "";
+  CLOutp.FSerNr = -1;
+  crncy = CLOutp.CurncyCode;
+  GetFullCurncyRate(crncy,CLOutp.TransDate,fr,to1,to2,br1,br2);
+  CLOutp.CurncyCode = crncy;
+  CLOutp.FrRate = fr;
+  CLOutp.ToRateB1 = to1; 
+  CLOutp.ToRateB2 = to2;
+  CLOutp.BaseRate1 = br1;
+  CLOutp.BaseRate2 = br2;
+  PastePMInCLOut(CLOutp);  
+  BlockLoad(MCLb);
+  if (MCLb.ChronologyforCLNo!=0) then begin
+    CLOutp.TransDate = CurrentDate;
+  end;
+  if (Importing==false) then begin
+    if (DateLocked(CLOutp.TransDate,"CLOutVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(CLOutp.TransDate,"CLOutVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;    
+  end;
+  WarnFutureDate(true,CLOutp.TransDate);
+  CLOutVcRecordDuplicate = res;
+  RETURN;
+end;
+
+function Boolean CLOutVIRecordExists(LongInt cloutvi,LongInt vinr,string filename)
+BEGIN
+  Boolean res;
+  record CLOutVIVc CLOutVIr;
+  
+  CLOutVIr.CLOutNr = cloutvi;
+  CLOutVIr.SerNr = vinr;
+  CLOutVIr.FileName = filename;
+  res = ReadFirstMain(CLOutVIr,3,true);
+  CLOutVIRecordExists = res;
+  RETURN;
+END;
+
+updating procedure UpdateCLOutVIfromOP(LongInt cloutsernr,LongInt opnr)
+BEGIN
+  record OPVc OPr;
+  row OPVc OPrw;
+  Integer i,rwcnt;
+  record CLOutVIVc CLOutVIr;
+  
+  OPr.SerNr = opnr;
+  if (ReadFirstMain(OPr,1,true)) then begin
+    rwcnt = MatRowCnt(OPr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(OPr,i,OPrw);
+      CLOutVIr.CLOutNr = cloutsernr;
+      CLOutVIr.SerNr = OPrw.VISerNr;
+      CLOutVIr.FileName = "VIVc";    
+      if (CLOutVIRecordExists(CLOutVIr.CLOutNr,CLOutVIr.SerNr,CLOutVIr.FileName)==false) then begin
+        if (RecordStore(CLOutVIr,false)) then begin end;
+      end;
+    end;
+  end;  
+  RETURN;
+END;
+
+function Boolean CLOutOPRecordExists(LongInt cloutvi,LongInt opnr,string filename)
+BEGIN
+  Boolean res;
+  record CLOutVIVc CLOutVIr;
+  
+  CLOutVIr.CLOutNr = cloutvi;
+  CLOutVIr.SerNr = opnr;
+  CLOutVIr.FileName = filename;
+  res = ReadFirstMain(CLOutVIr,3,true);
+  CLOutOPRecordExists = res;
+  RETURN;
+END;
+
+global
+updating procedure UpdateCLOutVI(record CLOutVc CLOutr,record CLOutVc CLOut2r,Integer mode)
+BEGIN
+  record CLOutVIVc CLOutVIr;
+  
+  switch (mode) begin
+    case 0://store
+      if ((CLOutr.FileName=="VIVc") and (CLOutr.FSerNr!=-1)) then begin 
+        CLOutVIr.CLOutNr = CLOutr.SerNr;
+        CLOutVIr.SerNr = CLOutr.FSerNr;
+        CLOutVIr.FileName = CLOutr.FileName;
+        if (CLOutVIRecordExists(CLOutVIr.CLOutNr,CLOutVIr.SerNr,CLOutVIr.FileName)==false) then begin
+          if (RecordStore(CLOutVIr,false)) then begin end;
+        end;  
+      end;  
+      if ((CLOutr.FileName=="OPVc") and (CLOutr.FSerNr!=-1)) then begin
+        CLOutVIr.CLOutNr = CLOutr.SerNr;
+        CLOutVIr.SerNr = CLOutr.FSerNr;
+        CLOutVIr.FileName = CLOutr.FileName;
+        if (CLOutOPRecordExists(CLOutVIr.CLOutNr,CLOutVIr.SerNr,CLOutVIr.FileName)==false) then begin
+          if (RecordStore(CLOutVIr,false)) then begin 
+            UpdateCLOutVIfromOP(CLOutr.SerNr,CLOutr.FSerNr);
+          end;
+        end;  
+      end;  
+    case 1: //update
+      ;
+    case 2://delete
+      if (CLOutr.FSerNr!=-1) then begin
+        CLOutVIr.CLOutNr = CLOutr.SerNr;
+        CLOutVIr.SerNr = CLOutr.FSerNr;
+        CLOutVIr.FileName = CLOutr.FileName;
+        if (ReadFirstMain(CLOutVIr,3,true)) then begin
+          RecordDelete(CLOutVIr);
+        end;  
+      end;              
+  end;  
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordUpdate(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  if ((CLOutr.OKFlag!=0) and (CLOut2r.OKFlag==0)) then begin
+    CLOutr.PPOKNr = UpdatePPOKNr(CLOutr.PPOKNr);
+    CLOutUpdatePlannedPayments(CLOutr);
+  end;
+  if ((CLOutr.OKFlag==0) and (CLOut2r.OKFlag==1)) then begin//unok
+    DeleteTransaction(CLOutr.SerNr,CLOutYc);
+    StoreUnOKHistory("CLOutVc",CLOutr.SerNr,CurrentDate,CurrentTime,CurrentUser);
+    DeletePlannedPayment("CLOutVc",CLOutr.SerNr,-1);
+  end;
+  CLOutVcRecordUpdate = res;
+  RETURN;
+END;
+
+updating procedure InvalidateCLOut(record CLOutVc CLOutp)
+BEGIN
+  UpdateCLOutVI(CLOutp,CLOutp,2);
+  CLOutUpdateStats(CLOutp,true,false);
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordUpdateAfter(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+//  if ((CLOutr.OKFlag==1) and ((CLOut2r.OKFlag==0))) then begin
+    UpdateCLOutVI(CLOutr,CLOut2r,0);//should it be updated maybe
+//  end;    
+  if ((CLOutr.Invalid!=0) and (CLOut2r.Invalid==0)) then begin
+    if (CLOut2r.OKFlag!=0) then begin
+      InvalidateTR(CLOutYc,CLOutr.SerNr);
+      InvalidateCLOut(CLOutr);
+    end;
+  end;    
+  if ((CLOutr.OKFlag!=0) and (CLOut2r.OKFlag==0)) then begin
+    CLOutUpdateStats(CLOutr,false,false);
+    AutomatedSalesOrderly("HasIntegratedNL");
+  end;      
+  if ((CLOutr.Invalid==0) and (CLOut2r.Invalid==0)) then begin//unok
+    if ((CLOutr.OKFlag==0) and (CLOut2r.OKFlag==1)) then begin
+      InvalidateCLOut(CLOutr);
+    end;
+  end;
+  CLOutVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+updating procedure DeleteCLOutVI(record CLOutVc CLOutr)
+BEGIN
+  record CLOutVIVc CLOutVIr;
+  Boolean TrHs;
+
+  TrHs = true;
+  CLOutVIr.CLOutNr = CLOutr.SerNr;
+  while (LoopMain(CLOutVIr,1,TrHs)) begin
+    if (CLOutVIr.CLOutNr!=CLOutr.SerNr) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      RecordDelete(CLOutVIr);
+      StepBack(CLOutVIr);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordRemove(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  DeleteCLOutVI(CLOutr);
+  CLOutVcRecordRemove = res;  
+  RETURN;
+end;

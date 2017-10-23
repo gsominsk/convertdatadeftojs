@@ -1,0 +1,734 @@
+external procedure DivPIFactor(val,val,var val);
+external function roundmode SetRoundModeD(Integer);
+remote function Boolean POCOVc_PasteVEArtCode(var record POCOVc,Integer);
+remote function Boolean POCOVc_PasteArtCode(var record POCOVc,Integer);
+external procedure GetSalesGroup(string,var string);
+remote function Boolean POCOVc_PasteVECode(var record POCOVc,Boolean);
+remote procedure POCOGetRate(var record POCOVc);
+external function Boolean AllowCurChange(string,Boolean);
+remote updating function LongInt RecordAction_raPastePOCOInVI(var record POCOVc,var record VIVc);
+remote updating function LongInt RecordAction_raPastePOCOInPO(record POCOVc,var record POVc);
+external procedure RecordActionPOCO_Print(var record POCOVc,string);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure RoundRowSum(string,string,string,var val);
+
+global
+procedure MulPIFactor(val a,val b,var val c)
+BEGIN
+  val factor;
+
+  if (blank(a)) then begin
+    c = blankval;
+    goto LMulPIFactor;
+  end;
+  if (b==0) then begin
+    factor = 1;
+  end else begin
+    factor = b;
+  end;
+  c = a*factor;
+LMulPIFactor:;  
+  RETURN;
+END;
+
+global
+procedure POCOSumup(var record POCOVc POCOp)
+BEGIN
+  row POCOVc POCOrw;
+  val s,ms,ms2,temp;
+  Integer i,rwcnt;
+  roundmode roundlines,rndtotal,rndvat;
+  record SMVc VATr;/*VATBaseRowType*/
+  Integer vatcnt;  
+
+  SetupVATBase(VATr,vatcnt);
+  rwcnt = MatRowCnt(POCOp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POCOp,i,POCOrw);
+    s = s + POCOrw.Sum;
+    AddVATBase(VATr,POCOrw.VATCode,POCOrw.Sum,blankval,vatcnt,POCOp.InclVAT,POCOp.NoTAXonVAT);
+  end;
+  CalcVATBaseVAT(VATr,POCOp.InclVAT,POCOp.NoTAXonVAT,vatcnt,ms,temp);
+  if ((POCOp.ExportFlag==1) or (POCOp.ExportFlag==2)) then begin
+    ms = blankval;
+  end;  
+  GetCurncyRoundoff(POCOp.CurncyCode,POCOp.PayDeal,"POCOVc",rndtotal,roundlines,rndvat);
+  ms = Round(ms,rndvat);
+  if (POCOp.InclVAT!=0) then begin
+    ms2 = s;
+  end else begin
+    ms2 = s + ms;
+  end;
+  ms2 = Round(ms2,rndtotal);
+  POCOp.Sum1 = s;
+  POCOp.Sum3 = ms;
+  POCOp.Sum4 = ms2;
+  RETURN;
+END;
+
+global
+function Boolean POCODchrsum(record POCOVc POCOp,Integer rownr)
+BEGIN
+  Boolean res;
+  row POCOVc POCOrwp;
+  val s;
+  
+  MatRowGet(POCOp,rownr,POCOrwp);
+  CalcSum(POCOrwp.VEQuant,POCOrwp.Price,POCOrwp.PriceFactor,POCOrwp.vRebate,s,0);
+  RoundRowSum(POCOp.CurncyCode,POCOp.PayDeal,"POCOVc",s);
+  if (s!=POCOrwp.Sum) then begin
+    res = true;
+    POCOrwp.Sum = s;
+  end;
+  MatRowPut(POCOp,rownr,POCOrwp);
+  POCODchrsum = res;
+  RETURN;
+END;
+
+procedure POCOVc_PasteQuant(var record POCOVc POCOp,Integer rownr)
+BEGIN
+  val t;
+  row POCOVc POCOrw;
+  
+  MatRowGet(POCOp,rownr,POCOrw);
+  DivPIFactor(POCOrw.Quant,POCOrw.PIFactor,t);
+  POCOrw.VEQuant = t;    
+  MatRowPut(POCOp,rownr,POCOrw);
+  if (POCODchrsum(POCOp,rownr)) then begin
+    POCOSumup(POCOp);
+  end;
+  RETURN;
+END;
+
+procedure POCOVc_PasteVEQuant(var record POCOVc POCOp,Integer rownr)
+BEGIN
+  val t;
+  row POCOVc POCOrw;
+  
+  MatRowGet(POCOp,rownr,POCOrw);
+  MulPIFactor(POCOrw.VEQuant,POCOrw.PIFactor,t);
+  POCOrw.Quant = t;    
+  MatRowPut(POCOp,rownr,POCOrw);
+  if (POCODchrsum(POCOp,rownr)) then begin
+    POCOSumup(POCOp);
+  end;
+  RETURN;
+END;
+
+procedure POCOVc_PastePrice(var record POCOVc POCOp,Integer rownr)
+BEGIN
+  if (POCODchrsum(POCOp,rownr)) then begin
+    POCOSumup(POCOp);
+  end;
+  RETURN;
+END;
+
+procedure POCOVc_PastevRebate(var record POCOVc POCOp,Integer rownr)
+BEGIN
+  if (POCODchrsum(POCOp,rownr)) then begin
+    POCOSumup(POCOp);
+  end;
+  RETURN;
+END;
+
+procedure POCOVc_PasteSum(var record POCOVc POCOp,Integer rownr)
+BEGIN
+  row POCOVc POCOrw;
+  val s;
+
+  MatRowGet(POCOp,rownr,POCOrw);
+  if ((nonblank(POCOrw.VEQuant)) and (nonblank(POCOrw.Price))) then begin
+    s = POCOrw.Sum/POCOrw.VEQuant;
+    s = POCOrw.Price - s;
+    s = s*100;
+    s = s/POCOrw.Price;
+    s = Round(s,SetRoundModeD(1));
+    POCOrw.vRebate = s;
+  end;  
+  MatRowPut(POCOp,rownr,POCOrw);
+  if (POCODchrsum(POCOp,rownr)) then begin
+    POCOSumup(POCOp);
+  end;
+  RETURN;
+END;
+
+procedure POCOVc_PasteVATCode(var record POCOVc POCOp,Integer rownr)
+BEGIN
+  if (POCODchrsum(POCOp,rownr)) then begin
+    POCOSumup(POCOp);
+  end;
+  RETURN;
+END;
+
+global
+procedure PrintPOCOL(Integer wn,Boolean previewf)
+BEGIN
+  record POCOVc POCOr;
+  Integer i;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(POCOr,wn,i)) begin
+    RecordActionPOCO_Print(POCOr,previewf);
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  RETURN;
+END;
+
+global
+updating procedure POFromPOCODsm()
+BEGIN
+  record POCOVc POCOr;
+  record POVc POr;
+  LongInt r;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin//Rs_normal
+    GetWindowRecord(wn,POCOr);
+    if (UserCanAction("POCOToPO",true)) then begin
+      r = RecordAction_raPastePOCOInPO(POCOr,POr);
+      switch (r) begin
+        case -1: Beep;
+        case -2: MessageBox(38840,"");
+        otherwise
+          nwn = OpenWindow("PODClass",1,0,"","",POr);
+      end;
+      UpdateBrowses("POVc");
+    end else begin
+      MessageBox(1274,StringFromStringSet(3,"POCOToPO"));
+    end;
+  end else begin
+    Beep;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure VIFromPOCODsm()
+BEGIN
+  record POCOVc POCOr;
+  record VIVc VIr;
+  LongInt r;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin//Rs_normal
+    GetWindowRecord(wn,POCOr);
+    if (UserCanAction("POCOToVI",true)) then begin
+      r = RecordAction_raPastePOCOInVI(POCOr,VIr);
+      switch (r) begin
+        case -1: Beep;
+        case -2: MessageBox(1434,"");
+        otherwise
+          nwn = OpenWindow("VIDClass",1,0,"","",VIr);
+      end;
+      UpdateBrowses("VIVc");
+    end else begin
+      MessageBox(1274,StringFromStringSet(3,"POCOToVI"));
+    end;
+  end else begin
+    Beep;
+  end;
+  RETURN;
+END;
+
+global
+procedure POCOStatus()
+begin
+  record POCOVc POCOr;
+  record RcVc RepSpec;
+  
+  GetWindowRecord(CurWindow,POCOr);
+  RepSpec.repname = "POCOStatusRn";
+  RepSpec.Media = mtScreen;
+  RepSpec.ArtMode = 1;
+  RepSpec.flags[0] = 1;
+  RepSpec.f1 = POCOr.SerNr;
+  RunReport(RepSpec,0);
+  RETURN;
+end;
+
+global
+function Boolean POCODClassExportFlagButtonAfter(Integer wn,Boolean changedf)
+begin        
+  record POCOVc POCOr;  
+  Boolean res;
+
+  GetWindowRecord(wn,POCOr);
+  POCOSumup(POCOr);
+  PutWindowRecord(wn,POCOr);
+  POCODClassExportFlagButtonAfter = res;  
+  return;
+end;
+
+global 
+function Boolean POCODClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record POCOVc POCOr;
+  row POCOVc POCOrw;
+  Boolean res;
+  Integer updatemode;
+
+  res = true;
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,POCOr);
+    if (POCOr.OKFlag!=0) then begin
+      res = false;
+    end else begin
+      if (rownr<MatRowCnt(POCOr)) then begin
+        MatRowGet(POCOr,rownr,POCOrw);
+        if (POCOrw.VINr!=-1) then begin
+          res = false;
+          MessageBox(1092,"");
+        end;
+        if (res and POCOrw.Ordered>0) then begin
+          res = false;
+          MessageBox(34470,"");
+        end;
+      end;
+    end;
+  end;
+  POCODClassDeleteRowTest = res;
+  return;
+end;
+
+global
+function Boolean POCODClassOnOverStrike(Integer wn,Integer rownr)
+begin
+  record POCOVc POCOr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOSumup(POCOr);
+    PutWindowRecord(wn,POCOr);    
+  end;
+  POCODClassOnOverStrike = true;
+  return;
+end;
+
+function Boolean POCOShipdTest2(record POCOVc POCOp,Integer rownr)
+begin
+  Boolean res;
+  Integer i,rwcnt;
+  row POCOVc POCOrw;
+  
+  rwcnt = MatRowCnt(POCOp);
+  if (rownr==-1) then begin
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(POCOp,i,POCOrw);
+      if (POCOrw.Ordered>0) then begin
+        res = true;
+        goto LPOCOShipdTest;
+      end;
+    end;
+  end else begin
+    if (rownr<rwcnt) then begin
+      MatRowGet(POCOp,rownr,POCOrw);
+      res = POCOrw.Ordered>0;
+    end;
+  end;
+LPOCOShipdTest:;
+  POCOShipdTest2 = res;
+  return;
+end;
+
+function Boolean POCOShipdTest(record POCOVc POCOp)
+begin
+  POCOShipdTest = POCOShipdTest2(POCOp,-1);
+end;
+
+global
+function Boolean POCODClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record POCOVc POCOr;
+  record POCOVc POCO2r;
+  row POCOVc POCOrw;
+
+  res = true;
+  if (wnst!=1) then begin//Rs_insert
+     switch (fieldname) begin
+       case "SerNr":
+         res = false;
+         goto LPOCODClassActiveEditField;
+     end;
+  end;
+  switch (fieldname) begin
+    case "FrRate": 
+      if (AllowCurChange(POCOr.CurncyCode,false)==false) then begin res = false; end;
+    case "ToRateB1": 
+      if (AllowCurChange(POCOr.CurncyCode,false)==false) then begin res = false; end;
+    case "ToRateB2": 
+      if (AllowCurChange(POCOr.CurncyCode,false)==false) then begin res = false; end;
+    case "BaseRate1": 
+      if (AllowCurChange(POCOr.CurncyCode,true)==false) then begin res = false; end;
+    case "BaseRate2": 
+      if (AllowCurChange(POCOr.CurncyCode,true)==false) then begin res = false; end;  
+  end;
+  if (res==false) then begin
+    goto LPOCODClassActiveEditField;
+  end;
+  GetWindowRecord(wn,POCOr);
+  if (wnst==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,POCO2r);
+    if (POCO2r.OKFlag!=0) then begin
+      switch (fieldname) begin
+        case "PlanShip": res = true;
+        otherwise res = false;
+      end;
+      if (rownr>=0) then begin
+        res = true;
+        switch (fieldname) begin
+          case "PlanShipRow": res = true;
+          otherwise res = false;
+        end;
+      end;
+      if (res==false) then begin goto LPOCODClassActiveEditField; end;
+    end else begin
+      if ((rownr>=0) and (rownr<WindowOldRowcnt(wn))) then begin
+        MatRowGet(POCOr,rownr,POCOrw);
+        if (POCOrw.VINr!=-1) then begin
+          res = false;
+          switch(fieldname) begin
+            case "Spec": res = true;
+            case "Comment": res = true;
+          end;
+          if ((res==false) and (changed!=0)) then begin
+            MessageBox(1092,"");
+            goto LPOCODClassActiveEditField;
+          end;
+        end;
+        if (POCOShipdTest2(POCOr,rownr)==false) then begin goto LPOCODClassActiveEditField; end;
+        switch(fieldname) begin
+          case "ArtCode":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+          case "VEArtCode":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+          case "Quant":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+          case "VEQuant":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+          case "PIFactor":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+          case "VINr":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+          case "Ordered":
+            res = false;
+            if (changed!=0) then begin MessageBox(34470,""); end;
+            goto LPOCODClassActiveEditField;
+        end;
+      end;
+    end;
+  end;
+LPOCODClassActiveEditField:;  
+  POCODClassActiveEditField = res;
+  return;
+end;
+
+function Boolean POCODClassPlanShipEFAfter(Integer wn,Boolean changedf)
+begin
+  record POCOVc POCOr;
+  record PlanDeliveryBlock PlanDelRec;
+  LongInt week;
+  date d;
+  
+  if (changedf) then begin
+    BlockLoad(PlanDelRec);
+    GetWindowRecord(wn,POCOr);
+    switch (PlanDelRec.FieldType) begin
+      case 1:  /* date */
+        d = POCOr.PlanShip;
+        POCOr.PlanShip = d;
+        POCOr.PlanShipDate = StringToDate(POCOr.PlanShip);
+      case 2:  /* week number (nn) */
+        week = POCOr.PlanShip;
+        POCOr.PlanShip = week;
+      case 3:  /* week number (yynn */
+        if (nonblank(POCOr.PlanShip)) then begin
+          week = POCOr.PlanShip;
+          POCOr.PlanShip = week;
+          if (len(POCOr.PlanShip)<4) then begin
+            POCOr.PlanShip = "0" & POCOr.PlanShip;
+          end;
+          if (len(POCOr.PlanShip)>4) then begin
+            POCOr.PlanShip = Left(POCOr.PlanShip,4);
+          end;
+        end;
+    end;
+    PutWindowRecord(wn,POCOr);    
+  end;
+  POCODClassPlanShipEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassSalesManEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+  string 255 tstr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    GetSalesGroup(POCOr.SalesMan,tstr);
+    POCOr.SalesGroup = tstr;
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassSalesManEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassCurncyCodeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOGetRate(POCOr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassCurncyCodeEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassLocationEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+  record LocationVc locR;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    locR.Code = POCOr.Location;
+    if (ReadFirstMain(locR,1,true)) then begin
+      POCOr.ShipAddr0 = locR.Name;
+      POCOr.ShipAddr1 = locR.Addr0;
+      POCOr.ShipAddr2 = locR.Addr1;
+      POCOr.ShipAddr3 = locR.Addr2;
+      POCOr.DelAddr3 = locR.Addr3;
+      POCOr.DelAddr4 = locR.Addr4;
+    end else begin
+      Beep;
+    end;
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassLocationEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassVECodeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    if (POCOVc_PasteVECode(POCOr,true)) then begin
+      PutWindowRecord(wn,POCOr);
+    end else begin
+      Beep;
+    end;
+  end;
+  POCODClassVECodeEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassPlanShipRowEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  record POCOVc POCOr;
+  row POCOVc POCOrw;
+  record PlanDeliveryBlock PlanDelRec;
+  LongInt week;
+  date d;
+  
+  if (changedf) then begin
+    BlockLoad(PlanDelRec);
+    GetWindowRecord(wn,POCOr);
+    MatRowGet(POCOr,rownr,POCOrw);
+    switch (PlanDelRec.FieldType) begin
+      case 1:  /* date */
+        d = POCOrw.PlanShipRow;
+        POCOrw.PlanShipRow = d;
+      case 2:  /* week number (nn) */
+        week = POCOrw.PlanShipRow;
+        POCOrw.PlanShipRow = week;
+      case 3:  /* week number (yynn */
+        week = POCOrw.PlanShipRow;
+        POCOrw.PlanShipRow = week;
+        if (len(POCOrw.PlanShipRow)<4) then begin
+          POCOrw.PlanShipRow = "0" & POCOrw.PlanShipRow;
+        end;
+        if (len(POCOrw.PlanShipRow)>4) then begin
+          POCOrw.PlanShipRow = Left(POCOrw.PlanShipRow,4);
+        end;
+    end;
+    MatRowPut(POCOr,rownr,POCOrw);
+    PutWindowRecord(wn,POCOr);    
+  end;
+  POCODClassPlanShipRowEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassArtCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+  row POCOVc POCOrw;
+
+  GetWindowRecord(wn,POCOr);    
+  MatRowGet(POCOr,rownr,POCOrw);
+  if ((changedf) or (blank(POCOrw.Spec) and (nonblank(POCOrw.ArtCode)))) then begin
+    if (POCOVc_PasteArtCode(POCOr,rownr)) then begin
+      PutWindowRecord(wn,POCOr);
+    end else begin
+      Beep;
+    end;
+  end;
+  POCODClassArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassVEArtCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    if (POCOVc_PasteVEArtCode(POCOr,rownr)) then begin
+      PutWindowRecord(wn,POCOr);
+    end else begin
+      Beep;
+    end;
+  end;
+  POCODClassVEArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassQuantEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOVc_PasteQuant(POCOr,rownr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassQuantEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassVEQuantEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOVc_PasteVEQuant(POCOr,rownr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassVEQuantEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassPriceEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOVc_PastePrice(POCOr,rownr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassPriceEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassvRebateEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOVc_PastevRebate(POCOr,rownr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassvRebateEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassSumEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOVc_PasteSum(POCOr,rownr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassSumEFAfter = true;
+  return;
+end;
+
+function Boolean POCODClassVATCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POCOVc POCOr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POCOr);    
+    POCOVc_PasteVATCode(POCOr,rownr);
+    PutWindowRecord(wn,POCOr);
+  end;
+  POCODClassVATCodeEFAfter = true;
+  return;
+end;
+
+global
+function Boolean POCODClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "PlanShip": res = POCODClassPlanShipEFAfter(wn,changed!=0);
+    case "SalesMan": res = POCODClassSalesManEFAfter(wn,changed!=0);
+    case "CurncyCode": res = POCODClassCurncyCodeEFAfter(wn,changed!=0);
+    case "Location": res = POCODClassLocationEFAfter(wn,changed!=0);
+    case "VECode": res = POCODClassVECodeEFAfter(wn,changed!=0);
+
+    case "PlanShipRow": res = POCODClassPlanShipRowEFAfter(wn,rownr,changed!=0);
+    case "ArtCode": res = POCODClassArtCodeEFAfter(wn,rownr,changed!=0);
+    case "VEArtCode": res = POCODClassVEArtCodeEFAfter(wn,rownr,changed!=0);
+    case "Quant": res = POCODClassQuantEFAfter(wn,rownr,changed!=0);
+    case "VEQuant": res = POCODClassVEQuantEFAfter(wn,rownr,changed!=0);
+    case "Price": res = POCODClassPriceEFAfter(wn,rownr,changed!=0);
+    case "vRebate": res = POCODClassvRebateEFAfter(wn,rownr,changed!=0);
+    case "Sum": res = POCODClassSumEFAfter(wn,rownr,changed!=0);
+    case "VATCode": res = POCODClassVATCodeEFAfter(wn,rownr,changed!=0);
+  end;
+  POCODClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean POCODClassExportFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+//vat zone should be as it is on customer card
+//otherwise u can paste customer  , filled all, change vat zone and get crap
+  res = false;
+  POCODClassExportFlagButtonAction = res;
+  RETURN;
+END;

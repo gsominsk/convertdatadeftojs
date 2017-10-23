@@ -1,0 +1,468 @@
+remote updating function Integer CreateMailFromPOQTD(record POQTVc,var record MailVc,var string,string);
+external function roundmode DefaultRoundMode();
+// The sumup functions are remote, they should be able to NOT be remote...then most of these functions would not be remote...
+external function Boolean TestForMATVARINS(Integer);
+remote procedure POQTVc_PasteVATCode(var record POQTVc,Integer);
+remote procedure POQTVc_PasteSum(var record POQTVc,Integer);
+remote procedure POQTVc_PastePrice(var record POQTVc,Integer);
+remote procedure POQTVc_PastevRebate(var record POQTVc,Integer);
+remote procedure POQTVc_PasteVEQuant(var record POQTVc,Integer);
+remote procedure POQTVc_PasteQuant(var record POQTVc,Integer);
+remote function Boolean POQTVc_PasteVEArtCode(var record POQTVc,Integer);
+remote function Boolean POQTVc_PasteArtCode(var record POQTVc,Integer,Boolean);
+remote function Boolean POQTVc_PasteVECode(var record POQTVc,Boolean);
+remote procedure POQTGetRate(var record POQTVc);
+external procedure SendArtStat(string,string,string,val,val,val,Date,Integer);
+external function Boolean AllowCurChange(string,Boolean);
+remote procedure POQTSumup(var record POQTVc);
+remote updating function LongInt RecordAction_raPastePOQTInPO(var record POQTVc,var record POVc);
+external updating procedure RecordActionPOQT_Print(var record POQTVc,string,Boolean);
+
+global
+updating procedure PrintPOQTL(Integer wn,Boolean previewf)
+BEGIN
+  record POQTVc POQTr;
+  Integer i;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(POQTr,wn,i)) begin
+    RecordActionPOQT_Print(POQTr,previewf,true);
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  RETURN;
+END;
+
+global
+updating procedure POFromPOQTDsm()
+BEGIN
+  record POQTVc POQTr;
+  record POVc POr;
+  LongInt r;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin//Rs_normal
+    GetWindowRecord(wn,POQTr);
+    if (UserCanAction("POQTToPO",true)) then begin
+      if (POQTr.Closed==0) then begin
+        r = RecordAction_raPastePOQTInPO(POQTr,POr);
+        switch (r) begin
+          case -1: Beep;
+          case -2: MessageBox(1281,"");
+          otherwise
+            nwn = OpenWindow("PODClass",1,0,"","",POr);
+        end;
+        UpdateBrowses("POQTVc");
+      end;
+    end else begin
+      MessageBox(1274,StringFromStringSet(3,"POQTToPO"));
+    end;
+  end else begin
+    Beep;
+  end;
+  RETURN;
+END;
+
+global
+function Boolean POQTDClassClosedButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record POQTVc POQTr;
+  Integer normalmode,updatemode;
+ 
+  res = false;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,POQTr);
+    if (POQTr.PONr==-1) then begin
+      res = true;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,POQTr);
+    if (POQTr.PONr==-1) then begin
+      res = true;
+    end;
+  end;  
+  POQTDClassClosedButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean POQTDClassExportFlagButtonAfter(Integer wn,Boolean changedf)
+begin        
+  record POQTVc POQTr;  
+  Boolean res;
+
+  GetWindowRecord(wn,POQTr);
+  POQTSumup(POQTr);
+  PutWindowRecord(wn,POQTr);
+  POQTDClassExportFlagButtonAfter = res;  
+  return;
+end;
+
+global
+function Boolean POQTDClassOnOverStrike(Integer wn,Integer rownr)
+begin
+  record POQTVc POQTr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTSumup(POQTr);
+    PutWindowRecord(wn,POQTr);    
+  end;
+  POQTDClassOnOverStrike = true;
+  return;
+end;
+
+global
+function Boolean POQTDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record POQTVc POQTr;
+  record POQTVc POQT2r;
+  row POQTVc POQTrw;
+
+  res = true;
+  if (wnst!=1) then begin//Rs_insert
+     switch (fieldname) begin
+       case "SerNr":
+         res = false;
+         goto LPOQTDClassActiveEditField;
+     end;
+  end;
+  switch (fieldname) begin
+    case "FrRate": 
+      if (AllowCurChange(POQTr.CurncyCode,false)==false) then begin res = false; end;
+    case "ToRateB1": 
+      if (AllowCurChange(POQTr.CurncyCode,false)==false) then begin res = false; end;
+    case "ToRateB2": 
+      if (AllowCurChange(POQTr.CurncyCode,false)==false) then begin res = false; end;
+    case "BaseRate1": 
+      if (AllowCurChange(POQTr.CurncyCode,true)==false) then begin res = false; end;
+    case "BaseRate2": 
+      if (AllowCurChange(POQTr.CurncyCode,true)==false) then begin res = false; end;  
+  end;
+  if (res==false) then begin
+    goto LPOQTDClassActiveEditField;
+  end;
+  if (wnst==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,POQT2r);
+    if (POQT2r.PONr!=-1) then begin
+      switch (fieldname) begin
+        case "PlanShip": res = true;
+        otherwise res = false;
+      end;
+      if (res==false) then begin goto LPOQTDClassActiveEditField; end;
+    end;
+  end;  
+LPOQTDClassActiveEditField:;  
+  POQTDClassActiveEditField = res;
+  return;
+end;
+
+function Boolean POQTDClassPlanShipEFAfter(Integer wn,Boolean changedf)
+begin
+  record POQTVc POQTr;
+  record PlanDeliveryBlock PlanDelRec;
+  LongInt week;
+  date d;
+  
+  if (changedf) then begin
+    BlockLoad(PlanDelRec);
+    GetWindowRecord(wn,POQTr);
+    switch (PlanDelRec.FieldType) begin
+      case 1:  /* date */
+        d = POQTr.PlanShip;
+        POQTr.PlanShip = d;
+        POQTr.PlanShipDate = StringToDate(POQTr.PlanShip);
+      case 2:  /* week number (nn) */
+        week = POQTr.PlanShip;
+        POQTr.PlanShip = week;
+      case 3:  /* week number (yynn */
+        if (nonblank(POQTr.PlanShip)) then begin
+          week = POQTr.PlanShip;
+          POQTr.PlanShip = week;
+          if (len(POQTr.PlanShip)<4) then begin
+            POQTr.PlanShip = "0" & POQTr.PlanShip;
+          end;
+          if (len(POQTr.PlanShip)>4) then begin
+            POQTr.PlanShip = Left(POQTr.PlanShip,4);
+          end;
+        end;
+    end;
+    PutWindowRecord(wn,POQTr);    
+  end;
+  POQTDClassPlanShipEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassCurncyCodeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTGetRate(POQTr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassCurncyCodeEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassLocationEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+  record LocationVc locR;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    locR.Code = POQTr.Location;
+    if (ReadFirstMain(locR,1,true)) then begin
+      POQTr.ShipAddr0 = locR.Name;
+      POQTr.ShipAddr1 = locR.Addr0;
+      POQTr.ShipAddr2 = locR.Addr1;
+      POQTr.ShipAddr3 = locR.Addr2;
+      POQTr.DelAddr3 = locR.Addr3;
+      POQTr.DelAddr4 = locR.Addr4;
+    end else begin
+      Beep;
+    end;
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassLocationEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassVECodeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    if (POQTVc_PasteVECode(POQTr,true)) then begin
+      PutWindowRecord(wn,POQTr);
+    end else begin
+      Beep;
+    end;
+  end;
+  POQTDClassVECodeEFAfter = true;
+  return;
+end;
+
+global
+function Boolean POQTDClassSwitchRow(Integer wn,Integer rownr)
+begin        
+  record POQTVc POQTr;  
+  row POQTVc POQTrw; 
+  Integer rwcnt;
+  Boolean res;
+  val unitprdisc;
+  string 255 recepy;
+
+  res = true;
+  GetWindowRecord(wn,POQTr);
+  rwcnt = MatRowCnt(POQTr);  
+  if ((rownr<rwcnt) and (rownr>=0)) then begin
+    MatRowGet(POQTr,rownr,POQTrw);
+    unitprdisc = POQTrw.Sum/POQTrw.Quant;
+    unitprdisc = Round(unitprdisc,DefaultRoundMode);
+    recepy = "";
+    SendArtStat(POQTrw.ArtCode,POQTr.Location,recepy,0,0,unitprdisc,POQTr.TransDate,0);
+  end;
+  SetWindowNameArg(wn,POQTrw.ArtCode & ":" & POQTr.Location);
+  POQTDClassSwitchRow = res;  
+  return;
+end;
+
+function Boolean POQTDClassArtCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+  row POQTVc POQTrw;
+
+  GetWindowRecord(wn,POQTr);    
+  MatRowGet(POQTr,rownr,POQTrw);
+  if ((changedf) or (blank(POQTrw.Spec) and (nonblank(POQTrw.ArtCode)))) then begin
+    if (POQTVc_PasteArtCode(POQTr,rownr,false)) then begin
+      PutWindowRecord(wn,POQTr);
+      if (POQTDClassSwitchRow(wn,rownr)) then begin end;    
+    end else begin
+      Beep;
+    end;
+  end;
+  POQTDClassArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassVEArtCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    if (POQTVc_PasteVEArtCode(POQTr,rownr)) then begin
+      PutWindowRecord(wn,POQTr);
+    end else begin
+      Beep;
+    end;
+  end;
+  POQTDClassVEArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassQuantEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTVc_PasteQuant(POQTr,rownr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassQuantEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassVEQuantEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTVc_PasteVEQuant(POQTr,rownr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassVEQuantEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassPriceEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTVc_PastePrice(POQTr,rownr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassPriceEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassvRebateEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTVc_PastevRebate(POQTr,rownr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassvRebateEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassSumEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTVc_PasteSum(POQTr,rownr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassSumEFAfter = true;
+  return;
+end;
+
+function Boolean POQTDClassVATCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record POQTVc POQTr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,POQTr);    
+    POQTVc_PasteVATCode(POQTr,rownr);
+    PutWindowRecord(wn,POQTr);
+  end;
+  POQTDClassVATCodeEFAfter = true;
+  return;
+end;
+
+global
+function Boolean POQTDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "PlanShip": res = POQTDClassPlanShipEFAfter(wn,changed!=0);
+    case "CurncyCode": res = POQTDClassCurncyCodeEFAfter(wn,changed!=0);
+    case "Location": res = POQTDClassLocationEFAfter(wn,changed!=0);
+    case "VECode": res = POQTDClassVECodeEFAfter(wn,changed!=0);
+
+    case "ArtCode": res = POQTDClassArtCodeEFAfter(wn,rownr,changed!=0);
+    case "VEArtCode": res = POQTDClassVEArtCodeEFAfter(wn,rownr,changed!=0);
+    case "Quant": res = POQTDClassQuantEFAfter(wn,rownr,changed!=0);
+    case "VEQuant": res = POQTDClassVEQuantEFAfter(wn,rownr,changed!=0);
+    case "Price": res = POQTDClassPriceEFAfter(wn,rownr,changed!=0);
+    case "vRebate": res = POQTDClassvRebateEFAfter(wn,rownr,changed!=0);
+    case "Sum": res = POQTDClassSumEFAfter(wn,rownr,changed!=0);
+    case "VATCode": res = POQTDClassVATCodeEFAfter(wn,rownr,changed!=0);
+  end;
+  POQTDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean POQTDClassBeforeEditField(Integer wn,string fieldname,Integer fn, Integer rownr)
+BEGIN
+  Boolean res;
+  record POQTVc POQTr;
+  row POQTVc POQTrw;
+
+  switch (fieldname) begin  
+    case "Quant":     
+      GetWindowRecord(wn,POQTr);      
+      MatRowGet(POQTr,rownr,POQTrw);
+      if (POQTrw.Quant==0) then begin
+        if (TestForMATVARINS(wn)) then begin end;
+      end;
+  end;
+  POQTDClassBeforeEditField = res;
+  return;
+end;
+
+global
+function Boolean POQTDClassExportFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+//vat zone should be as it is on customer card
+//otherwise u can paste customer  , filled all, change vat zone and get crap
+  res = false;
+  POQTDClassExportFlagButtonAction = res;
+  RETURN;
+END;
+
+global 
+updating procedure CreateMailFromPOQTDsm()
+begin
+  Integer wn,nwn;
+  record MailVc Mailr;
+  record POQTVc POQTr;
+  string 255 tstr;
+  Integer err;
+
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal)then begin
+    GetWindowRecord(wn,POQTr);  
+    err = CreateMailFromPOQTD(POQTr,Mailr,tstr,WindowFormName(wn));
+    if (err!=0) then begin
+      MessageBox(err,": " & tstr);
+    end else begin
+      nwn = OpenWindow("MailDClass",1,0,"","",Mailr);
+    end;
+  end;
+  return;
+end;

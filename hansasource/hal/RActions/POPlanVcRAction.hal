@@ -1,0 +1,287 @@
+external function Boolean SerNrTestPOPlanVc(LongInt,Date,var Boolean);
+
+global
+function LongInt POPlanVcRecordDefaults(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Time blankt;
+  Date td;
+  
+  POPlanr.StartDate = CurrentDate;
+  POPlanr.EndDate = AddDay(AddMonth(CurrentDate,1),-1);
+
+  td = CurrentDate; 
+  td.day = 1;
+  POPlanr.StartDate = td;
+  POPlanr.EndDate = AddDay(AddMonth(td,1),-1);
+
+  POPlanr.OKFlag = 0;
+  POPlanr.Closed = 0;
+  POPlanr.SerNr = -1;
+  if (SingleUserMode) then begin
+    POPlanr.SerNr = NextSerNr("POPlanVc",POPlanr.CreateDate,-1,false,"");
+  end;
+  POPlanVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt POPlanVcRecordDuplicate(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Date blankd;
+  row POPlanVc POPlanrw;
+  Integer i,rwcnt;
+
+  POPlanr.OKFlag = 0;
+  POPlanr.Closed = 0;
+  POPlanr.SerNr = -1;
+  rwcnt = MatRowCnt(POPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POPlanr,i,POPlanrw);
+    POPlanrw.PONr = -1;
+    MatRowPut(POPlanr,i,POPlanrw);
+  end;
+  if (SingleUserMode) then begin
+    POPlanr.SerNr = NextSerNr("POPlanVc",POPlanr.CreateDate,-1,false,"");
+  end;
+  POPlanVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+function Boolean CheckIfPOPlanExists(string itemcode,LongInt sernr,Date startdate,Date enddate)
+begin
+  Boolean res;
+  record POPlanVc POPr;
+  Boolean found,testf;
+  string 255 ckey;
+  
+  found = true;
+  ckey = "ItemCodeSD:";
+  ckey = ckey & itemcode;
+  POPr.Closed = 0;
+  POPr.StartDate = startdate;
+  while (LoopKey(ckey,POPr,2,found)) begin
+    if (POPr.Closed!=0) then begin found = false; end;
+    if (POPr.StartDate>enddate) then begin 
+      found = false;
+    end;
+    if (found) then begin
+      testf = true;
+      if (POPr.EndDate<startdate) then begin  testf = false; end;
+      if (POPr.SerNr==sernr) then begin testf = false; end;
+      if (testf) then begin
+        res = true;
+        goto LCheckIfPOPlanExists;
+      end;
+    end;
+  end;
+  ResetLoop(POPr);
+  found = true;
+  ckey = "ItemCodeED:";
+  ckey = ckey & itemcode;
+  POPr.Closed = 0;
+  POPr.EndDate = startdate;
+  while (LoopKey(ckey,POPr,2,found)) begin
+    if (POPr.Closed!=0) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (DateInRange(startdate,POPr.StartDate,POPr.EndDate)==false) then begin
+        if (DateInRange(enddate,POPr.StartDate,POPr.EndDate)==false) then begin
+          testf = false;
+        end;
+      end;
+      if (POPr.SerNr==sernr) then begin testf = false; end;
+      if (testf) then begin
+        res = true;
+        goto LCheckIfPOPlanExists;
+      end;
+    end;
+  end;
+LCheckIfPOPlanExists:;  
+  CheckIfPOPlanExists = res;
+  return;
+end;
+
+global
+function LongInt POPlanVcRecordCheck(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row POPlanVc POPrw;
+  Integer insertmode,updatemode;
+  Integer i,rwcnt;
+  Boolean transf,gentrans;
+  record SFPeriodsBlock SFPb; 
+  
+  BlockLoad(SFPb);  
+  insertmode = 1;
+  updatemode = 2;
+  if (POPlanr.SerNr==-1) then begin
+    POPlanr.SerNr = NextSerNr("POPlanVc",POPlanr.CreateDate,-1,false,"");
+  end;
+  if (POPlanr.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (POPlan2r.OKFlag==0) then begin transf = true; end;
+    end;
+  end;
+  if (SerNrTestPOPlanVc(POPlanr.SerNr,POPlanr.StartDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto LPOPlanVcRecordCheck;
+  end;
+  if (transf) then begin
+    if (UserCanAction("POPlanOK",true)==false) then begin
+      RecordCheckError(1274,StringFromStringSet(3,"POPlanOK"),-1,"SerNr");      
+      res = -1; 
+      goto LPOPlanVcRecordCheck;
+    end;
+  end;  
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      if (GetDay(POPlanr.StartDate)!=1) then begin
+        RecordCheckError(20851,"",-1,"StartDate");      
+        res = -1; 
+        goto LPOPlanVcRecordCheck;
+      end;
+      if (GetDay(POPlanr.EndDate)!=DaysInMonth(GetYear(POPlanr.StartDate),GetMonth(POPlanr.StartDate))) then begin
+        RecordCheckError(20851,"",-1,"EndDate");      
+        res = -1; 
+        goto LPOPlanVcRecordCheck;
+      end;
+    case kForecastPeriodTypeWeeks:
+      if (GetDateId(POPlanr.StartDate)!=1) then begin
+        RecordCheckError(20851,"",-1,"StartDate");      
+        res = -1; 
+        goto LPOPlanVcRecordCheck;
+      end;
+      if (POPlanr.EndDate!=AddDay(POPlanr.StartDate,-GetDateId(POPlanr.StartDate)+7)) then begin
+        RecordCheckError(20851,"",-1,"EndDate");      
+        res = -1; 
+        goto LPOPlanVcRecordCheck;
+      end;
+  end;
+  rwcnt = MatRowCnt(POPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POPlanr,i,POPrw);
+    if (CheckIfPOPlanExists(POPrw.ItemCode,POPlanr.SerNr,POPlanr.StartDate,POPlanr.EndDate)) then begin
+      RecordCheckError(1547,"",i,"ItemCode");      
+      res = -1; 
+      goto LPOPlanVcRecordCheck;
+    end;
+    if ((POPrw.NeededDate<POPlanr.StartDate) or (POPrw.NeededDate>POPlanr.EndDate)) then begin
+      RecordCheckError(20851,"",i,"NeededDate");      
+      res = -1; 
+      goto LPOPlanVcRecordCheck;
+    end;
+    
+  end;
+
+  res = 0;
+LPOPlanVcRecordCheck:;  
+  POPlanVcRecordCheck = res;
+  RETURN;
+END;
+
+procedure SetEarliestPODate(record POPlanVc POPlanp)
+BEGIN
+  Integer i,rwcnt;
+  row POPlanVc POPlanrw;
+  Date bldat;
+
+  POPlanp.EarliestPODate = bldat;
+  rwcnt = MatRowCnt(POPlanp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POPlanp,i,POPlanrw);
+    if (blankdate(POPlanp.EarliestPODate)) then begin
+      POPlanp.EarliestPODate = POPlanrw.POOrdDate;
+    end else begin
+      if (nonblankdate(POPlanrw.POOrdDate)) then begin
+        if (POPlanp.EarliestPODate>POPlanrw.POOrdDate) then begin
+          POPlanp.EarliestPODate = POPlanrw.POOrdDate;
+        end;
+      end;
+    end;
+  end;
+  if (blankdate(POPlanp.EarliestPODate)) then begin
+    POPlanp.EarliestPODate = POPlanp.EndDate;
+  end;
+  RETURN;
+END;
+
+global
+function LongInt POPlanVcRecordSave(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  SetEarliestPODate(POPlanr);
+  POPlanr.CreateDate = CurrentDate;
+  if (POPlanr.OKFlag!=0) then begin
+    POPlanr.OKDate = CurrentDate;
+  end;
+  POPlanVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating function LongInt POPlanVcRecordSaveAfter(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  POPlanVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt POPlanVcRecordUpdate(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  SetEarliestPODate(POPlanr);
+  if ((POPlanr.OKFlag!=0) and (POPlan2r.OKFlag==0)) then begin
+    POPlanr.OKDate = CurrentDate;
+  end;
+  POPlanVcRecordUpdate = res;
+  RETURN;
+END;
+
+global
+updating function LongInt POPlanVcRecordUpdateAfter(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  POPlanVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt POPlanVcRecordRemoveTest(var record POPlanVc POPlanr,record POPlanVc POPlan2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record DBLockBlock DBLb;
+  
+  res = 1;
+  BlockLoad(DBLb);
+  if (POPlanr.OKFlag==0) then begin
+  end;
+  if (POPlanr.OKFlag!=0) then begin
+    if (POPlanr.StartDate>DBLb.DeleteBeforeDate) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+      res = 0;
+      goto LPOPlanVcRecordRemoveTest;
+    end;
+    if (POPlanr.EndDate<DBLb.DeleteBeforeDate) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+      res = 0;
+      goto LPOPlanVcRecordRemoveTest;
+    end;
+  end;
+LPOPlanVcRecordRemoveTest:;
+  POPlanVcRecordRemoveTest = res;  
+  return;
+end;
+

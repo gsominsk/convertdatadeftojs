@@ -1,0 +1,158 @@
+updating procedure UpdateAllActLinks(record ActVc oldActr,Integer oldcomp,record ActVc newActr,Integer newcomp)
+begin
+  record RLinkVc RLr;
+  record RLinkVc RL2r;
+  Boolean foundf;
+  string 255 tstr;
+
+  tstr = BuildRecordIdStr(oldActr,oldcomp);
+LUpdateAllActLinksOne:;
+  foundf = true;
+  ResetLoop(RLr);
+  RLr.ToRecidStr = tstr;
+  while (LoopKey("ToRecKey",RLr,1,foundf)) begin
+    if (RLr.ToRecidStr!=tstr) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      RecordCopy(RL2r,RLr);
+      RLr.ToRecidStr = BuildRecordIdStr(newActr,newcomp);
+      if (RecordUpdate(RL2r,RLr,false)==0) then begin
+        goto LUpdateAllActLinksOne;
+      end;
+    end;
+  end;
+  tstr = BuildRecordIdStr(oldActr,oldcomp);
+LUpdateAllActLinksTwo:;
+  foundf = true;
+  ResetLoop(RLr);
+  RLr.FromRecidStr = tstr;
+  while (LoopMain(RLr,1,foundf)) begin
+    if (RLr.FromRecidStr!=tstr) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      RecordCopy(RL2r,RLr);
+      RLr.FromRecidStr = BuildRecordIdStr(newActr,newcomp);
+      if (RecordUpdate(RL2r,RLr,false)==0) then begin
+        goto LUpdateAllActLinksTwo;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating function Boolean TransferToOtherCompany(var record ActVc Actr,record RcVc RepSpec)
+begin
+  Boolean deletef;
+  record ActVc locActr;
+  Integer oldcomp;
+  
+  oldcomp = CurrentCompany;
+  RecordCopy(locActr,Actr);
+  locActr.SerNr = -1;
+  if (SetCompanyCode(RepSpec.FirstAcc,false)) then begin
+    locActr.SerNr = NextSerNr("ActVc",locActr.TransDate,-1,false,"");
+    if (RepSpec.ArtMode==1) then begin
+      deletef = true;
+    end;
+    if (nonblank(locActr.MainPersons)) then begin
+      if (locActr.MainPersons!=RepSpec.f1) then begin
+        locActr.MainPersons = RepSpec.f1;
+        deletef = false;
+      end;
+    end;
+    if (nonblank(locActr.CCPersons)) then begin
+      if (locActr.CCPersons!=RepSpec.f1) then begin
+        locActr.MainPersons = RepSpec.f1;
+        locActr.CCPersons = "";
+        deletef = false;
+      end;
+    end;
+    if (RecordInsert(locActr,false)) then begin
+    end;
+    UpdateAllActLinks(Actr,oldcomp,locActr,CurrentCompany);
+  end;  
+  ResetCompany(oldcomp);
+  TransferToOtherCompany = deletef;
+  return;
+end;
+
+global
+updating procedure ActMoveCompMn(record RcVc RepSpec)
+BEGIN
+  record ActVc Actr;
+  string 200 key;
+  Boolean foundf,testf;
+  Integer read,handled;
+
+  if ((nonblank(RepSpec.f1)) and (nonblank(RepSpec.FirstAcc))) then begin
+    foundf = true;
+    key = "UserMain:" & RepSpec.f1;
+    while (LoopKey(key,Actr,1,foundf)) begin
+      testf = false;
+      read = read + 1;
+      if (RepSpec.flags[1]!=0) then begin
+        if (Actr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (Actr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+      if (testf) then begin
+        testf = false;
+        if (RepSpec.flags[3]!=0) then begin
+          if (Actr.TodoFlag==0) then begin
+            testf = true;
+          end;
+        end;
+        if (RepSpec.flags[4]!=0) then begin
+          if (Actr.TodoFlag==1) then begin
+            testf = true;
+          end;
+        end;
+        if (RepSpec.flags[5]!=0) then begin
+          if (Actr.TodoFlag==2) then begin
+            testf = true;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        testf = false;
+        if (RepSpec.flags[6]!=0) then begin
+          if (Actr.CalTimeFlag==1) then begin
+            testf = true;
+          end;
+        end;
+        if (RepSpec.flags[7]!=0) then begin
+          if (Actr.CalTimeFlag==2) then begin
+            testf = true;
+          end;
+        end;
+        if (RepSpec.flags[8]!=0) then begin
+          if (Actr.CalTimeFlag==0) then begin
+            testf = true;
+          end;
+        end;
+      end;
+      if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (TransferToOtherCompany(Actr,RepSpec)) then begin
+          RecordDelete(Actr);
+          StepBack(Actr);
+        end;
+        handled = handled + 1;
+      end;
+    end;
+    LogText(0,"Activities moved = " & handled);
+  end else begin
+    LogText(0,"User and Receiving company has to be specified");
+  end;
+  RETURN;
+END;
+

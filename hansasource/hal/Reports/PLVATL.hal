@@ -1,0 +1,523 @@
+#ifdef hal
+
+external procedure HT2Per(Date, Date , var string);
+External Procedure PrintPrepayments(record RcVc,date,string, var val, var val, var val, var val, var val, var val);
+External Procedure PrintTransactions(record RcVc,date,string, var val, var val, var val, var val, var val, var val);
+External Procedure PrintVATInv(record RcVc,record OPVc,string, var val, var val, var val, var val, var val, var val);
+
+Procedure PrintPayments(record RcVc RepSpec,var record OPVc OP2r,date printdate,string base1cur, var val total,var val totvat,var val mintot,var val minvat,var val maxtot,var val maxvat)
+begin
+  Record OPVc OPr;
+  Row OPVc OPrw;
+  Record VIVc VIr;
+  Record CUVc VEr;
+  row OPVc OP2rw;
+  Integer k,rwcnt,rw2,i;
+  Boolean TrHs;
+  Boolean testf;
+  Boolean vatpay;
+  Boolean Previous;
+  Boolean rflag;
+  String 255 tstr;
+  String 30 prevsupplier;
+  Val paysum, payvat;
+  Val prevpaysum, prevpayvat;
+
+  prevpaysum = 0;
+  prevpayvat = 0;
+  Previous = false;
+
+  rw2 = MatRowCnt(OP2r);
+  
+  OPr.TransDate = printdate;
+  TrHs = true;
+  while (LoopKey("TransDate",OPr,1,TrHs)) begin
+    if (OPr.TransDate > printdate) then begin
+      TrHs = false;
+    end;
+    if ((TrHs == true) and nonblank(OPr.DoneFlag)) then begin
+      rwcnt = MatRowCnt(OPr);
+      for (k=0;k<rwcnt;k=k+1) begin
+        MatRowGet(OPr,k,OPrw);
+        rflag = true;
+        if (RepSpec.flags[4] == 1) and (OPrw.VISerNr == -1) then begin
+          rflag = false;
+        end;
+        if (RepSpec.flags[1] == 0) and (OPrw.VISerNr <> -1) then begin
+          rflag = false;
+        end;
+        if (nonblank(RepSpec.f3)) and (OPrw.VATCode == RepSpec.f3) then begin
+          rflag = false;
+        end;
+        if (OPrw.stp == 1) and (rflag) then begin
+          if (nonblank(OPrw.VATVal)) then begin
+            if (OPrw.VISerNr <> -1) then begin
+              VIr.SerNr = OPrw.VISerNr;
+              testf = ReadFirstMain(VIr,1,true);
+            end;
+L50:;            
+             paysum = 0;
+             payvat = 0;
+             vatpay = false;
+             if (nonblank(RepSpec.ObjStr) and SetInSet(RepSpec.ObjStr,OPrw.Objects) == true) then begin
+               vatpay = true;
+             end;
+             if ( blank(OPrw.PInvCurncy) or (OPrw.PInvCurncy == base1cur)) then begin
+               if (vatpay) then begin
+                 payvat = OPrw.PInvVal;
+                 if (nonblank(RepSpec.vals2) and (RepSpec.vals2<>0)) then begin
+                   paysum = payvat*100/RepSpec.vals2;
+                 end;
+               end else begin
+                 paysum = OPrw.PInvVal-OPrw.VATVal;
+                 payvat = OPrw.VATVal;
+               end;
+             end else begin
+               if (vatpay) then begin
+                 payvat = (VIr.ToRateB1 * OPrw.PInvVal)/VIr.FrRate;
+                 if (nonblank(RepSpec.vals2) and (RepSpec.vals2<>0)) then begin
+                   paysum = payvat*100/RepSpec.vals2;
+                 end;
+               end else begin
+                 paysum = (VIr.ToRateB1 * (OPrw.PInvVal-OPrw.VATVal))/VIr.FrRate;
+                 payvat = (VIr.ToRateB1 * OPrw.VATVal)/VIr.FrRate;
+               end;
+             end;
+             if (RepSpec.basecurncy == 1) then begin
+               paysum = paysum/VIr.BaseRate1*VIr.BaseRate2;
+               payvat = payvat/VIr.BaseRate1*VIr.BaseRate2;
+             end;
+             if ((Previous == false) and (rwcnt == 2)) then begin
+               prevsupplier = OPrw.VECode;
+               prevpaysum = paysum;
+               prevpayvat = payvat;
+               if (paysum>0) then begin
+                 if ((k+1)<rwcnt) then begin
+                   MatRowGet(OPr,k+1,OPrw);
+                   if ((OPrw.stp == 1) and nonblank(OPrw.VATVal) and (OPrw.VATVal < 0) and (prevsupplier == OPrw.VECode)) then begin
+                     k = k +1;
+                     Previous = true;
+                     goto L50;
+                   end else begin
+                     MatRowGet(OPr,k,OPrw);
+                   end;
+                 end;
+               end;
+             end;
+             if (Previous == true) then begin
+               paysum = paysum + prevpaysum;
+               payvat = payvat + prevpayvat;
+               Previous = false;
+             end;
+             if (nonblank(RepSpec.vals0) and (paysum<RepSpec.vals0)) then begin
+               goto L55;
+             end;
+             if (nonblank(RepSpec.vals1) and (paysum>RepSpec.vals1)) then begin
+               goto L56;
+             end;
+             StartFormat(15);
+             VEr.Code = OPrw.VECode;
+             if (ReadFirstMain(VEr,1,true)==true) then begin
+               tstr = VEr.Name;
+               OutString(0,0,tstr,false);
+               tstr = VEr.VATNr;
+               OutString(183,0,tstr,true);
+             end;
+             OutDate(2,0,OPr.TransDate,false);
+             OutVal(3,0,paysum,M4Val,true);
+             OutVal(4,0,payvat,M4Val,true);
+             OutString(5,"DblVePerOP",OPr.SerNr,false);
+             if (OPrw.VISerNr <> -1) then begin
+               OutString(6,0,VIr.InvoiceNr,false);
+               OutDate(1,0,VIr.InvDate,true);
+             end else begin
+               OutString(6,0,OPrw.PrepayNr,false);
+               OutDate(1,0,OPr.TransDate,true);
+             end;
+             EndFormat;
+             if (nonblank(RepSpec.f3)) and (OPrw.VATCode == RepSpec.f3) then begin
+               if (OPrw.VISerNr <> -1) and (vatpay == false) then begin
+                 testf = false;
+                 for (i = 0;i < rw2;i = i+1) begin
+                   MatRowGet(OP2r,i,OP2rw);
+                   if (OPrw.VISerNr == OP2rw.VISerNr) then begin
+                     OP2rw.RecVal = OP2rw.RecVal + paysum;
+                     OP2rw.VATVal = OP2rw.VATVal + payvat;
+                     MatRowPut(OP2r,i,OP2rw);
+                     testf = true;
+                     i = rw2;
+                   end;  
+                 end;
+                 if (testf == false) then begin
+                   OP2rw.VISerNr = OPrw.VISerNr;
+                   OP2rw.RecVal = paysum;
+                   OP2rw.VATVal = payvat;
+                   MatRowPut(OP2r,rw2,OP2rw);
+                 end;
+               end;
+             end;
+             totvat = totvat + payvat;
+             total = total + paysum;
+             goto L57;
+L55:;            
+             mintot = mintot + paysum;
+             minvat = minvat + payvat;
+             goto L57;
+L56:;          
+             maxtot = maxtot + paysum;
+             maxvat = maxvat + payvat;
+L57:;
+           end;
+         end;
+       end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintCashPurchInv(record RcVc RepSpec,date printdate,string base1cur, var val total, var val totvat, var val mintot, var val minvat, var val maxtot, var val maxvat)
+begin
+  Record VIVc VIr;
+  Record CUVc VEr;
+  Boolean TrHs,testf;
+  String 255 tstr;
+  Val paysum, payvat;
+  
+  TrHs = true;
+  VIr.TransDate = printdate;
+  while (LoopKey("TransDate",VIr,1,TrHs)) begin
+    testf = true;
+    if (VIr.TransDate > printdate) then begin
+      TrHs = false;
+      testf = false;
+    end;
+    if (VIr.OKFlag == 0) then begin
+      testf = false;
+    end;
+    if (VIr.InvType!=kInvoiceTypeCash and VIr.InvType!=kInvoiceTypeCashInvoiceReceiptPRT) then begin
+      testf = false;
+    end;
+    if (VIr.Invalid == 1) then begin
+      testf = false;
+    end;
+    if testf then begin
+      paysum = 0;
+      payvat = 0;
+    if (VIr.VATVal <> 0) then begin
+      if (blank(VIr.CurncyCode) or  VIr.CurncyCode == base1cur) then begin
+        paysum = VIr.PayVal - VIr.VATVal;
+        payvat = VIr.VATVal;
+      end else begin
+        paysum = (VIr.ToRateB1 * (VIr.PayVal - VIr.VATVal))/VIr.FrRate;
+        payvat = (VIr.ToRateB1 * VIr.VATVal)/VIr.FrRate;
+      end;
+      end else begin
+        if (nonblank(RepSpec.vals2) and (RepSpec.vals2<>0)) then begin
+          if (nonblank(RepSpec.ObjStr) and SetInSet(RepSpec.ObjStr,VIr.Objects) == true) then begin
+            if (blank(VIr.CurncyCode) or  VIr.CurncyCode == base1cur) then begin
+              payvat = VIr.PayVal;
+              paysum = payvat*100/RepSpec.vals2;
+            end else begin
+              payvat = (VIr.ToRateB1 * VIr.PayVal)/VIr.FrRate;
+              paysum = payvat*100/RepSpec.vals2;
+            end;
+          end;
+        end;
+      end;
+      if (RepSpec.basecurncy == 1) then begin
+        paysum = paysum/VIr.BaseRate1*VIr.BaseRate2;
+        payvat = payvat/VIr.BaseRate1*VIr.BaseRate2;
+      end;
+      if (nonblank(RepSpec.vals0) and (paysum<RepSpec.vals0)) then begin
+        goto L65;
+      end;
+      if (nonblank(RepSpec.vals1) and (paysum>RepSpec.vals1)) then begin
+        goto L66;
+      end;
+      if (payvat <> 0 or paysum <> 0) then begin
+        StartFormat(15);
+        VEr.Code = VIr.VECode;
+        if (ReadFirstMain(VEr,1,true) == true) then begin
+          tstr = VEr.Name;
+          OutString(0,0,tstr,false);
+          tstr = VEr.VATNr;
+          OutString(183,0,tstr,true);
+        end;
+        OutDate(2,0,VIr.TransDate,false);
+        OutVal(3,0,paysum,M4Val,true);
+        OutVal(4,0,payvat,M4Val,true);
+        OutString(5,"DblVIVc",VIr.SerNr,false);
+        OutString(6,0,VIr.InvoiceNr,false);
+        OutDate(1,0,VIr.InvDate,true);
+        EndFormat;
+        totvat = totvat + payvat;
+        total = total + paysum;
+      end;
+      goto L67;
+L65:;            
+      mintot = mintot + paysum;
+      minvat = minvat + payvat;
+      goto L67;
+L66:;          
+      maxtot = maxtot + paysum;
+      maxvat = maxvat + payvat;
+L67:;
+    end;
+  end; 
+  return;
+end;
+
+procedure PrintExpenses(record RcVc RepSpec, date printdate, string base1cur, var val total, var val totvat, var val mintot, var val minvat, var val maxtot, var val maxvat)
+begin
+  Record ExpVc Expr;
+  Row ExpVc Exprw;
+  Record CUVc VEr;
+  Integer k,rwcnt;
+  Boolean TrHs,tt;
+  Boolean vatpay;
+  String 255 tstr;
+  Val paysum, payvat;
+
+  TrHs = true;
+  Expr.TransDate = printdate;
+  while (LoopKey("TransDate",Expr,1,TrHs)) begin
+    if (Expr.TransDate > printdate) then begin
+      TrHs = false;
+    end;
+    if (TrHs) and (Expr.Invalid==0) then begin
+      rwcnt = MatRowCnt(Expr);
+      for (k = 0;k < rwcnt;k = k+1) begin
+        paysum = 0;
+        payvat = 0;
+        MatRowGet(Expr,k,Exprw);
+        if (Exprw.VATSum <> 0) then begin
+          if ( blank(Expr.CurncyCode) or  Expr.CurncyCode == base1cur) then begin
+            paysum = Exprw.Sum - Exprw.VATSum;
+            payvat = Exprw.VATSum;
+          end else begin
+            paysum = (Expr.ToRateB1 * (Exprw.Sum - Exprw.VATSum))/Expr.FrRate;
+            payvat = (Expr.ToRateB1 * Exprw.VATSum)/Expr.FrRate;
+          end;
+          if (RepSpec.basecurncy == 1) then begin
+            paysum = paysum/Expr.BaseRate1*Expr.BaseRate2;
+            payvat = payvat/Expr.BaseRate1*Expr.BaseRate2;
+          end;
+          tt=true;
+          if (nonblank(RepSpec.vals0) and (paysum<RepSpec.vals0)) then begin
+            mintot = mintot + paysum;
+            minvat = minvat + payvat; 
+            tt=false;
+          end;
+          if (nonblank(RepSpec.vals1) and (paysum>RepSpec.vals1)) then begin
+            maxtot = maxtot + paysum;
+            maxvat = maxvat + payvat;
+            tt=false;
+          end;
+          if (tt) and (payvat <> 0 or paysum <> 0) then begin
+            StartFormat(15);
+            VEr.Code = Exprw.VECode;
+            if (ReadFirstMain(VEr,1,true) == true) then begin
+              tstr = VEr.Name;
+              OutString(0,0,tstr,false);
+              tstr = VEr.VATNr;
+              OutString(183,0,tstr,true);
+            end;
+            OutDate(2,0,Expr.TransDate,false);
+            OutVal(3,0,paysum,M4Val,true);
+            OutVal(4,0,payvat,M4Val,true);
+            OutString(5,"DblExpVc",Expr.SerNr,false);
+            OutString(6,0,Exprw.DocNr,false);
+            OutDate(1,0,Exprw.ExpDate,true);
+            EndFormat;
+            totvat = totvat + payvat;
+            total = total + paysum;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure OLDPLVAT2Rn(record RcVc RepSpec)
+begin
+  Record BaseCurBlock bcb;
+  record CYBlock CYBl;
+  record OPVc OP2r;
+  row OPVc OP2rw;
+  Boolean TrHs;
+  Integer rw,i;
+  String 255 tstr;
+  string 2 _month;
+  Val total,totvat,total2,totvat2;
+  Val paysum,payvat;
+  Val mintot,minvat,mintot2,minvat2;
+  Val maxtot,maxvat,maxtot2,maxvat2;
+  Val VIpayval,VATProc;
+  Date td;
+    
+  BlockLoad(bcb);
+  BlockLoad(CYBl);
+
+  StartReportJob(USetStr(6900));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw +1;
+  if (nonBlank(RepSpec.vals0)) then begin
+    tstr = USetStr(5235);
+    tstr = tstr & " " & RepSpec.vals0;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonBlank(RepSpec.vals1)) then begin
+    tstr = USetStr(5236);
+    tstr = tstr & " " & RepSpec.vals1;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (RepSpec.basecurncy == 0) then begin
+    tstr = USetStr(6699) & " " & bcb.BaseCur1;
+    Header(rw,tstr,1);
+  end else begin
+    tstr = USetStr(6699) & " " & bcb.BaseCur2;
+    Header(rw,tstr,1);
+  end;
+  EndHeader;
+
+  SetRepCol(2,190);
+  SetRepCol(3,293);
+  SetRepCol(4,335);
+  SetRepCol(5,350);
+  SetRepCol(6,390);
+
+  StartFormat(12);
+  OutString(0,0,USetStr(5224),false);
+  OutString(130,0,USetStr(7279),false);
+  OutString(2,0,USetStr(5222),false);
+  OutString(3,0,USetStr(5231),true);
+  OutString(4,0,USetStr(5233),true);
+  OutString(370,0,USetStr(5219),false);
+  EndFormat;
+  StartFormat(15);
+  OutString(185,0,USetStr(5218),false);
+  OutString(5,0,USetStr(2612),false);
+  OutString(6,0,USetStr(7803),false);
+  OutString(440,0,USetStr(5222),false);
+  EndFormat;
+  Black_Divider(0,1);
+  StartFormat(1);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(5216),false);
+  EndFormat;
+  Gray_Divider(0,230);
+  
+  total = 0;
+  totvat = 0;
+  mintot = 0;
+  minvat = 0;
+  maxtot = 0;
+  maxvat = 0;
+  td = RepSpec.sStartDate;
+  while (td <= RepSpec.sEndDate) begin
+    if (RepSpec.flags[1] == 1) or (RepSpec.flags[4] == 0) then begin
+      PrintPayments(RepSpec,OP2r,td,bcb.BaseCur1, total, totvat, mintot, minvat, maxtot, maxvat);
+    end;
+    if (RepSpec.flags[4] == 1) then begin
+      PrintPrePayments(RepSpec,td,bcb.BaseCur1, total, totvat, mintot, minvat, maxtot, maxvat);
+    end;
+    if (RepSpec.flags[2] == 1) then begin
+      PrintCashPurchInv(RepSpec,td,bcb.BaseCur1, total, totvat, mintot, minvat, maxtot, maxvat);
+    end;
+    if (RepSpec.flags[3] == 1) then begin
+      PrintExpenses(RepSpec,td,bcb.BaseCur1, total, totvat, mintot, minvat, maxtot, maxvat);
+    end;
+    if (RepSpec.flags[5] == 1) then begin
+      PrintTransactions(RepSpec,td,bcb.BaseCur1, total, totvat, mintot, minvat, maxtot, maxvat);
+    end;
+    td = AddDay(td,1);
+  end;  
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutVal(3,0,total,M4Val,true);
+  OutVal(4,0,totvat,M4Val,true);
+  EndFormat;
+  if (mintot != 0) then begin
+    StartFormat(15);
+    OutString(180,0,USetStr(5213),false);
+    OutVal(3,0,mintot,M4Val,true);
+    OutVal(4,0,minvat,M4Val,true);
+    EndFormat;
+  end;
+  if (maxtot != 0) then begin
+    StartFormat(15);
+    OutString(180,0,USetStr(5214),false);
+    OutVal(290,0,maxtot,M4Val,true);
+    OutVal(350,0,maxvat,M4Val,true);
+    EndFormat;
+  end;
+
+  Gray_Divider(0,1);
+  StartFormat(10);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(5217),false);
+  EndFormat;
+  Gray_Divider(0,230);
+  StartFormat(10);
+  EndFormat;
+
+  if (nonblank(RepSpec.f3)) then begin
+    PrintVATInv(RepSpec,OP2r,bcb.BaseCur1, total2, totvat2, mintot2, minvat2, maxtot2, maxvat2);
+  end;
+
+  Gray_Divider(0,1);
+  StartFormat(10);
+  EndFormat;
+  StartFormat(15);
+  OutVal(3,0,total2,M4Val,true);
+  OutVal(4,0,totvat2,M4Val,true);
+  EndFormat;
+  if (mintot2 != 0) then begin
+    StartFormat(15);
+    OutString(180,0,USetStr(5213),false);
+    OutVal(3,0,mintot2,M4Val,true);
+    OutVal(4,0,minvat2,M4Val,true);
+    EndFormat;
+  end;
+  if (maxtot2 != 0) then begin
+    StartFormat(15);
+    OutString(180,0,USetStr(5214),false);
+    OutVal(290,0,maxtot2,M4Val,true);
+    OutVal(350,0,maxvat2,M4Val,true);
+    EndFormat;
+  end;
+
+  Black_Divider(0,1);
+  StartFormat(15);
+  OutString(80,0,USetStr(5336),false);
+  OutVal(3,0,total + total2,M4Val,true);
+  OutVal(4,0,totvat + totvat2,M4Val,true);
+  EndFormat;
+  if ((mintot+mintot2) != 0) then begin
+    StartFormat(15);
+    OutString(180,0,USetStr(5213),false);
+    OutVal(3,0,mintot + mintot2,M4Val,true);
+    OutVal(4,0,minvat + minvat2,M4Val,true);
+    EndFormat;
+  end;
+  if ((maxtot + maxtot2)!=0) then begin
+    StartFormat(15);
+    OutString(180,0,USetStr(5214),false);
+    OutVal(290,0,maxtot + maxtot2,M4Val,true);
+    OutVal(350,0,maxvat + maxvat2,M4Val,true);
+    EndFormat;
+  end;
+
+  EndJob;
+  return;
+end;
+
+#endif

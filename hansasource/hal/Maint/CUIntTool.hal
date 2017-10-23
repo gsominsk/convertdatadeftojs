@@ -1,0 +1,254 @@
+external function roundmode DefaultRoundMode();
+
+global
+procedure GetReceiptRow(LongInt invnr,var row IPVc resIPrw)
+BEGIN
+  record IPrsVc IPrsr;
+  Boolean TrHs;
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer i,rwcnt;
+  
+  TrHs = true;
+  IPrsr.IVNr = invnr;
+  IPrsr.TransType = kIPrsTransTypeReceipt;
+  while (LoopKey("IVKey",IPrsr,2,TrHs)) begin
+    if (IPrsr.TransType!=kIPrsTransTypeReceipt) then begin TrHs = false; end;
+    if (IPrsr.IVNr!=invnr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      IPr.SerNr = IPrsr.TransNr;
+      if (ReadFirstMain(IPr,1,true)) then begin end;
+      rwcnt = MatRowCnt(IPr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IPr,i,IPrw);
+        if (IPrw.InvoiceNr==invnr) then begin
+          CopyRow(IPr,IPrw,resIPrw);
+          goto LGetReceiptRow;
+        end;
+      end;
+    end;
+  end;
+LGetReceiptRow:;  
+  RETURN;
+END;
+
+global
+procedure CUIntGetCLInDate(LongInt invnr,var Date clindate)
+BEGIN
+  record IPrsVc IPrsr;
+  Boolean TrHs;
+  
+  TrHs = true;
+  IPrsr.IVNr = invnr;
+  IPrsr.TransType = kIPrsTransTypeCashIn;
+  while (LoopKey("IVKey",IPrsr,2,TrHs)) begin
+    if (IPrsr.TransType!=kIPrsTransTypeCashIn) then begin TrHs = false; end;
+    if (IPrsr.IVNr!=invnr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      clindate = IPrsr.TransDate;
+      goto LCUIntGetCLInDate;
+    end;
+  end;
+LCUIntGetCLInDate:;  
+  RETURN;
+END;
+
+global
+updating procedure SetPrintedFlag_IVVc2(LongInt SerNr,Boolean updatePrntdf)
+begin
+  record IVVc oldIVr;
+  record IVVc IVr;
+  Boolean testf;
+  
+  testf = true;
+  if (updatePrntdf==false) then begin testf = false; end;
+  if (testf) then begin
+    IVr.SerNr = SerNr;
+    if (ReadFirstMain(IVr,1,true)) then begin
+      if (IVr.Prntdf!=1) then begin
+        RecordCopy(oldIVr,IVr);    
+        IVr.Prntdf = 1;
+        RecordUpdate(oldIVr,IVr,false);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure SetPrintedFlag_IVVc(LongInt SerNr)
+begin
+  SetPrintedFlag_IVVc2(SerNr,true,);
+  return;
+end;
+
+global
+updating procedure SetRemStatus(record IVVc IVp,Boolean prntdf)
+BEGIN
+  record IVVc oldlIVr;
+  record IVVc lIVr;
+  Boolean updf;
+  
+  lIVr.SerNr = IVp.SerNr;
+  if (ReadFirstMain(lIVr,1,true)) then begin
+    RecordCopy(oldlIVr,lIVr);
+    if (lIVr.LastRemDate<=IVp.LastRemDate) then begin
+      lIVr.LastRemndr = IVp.LastRemndr;
+      lIVr.LastRemDate = IVp.LastRemDate;
+      updf = true;
+    end;
+    
+    if (prntdf and lIVr.Prntdf<>1) then begin
+      lIVr.Prntdf = 1;
+      updf = true;
+    end;
+    
+    if (updf) then begin
+      RecordUpdate(oldlIVr,lIVr,false);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Integer RemLevelOneUpQueued(LongInt invnr,Integer rmode,Boolean IncreaseRemf,Boolean prntdf)
+begin
+  record IVVc IVr;
+  Integer res;
+
+  IVr.SerNr = invnr;
+  if (ReadFirstMain(IVr,1,true)) then begin
+    if (IVr.LastRemndr==-1) then begin IVr.LastRemndr = 0; end;
+    IVr.LastRemndr = IVr.LastRemndr + 1;
+    IVr.LastRemDate = CurrentDate;
+    switch (rmode) begin
+      case 0:          
+        if (IncreaseRemf or prntdf) then begin
+          queued.SetRemStatus(IVr,prntdf);
+        end;
+    end;
+    res = IVr.LastRemndr;
+  end;
+  RemLevelOneUpQueued = res;
+  return;
+end;
+
+global
+updating function Integer RemLevelOneUp(LongInt invnr,Integer rmode,Boolean IncreaseRemf)
+BEGIN
+  record IVVc IVr;
+  Integer res;
+
+  IVr.SerNr = invnr;
+  if (ReadFirstMain(IVr,1,true)) then begin
+    if (IVr.LastRemndr==-1) then begin IVr.LastRemndr = 0; end;
+    IVr.LastRemndr = IVr.LastRemndr + 1;
+    IVr.LastRemDate = CurrentDate;
+    switch (rmode) begin
+      case 0:          
+      if (IncreaseRemf) then begin
+        SetRemStatus(IVr,false);
+      end;
+    end;
+    res = IVr.LastRemndr;
+  end;
+  RemLevelOneUp = res;
+  RETURN;
+END;
+
+global
+procedure CalcInt2(Boolean leapf,val basevp,LongInt intdays,val intvp,var val resvp)
+BEGIN
+  val ival;
+  
+  resvp = blankval;
+  ival = basevp*intvp;
+  ival = ival*intdays;
+  if (leapf) then begin
+    ival = ival/36600;
+  end else begin
+    ival = ival/36500;
+  end;
+  ival = Round(ival,DefaultRoundMode);
+  if (ival>0) then begin
+    resvp = ival;
+  end;
+  RETURN;
+END;
+
+global
+function Boolean GetDateIRInt(string intcode,Date sdp,record IRVc IRp,var Date edp,string freecode)
+BEGIN
+  Boolean res;
+  LongInt postnr;
+  Boolean irfound,ir2found;
+  record IRVc IR2r;  
+   
+  ResetLoop(IRp);
+  IRp.Code = intcode;
+  IRp.startDate = sdp;
+  irfound = LoopBackKey("CDKey",IRp,2,true);
+  postnr = GetLoopPosition(IRp);
+  if (irfound) then begin
+    if (IRp.Code!=intcode) then begin    
+      irfound = false;
+    end;
+  end;
+  if (irfound) then begin
+    SetLoopPosition(IR2r,postnr);
+    ir2found = LoopMain(IR2r,2,true);
+    if (ir2found) then begin
+      if (IR2r.Code==intcode) then begin    
+        edp = AddDay(IR2r.startDate,-1);
+      end;
+    end;
+    if (IRp.startDate==sdp) then begin
+      res = true;
+      SetLoopPosition(IR2r,postnr);
+      ir2found = LoopMain(IR2r,2,true);
+      if (ir2found) then begin
+        if (IR2r.Code==intcode) then begin
+          edp = AddDay(IR2r.startDate,-1);
+        end;
+      end;
+    end else begin
+//      edp = AddDay(IRp.startDate,-1);
+      SetLoopPosition(IR2r,postnr-1);
+      irfound = LoopMain(IR2r,2,true);
+      if (irfound) then begin
+        if (IR2r.Code==intcode) then begin
+          res = true;
+        end;
+      end;
+    end;
+  end else begin
+    postnr = postnr - 1;
+    SetLoopPosition(IRp,postnr-1);
+    irfound = LoopMain(IRp,2,true);
+    if (irfound) then begin
+      if (IRp.Code==intcode) then begin
+        res = true;
+      end;
+    end;
+  end;
+  if (res==true) then begin
+    if (nonblank(freecode)) then begin
+      IR2r.Code = freecode;
+      IR2r.startDate = sdp;
+      irfound = ReadFirstMain(IR2r,2,false);
+      if (irfound) then begin
+        if (IR2r.Code==freecode) then begin    
+          if (IR2r.startDate==sdp) then begin
+            RecordCopy(IRp,IR2r);
+            IRp.Code = intcode;
+            edp = sdp;
+          end else begin
+            edp = AddDay(IR2r.startDate,-1);
+          end;
+        end;
+      end;
+    end;
+  end;
+  GetDateIRInt = res;
+  RETURN;
+END;

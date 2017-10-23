@@ -1,0 +1,213 @@
+external function roundmode GetRowSumRoundModeRB();
+external function roundmode DefaultRoundMode();
+external procedure PrintAgreementInformation(record AgreementVc,record CUVc,Boolean,Boolean);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function LongInt CountWorkingDays(Date,Date,string,string);
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure GetUserName(string,var string);
+external procedure GetFullCurncyRateText(Boolean,var string,val,val,val,val,val);
+external procedure ItemBC39(string,var string);
+external procedure GetItemGroup(string,var string);
+external procedure GetUnitStr(string,string,var string);
+external procedure GetInterestPrc(var string);
+external procedure GetPayDealText(string,string,var string);
+external procedure GetShipDealText(string,string,var string);
+external procedure GetShipModeText(string,string,var string);
+external procedure ItemBCEAN(string,var string);
+external procedure ItemBCEAN13(string,var string);
+external procedure CommonDocumentFields(record RcVc);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure PrintSiteInformation(string,string);
+external procedure PrintLocationInformation(string);
+
+procedure PrintRentResRows(record RcVc RepSpec,record RentResVc RentResr,record LangNrVc LangNrr)
+BEGIN
+  Integer i,rwcnt;
+  row RentResVc RentResrw;
+  string 255 tstr;
+  record SysFormatBlock SysFormatRec;
+  
+  BlockLoad(SysFormatRec);
+  rwcnt = MatRowCnt(RentResr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentResr,i,RentResrw);
+    if (FIELDINFORM("F_ENHET")) then begin
+      GetUnitStr(RentResrw.ArtCode,RentResr.LangCode,tstr);
+      OUTFORMFIELD("F_ENHET",tstr);
+    end;  
+    OUTFORMFIELD("F_ARTNR",RentResrw.ArtCode);
+    OUTFORMFIELD("F_ARTNR2",RentResrw.ArtCode);
+    if (FIELDINFORM("F_ARTNRBC39")) then begin
+      ItemBC39(RentResrw.ArtCode,tstr);
+      OUTFORMFIELD("F_ARTNRBC39",tstr);
+    end;  
+    if (FIELDINFORM("F_ARTNRBCEAN")) then begin
+      ItemBCEAN(RentResrw.ArtCode,tstr);
+      OUTFORMFIELD("F_ARTNRBCEAN",tstr);
+    end;  
+    if (FIELDINFORM("F_ARTNRBCEAN13")) then begin
+      ItemBCEAN13(RentResrw.ArtCode,tstr);    
+      OUTFORMFIELD("F_ARTNRBCEAN13",tstr);
+    end;  
+    GetItemGroup(RentResrw.ArtCode,tstr);
+    OUTFORMFIELD("F_ARTGRUPP",tstr);
+    tstr = ValToString(RentResrw.Quant,M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,LangNrr.CutDecimals);    
+    OUTFORMFIELD("F_ANTAL",tstr);
+    OUTFORMFIELD("F_SERIALNR",RentResr.SerialNr);
+    OUTFORMFIELD("F_SPECIFIKATION",RentResrw.Spec);
+    EndFormRow;    
+  end;
+  RETURN;
+END;
+
+global
+procedure DoRentResForm(record RcVc RepSpec,record RentResVc RentResr)
+BEGIN
+  record AgreementVc Agreementr;
+  record AgreeTypeVc AgreeTyper;
+  record CUVc CUr;
+  record RentINVc RentINr;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  record DocVc Docr;
+  record LangNrVc LangNrr;
+  Boolean printf,langf;
+  Integer intdocnr;
+  string 30 formcode,langcode;
+  Boolean agreeexist;
+  val quant,t,rowsum;
+  record SysFormatBlock SysFormatRec;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  BlockLoad(SysFormatRec);
+  GetLangNr(RentResr.LangCode,LangNrr);    
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoRentResForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  langcode = RentResr.LangCode;
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;
+  Agreementr.SerNr = RentResr.AgreementNr;
+  agreeexist = ReadFirstMain(Agreementr,1,true);
+  if (agreeexist) then begin
+    CUr.Code = Agreementr.CustCode;
+    if (ReadFirstMain(CUr,1,true)==false) then begin
+      CUr.Code = "";
+      CUr.CountryCode = "";
+    end;
+  end;
+  RentINr.Code = RentResr.Code;
+  if (ReadFirstMain(RentINr,1,true)==false) then begin
+    RentINr.Code = "";
+    RentINr.Group = "";
+    RentINr.Value = BlankVal;
+  end;
+  quant = CountWorkingDays(RentResr.TransDate,RentResr.EndDate,CUr.Code,CUr.CountryCode);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,RentResr.SerNr,FDrw.PrintGroupCode,
+                      langcode,intdocnr,"RentResVc",formcode)) then
+      begin
+        goto LBREAK;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+        NumberofDocumentPages(FDrw.FPCode,MatRowCnt(RentResr));
+        if (FIELDINFORM("F_RENTALITEMUNIT")) then begin
+          GetUnitStr(RentResr.Code,Agreementr.LangCode,tstr);
+          OUTFORMFIELD("F_RENTALITEMUNIT",tstr);
+        end;
+        OUTFORMFIELD("F_RENTALITEM",RentResr.Code);
+        OUTFORMFIELD("F_INVITEM",RentResr.InvItem);
+        OUTFORMFIELD("F_INVITEMNAME",RentResr.InvItemName);
+        OUTFORMFIELD("F_RENTALITEMSERNO",RentResr.SerialNr);
+        OUTFORMFIELD("F_RENTALITEMGROUP",RentINr.Group);
+        PrintValue("F_FAKTURADAGAR",quant,M4UVal,LangNrr,SysFormatRec,false);
+        OUTFORMFIELD("F_RENTALITEMNAME",RentResr.Name);
+
+        PrintValue("F_KOSTPRIS",RentINr.Value,M4Val,LangNrr,SysFormatRec,false);
+        PrintValue("F_RABATT",RentResr.vRebate,M4Val,LangNrr,SysFormatRec,false);
+        CalcSum(quant,RentResr.Price,0,RentResr.vRebate,rowsum,GenOptRec.UseDiscount);
+        PrintValue("F_BELOPP",rowsum,M4Val,LangNrr,SysFormatRec,false);
+        PrintValue("F_UNITPRICEINCDISC",rowsum,M4Val,LangNrr,SysFormatRec,false);
+        CalcSum(1,RentResr.Price,0,RentResr.vRebate,t,GenOptRec.UseDiscount);
+        PrintValue("F_ROWPRICEREBATE",t,M423Val,LangNrr,SysFormatRec,false);
+        PrintValue("F_APRIS",RentResr.Price,M423Val,LangNrr,SysFormatRec,false);
+        t = MulRateToBase1(Agreementr.CurncyCode,RentResr.Price,Agreementr.FrRate,Agreementr.ToRateB1,Agreementr.ToRateB2,Agreementr.BaseRate1,Agreementr.BaseRate2,DefaultCurRoundOff);
+        PrintValue("F_PRICEBASECURNCY1",t,M4Val,LangNrr,SysFormatRec,false);
+        t = MulRateToBase2(Agreementr.CurncyCode,RentResr.Price,Agreementr.FrRate,Agreementr.ToRateB1,Agreementr.ToRateB2,Agreementr.BaseRate1,Agreementr.BaseRate2,DefaultCurRoundOff);
+        PrintValue("F_PRICEBASECURNCY2",t,M4Val,LangNrr,SysFormatRec,false);
+        t = MulRateToBase1(Agreementr.CurncyCode,rowsum,Agreementr.FrRate,Agreementr.ToRateB1,Agreementr.ToRateB2,Agreementr.BaseRate1,Agreementr.BaseRate2,DefaultCurRoundOff);
+        PrintValue("F_ROWPRICEBASECURNCY1",t,M4Val,LangNrr,SysFormatRec,false);
+        t = MulRateToBase2(Agreementr.CurncyCode,rowsum,Agreementr.FrRate,Agreementr.ToRateB1,Agreementr.ToRateB2,Agreementr.BaseRate1,Agreementr.BaseRate2,DefaultCurRoundOff);
+        PrintValue("F_ROWPRICEBASECURNCY2",t,M4Val,LangNrr,SysFormatRec,false);
+        OUTFORMFIELD("F_RECEPY",RentResr.IncludeRecepy);
+        PrintValue("F_AMOUNTROUNDED",Round(rowsum,GetRowSumRoundModeRB),M4Val,LangNrr,SysFormatRec,false);
+        PrintSiteInformation(RentResr.Site,CUr.Code);
+        PrintLocationInformation(RentResr.Location);
+        OUTFORMFIELD("F_KUNDORDNR",RentResr.CustOrdNr);
+        OUTFORMFIELD("F_NUMMER",RentResr.SerNr);
+        AgreeTyper.Code = RentResr.AgreeType;
+        if (ReadFirstMain(AgreeTyper,1,true)==false) then begin
+          AgreeTyper.Comment = "";
+        end;
+        if (nonblank(AgreeTyper.Comment)) then begin
+          OUTFORMFIELD("F_CHARGESCODE",AgreeTyper.Comment);
+        end else begin
+          OUTFORMFIELD("F_CHARGESCODE",AgreeTyper.Code);
+        end;
+        OUTFORMFIELD("F_ACTTYPE",AgreeTyper.Code);
+        OUTFORMFIELD("F_ACTTYPECOMMENT",AgreeTyper.Comment);  
+        OUTFORMFIELD("F_ERREFERENS",RentResr.ClientContact);
+        OUTFORMFIELD("F_STARTDATUM",RentResr.TransDate);
+        OUTFORMFIELD("F_ENDDATE",RentResr.EndDate);
+        if (agreeexist) then begin
+          RepSpec.sStartDate = Agreementr.startDate;
+          RepSpec.sEndDate = Agreementr.endDate;
+          OUTFORMFIELD("F_KUNDNAMN",Agreementr.Addr0);
+          OUTFORMFIELD("F_KUNDNR",Agreementr.CustCode);
+          OUTFORMFIELD("F_AGREEMENT",Agreementr.SerNr);
+          PrintAgreementInformation(Agreementr,CUr,false,false);
+        end;
+        PrintRentResRows(RepSpec,RentResr,LangNrr);
+        CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoRentResForm:;  
+  RETURN;
+END;
+

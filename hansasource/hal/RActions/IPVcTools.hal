@@ -1,0 +1,409 @@
+external function roundmode DefaultRoundMode();
+external procedure ChangeIPInvVal(row IPVc,Date);
+external function string 5 AddVATCodeToVATAccRows(string);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external procedure GetVATRow(string,var row VATCodeBlock);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Boolean GetCuAccUseRow2(string,var row CuAccBlock);
+external procedure AddEuroCurncyNomARTrRow(record TRVc,string,string,string,string,val,val,Boolean,
+                                  Boolean,var val,string,val,val,val,val,val,
+                                  val,val,string,LongInt,Integer,val,Date,LongInt,Boolean,string,string,string);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,
+var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+
+function
+Boolean CheckIPRoundoffSum(record IVVc IVp,record IPVc IPp,Integer iprow,var val roundof,var val emuroundof,var val writeof,var val emuwriteof)
+BEGIN
+  row IPVc iprwp;
+  row IPVc IPrw;
+  record ARVc ARr;
+  record CurncyCodeVc invccr,recccr;
+  val inv,rec,rnd,temp;
+  Boolean invisemucur;
+  Boolean recisemucur;
+  Boolean res;
+  Integer rwcnt,i;
+
+  MatRowGet(IPp,iprow,iprwp);
+  roundof = blankval;
+  emuroundof = blankval;
+  writeof = blankval;
+  emuwriteof = blankval;
+  inv = IVp.Sum4;
+  ARr.InvoiceNr = IVp.SerNr;
+  if (ReadFirstMain(ARr,1,true)) then begin
+    inv = ARr.RVal;
+  end;
+  iprwp.InvOutstand = inv;
+  if (inv<=0) then begin
+    goto LCheckIPRoundoffSum;
+  end;
+  invccr.CurncyCode = IVp.CurncyCode;
+  if (ReadFirstMain(invccr,1,true)==false) then begin
+    goto LCheckIPRoundoffSum;
+  end;
+  if (invccr.EMUCurncy!=0) then begin
+    if (IPp.TransDate>=invccr.EMUDate) then begin
+      invisemucur = true;
+    end;
+  end;
+  recccr.CurncyCode = iprwp.RecCurncy;
+  if (ReadFirstMain(recccr,1,true)==false) then begin
+    goto LCheckIPRoundoffSum;
+  end;
+  if (recccr.EMUCurncy!=0) then begin
+    if (IPp.TransDate>=recccr.EMUDate) then begin
+      recisemucur = true;
+    end;
+  end;
+  ChangeIPInvVal(iprwp,IPp.TransDate);
+/*
+  if (iprwp.InvCurncy==iprwp.RecCurncy) then begin
+    iprwp.InvVal = iprwp.RecVal;
+  end else begin
+    CurValToOtherCur(IPp.TransDate,iprwp.RecCurncy,iprwp.RecVal,iprwp.InvCurncy,temp,DefaultCurRoundOff);
+    iprwp.InvVal = temp;
+  end;
+*/
+  MatRowPut(IPp,iprow,iprwp);
+  rec = iprwp.InvVal;
+  rwcnt = MatRowCnt(IPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IPp,i,IPrw);
+    if (i!=iprow) then begin
+//      if (IPrw.stp==kReceiptRowTypeNormal) or (IPrw.stp==kReceiptRowTypeWriteoff) then begin
+      if (IPrw.stp==kReceiptRowTypeWriteoff) then begin
+        if (IPrw.InvoiceNr==iprwp.InvoiceNr) then begin
+          rec = rec + IPrw.InvVal;
+        end;
+      end;
+    end;
+  end;
+  rnd = inv - rec;
+  if (rnd<0) then begin
+    temp = -rnd;
+  end else begin
+    temp = rnd;
+  end;
+  if (IVp.CurncyCode==iprwp.RecCurncy) then begin
+    if (invisemucur) then begin
+      if (temp<=invccr.AutoWriteof) then begin
+        emuwriteof = Round(rnd,DefaultRoundMode);
+        res = true;
+      end;
+    end else begin
+      if (temp<=invccr.AutoWriteof) then begin
+        writeof = Round(rnd,DefaultRoundMode);
+        res = true;
+      end;
+    end;
+  end else begin
+    if (invisemucur and recisemucur) then begin
+      if (temp<=invccr.AutoRoundof) then begin
+        emuroundof = Round(rnd,DefaultRoundMode);
+        res = true;
+      end;
+    end else begin
+      if (temp<=invccr.AutoRoundof) then begin
+        roundof = Round(rnd,DefaultRoundMode);
+        res = true;
+      end;
+    end;
+  end;
+LCheckIPRoundoffSum:;
+
+  CheckIPRoundoffSum = res;
+  RETURN;
+END;
+
+global
+procedure AddIPRoundOffToRows(var record IPVc IPp,record AccBlock ARAccRec)
+BEGIN
+  record IVVc IVr;
+  row IPVc IPrw;
+  Integer rwcnt,i;
+  val roundof,emuroundof,writeof,emuwriteof;
+
+  rwcnt = MatRowCnt(IPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IPp,i,IPrw);
+    IVr.SerNr = IPrw.InvoiceNr;
+    if (ReadFirstMain(IVr,1,true)) then begin
+      if (CheckIPRoundoffSum(IVr,IPp,i,roundof,emuroundof,writeof,emuwriteof)) then begin
+        MatRowGet(IPp,i,IPrw);
+        if (roundof!=0) then begin
+          IPrw.RoundOff = roundof;
+          if (blank(IPrw.RoundOffAcc)) then begin
+            IPrw.RoundOffAcc = ARAccRec.RateRndOffAcc;
+          end;
+        end;
+        if (emuroundof!=0) then begin
+          IPrw.RoundOff = emuroundof;
+          if (blank(IPrw.RoundOffAcc)) then begin
+            IPrw.RoundOffAcc = ARAccRec.EMURndOffAcc;
+          end;
+        end;
+        if (writeof!=0) then begin
+          IPrw.RoundOff = writeof;
+          if (blank(IPrw.RoundOffAcc)) then begin
+            if (writeof>0) then begin
+              IPrw.RoundOffAcc = ARAccRec.CredAcc;
+            end else begin
+              IPrw.RoundOffAcc = ARAccRec.WriteOffLossAcc;
+            end;
+            if (blank(IPrw.RoundOffAcc)) then begin
+              IPrw.RoundOffAcc = ARAccRec.CredAcc;
+            end;
+          end;
+        end;
+        if (emuwriteof!=0) then begin
+          IPrw.RoundOff = emuwriteof;
+          if (blank(IPrw.RoundOffAcc)) then begin
+            IPrw.RoundOffAcc = ARAccRec.EMUWriteOffAcc;
+          end;
+        end;
+      end else begin
+        IPrw.RoundOffAcc = "";
+        IPrw.RoundOff = blankval;
+      end;
+      IPrw.InvVal = IPrw.InvVal + IPrw.RoundOff;//HAS TO BE InvVal, the problem is elsewhere, this code was VERY incorrect.
+      MatRowPut(IPp,i,IPrw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Integer AddLoanIPTrRows(record TRVc gTRp,record AccBlock ARAccRecp,record IVVc IVp,var record IPVc IPp,Integer iprow,var val rateloss,var val rategain,var val TotSum,Boolean dc1,Boolean dc2,var Boolean loanf,var val nloanvp)
+BEGIN
+  row IPVc IPrwp;
+  record IPrsVc IPrs;
+  record IPVc IPr;
+  row IPVc IPrw;
+  row IVVc IVrw;
+  Integer res;
+  Integer i,ivrwcnt;
+  val vv,ipv,t,sum;
+  row CuAccBlock CuAccRec;
+  val frrate,torate1,torate2,baserate1,baserate2,rs,ors,rd;
+  Boolean accf,TrHs,testf,interestf;
+  string 255 tstr,otxt,accstr,ftxt;
+
+  res = 1085;
+  MatRowGet(IPp,iprow,IPrwp);
+  interestf = true;
+  GetFullCurncyRate(IPrwp.InvCurncy,IPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+  begin    
+    TrHs = true;
+    IPrs.IVNr = IVp.SerNr;
+    IPrs.TransType = kIPrsTransTypeReceipt;
+    while (LoopKey("IVKey",IPrs,2,TrHs)) begin
+       if (IVp.SerNr!=IPrs.IVNr) then begin
+         TrHs = false;
+       end;
+       if (TrHs) then begin
+          IPr.SerNr = IPrs.TransNr;
+          if (ReadFirstMain(IPr,1,true)) then begin
+            ivrwcnt = MatRowCnt(IPr);
+            for (i=0;i<ivrwcnt;i=i+1) begin
+              MatRowGet(IPr,i,IPrw);
+              if (IPrw.InvoiceNr==IVp.SerNr) then begin
+                interestf = false;
+                TrHs = false;
+              end;
+            end;
+          end;
+       end;
+    end;
+  end;
+  sum = blankval;
+  ipv = IPrwp.InvVal;
+  ivrwcnt = MatRowCnt(IVp);
+  for (i=0;i<ivrwcnt;i=i+1) begin
+    MatRowGet(IVp,i,IVrw);
+    testf = false;
+    if ((IVrw.stp==8) or (IVrw.stp==7)) then begin testf = true; end;
+    if ((interestf==false) and (IVrw.stp==8)) then begin testf = false; end;
+    if (testf) then begin
+       loanf = true;
+       testf = GetCuAccUseRow2(IVrw.CuAccCode,CuAccRec);
+       sum = sum + IVrw.Sum;
+       if (ipv<sum) then begin
+         sum = sum - IVrw.Sum;
+         t = ipv - sum;
+         vv = t;
+         sum = sum + vv;
+       end else begin
+         vv = IVrw.Sum;
+       end; 
+       rs = MulRateToBase1(IPrwp.InvCurncy,vv,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+       ors = rs;
+       ors = MulRateToBase1(IVp.CurncyCode,vv,IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,DefaultCurRoundOff);
+       rd = ors - rs;
+       if (rd<0) then begin
+         rategain = rategain + rd;
+       end;
+       if (rd>0) then begin
+         rateloss = rateloss + rd;
+       end;
+       accstr = "";
+       switch (IVrw.stp) begin
+         case 7:
+           if (GetAccName(IVrw.SalesAcc,tstr,60)==false) then begin
+             goto LAddLoanIPTrRows;
+           end;
+           AddEuroCurncyTrRow(gTRp,IVrw.SalesAcc,IVrw.Objects,"",tstr,ors,false,dc2,
+              TotSum,IPrwp.InvCurncy,frrate,torate1,torate2,baserate1,baserate2,rs,blankval,-1,false,"");
+           accstr = CuAccRec.InstallmentAcc;
+           if (GetAccName(accstr,tstr,60)==false) then begin
+             goto LAddLoanIPTrRows;
+           end;
+           AddEuroCurncyTrRow(gTRp,accstr,IVrw.Objects,"",tstr,ors,false,dc1,
+               TotSum,IPrwp.InvCurncy,frrate,torate1,torate2,baserate1,baserate2,rs,blankval,-1,false,"");
+       end;
+       otxt = "";
+       rs = MulRateToBase1(IPrwp.InvCurncy,vv,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+       ors = rs;
+       ors = MulRateToBase1(IVp.CurncyCode,vv,IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,DefaultCurRoundOff);
+       rd = ors - rs;
+       if (rd<0) then begin
+         rategain = rategain + rd;
+       end;
+       if (rd>0) then begin
+         rateloss = rateloss + rd;
+       end;
+       if (blank(IVp.ARAcc)) then begin
+          IVp.ARAcc = ARAccRecp.ARAcc;
+        end;
+        otxt = IVrw.Objects;
+        if (ARAccRecp.ARUseObj!=0) then begin
+          if (nonblank(IVp.Objects)) then begin
+            otxt = otxt & ",";
+            otxt = otxt & IVp.Objects;
+          end;
+        end;
+        accstr = "";
+        switch (IVrw.stp) begin
+          case 8:
+            accstr = CuAccRec.ARInterestAcc;
+          case 7:
+            accstr = CuAccRec.ARInstallmentAcc;
+        end;
+        if (GetAccName(accstr,ftxt,60)==false) then begin
+          res = 20026;
+          goto LAddLoanIPTrRows;
+        end;
+        switch (IPrw.stp) begin
+          case 1: accf = false; 
+          otherwise accf = true;
+        end;
+        if (IPp.ARonTR!=0) then begin
+           AddEuroCurncyNomARTrRow(gTRp,accstr,otxt,"",ftxt,ors,blankval,accf,dc1,TotSum,
+                IPrwp.InvCurncy,frrate,torate1,torate2,baserate1,baserate2,vv,blankval,
+                IPrwp.CustCode,IPrwp.InvoiceNr,1,blankval,IPrwp.PayDate,-1,false,"","","");
+        end else begin
+           AddEuroCurncyTrRow(gTRp,accstr,otxt,"",ftxt,ors,accf,dc1,TotSum,
+                IPrwp.InvCurncy,frrate,torate1,torate2,baserate1,baserate2,vv,blankval,-1,false,"");
+        end;
+    end;
+  end;
+  nloanvp = sum;
+  res = 0;
+LAddLoanIPTrRows:;
+  AddLoanIPTrRows = res;
+  RETURN;
+END;
+
+global
+function Integer BookVATonRateGainIP(record TRVc gTRp,record IVVc IVr,var val rd,var val rd2,val baserate1,val baserate2,Boolean dc2,var val TotSum)
+BEGIN
+  Integer res;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  val vat,tax,tot;
+  val vat2,tax2,tot2;
+  string 255 tstr;
+  row VATCodeBlock VATCoderw;
+  val lrd,lrd2;
+  record SMVc VATr;
+  row SMVc VATrw;
+  Integer vcrwcnt;
+  
+  if (rd<0) then begin
+    lrd = -rd;
+    lrd2 = -rd2;
+  end;
+  SetupVATBase(VATr,vcrwcnt);  
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    AddVATBase(VATr,IVrw.VATCode,IVrw.Sum,blankval,vcrwcnt,IVr.InclVAT,IVr.NoTAXonVAT);
+  end;
+    
+  for (i=0;i<vcrwcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw);
+    MulVATIV(VATrw.VATCode,lrd*(VATrw.DebVal/IVr.Sum4),vat,tax,IVr.InclVAT,IVr.NoTAXonVAT);
+    if (vat!=0) or (tax!=0) then begin
+      tot = tot + vat + tax;
+      B1ToB2Val(vat,baserate2,baserate1,vat2);
+      B1ToB2Val(tax,baserate2,baserate1,tax2);
+      tot2 = tot2 + vat2 + tax2;
+      GetVATRow(VATrw.VATCode,VATCoderw);
+      if (GetAccName(VATCoderw.SalesVATAcc,tstr,60)==false) then begin 
+        res = 1902;
+        goto LBookVATonRateGainIP;
+      end;
+      if (rd<0) then begin
+        vat = -vat;
+      end;
+      AddEuroTrRow(gTRp,VATCoderw.SalesVATAcc,"",AddVATCodeToVATAccRows(VATCoderw.VATCode),tstr,vat,baserate1,baserate2,false,dc2,TotSum,false,"","","");
+      if (GetAccName(VATCoderw.Tax1Acc,tstr,60)==false) then begin 
+        res = 1902;
+        goto LBookVATonRateGainIP;
+      end;
+      if (rd<0) then begin
+        tax = -tax;
+      end;
+      AddEuroTrRow(gTRp,VATCoderw.Tax1Acc,"","",tstr,tax,baserate1,baserate2,true,dc2,TotSum,false,"","","");
+    end;
+  end;
+LBookVATonRateGainIP:;  
+  rd = rd + tot;
+  rd2 = rd2 + tot2;
+  BookVATonRateGainIP = res;
+  RETURN;
+END;
+
+global
+function Boolean CheckIPVatCodeAcc(var LongInt result,var string Error,string VatCode)
+begin
+  Boolean res;
+  record VATCodeBlock VATCodeb;
+  row VATCodeBlock VATCoderw;
+  integer i,rwcnt;
+  
+  res = true;
+  BlockLoad(VATCodeb);
+  rwcnt = MatRowCnt(VATCodeb);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(VATCodeb,i,VATCoderw);
+    if (VATCoderw.VATCode==VatCode) then begin
+      if (blank(VATCoderw.PaySalesVATAcc) or blank(VATCoderw.PayPurchVATAcc)) then begin
+        result = 33706;
+        Error = VatCode;
+      end else begin
+        res = false;
+      end;  
+      i = rwcnt;               
+    end;
+  end;
+  CheckIPVatCodeAcc = res;
+  return;
+end;

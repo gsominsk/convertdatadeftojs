@@ -1,0 +1,304 @@
+external function roundmode SetRoundModeD(Integer);
+external updating procedure CleanPrelPOSOStock();
+
+global
+function Boolean IsLocationToInclude(string location)
+begin
+  record MainStockBlock MainStockRec;
+  record INProgLocBlock INProgLocRec;
+  row INProgLocBlock INProgLocrw;
+  Boolean res;
+  Integer i,rwcnt;
+  string 10 llocation;
+  
+  llocation = location;
+  if (blank(location)) then begin
+    BlockLoad(MainStockRec);
+    llocation = MainStockRec.MainStock;
+  end;
+  BlockLoad(INProgLocRec);
+  rwcnt = MatRowCnt(INProgLocRec);
+  if (rwcnt==0) then begin
+    res = true;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INProgLocRec,i,INProgLocrw);
+    if (INProgLocrw.Location==llocation) then begin
+      res = true;
+      goto LIsLocationToInclude;
+    end;
+  end;  
+LIsLocationToInclude:;  
+  IsLocationToInclude = res;
+  return;
+end;
+
+global
+function Boolean IsClassToInclude(string class)
+begin
+  record MainStockBlock MainStockRec;
+  record INProgOrdClassBlock INProgOrdClassRec;
+  row INProgOrdClassBlock INProgOrdClassrw;
+  Boolean res;
+  Integer i,rwcnt;
+  
+  BlockLoad(INProgOrdClassRec);
+  rwcnt = MatRowCnt(INProgOrdClassRec);
+  if (rwcnt==0) then begin
+    res = true;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INProgOrdClassRec,i,INProgOrdClassrw);
+    if (INProgOrdClassrw.OrdClass==class) then begin
+      res = true;
+      goto LIsClassToInclude;
+    end;
+  end;  
+LIsClassToInclude:;  
+  IsClassToInclude = res;
+  return;
+end;
+
+updating procedure StorePrelORPUStock(LongInt ordnr,Integer orrownr,Date orddate,Date plandel,string location,string filename,string artcode,val qty,Integer itemtype,string MainStock,Integer mode)
+begin
+  record PrelORPUStockVc PrelORPUStockr;
+  string 20 llocation;
+  Date actualplandat;
+
+  llocation = location;
+  if (blank(llocation)) then begin
+    llocation = MainStock;
+  end;
+  if (blankdate(plandel)) then begin
+    actualplandat = orddate;
+  end else begin
+    actualplandat = plandel;
+  end;
+/*
+  if (filename=="ORVc") then begin
+    PIr.ItemCode = artcode;
+    PIr.Lccation = artcode;
+    PIr.DefaultChoice = 1;
+    if (ReadFirstKey("DefaultChoice",PIr,2,true)) then begin
+      actualplandat = AddDay(actualplandat,-PIr.PlannedDelDays);
+    end;
+  end;
+*/
+  switch (mode) begin
+    case 0:
+      PrelORPUStockr.FileName = filename;
+      PrelORPUStockr.ItemCode = artcode;
+      PrelORPUStockr.EventDate = actualplandat;
+      PrelORPUStockr.Location = llocation;
+      if (ReadFirstMain(PrelORPUStockr,4,true)) then begin
+        PrelORPUStockr.Qty = PrelORPUStockr.Qty + qty;
+        if (RecordStore(PrelORPUStockr,true)) then begin end;
+      end else begin
+        PrelORPUStockr.FileName = filename;
+        PrelORPUStockr.ItemCode = artcode;
+        PrelORPUStockr.EventDate = actualplandat;
+        PrelORPUStockr.Location = llocation;
+        PrelORPUStockr.ItemType = itemtype;
+        PrelORPUStockr.Qty = qty;
+        PrelORPUStockr.OrderedDate = orddate;
+        PrelORPUStockr.MaintDate = CurrentDate;
+        if (nonblankdate(PrelORPUStockr.EventDate)) then begin
+          if (RecordStore(PrelORPUStockr,false)) then begin end; // If we let empty dates in here, it will be a MESS
+        end;
+      end;
+//      DBFlush;
+//      DBHold;        
+    case 1:
+      ExportString(artcode);
+      ExportString(filename);
+      ExportLongInt(ordnr);
+      ExportLongInt(orrownr);
+      ExportString(orddate);
+      ExportString(actualplandat);
+      ExportString(llocation);
+      ExportString(qty);
+      ExportString(itemtype);
+      NewLine;
+  end;
+  return;
+end;
+
+updating procedure ExpandStructure3(LongInt ordnr,Integer orrownr,Date orddate,Date plandel,string location,string filename,string artcode,val qty,string  recepy,string MainStock,Integer mode)
+begin
+  record INVc INr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  Integer i,rwcnt;
+  Date locplandel;
+  val newqty,prcval;
+  
+  prcval = 1;
+  Recr.Code = recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    locplandel = AddDay(plandel,-Recr.FixedAssembDays);
+    rwcnt = MatRowCnt(Recr);
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.Item==artcode) then begin
+        if (Recrw.OutQty>0) then begin
+          prcval = Recrw.OutQty;
+        end;
+      end;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.InQty!=0) then begin
+        INr.Code = Recrw.Item;
+        if (ReadFirstMain(INr,1,true)) then begin
+          newqty = round(((qty * Recrw.InQty) / prcval)+49999.00/100000.00,SetRoundModeD(0));
+          if (nonblank(INr.Recepy)) then begin
+            ExpandStructure3(ordnr,orrownr,orddate,locplandel,location,filename,INr.Code,newqty,INr.Recepy,MainStock,mode);
+          end else begin
+            StorePrelORPUStock(ordnr,orrownr,orddate,locplandel,location,filename,INr.Code,newqty,INr.ItemType,MainStock,mode);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure AddtoPrelORPUStock(LongInt ordnr,Integer orrownr,Date orddate,Date plandel,string location,string filename,string artcode,val qty,string MainStock,Integer mode)
+begin
+  record INVc INr;
+
+  INr.Code = artcode;
+  if (ReadFirstMain(INr,1,true)) then begin
+    if (nonblank(INr.Recepy)) then begin
+      ExpandStructure3(ordnr,orrownr,orddate,plandel,location,filename,artcode,qty,INr.Recepy,MainStock,mode);
+    end else begin
+      StorePrelORPUStock(ordnr,orrownr,orddate,plandel,location,filename,artcode,qty,INr.ItemType,MainStock,mode);
+    end;
+  end;
+  return;
+end;
+
+updating procedure ORtoPrelORPUStock(record RcVc RepSpec,string MainStock,Integer mode)
+begin
+  record ORVc ORr;
+  row ORVc ORrw;
+  Boolean TrHs,testf;
+  Integer i,rwcnt;
+  Date orddat,plandat;
+  
+  TrHs = true;
+  ORr.OSFlag = 1;
+  while (LoopKey("OSFlag",ORr,1,TrHs)) begin
+    if (ORr.OSFlag!=1) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (ORr.Closed!=0) then begin
+        testf = false;
+      end;
+      if (IsLocationToInclude(ORr.Location)==false) then begin testf = false; end;
+      if (IsClassToInclude(ORr.OrderClass)==false) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(ORr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(ORr,i,ORrw);
+          if ((ORrw.Shipd2<ORrw.Quant) and (nonblank(ORrw.ArtCode))) then begin
+            orddat = StringToDate(ORr.PlanShip);
+            if (blankdate(orddat)) then begin
+              orddat = ORr.OrdDate;
+            end;
+            plandat = orddat;
+            if (nonblank(ORrw.PlanShipRow)) then begin
+              plandat = StringToDate(ORrw.PlanShipRow);
+            end;
+            AddtoPrelORPUStock(ORr.SerNr,i+1,orddat,plandat,ORr.Location,"ORVc",ORrw.ArtCode,ORrw.Quant-ORrw.Shipd2,MainStock,mode);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure POtoPrelORPUStock(record RcVc RepSpec,string MainStock,Integer mode)
+begin
+  record POVc POr;
+  row POVc POrw;
+  Boolean TrHs,testf;
+  Integer i,rwcnt;
+  Date orddat,plandat;
+  
+  TrHs = true;
+  POr.OSFlag = 1;
+  while (LoopKey("OSFlag",POr,1,TrHs)) begin
+    if (POr.OSFlag!=1) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (POr.Closed!=0) then begin
+        testf = false;
+      end;
+      if (IsLocationToInclude(POr.Location)==false) then begin testf = false; end;
+//      if (IsClassToInclude(POr.OrderClass)==false) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(POr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(POr,i,POrw);
+          if ((POrw.Shipd2<POrw.Quant) and (nonblank(POrw.ArtCode))) then begin
+            orddat = StringToDate(POr.PlanShip);
+            if (blankdate(orddat)) then begin
+              orddat = POr.TransDate;
+            end;
+            plandat = orddat;
+            if (nonblank(POrw.PlanShipRow)) then begin
+              plandat = StringToDate(POrw.PlanShipRow);
+            end;
+            AddtoPrelORPUStock(POr.SerNr,i+1,orddat,plandat,POr.Location,"POVc",POrw.ArtCode,POrw.Quant-POrw.Shipd2,MainStock,mode);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CalcSOPOStock(record RcVc RepSpec,Integer mode)
+begin
+  record MainStockBlock MainStockRec;
+  
+  BlockLoad(MainStockRec);
+  if (mode==0) then begin//maintanance
+    CleanPrelPOSOStock;
+  end;
+  ORtoPrelORPUStock(RepSpec,MainStockRec.MainStock,mode);
+  POtoPrelORPUStock(RepSpec,MainStockRec.MainStock,mode);
+  return;
+end;
+
+global
+updating procedure CalcSOPOStockMn(record RcVc RepSpec)
+begin
+  CalcSOPOStock(RepSpec,0);
+  return;
+end;
+
+global
+updating procedure CalcSOPOStockEn(record RcVc RepSpec)
+begin
+  ExportString("Item");
+  ExportString("FileName");
+  ExportLongInt("Ord. No.");
+  ExportLongInt("Ord. Row");
+  ExportString("Ord. Date");
+  ExportString("Plan. del.");
+  ExportString("Location");
+  ExportString("Quantity");
+  ExportString("Item Type");
+  NewLine;
+  CalcSOPOStock(RepSpec,1);
+  return;
+end;

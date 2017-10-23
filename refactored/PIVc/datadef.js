@@ -1,0 +1,36 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fItemCode: { public: true, type: 'TEXT' },
+     fVECode: { public: true, type: 'TEXT' },
+     fVEItemCode: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fPurPrice: { public: true, type: 'FLOAT' },
+     fDefaultChoice: { public: true, type: 'INTEGER' },
+     fVEName: { public: true, type: 'TEXT' },
+     PIVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fText: { public: true, type: 'TEXT' } } },
+     fNormPOQty: { public: true, type: 'FLOAT' },
+     fMinPOQty: { public: true, type: 'FLOAT' },
+     fManufacturer: { public: true, type: 'TEXT' },
+     fOrgCountry: { public: true, type: 'TEXT' },
+     fVendDefChoice: { public: true, type: 'INTEGER' },
+     fPIFactor: { public: true, type: 'FLOAT' },
+     fPurchaseCost: { public: true, type: 'FLOAT' },
+     fCurncyCode: { public: true, type: 'TEXT' },
+     fExtraCaost: { public: true, type: 'FLOAT' },
+     fUnit: { public: true, type: 'TEXT' },
+     fVEUnit: { public: true, type: 'TEXT' },
+     fPlannedDelDays: { public: true, type: 'FLOAT' },
+     fSalesGroup: { public: true, type: 'TEXT' },
+     fSalesMan: { public: true, type: 'TEXT' },
+     fLocation: { public: true, type: 'TEXT' },
+     fDefStockType: { public: true, type: 'INTEGER' } },
+  indexes: 
+   { MainKeyIndex34: 
+      { fields: [ 'fItemCode', 'fLocation', 'fVECode', 'fVEItemCode' ],
+        indicesType: 'UNIQUE' } } }

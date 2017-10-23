@@ -1,0 +1,160 @@
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Integer GetIntYc(Date);
+external procedure TAX_objbalance(string,date,string,var Val,var Val);
+external procedure TAX_balance(date,string,var Val,var Val);
+external procedure DeprSegment(Date,Date,Integer,record DprModVc,Date,Date,Date,val,var val,var val,var val,var val,var Integer,val);
+external updating procedure SaveTrans(record TRVc);
+external procedure TRSumup(var record TRVc,var val);
+
+updating
+procedure CreateTaxDepr(record RcVc RepSpec,string depmodel,row AC2Block AC2rw)
+begin
+  val balsum,depsum,debsum,credsum;
+  date startdate,d1,d2,d3,d4;
+  val v1,v2,v3,v4,v5,t,TotSum;
+  integer alreadydone;
+  record TRVc TRr;
+  row TRVc TRrw;
+  date sdate,edate;
+  integer model;
+  record BaseERVc BERr;
+  val base1,base2,startval;
+  string 60 accname,blanks;
+  Date bd;
+  record DprModVc DMr;
+  
+  sdate = RepSpec.sStartDate;
+  edate = RepSpec.sEndDate;
+  model = RepSpec.flags[1];
+  startdate = AddDay(sdate,-1);
+  if (model==0) then begin
+    if (nonblank(AC2rw.Asset1Objects)) then begin
+      TAX_objbalance(AC2rw.Asset1Objects,startdate,AC2rw.Asset1Acc,debsum,credsum);
+    end else begin
+      TAX_balance(startdate,AC2rw.Asset1Acc,debsum,credsum);
+    end;
+    balsum = debsum - credsum;
+    if (nonblank(AC2rw.Depr1Objects)) then begin
+      TAX_objbalance(AC2rw.Depr1Objects,startdate,AC2rw.Depr1Acc,debsum,credsum);
+    end else begin
+      TAX_balance(startdate,AC2rw.Depr1Acc,debsum,credsum);
+    end;
+    depsum = debsum - credsum;
+  end else begin
+    if (nonblank(AC2rw.Asset2Objects)) then begin
+      TAX_objbalance(AC2rw.Asset2Objects,startdate,AC2rw.Asset2Acc,debsum,credsum);
+    end else begin
+      TAX_balance(startdate,AC2rw.Asset2Acc,debsum,credsum);
+    end;
+    balsum = debsum - credsum;
+    if (nonblank(AC2rw.Depr2Objects)) then begin
+      TAX_objbalance(AC2rw.Depr2Objects,startdate,AC2rw.Depr2Acc,debsum,credsum);
+    end else begin
+      TAX_balance(startdate,AC2rw.Depr2Acc,debsum,credsum);
+    end;
+    depsum = debsum - credsum;
+  end;
+  
+  if (balsum-depsum<>0) then begin
+    d1=sdate;
+    d2=sdate;
+    d3=edate;
+    alreadydone = 2;
+    v3=0;
+    DMr.Code = depmodel;
+    if (ReadFirstMain(DMr,1,true)) then begin end;
+    startval = balsum-depsum;
+    DeprSegment(edate,bd,2,DMr,d1,d2,d3,startval,v1,v2,v3,v4,alreadydone,v5);  
+    
+    if (v2<>0) then begin
+      RecordNew(TRr);
+      if (blank(RepSpec.d1)) then begin
+        TRr.TransDate = CurrentDate;
+      end else begin
+        TRr.TransDate = RepSpec.d1;
+      end;
+      TRr.RegDate = CurrentDate;
+      TRr.Number = NextSerNr("TRVc",TRr.TransDate,-1,false,"");  
+      TRr.IntYc = GetIntYc(TRr.TransDate);
+      
+      base1 = 100;
+      base2 = 100;
+      BERr.Date = TRr.TransDate;
+      if (ReadLastMain(BERr,1,false)) then begin
+        base1 = BERr.Rate1;
+        base2 = BERr.Rate2;
+      end;  
+      
+      if (GetAccName(AC2rw.Depr2Acc,accname,60)) then begin
+        AddEuroTrRow(TRr,AC2rw.Depr2Acc,AC2rw.Asset2Objects,blanks,accname,v2,base1,base2,true,true,TotSum,false,"","","");
+      end;  
+      
+      if (GetAccName(AC2rw.Cost2Acc,accname,60)) then begin
+        AddEuroTrRow(TRr,AC2rw.Cost2Acc,AC2rw.Cost2Objects,blanks,accname,v2,base1,base2,true,false,TotSum,false,"","","");
+      end;  
+    
+      TRSumup(TRr,t);
+      SaveTrans(TRr);
+
+    end;
+  end;
+
+ 
+  return;
+end;
+
+global updating
+procedure AT2TaxDeprMn(record RcVc RepSpec)
+begin
+  record AT2Vc AT2r;
+  record AC2Block AC2r;
+  row AC2Block AC2rw;
+  integer i,ar;
+  string 20 fcat,lcat,model;
+  boolean TrHs,testf;
+  
+  fcat = FirstInRange(RepSpec.f1,20);
+  lcat = LastInRange(RepSpec.f1,20);
+  BlockLoad(AC2r);
+  ar = MatRowCnt(AC2r);
+  
+  AT2r.Code = fcat;
+  TrHs = true;
+  While (LoopMain(AT2r,1,TrHs)) begin
+    testf = true;
+    if (nonblank(lcat)) and (AT2r.Code>lcat) then begin
+      testf = false; TrHs = false;
+    end;
+    if (AT2r.Inactive==1) then begin
+      testf = false;
+    end;
+    if (blank(AT2r.AT2Class)) then begin
+      testf = false;
+    end;
+    if (blank(AT2r.Model1)) and (RepSpec.flags[1]==0) then begin
+      testf = false;
+    end;
+    if (blank(AT2r.Model2)) and (RepSpec.flags[1]==1) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      for (i=0;i<ar;i=i+1) begin
+        MatRowGet(AC2r,i,AC2rw);
+        if (AC2rw.Code==AT2r.AT2Class) then begin
+          if (RepSpec.flags[1]==0) then begin
+            model = AT2r.Model1;
+          end else begin  
+            model = AT2r.Model2;
+          end;
+          CreateTaxDepr(RepSpec,model,AC2rw);
+          i = ar;
+        end; 
+      end;  
+    end;  
+  end;
+ 
+
+  return;
+end;

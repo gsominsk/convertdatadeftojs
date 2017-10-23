@@ -1,0 +1,308 @@
+remote function Boolean GetNextItemNr(var string);
+remote updating function LongInt CancelApprovalRequest(string,string,var Integer);
+remote updating function Integer RequestApproval_POVc(record POVc,var record RcVc,var Integer);
+external procedure ActVcRecordDefClient(var record ActVc);
+remote updating function Boolean MakeActFromPO2(var record POVc,var record ActVc,Boolean);
+remote updating procedure POCreatePlannedPayment(record POVc);
+external function Integer CountObjects(string);
+remote procedure POSetShipCost(var record POVc,Integer);
+external procedure DivPIFactor(val,val,var val);
+external function roundmode SetRoundModeD(Integer);
+remote procedure POSumup(var record POVc);
+
+
+global 
+function Boolean PODClassCost1_5EFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf,integer column)
+begin
+  Boolean chsum,chrsum;
+  record POVc POr;
+  row POVc POrw;
+  val p,s;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,POr);
+    DeselectWindow(wn,false);
+    POSetShipCost(POr,column);
+    POSumUp(POr);
+    PutWindowRecord(wn,POr);
+  end;
+  PODClassCost1_5EFAfter = true;
+  return;
+end;
+
+global 
+function Boolean PODClassRowCost1_5EFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf,integer column)
+begin
+  record POVc POr;
+  row POVc POrw;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,POr);
+    DeselectWindow(wn,false);
+    POSumUp(POr);
+    PutWindowRecord(wn,POr);
+  end;
+  PODClassRowCost1_5EFAfter = true;
+  return;
+end;
+
+global 
+function Boolean PODClassShipCostEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  Boolean chsum,chrsum;
+  record POVc POr;
+  row POVc POrw;
+  val p,s;
+  
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,POr);
+    DeselectWindow(wn,false);
+    if (rownr>=0) then begin
+      POSumUp(POr);
+    end else begin
+      POSetShipCost(POr,6);
+    end;
+    PutWindowRecord(wn,POr);
+  end;
+  PODClassShipCostEFAfter = true;
+  return;
+end;
+
+global 
+function Boolean PODClassCustomsCostEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  Boolean chsum,chrsum;
+  record POVc POr;
+  row POVc POrw;
+  val p,s;
+  
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,POr);
+    DeselectWindow(wn,false);
+    if (rownr>=0) then begin
+      POSumUp(POr);
+    end else begin
+      POSetShipCost(POr,7);
+    end;
+    PutWindowRecord(wn,POr);
+  end;
+  PODClassCustomsCostEFAfter = true;
+  return;
+end;
+
+global
+procedure POReservPODsm()
+BEGIN
+  record RcVc RepSpec;
+  record POVc POr;
+
+  GetWindowRecord(CurWindow,POr);
+  RepSpec.f1 = POr.SerNr;
+  RepSpec.Media = mtScreen;
+  RepSpec.repname = "POReservRn";
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+updating procedure POSendforAcceptancePODsmExecute(Integer wn,string acceptanceby,string acceptancefyi)
+begin
+  Integer err,nwn;
+  record POVc POr;
+  Integer ApproverSelection,ApprovalStatusFlag;
+  record RcVc RepSpec;
+  
+  GetWindowRecord(wn,POr);
+  if (WindowState(wn)!=Rs_normal) then begin
+    if (WindowDoOK(wn,0)==false) then begin
+      goto LPOSendforAcceptancePODsm;
+    end;
+    GetWindowRecord(wn,POr);
+  end;
+  POr.AcceptanceBy = acceptanceby;
+  POr.AcceptanceFYI = acceptancefyi;
+  err = RequestApproval_POVc(POr,RepSpec,ApprovalStatusFlag);
+  ApproverSelection = RepSpec.ArtMode;
+  if ((ApproverSelection==kAcceptanceApproverSelectionManual) and (blank(POr.AcceptanceBy))) then begin
+    switch (err) begin  
+      case 0:
+        if (CountObjects(RepSpec.f12)==1) then begin
+          RepSpec.f1 = RepSpec.f12;
+        end;
+        if (CountObjects(RepSpec.f11)==1) then begin
+          RepSpec.f2 = RepSpec.f11;
+        end;
+        nwn = OpenWindow("SelectApproverWClass",0,wn,"","",RepSpec);
+      otherwise
+        MessageBox(err,"");
+    end;
+  end else begin
+    switch (err) begin  
+      case 0:
+        PutWindowRecord(wn,POr);
+        if (WindowDoOK(wn,0)) then begin
+        end;
+        PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));
+        CheckmarkBox(37501,"");
+      otherwise
+        MessageBox(err,"");
+    end;
+  end;
+LPOSendforAcceptancePODsm:;  
+  return;
+end;
+
+global
+updating procedure POSendforAcceptancePODsm()
+begin
+  POSendforAcceptancePODsmExecute(CurWindow,"","");
+  return;
+end;
+
+global
+updating procedure POCancelApprovalRequest(Integer wn)
+begin
+  record POVc POr;
+  Integer ApprovalStatusFlag;
+  LongInt err;
+
+  GetWindowRecord(wn,POr);
+  err = CancelApprovalRequest("POVc",POr.SerNr,ApprovalStatusFlag);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    if (err!=37503) then begin
+      goto LPOCancelApprovalRequest;
+    end;
+  end;
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+LPOCancelApprovalRequest:;
+  return;
+end;
+
+global  
+procedure POLastPPrsm()
+BEGIN
+  record POVc POr;
+  row POVc POrw;
+  record RcVc RepSpec;
+  Integer wn,rownr;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,POr);
+  rownr = GetWindowCurRow(wn);
+  if (rownr>=0) then begin
+    MatRowGet(POr,rownr,POrw);
+    ReportDefaults(RepSpec,"INLastPPriceRClass");  
+    RepSpec.repname = "INLastPPriceRn";
+    RepSpec.f1 = POr.VECode;
+    RepSpec.f2 = POrw.ArtCode;
+    RepSpec.vals0 = POrw.Price;
+    RepSpec.long1 = 5;
+    RepSpec.ArtMode = 1;
+    RepSpec.Media = 6;    
+    RepSpec.UsedOnly = wn;
+    RepSpec.FirstAcc = "POVc";
+    RepSpec.long2 = POr.SerNr;
+    RepSpec.flags[0] = rownr;
+    RunReport(RepSpec,1);
+  end;  
+  RETURN;
+END;
+
+global
+procedure OpenVatMatrixPODsm()
+begin
+  record TaxMatrixVc TMr;
+  record POVc POr;
+  row POVc POrw;
+  longint nwn,wn,rowno;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,POr);
+  rowno = WindowActiveRow(wn);
+  
+  if (rowno>=0) then begin
+    MatRowGet(POr,rowno,POrw);
+    UnpackRowFieldMatrix(POrw,"TaxMatrix",TMr);
+  end else begin
+    UnpackFieldMatrix(POr,"TaxMatrix",TMr);
+  end;
+  
+  nwn = OpenWindow("TaxMatrixVClass",0,wn,"","",TMr);
+  PutWindowString(nwn,"TaxMatrixActiveRow",rowno);
+  
+  PutWindowRecord(nwn,TMr);
+  PutWindowPrevRecord(nwn,TMr);
+  SetWindowState(nwn,Rs_normal);
+  
+  return;
+end;
+
+/*
+global
+updating procedure PlannedPaymentPODsm()
+begin
+  Integer wn;
+  record POVc POr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,POr);
+  POCreatePlannedPayment(POr);
+  return;
+end;
+*/
+
+global
+updating procedure CreateActFromPODsm()
+begin
+  record POVc POr;
+  record ActVc Actr;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,POr);  
+    RecordNew(Actr);
+    ActVcRecordDefClient(Actr);
+    if (MakeActFromPO2(POr,Actr,false)) then begin
+      nwn = OpenWindow("ActDClass",1,0,"","",Actr);
+      SetRLink(wn,true);  
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure POVcCreateActivity()
+begin
+  CreateActFromPODsm;
+  return;
+end;
+
+global
+procedure AddSupplierPODsm()
+begin
+  record CUVc CUr;
+  Integer nwn;
+  
+  RecordNew(CUr);
+  CUr.CUType = 0;
+  CUr.VEType = 1;
+  nwn = OpenWindow("CUDClass",0,CurWindow,"","",CUr);
+  PutWindowString(nwn,"OperationMenuAction","AddContact");
+  return;
+end;
+
+global
+procedure AddItemPODsm()
+begin
+  record INVc INr;
+  Integer nwn;
+  
+  RecordNew(INr);
+  nwn = OpenWindow("INDClass",0,CurWindow,"","",INr);
+  PutWindowString(nwn,"OperationMenuAction","AddItem");
+  if (blank(INr.Code)) then begin
+    GetNextItemNr(INr.Code);
+  end;
+  return;
+end;

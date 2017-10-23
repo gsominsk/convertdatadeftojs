@@ -1,0 +1,973 @@
+external function Boolean OtherExchangeRate(val,val,val,val,val,val,val,val,val,val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean DateLocked(Date,string);
+external procedure MailTextRow2(string,string,string,string,var row MailTextVc,var Integer);
+external procedure FindUserMailboxName(string,var string,var string);
+external procedure OPVc_PasteBankCurncy(var record OPVc,Integer);
+external function Boolean WarnOldRecords(Date,string,LongInt);
+external function Boolean DateWarned(Date,string);
+external function roundmode DefaultRoundMode();
+external procedure VATVISumup(var record VATVIVc);
+external procedure VATVICalcVals(var record VATVIVc);
+external function val FindVAT(string,val,Integer,Integer);
+external function Boolean GetVAT2(string,var val,var Integer,Integer);
+external procedure FEVIVc_PasteVECode(var record FEVIVc,var string,string);
+external procedure GetPurchaseControlAcc(string,Integer,string,record AccBlock,string,var string,string);
+external procedure CalcExtra(val,string,var val);
+external procedure GetPIPurchseCost(string,string,string,var val);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure FEVICalcVals(record FEVIVc );
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure FEVISumup(record FEVIVc,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external function val MulVAT(string,val,Integer,Integer);
+
+function val GetPORowFEVISum(LongInt ordernr,Integer InclVAT,LongInt fevinr,string accnumber,string artcode)
+BEGIN
+  val res;
+  record FEVIVc FEVIr;
+  row FEVIVc FEVIrw;
+  Integer i,rwcnt;
+  Boolean TrHs,testf;
+  
+  TrHs = true;
+  FEVIr.OrderNr = ordernr;
+  while (LoopKey("OrderNr",FEVIr,1,TrHs)) begin
+    if (FEVIr.OrderNr!=OrderNr) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (FEVIr.SerNr==fevinr) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(FEVIr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(FEVIr,i,FEVIrw);
+          if ((FEVIrw.AccNumber==accnumber) and ((FEVIrw.Item==artcode) or (blank(FEVIrw.Item)))) then begin          
+            res = res + FEVIrw.Sum;
+            if (InclVAT!=0) then begin
+              res = res + MulVAT(FEVIrw.VATCode,FEVIrw.Sum,0,0);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;  
+//  StopAlert("artcode " & artcode & " res " & res);
+  GetPORowFEVISum = res;
+  RETURN;
+END;
+
+procedure PastePOInFEVI(var record FEVIVc FEVIp,record POVc POp,LongInt prepnr,val bval,Date td,LongInt OPNr)
+BEGIN
+  Integer i,rwcnt,vatcnt;
+  Integer j,virwcnt;
+  row FEVIVc FEVIrw;
+  row POVc POrw;
+  Integer nrwcnt;
+  record INVc INr;
+  val t1,totqty,totveqty,costperunit;
+  val p,shp,pr,totvatv;
+  Integer line;
+  record CUVc VEr;
+  record APAccBlock APAccRec;
+  record AccBlock ARAccRec;
+  record CostAccBlock CostAccRec;
+  record VITBlock VITRec;
+  Integer res;
+  Boolean itemfoundf;
+  val from,to1,to2,base1,base2;
+  val sum,sumvat,tmpsum,tmpsuminclvat;
+  record SMVc VATr;
+  string 255 tstr;  
+
+  SetupVATBase(VATr,vatcnt);
+  VEr.Code = POp.VECode;
+  if (ReadFirstMain(VEr,1,true)==false) then begin 
+    res = 1434;
+    goto LPastePOInFEVI; 
+  end;
+  if (IsStandardProduct==false) then begin
+    if (blank(VEr.AccCost)) then begin 
+      res = 1434;  
+      goto LPastePOInFEVI; 
+    end;
+  end;
+//  if (POp.Closed!=0) then goto LPastePOInFEVI;// the same as OR
+  res = 0;
+  FEVIp.ExportFlag = POp.ExportFlag;
+  FEVIp.PrepaymentNr = prepnr;
+  FEVIp.OrderNr = POp.SerNr;
+  FEVIp.TransDate = td;
+  FEVIp.VECode = POp.VECode;
+  FEVIp.VEName = POp.Addr0;
+  FEVIp.CurncyCode = POp.CurncyCode;
+  FEVIp.PayDeal = POp.PayDeal;
+  FEVIp.Objects = POp.Objects;
+  FEVIp.VATNr = VEr.VATNr;
+  FEVIp.LangCode = POp.LangCode;
+  BlockLoad(APAccRec);
+  BlockLoad(ARAccRec);
+  BlockLoad(CostAccRec);
+  FEVIp.VEVatCode = VEr.VEVATCode;
+  FEVIp.FrRate = POp.FrRate;
+  FEVIp.ToRateB1 = POp.ToRateB1;
+  FEVIp.ToRateB2 = POp.ToRateB2;
+  FEVIp.BaseRate1 = POp.BaseRate1;
+  FEVIp.BaseRate2 = POp.BaseRate2;
+  FEVIp.VITransDate = td;
+  FEVIp.VIInvDate = td;
+  rwcnt = MatRowCnt(POp);
+//  FEVIp.PayVal = POp.Sum4;
+  nrwcnt = 0;
+  BlockLoad(VITRec);
+  if (VITRec.FullQtyTrans==0) then begin 
+    FEVIp.PayVal = blankval;
+  end;
+  FEVIp.PayVal = blankval;
+  for (i=0;i<rwcnt;i=i+1) begin  
+    MatRowGet(POp,i,POrw);
+    totveqty = totveqty + POrw.VEQuant;
+    totqty = totqty + POrw.Quant;
+  end;  
+  CalcExtra(POp.Sum1,POp.CostPerUnit,costperunit);
+  costperunit = costperunit/totqty;      
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POp,i,POrw);    
+    if (blank(POrw.ArtCode)) then begin goto L44PastePOInFEVI; end;
+    if (VITRec.FullQtyTrans==0) then begin
+//      if (POrw.Shipd2==0) then begin goto L44PastePOInFEVI; end;
+    end;
+/*    
+    tmpsum = POrw.Sum - GetPORowFEVISum(POr.SerNr,FEVIp.SerNr,string accnumber,POrw.ArtCode);
+    if (POp.InclVAT==0) then begin
+      tmpsum = tmpsum + FindVAT(POrw.VATCode,POrw.Sum,0,0);
+    end;    
+    if (tmpsum>(bval - sum)) then begin
+      tmpsum = bval - sum;
+      if (POp.InclVAT==0) then begin
+        tmpsum = tmpsum - FindVAT(POrw.VATCode,tmpsum,1,0);
+      end;    
+    end else begin
+      tmpsum = POrw.Sum;
+    end;
+//StopAlert("tmpsum " & tmpsum & " sum " & sum);
+    if (tmpsum<=0) then begin
+      goto L44PastePOInFEVI;
+    end;
+*/    
+    virwcnt = MatRowCnt(FEVIp);
+    line = -1;
+    for (j=0;j<virwcnt;j=j+1) begin
+      MatRowGet(FEVIp,j,FEVIrw);
+      switch (VITRec.TransferItems) begin
+        case 0:
+          if (POrw.VATCode==FEVIrw.VATCode) then begin
+            line = j;
+            goto L33PastePOInFEVI;
+          end;        
+        case 1:
+          if ((POrw.VATCode==FEVIrw.VATCode) and (POrw.ArtCode==FEVIrw.Item) and (POp.PRCode==FEVIrw.PRCode)) then begin
+            line = j;
+            goto L33PastePOInFEVI;
+          end;
+        case 2:
+      end;
+    end;
+L33PastePOInFEVI:;
+    INr.Code = POrw.ArtCode;
+    itemfoundf = ReadFirstMain(INr,1,true);
+    if (line==-1) then begin
+      virwcnt = virwcnt + 1;
+      line = virwcnt - 1;
+      ClearRow(FEVIp,FEVIrw,1);
+    end;
+    if (blank(FEVIrw.AccNumber)) then begin
+      FEVIrw.AccNumber = VEr.AccCost;
+      if (GetAccName(FEVIrw.AccNumber,tstr,60)) then begin end;
+      FEVIrw.Comment = tstr;
+      FEVIrw.VATCode = POrw.VATCode;
+      FEVIrw.Sum = blankval;
+      FEVIrw.OrdRow = -2; // Row comes from Order, but is not connected to a specific row 
+      if (VITRec.TransferItems!=0) then begin
+        FEVIrw.OrdRow = i;
+        FEVIrw.Item = POrw.ArtCode;
+        if (blank(POrw.PRCode)) then begin
+          FEVIrw.PRCode = POp.PRCode;
+        end else begin
+          FEVIrw.PRCode = POrw.PRCode;
+        end;
+        FEVIrw.Objects = POrw.Objects;
+        GetPurchaseControlAcc("",CostAccRec.ItemGroupAccounts,POrw.ArtCode,ARAccRec,VEr.AccCost,tstr,POp.VECode);
+        FEVIrw.AccNumber = tstr;
+        if (GetAccName(FEVIrw.AccNumber,tstr,60)) then begin end;
+        FEVIrw.Comment = tstr;
+      end;
+      if (VITRec.TransferItems==2) then begin
+        if (nonblank(POrw.CostAcc)) then begin
+          FEVIrw.AccNumber = POrw.CostAcc;
+          if (GetAccName(FEVIrw.AccNumber,tstr,60)) then begin end;
+          FEVIrw.Comment = tstr;
+        end;  
+      end;    
+    end;
+    tmpsum = POrw.Sum;
+    if (VITRec.TransferItems==0) then begin
+      tmpsum = POp.Sum4 - GetPORowFEVISum(POp.SerNr,POp.InclVAT,FEVIp.SerNr,FEVIrw.AccNumber,FEVIrw.Item);
+    end else begin
+      tmpsum = tmpsum - GetPORowFEVISum(POp.SerNr,POp.InclVAT,FEVIp.SerNr,FEVIrw.AccNumber,FEVIrw.Item);      
+    end;
+    if (tmpsum<=0) then begin
+      goto L44PastePOInFEVI;
+    end;
+//    StopAlert("tmpsum " & tmpsum);
+    if (POp.InclVAT==0) then begin    
+      tmpsuminclvat = tmpsum + MulVAT(POrw.VATCode,tmpsum,POp.InclVAT,0);
+    end else begin
+      tmpsuminclvat = tmpsum;
+    end;    
+    if (tmpsuminclvat>(bval - sum)) then begin
+      tmpsum = bval - sum;
+      if (POp.InclVAT==0) then begin
+        tmpsum = tmpsum - MulVAT(POrw.VATCode,tmpsum,1,0);
+      end else begin
+        tmpsum = tmpsum - MulVAT(POrw.VATCode,tmpsum,1,0) - sumvat;
+      end;
+    end;
+    if (tmpsum<=0) then begin
+      goto L44PastePOInFEVI;
+    end;
+    sum = sum + tmpsuminclvat;
+    if (POp.InclVAT==0) then begin
+    end else begin
+      sumvat = sumvat + MulVAT(POrw.VATCode,tmpsum,1,0);
+    end;
+
+    if (VITRec.FullQtyTrans==0) then begin
+      shp = POrw.Quant;
+      if (INr.ItemType==0) then begin shp = POrw.Quant; end;
+      p = blankval;
+      if (shp!=0) then begin
+        p = shp;// - POrw.Invd;//test I think we shouldn't care about it, I am not sure though
+        if (p==0) then begin
+          virwcnt = virwcnt - 1;
+          goto L44PastePOInFEVI;
+        end;
+      end;
+      FEVIrw.qty = FEVIrw.qty + p;
+      if (POrw.VEQuant!=0) then begin
+        t1 = POrw.VEQuant/POrw.Quant;
+        FEVIrw.qty = FEVIrw.qty*t1;
+        p = p*t1;
+      end;
+      if (VITRec.TransferItems==0) then begin
+        t1 = tmpsum;
+      end else begin
+        if (POp.InclVAT!=0) then begin    
+          pr = FindVAT(FEVIrw.VATCode,POrw.Price,POp.InclVAT,0);
+          totvatv = totvatv + pr;
+          pr = POrw.Price - pr;     
+        end else begin
+          pr = POrw.Price;
+        end;
+        CalcSum(p,pr,POrw.PriceFactor,POrw.vRebate,t1,0); 
+        if (t1>tmpsum) then begin
+          t1 = tmpsum;
+        end;
+      end;
+      FEVIrw.Sum = FEVIrw.Sum + t1;
+    end else begin
+      p = POrw.Quant - POrw.Invd;
+      if (p==0) then begin
+        MessageBox(1547,"");
+      end;
+//      FEVIrw.Sum = FEVIrw.Sum + POrw.Sum;
+      FEVIrw.Sum = FEVIrw.Sum + tmpsum;
+      FEVIrw.qty = FEVIrw.qty + POrw.Quant;
+    end;
+    FEVIrw.PrepayNr = -1;
+    FEVIrw.PrepayAmount = blankval;
+    totqty = costperunit*FEVIrw.qty;
+    FEVIrw.Sum = FEVIrw.Sum + totqty;
+    GetPIPurchseCost(POrw.ArtCode,POp.VECode,POrw.VEArtCode,totqty);
+    totqty = totqty*FEVIrw.qty;
+    FEVIrw.Sum = FEVIrw.Sum + totqty;       
+    if (VITRec.FullQtyTrans!=0) then begin
+      FEVIp.PayVal = FEVIp.PayVal + totqty;
+      AddVATBase(VATr,FEVIrw.VATCode,totqty,blankval,vatcnt,0,0);    
+    end;        
+    if (FEVIrw.Sum<0.01) then begin goto L44PastePOInFEVI; end;
+    MatRowPut(FEVIp,line,FEVIrw);
+L44PastePOInFEVI:;
+  end;
+  if (VITRec.FullQtyTrans==0) then begin
+    virwcnt = MatRowCnt(FEVIp);
+    for (i=0;i<virwcnt;i=i+1) begin
+      MatRowGet(FEVIp,i,FEVIrw);
+      AddVATBase(VATr,FEVIrw.VATCode,FEVIrw.Sum,blankval,vatcnt,0,0);
+      FEVIp.PayVal = FEVIp.PayVal + FEVIrw.Sum;
+    end;
+  end;
+  if (POp.InclVAT==0) then begin
+    CalcVATBaseVAT(VATr,POp.InclVAT,POp.NoTAXonVAT,vatcnt,totvatv,t1);
+    FEVIp.PayVal = FEVIp.PayVal + totvatv;
+  end else begin
+    CalcVATBaseVAT(VATr,POp.InclVAT,POp.NoTAXonVAT,vatcnt,totvatv,t1);
+    if (FEVIp.ExportFlag!=1) then begin  // NEWVAT I don't think this is correct
+//    if ((FEVIp.ExportFlag==0) or (FEVIp.ExportFlag==3) or (FEVIp.ExportFlag==4)) then begin
+      FEVIp.PayVal = FEVIp.PayVal + totvatv;
+    end;  
+  end;
+  FEVIp.OPNr = OPNr;
+  FEVICalcVals(FEVIp);
+  FEVISumup(FEVIp,p);
+  if (p!=0) then begin
+    ClearRow(FEVIp,FEVIrw,1);
+    line = virwcnt;
+    FEVIrw.AccNumber = ARAccRec.RndAcc;
+    if (GetAccName(FEVIrw.AccNumber,tstr,60)) then begin end;
+    FEVIrw.Comment = tstr;
+    FEVIrw.Sum = -p;
+    FEVIrw.VATCode = "";
+//    MatRowPut(FEVIp,line,FEVIrw);
+  end;
+LPastePOInFEVI:;  
+  RETURN;
+END;
+
+/*I think it is wrong
+procedure PastePOInFEVI(var record FEVIVc FEVIp,record POVc POp,LongInt prepnr,val rval,Date td)
+BEGIN
+  record VITBlock VITRec;
+  record AccBlock ARAccRec;
+  record CostAccBlock CostAccRec;
+  record CUVc VEr;
+  row POVc POrw;
+  row FEVIVc FEVIrw;
+  Integer i,rwcnt,fevirow,vatcnt;
+  val tmpsum,rowsum,p,totsum;
+  string 255 tstr;
+  Integer res;
+  Boolean qtyf;
+  record SMVc VATr;
+
+  VEr.Code = POp.VECode;
+  if (ReadFirstMain(VEr,1,true)==false) then begin 
+    res = 1434;
+    goto LPastePOInFEVI; 
+  end;  
+  BlockLoad(CostAccRec);
+  BlockLoad(VITRec);
+  FEVIp.ExportFlag = POp.ExportFlag;
+  FEVIp.PrepaymentNr = prepnr;
+  FEVIp.OrderNr = POp.SerNr;
+  FEVIp.TransDate = td;
+  FEVIp.VECode = POp.VECode;
+  FEVIp.VEName = POp.Addr0;
+  FEVIp.CurncyCode = POp.CurncyCode;
+  FEVIp.PayDeal = POp.PayDeal;
+  FEVIp.Objects = POp.Objects;
+  FEVIp.VATNr = VEr.VATNr;
+  FEVIp.LangCode = POp.LangCode;
+  FEVIp.VEVatCode = VEr.VEVATCode;
+  FEVIp.FrRate = POp.FrRate;
+  FEVIp.ToRateB1 = POp.ToRateB1;
+  FEVIp.ToRateB2 = POp.ToRateB2;
+  FEVIp.BaseRate1 = POp.BaseRate1;
+  FEVIp.BaseRate2 = POp.BaseRate2;
+  SetupVATBase(VATr,vatcnt);
+  rwcnt = MatRowCnt(POp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POp,i,POrw);
+//StopAlert("tmp " & tmpsum & " rv " & rowsum & " s " & POrw.Sum);
+    if (blank(POrw.ArtCode)) then begin goto L44PastePOInFEVI; end;
+    rowsum = GetPORowFEVISum(prepnr,FEVIp.OrderNr,FEVIp.SerNr,i);    
+    if (rowsum>=POrw.Sum) then begin
+      goto L44PastePOInFEVI;
+    end;
+    tmpsum = POrw.Sum-rowsum;
+    if (POp.InclVAT==0) then begin
+      tmpsum = tmpsum + FindVAT(POrw.VATCode,POrw.Sum,0,0);
+    end; 
+    if (tmpsum>(rval - totsum)) then begin
+      tmpsum = rval - totsum;
+      tmpsum = tmpsum - FindVAT(POrw.VATCode,tmpsum,1,POp.NoTAXonVAT);
+      qtyf = true;
+    end else begin
+      tmpsum = POrw.Sum;
+      qtyf = false;
+    end;
+    if (tmpsum<=0) then begin
+      goto L44PastePOInFEVI;
+    end;
+    ClearRow(FEVIp,FEVIrw,1);
+    FEVIrw.VIRow = i;
+    FEVIrw.Item = POrw.ArtCode;
+    FEVIrw.AccNumber = VEr.AccCost;
+    
+    if (VITRec.TransferItems!=0) then begin
+      GetPurchaseControlAcc("",CostAccRec.ItemGroupAccounts,POrw.ArtCode,ARAccRec,VEr.AccCost,tstr);
+      FEVIrw.AccNumber = tstr;
+    end;
+    if (VITRec.TransferItems==2) then begin
+      if (nonblank(POrw.CostAcc)) then begin
+        FEVIrw.AccNumber = POrw.CostAcc;
+      end;  
+    end;        
+    if (GetAccName(FEVIrw.AccNumber,tstr,60)) then begin end;
+    FEVIrw.Comment = tstr;
+    FEVIrw.VATCode = POrw.VATCode;
+    if (qtyf) then begin
+      FEVIrw.qty = tmpsum*POrw.Quant/POrw.Sum;
+    end else begin
+      FEVIrw.qty = POrw.Quant;      
+    end;       
+    CalcSum(FEVIrw.qty,POrw.Price,POrw.PriceFactor,POrw.vRebate,p,0); 
+    FEVIrw.Sum = p;
+    FEVIp.PayVal = FEVIp.PayVal + FEVIrw.Sum;
+    AddVATBase(VATr,FEVIrw.VATCode,FEVIrw.qty,blankval,vatcnt,0,0);
+    if (FEVIrw.Sum!=0) then begin
+      MatRowPut(FEVIp,fevirow,FEVIrw);    
+    end;
+    totsum = totsum + POrw.Sum;
+    if (POp.InclVAT==0) then begin
+      totsum = totsum + FindVAT(POrw.VATCode,POrw.Sum,0,POp.NoTAXonVAT);
+    end;
+    fevirow = fevirow + 1;
+L44PastePOInFEVI:;    
+  end;
+  CalcVATBaseVAT(VATr,0,0,vatcnt,tmpsum,p);
+//  FEVIp.VATVal = tmpsum;
+  FEVICalcVals(FEVIp);
+  FEVIp.PayVal = FEVIp.PayVal + FEVIp.CalcVATVal;
+  FEVIp.PayVal = Round(FEVIp.PayVal,DefaultRoundMode);
+  FEVISumup(FEVIp,p);
+  if (p!=0) then begin
+    BlockLoad(ARAccRec);
+    ClearRow(FEVIp,FEVIrw,1);
+    FEVIrw.AccNumber = ARAccRec.RndAcc;
+    if (GetAccName(FEVIrw.AccNumber,tstr,60)) then begin end;
+    FEVIrw.Comment = tstr;
+    if (p!=0) then begin
+      FEVIrw.Sum = -p;
+      FEVIrw.VATCode = "";
+      MatRowPut(FEVIp,fevirow,FEVIrw);
+    end;
+  end;  
+LPastePOInFEVI:; 
+  if (FEVIp.PayVal==0) then begin
+    FEVIp.PayVal = blankval;
+  end; 
+  RETURN;
+END;
+
+procedure PasteOPRowInFEVI(var record FEVIVc FEVIp,row OPVc OPrw,Date td)
+BEGIN
+  record CUVc VEr;
+  val sum;
+  string 255 vewarn;
+  
+  sum = OPrw.RecVal - GetFEVISum(OPrw.PrepayNr,FEVIp.SerNr);  
+  if (sum<=0) then begin
+    goto LPasteOPRowInFEVI;
+  end;
+  FEVIp.VECode = OPrw.VECode;
+  FEVIVc_PasteVECode(FEVIp,vewarn,OPrw.VATCode);  
+  FEVIp.CurncyCode = OPrw.RecCurncy;
+  FEVIp.TransDate = td;
+  FEVIp.VIInvDate = td;
+  FEVIp.VITransDate = td;
+  FEVIp.PrepaymentNr = OPrw.PrepayNr;
+  FEVIp.PayVal = sum; 
+  FEVIp.VATVal = OPrw.VATVal; 
+LPasteOPRowInFEVI:;  
+  RETURN;
+END;
+*/
+
+function val GetFEVISum(LongInt prepnr,LongInt FEVInr)
+BEGIN
+  val res;
+  record FEVIVc FEVIr;
+  row FEVIVc FEVIrw;
+  Integer i,rwcnt;
+  Boolean TrHs,testf;
+  
+  TrHs = true;
+  FEVIr.PrepaymentNr = prepnr;
+  while (LoopKey("PrepaymentNr",FEVIr,1,TrHs)) begin
+    if (FEVIr.PrepaymentNr!=prepnr) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (FEVIr.SerNr==FEVInr) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        res = res + FEVIr.PayVal;
+      end;
+    end;
+  end;  
+  GetFEVISum = res;
+  RETURN;
+END;
+
+function Boolean FEVICanbeCreated(record POVc POr)
+BEGIN
+  Boolean res;
+  row POVc POrw;
+  Integer i,rwcnt;
+  record VITBlock VITRec;
+
+  res = true;
+  BlockLoad(VITRec);
+  if (VITRec.TransferItems==0) then begin
+//    goto LFEVICanbeCreated;
+  end;
+  rwcnt = MatRowCnt(POr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POr,i,POrw);
+    if (POrw.Shipd2>POrw.Invd) then begin
+      res = false;
+      goto LFEVICanbeCreated;
+    end;
+  end;
+LFEVICanbeCreated:;
+  FEVICanbeCreated = res;
+  RETURN;
+END;
+
+global
+function LongInt PasteOPInFEVI(var record FEVIVc FEVIp,record OPVc OPr,Integer rownr)
+BEGIN
+  LongInt res;
+  row OPVc OPrw;
+  record POVc POr;
+  record FEVIVc lFEVIr;
+  val sum;
+  Boolean testf;
+  
+  res = 0;
+  MatRowGet(OPr,rownr,OPrw);
+  RecordNew(FEVIp);
+  if (OPrw.OrderNr>0) then begin
+    lFEVIr.PrepaymentNr = OPrw.PrepayNr;
+    lFEVIr.OPNr = OPr.SerNr;
+    if (ReadFirstKey("PrepaymentNr",lFEVIr,2,true)==false) then begin
+      POr.SerNr = OPrw.OrderNr;
+      if (ReadFirstMain(POr,1,true)) then begin
+        testf = true;
+        if (POr.InvFlag==0) then begin
+          if (FEVICanbeCreated(POr)==false) then begin
+            testf = false;
+            res = 2182;
+          end;
+        end;
+        if (testf) then begin
+          sum = GetFEVISum(OPrw.PrepayNr,FEVIp.SerNr);  
+          if ((sum+OPrw.RecVal)>POr.Sum4) then begin
+          end else begin
+            PastePOInFEVI(FEVIp,POr,OPrw.PrepayNr,OPrw.RecVal,OPr.TransDate,OPr.SerNr);
+          end;
+        end;
+      end else begin
+        res = 1;
+      end;
+    end else begin
+      res = 1;
+    end;
+  end else begin
+  //not allowed at all
+//    PasteOPRowInFEVI(FEVIp,OPrw,OPr.TransDate,OPr.SerNr);
+  end;
+  if (FEVIp.PayVal==0) then begin
+    res = 1;
+  end;
+  PasteOPInFEVI = res;
+  return;
+end;
+
+procedure CopyHeaderPOToVATVI(record POVc POr,record OPVc OPr,row OPVc selectedOPrw,LongInt oprow,var record VATVIVc VATVIr)
+begin
+  Date blankd;
+  
+  VATVIr.TransDate = blankd;
+  VATVIr.VINr = -1;
+  VATVIr.PONr = POr.SerNr;
+  VATVIr.OPNr = OPr.SerNr;
+  VATVIr.OPRow = oprow;
+  VATVIr.PrepayNr = selectedOPrw.PrepayNr;
+  VATVIr.CurncyCode = selectedOPrw.RecCurncy;
+  VATVIr.VIInvDate = blankd;
+  VATVIr.VIRegDate = blankd;
+  VATVIr.VIDueDate = blankd;
+  VATVIr.VIRebDate = blankd;
+  VATVIr.VITransDate = blankd;
+  VATVIr.TransDate = OPr.TransDate;
+  VATVIr.InvoiceNr = "";
+  VATVIr.RefStr = "";
+  VATVIr.VECode = POr.VECode;
+  VATVIr.VEName = POr.Addr0;
+  VATVIr.Sign = "";
+  VATVIr.OKPersons = "";
+  VATVIr.Comment = POr.Comment;
+  VATVIr.Objects = POr.Objects;
+  VATVIr.LangCode = POr.LangCode;
+  VATVIr.SalesGroup = POr.SalesGroup;
+  VATVIr.SalesMan = POr.SalesMan;
+  VATVIr.PayVal = selectedOPrw.PInvVal;
+  return;
+end;
+
+function val GetVATPOSum(LongInt ponr,LongInt vatvinr,Integer ordrow,Boolean negf)
+begin
+  val res;
+  record VATVIVc VATVIr;
+  row VATVIVc VATVIrw;
+  Integer i,rwcnt;
+  Boolean TrHs,testf;
+  
+  TrHs = true;
+  VATVIr.PONr = ponr;
+  while (LoopKey("PONr",VATVIr,1,TrHs)) begin
+    if (VATVIr.PONr!=ponr) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (VATVIr.SerNr==vatvinr) then begin
+        testf = false;
+      end;
+      if (VATVIr.Invalid!=0) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(VATVIr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VATVIr,i,VATVIrw);
+          if (VATVIrw.OrdRow==ordrow) then begin
+            if (negf) then begin
+            end else begin
+              if (VATVIrw.Sum>0) then begin
+                res = res + VATVIrw.Sum;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;  
+LGetVATPOSum:;  
+  GetVATPOSum = res;
+  return;
+end;
+
+function val GetVATVISum(LongInt OPNr)
+begin
+  val res;
+  record VATVIVc VATVIr;
+  Boolean TrHs,testf;
+  
+  TrHs = true;
+  VATVIr.OPNr = OPNr;
+  while (LoopKey("OPNr",VATVIr,1,TrHs)) begin
+    if (VATVIr.OPNr!=OPNr) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (VATVIr.Invalid!=0) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        res = res + VATVIr.PayVal;
+      end;
+    end;
+  end;  
+LGetVATVISum:;  
+  GetVATVISum = res;
+  return;
+end;
+
+procedure PastePORowToVATVI(record POVc POr,var record VATVIVc VATVIr,Integer porownr,record OPVc OPr,row OPVc selectedOPrw)
+begin
+  row POVc POrw;
+  row VATVIVc VATVIrw;
+  Integer rwcnt;
+  val qty,t,sum;
+  Boolean testf;
+
+  rwcnt = MatRowCnt(POr);
+  if (porownr<rwcnt) then begin
+    MatRowGet(POr,porownr,POrw);
+    testf = true;
+    switch (POrw.stp) begin     
+      case 1:
+        if (selectedOPrw.PInvVal>0) then begin
+          qty = POrw.Quant;
+          sum = GetVATPOSum(POr.SerNr,VATVIr.SerNr,porownr,false);
+          sum = selectedOPrw.PInvVal - selectedOPrw.VATVal - sum;
+          if (sum<=0) then begin
+            testf = false;
+          end;
+          sum = sum + selectedOPrw.VATVal;
+        end else begin
+          qty = POrw.Quant;
+          sum = GetVATVISum(OPr.SerNr);
+          sum = -sum + selectedOPrw.PInvVal;
+          if (sum>=0) then begin
+            testf = false;
+          end;
+        end;
+      otherwise    
+        testf = false;
+    end;
+    if (testf) then begin
+      ClearRow(VATVIr,VATVIrw,POrw.stp);
+      VATVIrw.stp = POrw.stp;
+      VATVIrw.ovst = 0;
+      VATVIrw.Objects = POrw.Objects;
+      VATVIrw.Comment = POrw.Comment;
+      VATVIrw.qty = qty;
+      POrw.Price = (POrw.Price*sum)/POr.Sum4;
+      CalcSum(VATVIrw.qty,POrw.Price,POrw.PriceFactor,POrw.vRebate,t,0);
+      VATVIrw.Sum = t;
+      VATVIrw.Item = POrw.ArtCode;
+      VATVIrw.Comment = POrw.Spec;
+      VATVIrw.VATCode = POrw.VATCode;
+      VATVIrw.OrdRow = porownr;
+      MatRowPut(VATVIr,MatRowCnt(VATVIr),VATVIrw);
+    end;
+  end;
+  VATVICalcVals(VATVIr);
+  return;
+end;
+
+procedure PasteOPRowToVATVI(record OPVc OPr,row OPVc selectedOPrw,Integer oprownr,var record VATVIVc VATVIr)
+begin
+  record CUVc VEr;
+  row VATVIVc VATVIrw;
+  
+  VEr.Code = selectedOPrw.VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    VATVIr.VECode = VEr.Code;
+    VATVIr.VIInvDate = OPr.TransDate;
+    VATVIr.TransDate = OPr.TransDate;
+    VATVIr.PONr = -1;
+    VATVIr.VINr = -1;
+    VATVIr.OPNr = OPr.SerNr;
+    VATVIr.OPRow = oprownr;
+    VATVIr.PrepayNr = selectedOPrw.PrepayNr;
+  end;
+  return;
+end;
+
+procedure PasteOPToVATVI(record OPVc OPr,row OPVc selectedOPrw,LongInt oprownr,var record VATVIVc VATVIr)
+begin  
+  Integer i,rwcnt;
+  Integer vati;
+  record POVc POr;  
+  Boolean orfound;
+  
+  if (selectedOPrw.OrderNr>0) then begin
+    POr.SerNr = selectedOPrw.OrderNr;
+    if (ReadFIrstMain(POr,1,true)) then begin
+      CopyHeaderPOToVATVI(POr,OPr,selectedOPrw,oprownr,VATVIr);
+      rwcnt = MatRowCnt(POr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        PastePORowToVATVI(POr,VATVIr,i,OPr,selectedOPrw);
+      end;
+      VATVISumup(VATVIr);
+      orfound = true;
+    end;
+  end;
+  if (orfound==false) then begin
+    PasteOPRowToVATVI(OPr,selectedOPrw,oprownr,VATVIr);
+  end;
+  return;
+end;
+
+global
+function Integer CreateVATVIFromOP(record OPVc OPr,Integer rownr,var record VATVIVc VATVIr)
+begin
+  Integer res;
+  row OPVc OPrw;  
+  
+  RecordNew(VATVIr);
+  MatRowGet(OPr,rownr,OPrw);
+  res = 20938;
+  if (OPrw.PrepayNr>0) then begin
+    PasteOPToVATVI(OPr,OPrw,rownr,VATVIr);
+    if (MatRowCnt(VATVIr)>0) then begin
+      res = 0;
+    end else begin
+      res = 22091;
+    end;
+  end else begin
+    res = 22092;
+  end;
+  CreateVATVIFromOP = res;
+  return;
+end;
+
+global
+procedure OPVc_PasteTransDate(var record OPVc OPp)
+BEGIN
+  Integer i,rwcnt;
+  row OPVc OPrw;
+  val fr,to1,to2,br1,br2;
+  
+  if (blankdate(OPp.TransDate)) then begin
+    OPp.TransDate = OPp.PayDate;
+  end;
+  
+  rwcnt = MatRowCnt(OPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPp,i,OPrw);
+    GetFullCurncyRate(OPrw.RecCurncy,OPp.TransDate,fr,to1,to2,br1,br2); 
+    if (OtherExchangeRate(OPrw.FrRateBankVal,OPrw.ToRateB1BankVal,OPrw.ToRateB2BankVal,OPrw.BaseRate1BankVal,OPrw.BaseRate2BankVal,fr,to1,to2,br1,br2)) then begin 
+      GetFullCurncyRate(OPrw.RecCurncy,OPp.TransDate,OPrw.FrRateBankVal,OPrw.ToRateB1BankVal,OPrw.ToRateB2BankVal,OPrw.BaseRate1BankVal,OPrw.BaseRate2BankVal); 
+      OPrw.B1BankVal = blankval;
+      OPrw.B2BankVal = blankval;
+      MatRowPut(OPp,i,OPrw);
+      OPVc_PasteBankCurncy(OPp,i);
+    end;
+  end;
+  
+  if (DateLocked(OPp.TransDate,"OPVc")) then begin
+    MessageBox(1046,"");
+  end else begin
+    if (DateWarned(OPp.TransDate,"OPVc")) then begin
+      MessageBox(1045,"");
+    end;
+  end;    
+  
+  if (WarnOldRecords(OPp.TransDate,"OPVc",OPp.SerNr)) then begin
+    MessageBox(2020,"");
+  end;
+  RETURN;
+END;
+
+global
+updating function Integer CreateMailFromOPD(record OPVc OPr,var record MailVc Mailr,var string warning,string vecode,string pdfform)
+begin
+  Integer res;
+  record MailVc Mail2r;
+  record LTxtVc LTxtr;
+  record CUVc VEr;
+  record CUVc ContactCUr;
+  row OPVc OPrw;
+  row MailVc MArw;
+  Integer i,rwcnt;
+  string 255 mailboxnr,tstr;
+  row MailTextVc MTrw;
+  Integer IgnoreRecordDetails;
+  string 255 docname,fname;
+  transaction string 255 gCreateMailFromOPDVECode;
+  
+  res = 0;
+  if (ReadFirstMain(OPr,0,true)) then begin end;  
+  FindUserMailboxName(CurrentUser,mailboxnr,tstr);
+  if (blank(tstr)) then begin
+    res = 2289;
+    warning = CurrentUser;
+    goto LCreateMailFromOPD;
+  end;  
+  MArw.RowTyp = 1;
+  MArw.AddrCode = tstr;
+  MatRowPut(Mailr,0,MArw);
+  gCreateMailFromOPDVECode = vecode;
+  VEr.Code = vecode;
+  if (ReadFirstMain(VEr,1,true)) then begin end;
+  MArw.RowTyp = 0;
+  MArw.AddrCode = VEr.eMail;
+  if (blank(MArw.AddrCode)) then begin
+    res = 2289;
+    warning = VEr.Code;
+    goto LCreateMailFromOPD;
+  end;
+  MatRowPut(Mailr,1,MArw);
+  MailTextRow2("OPVc","",VEr.LangCode,OPr.LangCode,MTrw,IgnoreRecordDetails);
+  Mailr.Header = MTrw.Header;
+  Mailr.Header = Mailr.Header & USetStr(1751);
+  Mailr.Header = Mailr.Header & OPr.SerNr;
+  
+  LTxtr.Code = MTrw.FirstTxt;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    Mailr.HtmlFlag = LTxtr.HtmlFlag;
+  end;
+  if (Mailr.HtmlFlag==0) then begin
+    LTxtr.Code = MTrw.LastTxt;
+    if (ReadFirstMain(LTxtr,1,true)) then begin
+      Mailr.HtmlFlag = LTxtr.HtmlFlag;
+    end;
+  end;
+  
+  Mailr.TransDate = CurrentDate;
+  Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+  if (RecordStore(Mailr,false)) then begin 
+    CreateRecordLink(Mailr,CurrentCompany,OPr,CurrentCompany);  
+    CreateRecordLink(OPr,CurrentCompany,Mailr,CurrentCompany);  
+  end;
+  RecordCopy(Mail2r,Mailr);
+  
+  LTxtr.Code = MTrw.FirstTxt;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    if (Mailr.HtmlFlag==0) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        tstr = LineTextGet(LTxtr,i);
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+      end;    
+      AddCRToText(Mailr);
+    end else begin
+      if (LTxtr.HtmlFlag==0) then begin
+        AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+      end else begin
+        AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+      end;
+    end;
+  end;
+  LTxtr.Code = MTrw.LastTxt;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    if (Mailr.HtmlFlag==0) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        tstr = LineTextGet(LTxtr,i);
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+      end;    
+      AddCRToText(Mailr);
+    end else begin
+      if (LTxtr.HtmlFlag==0) then begin
+        AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+      end else begin
+        AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+      end;
+    end;
+  end;
+
+  RecordUpdate(Mail2r,Mailr,false);
+
+  docname = pdfform;
+  if (blank(docname)) then begin
+    docname = "OPDForm";
+  end;
+  fname = "tmp/" & USetStr(1751) & OPr.SerNr & ".pdf";
+  SetDocumentFilename(fname);
+  SetMedia(mtPdf);
+  PrintDocument(OPr,docname,false);
+  if (FileExists(fname)) then begin
+    RecordLinkFile(fname,0,Mailr,CurrentCompany);
+  end;
+  SetDocumentFilename("");
+  Delete_File(fname);
+
+LCreateMailFromOPD:;  
+  CreateMailFromOPD = res;
+  return;
+end;

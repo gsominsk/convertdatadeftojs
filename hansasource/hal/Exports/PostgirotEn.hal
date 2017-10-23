@@ -1,0 +1,361 @@
+procedure FindTypeOfAccount(string accno,string vecode,var integer acctype)
+begin
+  record CUVc VEr;
+  VEr.Code = vecode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    if (accno == VEr.BankAccount) then begin
+      acctype = 1;
+    end;
+    if (accno == VEr.Bank) then begin
+      acctype = 2;
+    end;
+  end;
+end;
+
+procedure PlusGiroBegin(string prod,string bankacc)
+begin
+  record CYBlock CYr;
+  string 255 tstr;
+
+  BlockLoad(CYr);    
+  ExportPadString("0",1,"",false);  
+  ExportPadString(CYr.BankCode,5," ",false); //customerno at PlusGirot
+  tstr = DateToString(CurrentDate,"YYMMDD");                    
+  ExportPadString(tstr,6,"",false);
+  ExportPadString(prod,1,"",false); //production no
+  ExportPadString(" ",87," ",false);
+   ExportPadString(chr(13) & chr(10),2,"",false);  
+  ExportPadString("2",1,"",false);
+  ExportPadString(CYr.BankCode,5," ",false); //customerno at PlusGirot
+  tstr = bankacc;
+  if (blank(tstr)) then begin
+    tstr = CYr.Bank2;
+  end;
+  ExportPadString(StripNonDigits(tstr),10," ",true);
+  ExportPadString("",2," ",false);
+  ExportPadString(UpperCase(ConvertSpecStr(CYr.CompName,"NOSCANDCHAR")),27," ",false);  
+  ExportPadString(CYr.Phone,27," ",false);  
+  ExportPadString("SEK", 3, "",false);
+  ExportPadString("SEK", 3, "",false);
+  ExportPadString("",22," ",false);
+  ExportPadString(chr(13) & chr(10),2,"",false);  
+  return;
+end;
+
+procedure PlusGiro4(string VECode) 
+begin
+  record CUVc VEr;
+  VEr.Code = VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    ExportPadString("3",1,"",false);
+    ExportPadString("4",1,"",false);
+    ExportPadString("",5," ",false);
+    //ExportPadString(VEr.Code,10," ",false);
+    ExportPadString(VEr.Code,10," ",true);
+    ExportPadString("",5," ",false);
+    ExportPadString(UpperCase(ConvertSpecStr(VEr.Name,"NOSCANDCHAR")),33," ",false)
+    ExportPadString(StripNonDigits(VEr.BankAccount),16,"",true);
+    ExportPadString("",29," ",false);
+    ExportPadString(chr(13) & chr(10),2,"",false);  
+  end;
+return;
+end;
+
+procedure PlusGiro2(record OPVc OPr,record RcVc RepSpec, string Crncy,var val totsum)  //Payment record
+begin
+ record CYBlock CYr;
+ record VIVc VIr;
+ row OPVc OPrw;
+// record CUVc VEr;
+ Integer i,rwcnt;
+ Integer invtype;
+ Boolean testf;
+ val paytype;
+ string 255 tstr,bankacc;
+ integer acctype;
+ Date thedat;
+
+ BlockLoad(CYr);
+ rwcnt = MatRowCnt(OPr);
+  for (i = 0 ; i<rwcnt ;i=i+1) begin
+    MatRowGet(OPr,i,OPrw);
+    if (OPrw.PInvCurncy== "SEK") or (OPrw.PInvCurncy== "EUR") or (blank(OPrw.PInvCurncy)) then begin
+      testf = true;
+      if (OPrw.ovst!=0) then begin testf = false; end;
+      if (OPrw.stp==5) then begin testf = false; end;
+//      if (blank(OPrw.BankAcc)) then begin testf = false; end;
+      VIr.SerNr = OPrw.VISerNr;
+      if (ReadFirstMain(VIr,1,true)==false) then begin testf = false; end;
+      if (VIr.Invalid<>0) then begin testf = false; end;
+      invtype = VIr.InvType;
+      if (invtype==kInvoiceTypeNormalSpecialSales) then begin invtype = kInvoiceTypeNormal; end;
+      if (invtype==kInvoiceTypeCreditSpecialSales) then begin invtype = kInvoiceTypeCredit; end;
+      if ((invtype<kInvoiceTypeNormal) or (invtype>kInvoiceTypeCredit)) then begin
+        invtype = kInvoiceTypeNormal;
+      end;
+      if ((invtype==kInvoiceTypeNormal) and (OPrw.RecVal<0)) then begin //VIr.PayVal<0)) then begin
+        invtype = kInvoiceTypeCredit; /* temporarily change it to a credit invoice (UGLY!) */
+      end;
+      if (RepSpec.flags[0]==0) then begin
+        thedat = OPr.PayDate;
+      end else begin
+        thedat = VIr.DueDate;
+      end;
+      if (thedat<CurrentDate) then begin
+        thedat = CurrentDate;
+      end;
+      if (testf==true) then begin
+        if (invtype == 1) then begin
+          FindTypeOfAccount(OPrw.BankAcc,OPrw.VECode,acctype);
+          if (acctype == 1) then begin
+            PlusGiro4(OPrw.VECode);  //receiver record
+            ExportPadString("5",1,"",false);
+            ExportPadString("4",1,"",false); //else assume bank account
+            bankacc = OPrw.BankAcc;
+            paytype = 4;
+          end;
+          if (acctype == 2) then begin
+            ExportPadString("5",1,"",false);
+            ExportPadString("3",1,"",false);  //if PlusGiro account
+            bankacc = OPrw.BankAcc;
+            paytype = 3;
+          end;
+          ExportPadString(" ",1," ",false);
+          if (paytype == 4) then begin
+            ExportPadString("SEK",3,"",false);
+          end;
+          if (paytype == 3) then begin
+            if nonblank(OPrw.PInvCurncy) then begin
+              ExportPadString(OPrw.PInvCurncy,3,"",false);
+            end else begin
+              ExportPadString(Crncy,3,"",false);         
+            end;
+          end;  
+          if (thedat == CurrentDate) then begin //Same day execution
+            ExportPadString("J",1,"",false);
+          end else begin
+            ExportPadString("N",1,"",false);
+          end;        
+          if (paytype == 3) then begin
+            ExportPadString(StripNonDigits(bankacc),10," ",true);
+          end;
+          if (paytype == 4) then begin
+            ExportPadString(OPrw.VECode,10," ",true);
+          end;
+          if (nonblank(VIr.RefStr)) then begin
+            ExportPadString(VIr.RefStr,27," ",false);
+          end else begin
+            ExportPadString(VIr.InvoiceNr,27," ",false);
+          end;
+          //FIX stop 050601
+          //ExportPadString(StripNonDigits(bankacc),10," ",true);
+          //ExportPadString(VIr.InvoiceNr,27," ",false);
+          if (OPrw.RecVal <> 0) then begin
+            ExportPadString(ValToString(OPrw.RecVal,M4Val,"","",0),11,"0",true);//summan
+          end; 
+          tstr = DateToString(thedat,"YYMMDD");                    
+          ExportPadString(tstr,6,"",false);
+          ExportPadString("",30," ",false);
+          ExportPadString(OPr.SerNr,8,"",false);
+          ExportPadString("",1," ",false);
+          ExportPadString(chr(13) & chr(10),2,"",false);  
+          totsum = totsum + OPrw.RecVal;
+        end; //invtype 1
+      end; 
+      if (invtype == 3) then begin
+        FindTypeOfAccount(OPrw.BankAcc,OPrw.VECode,acctype);
+        if (acctype == 1) then begin
+          bankacc = OPrw.BankAcc;
+          paytype = 4;
+        end;
+        if (acctype == 2) then begin
+          bankacc = OPrw.BankAcc;
+          paytype = 3;
+        end;        //is it to PlusGiro account or not
+        if (paytype == 3) then begin  // credit to PlusGiro
+          ExportPadString("6",1,"",false);
+          ExportPadString("3",1,"",false);
+          ExportPadString("",1, " ",false);
+          if nonblank(OPrw.PInvCurncy) then begin
+            ExportPadString(OPrw.PInvCurncy,3,"",false);
+          end else begin
+            ExportPadString(Crncy,3,"",false);         
+          end;
+          ExportPadString("",1, " ",false);
+          ExportPadString(StripNonDigits(bankacc),10," ",true);
+          ExportPadString(VIr.InvoiceNr,27," ",false);
+          if (OPrw.RecVal <> 0) then begin
+            ExportPadString(ValToString(OPrw.RecVal*-1,M4Val,"","",0),11,"0",true);
+          end; 
+          tstr = DateToString(thedat,"YYMMDD");                    
+          ExportPadString(tstr,6,"",false);
+          ExportPadString(tstr,6,"",false);
+          ExportPadString("",33," ",false);
+          ExportPadString(chr(13) & chr(10),2,"",false);  
+          totsum = totsum + OPrw.RecVal;
+        end; //paytype 3
+        if (paytype == 4) then begin
+          PlusGiro4(OPrw.VECode);  //receiver record
+          ExportPadString("6",1,"",false);
+          ExportPadString("4",1,"",false);
+          ExportPadString("",1, " ",false);
+          ExportPadString("SEK",3,"",false);         
+          ExportPadString("",1, " ",false);
+          ExportPadString(OPrw.VECode,10," ",true); // VEr.Code
+          ExportPadString(VIr.InvoiceNr,27," ",false);
+          if (OPrw.RecVal <> 0) then begin
+            ExportPadString(ValToString(OPrw.RecVal*-1,M4Val,"","",0),11,"0",true);
+          end; 
+          tstr = DateToString(thedat,"YYMMDD");                    
+          ExportPadString(tstr,6,"",false);
+          ExportPadString(tstr,6,"",false);
+          ExportPadString("",33," ",false);
+          ExportPadString(chr(13) & chr(10),2,"",false);  
+          totsum = totsum + OPrw.RecVal;
+        end; //paytype 4
+      end;  //invtype 3
+    end;
+  end;
+ return;
+end;
+
+procedure PlusGiroEnd(val totsum,string bankacc)
+begin
+  record CYBlock CYr;
+  string 255 tstr;
+
+  BlockLoad(CYr);
+  ExportPadString("7",1,"",false);
+  ExportPadString(CYr.BankCode,5," ",false); //customerno at PlusGirot
+  tstr = bankacc;
+  if (blank(tstr)) then begin
+    tstr = CYr.Bank2;
+  end;
+  ExportPadString(StripNonDigits(tstr),10," ",true);
+  ExportPadString("",2," ",false);
+  ExportPadString(ValToString(totsum,M4Val,"","",0),13,"0",true);
+  ExportPadString("",32," ",false);
+  ExportPadString("SEK",3,"",false);
+  ExportPadString("SEK",3,"",false);
+  ExportPadString("",31," ",false);
+  ExportPadString(chr(13) & chr(10),2,"",false);  
+return;
+end;
+
+procedure BankExpPlusGiroSwe(record OPVc OPr,record RcVc RepSpec,var val totsum)
+begin
+   string 255 Crncy;
+   if (OPr.PayCurCode == "EUR") or (OPr.PayCurCode == "SEK") then begin
+       Crncy = OPr.PayCurCode;
+   end;
+   if (blank(OPr.PayCurCode)) then begin
+      Crncy = "SEK";
+   end;
+   if (nonblank(Crncy)) then begin
+     PlusGiro2(OPr,RepSpec,Crncy,totsum);  //Payment record
+   end; 
+ return;
+end;
+
+
+global
+updating procedure PlusGirot(record RcVc RepSpec)
+begin
+  record BankFileBlock bfr;
+  record OPVc OPr;
+  record WeekVc WKr; /* For storing what Records should be updated */
+  row WeekVc WKrw;
+  Integer weekrw,weekrwcnt,i;
+  string 20 ckey,prod;
+  string 100 bankacc;
+  LongInt afr,ato;
+  Integer keys;
+  Integer NrOfExports;
+  val PGSum;
+  Boolean foundf,testf;
+  Boolean storedf;
+  LongInt betcount,rowsernr,appsernr;
+  Boolean firstf;
+  val totsum;  //New
+  
+  BlockLoad(bfr);
+  firstf = true;
+  afr = FirstInRange(RepSpec.f1,20);
+  ato = LastInRange(RepSpec.f1,20);
+  if (nonblank(RepSpec.Stext)) then begin
+    prod = RepSpec.Stext;
+  end else begin
+    prod = "1";
+  end;
+
+/*  if (SetExportCodepage("CP1252")==false) then begin
+    LogText(0,"Failed to set codepage CP1252");
+  end;
+  */
+  PGSum = 0;
+  NrOfExports = 0;
+  weekrw = 0;
+  foundf = true; 
+  if (RepSpec.OnlyUnprntd==0) then begin
+    OPr.SentFlag = 0;
+    OPr.SerNr = afr;
+    keys = 2;
+    ckey = "SentFlag";
+  end else begin
+    OPr.SerNr = afr;
+    keys = 1;
+    ckey = "SerNr";
+  end;
+  while (LoopKey(ckey,OPr,keys,foundf)) begin
+    if (RepSpec.OnlyUnprntd==0) then begin
+      if (OPr.SentFlag==1) then begin
+        foundf = false;
+      end;
+    end;
+    if (ato<>-1) then begin
+      if (OPr.SerNr>ato) then begin
+        foundf = false;
+      end;
+    end;
+    testf = true;
+    if (RepSpec.OnlyUnprntd==0) then begin
+      if (OPr.DoneFlag==1) then begin 
+        testf = false;
+      end;
+    end;
+    if (OPr.OrderedFlag==0) then begin 
+      testf = false;
+    end;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (testf==true) then begin
+      if (blank(bankacc)) then begin
+        bankacc = OPr.BankAcc;
+      end;
+      if (firstf) then begin
+        PlusGiroBegin(prod,bankacc);
+      end;
+      BankExpPlusGiroSwe(OPr,RepSpec,totsum);
+      WKrw.Year = OPr.SerNr;
+      MatRowPut(WKr,weekrw,WKrw);
+      weekrw = weekrw + 1;
+      firstf = false;
+    end;
+  end;
+  
+  if (firstf==false) then begin
+    PlusGiroEnd(totsum,bankacc);
+    weekrwcnt = MatRowCnt(WKr);
+    for (i=0;i<weekrwcnt;i=i+1) begin
+      MatRowGet(WKr,i,WKrw);
+      OPr.SerNr = WKrw.Year;
+      if (ReadFirstMain(OPr,1,true)) then begin
+        OPr.SentFlag = 1;
+        storedf = RecordStore(OPr,true);
+      end;
+    end;
+  end;
+  return;
+end;
+

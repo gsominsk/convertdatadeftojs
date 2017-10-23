@@ -1,0 +1,506 @@
+external function roundmode DefaultRoundMode();
+external function roundmode SetRoundModeD(Integer);
+external function Boolean GetBudgetCostPrice(string,string,string,string,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function LongInt DateDiff(Date,Date);
+external procedure RoundRowSum(string,string,string,var val);
+
+global
+procedure SMSumup(var record SMVc SMp)
+BEGIN
+  Integer i,rwcnt;
+  row SMVc SMrw;
+  
+  SMp.DSum = blankval;
+  SMp.CSum = blankval;
+  rwcnt = MatRowCnt(SMp);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(SMp,i,SMrw);
+    if (SMrw.DebVal!=0) then begin
+      SMp.DSum = SMrw.DebVal + SMp.DSum;
+    end;  
+    if (SMrw.CredVal!=0) then begin
+      SMp.CSum = SMp.CSum - SMrw.CredVal;
+    end;  
+  end;
+  SMp.DiffVal = SMp.DSum + SMp.CSum;
+  RETURN;
+END;
+
+
+global
+function Boolean GetFirstPurchaseItem2(string ItemCode,string location,string vecode,var record PIVc PIp)
+BEGIN
+  Boolean res;
+  string 20 keystr;
+  Integer keys;
+
+  if (blank(vecode)) then begin
+    PIp.DefaultChoice = 1;
+    keys = 3;
+    keystr = "DefaultChoice";
+  end else begin
+    PIp.VECode = VECode;
+    keys = 3;
+    keystr = "MainKey";
+  end;  
+  PIp.ItemCode = ItemCode;
+  PIp.Location = location;
+  res = ReadFirstKey(keystr,PIp,keys,true);  
+  if (res==false) then begin
+    if (nonblank(location)) then begin
+      res = GetFirstPurchaseItem2(ItemCode,"",vecode,PIp);
+    end;
+  end;
+  GetFirstPurchaseItem2 = res;
+  RETURN;
+END;
+
+global
+function Boolean GetFirstPurchaseItem(string ItemCode,string location,string vecode,var record PIVc PIp)
+BEGIN
+  Boolean res;
+
+  PIp.ItemCode = ItemCode;
+  PIp.Location = location;
+  PIp.VECode = VECode;
+  res = ReadFirstMain(PIp,3,true);  
+  if (res==false) then begin
+    if (nonblank(location)) then begin
+      res = GetFirstPurchaseItem(ItemCode,"",vecode,PIp);
+    end;
+  end;
+  GetFirstPurchaseItem = res;
+  RETURN;
+END;
+
+procedure CalcFormVal(string formula,var val res)
+BEGIN
+  record TBPFormVc TBPFr;
+  
+
+  TBPFr.Code = formula;
+  if (ReadFirstMain(TBPFr,1,true)) then begin
+    res = res*TBPFr.Perc;
+    res = res/100;
+    res = res + TBPFr.Add1Val;
+    res = Round(res,SetRoundModeD(TBPFr.RndTo));
+    res = res + TBPFr.Add2Val;
+  end;
+  RETURN;
+END;
+
+procedure GetTBPLDefTimeClassFormulas(string timeclass,string itcode,var string pform,var string cform)
+BEGIN
+  record TBPLDefVc TBPLDefr;
+  row TBPLDefVc TBPLDefrw;
+  Integer i,rwcnt;
+
+  pform = "";
+  cform = "";
+  TBPLDefr.TimeClass = timeclass;
+  if (ReadFirstKey("TimeClass",TBPLDefr,1,true)) then begin
+    rwcnt = MatRowCnt(TBPLDefr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TBPLDefr,i,TBPLDefrw);
+      if (TBPLDefrw.ITCode==itcode) then begin
+        pform = TBPLDefrw.PriceFormula;
+        cform = TBPLDefrw.CostFormula;
+        goto LGetTBPL;
+      end;
+    end;  
+  end;
+LGetTBPL:;
+  RETURN;
+END;
+
+global
+function Boolean GetTimeClassPrice(string timeclass,string artcode,var val price,var val resv)
+BEGIN
+  Boolean res;
+  record INVc INr;
+  string 255 pform,cform;  
+
+  if (blank(timeclass)) then begin goto LGetTimeClassPrice; end;
+  if (blank(artcode)) then begin goto LGetTimeClassPrice; end;
+  INr.Code = artcode;
+  if (ReadFirstMain(INr,1,true)) then begin
+    GetTBPLDefTimeClassFormulas(timeclass,INr.Group,pform,cform);
+    if (price!=-1) then begin CalcFormVal(pform,price); end;
+    if (resv!=-1)  then begin CalcFormVal(cform,resv); end;
+    res = true;
+  end;
+LGetTimeClassPrice:;
+  GetTimeClassPrice = res;
+  return;
+END;
+
+global
+procedure BUQTSumup(var record BUQTVc BUQTp)
+BEGIN
+/*
+  row BUQTVc BUQTrw;
+  record INVc INr;
+  Integer i,rwcnt;
+  val tt,ot,mt,st;
+  Integer itemtyp;
+  
+  rwcnt = MatRowCnt(BUQTp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(BUQTp,i,BUQTrw);
+    if ((nonblank(BUQTrw.ArtCode)) and (BUQTrw.stp!=9)) then begin
+      itemtyp = BUQTrw.ItemType;
+      if (itemtyp==0) then begin
+        INr.Code = BUQTrw.ArtCode;
+        if (ReadFirstMain(INr,1,true)) then begin
+          if (INr.ItemMaterial!=0) then begin itemtyp = 5; end;
+        end;
+      end;
+      if (itemtyp==0) then begin
+        ot = ot + BUQTrw.Sum;
+      end;
+      if (itemtyp==1) then begin
+        st = st + BUQTrw.Sum;
+      end;
+      if (itemtyp==3) then begin
+        tt = tt + BUQTrw.Sum;
+      end;
+      if (itemtyp==5) then begin
+        mt = mt + BUQTrw.Sum;
+      end;
+    end;
+  end;
+  BUQTp.SumTime = tt;
+  BUQTp.SumOther = ot;
+  BUQTp.SumStocked = st;
+  BUQTp.SumMaterial = mt;
+  tt = tt + ot;
+  tt = tt + st;
+  tt = tt + mt;
+  BUQTp.TotSum = tt;
+*/  
+  RETURN;
+END;
+
+global
+procedure TBBUSumup(var record TBBUVc TBBUp)
+BEGIN
+  row TBBUVc TBBUrw;
+  record INVc INr;
+  Integer i,rwcnt;
+  val tt,ot,mt,st;
+  Integer itemtyp;
+  val subtotv,costv;
+  
+  rwcnt = MatRowCnt(TBBUp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TBBUp,i,TBBUrw);
+    if (TBBUrw.stp!=9) then begin
+      if ((nonblank(TBBUrw.ArtCode)) and (TBBUrw.stp!=9)) then begin
+        itemtyp = TBBUrw.ItemType;
+        if (itemtyp==0) then begin
+          INr.Code = TBBUrw.ArtCode;
+          if (ReadFirstMain(INr,1,true)) then begin
+            if (INr.ItemMaterial!=0) then begin itemtyp = 5; end;
+          end;
+        end;
+        if (itemtyp==0) then begin
+          ot = ot + TBBUrw.Sum;
+        end;
+        if (itemtyp==1) then begin
+          st = st + TBBUrw.Sum;
+        end;
+        if (itemtyp==2) then begin//structured
+          st = st + TBBUrw.Sum;
+        end;
+        if (itemtyp==3) then begin
+          tt = tt + TBBUrw.Sum;
+        end;
+        if (itemtyp==5) then begin
+          mt = mt + TBBUrw.Sum;
+        end;
+      end;
+      subtotv = subtotv + TBBUrw.Sum;
+      costv = costv + TBBUrw.Qty*TBBUrw.Cost;
+    end else begin
+      if (TBBUrw.Sum!=subtotv) or (TBBUrw.Cost!=costv) then begin
+        TBBUrw.Sum = subtotv;
+        TBBUrw.Cost = costv;
+        MatRowPut(TBBUp,i,TBBUrw);
+      end;
+      subtotv = blankval;
+      costv = blankval;
+    end;
+  end;
+  TBBUp.SumTime = tt;
+  TBBUp.SumOther = ot;
+  TBBUp.SumStocked = st;
+  TBBUp.SumMaterial = mt;
+  tt = tt + ot;
+  tt = tt + st;
+  tt = tt + mt;
+  TBBUp.TotSum = tt;
+  RETURN;
+END;
+
+global
+procedure FindCustBalance(string cust,Integer base,var val limit,var val balp,var val duep)
+begin
+  record ARVc ARr;
+  LongInt latedays;
+  Boolean found;
+  val rs;
+      
+  balp = BlankVal;
+  duep = BlankVal;
+  ARr.CustCode = cust;
+  found = true;
+  while (LoopKey("CustCode",ARr,1,found)) begin
+    if (found) then begin
+      if (ARr.CustCode<>cust) then begin found = false; end;
+    end;
+    if (found) then begin
+      rs = ARr.BookRVal;
+      balp = balp + rs;
+      latedays = DateDiff(ARr.DueDate,CurrentDate);
+      if (latedays<0) then begin
+        duep = duep + rs;
+      end;
+    end;
+  end;
+  if (base==0) then begin
+  end;
+  if (base==1) then begin
+    balp = duep;
+  end;
+  if (base==2) then begin
+    if (duep<>0) then begin
+      limit = 0.001;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure PUCalcPerc(val bas1,string prctxt,var val res)
+BEGIN
+  string 255 tstr;
+  val valv,t,bas;
+  
+  bas = bas1;
+  res = blankval;
+  tstr = prctxt;
+  if (nonblank(tstr)) then begin
+    if (CharacterMatch(tstr,"%",len(tstr))) then begin
+      tstr = Left(tstr,len(tstr)-1);
+      valv = StringToVal(tstr,M45Val);
+      t = bas*valv;
+      res = t/100;
+    end else begin
+      res = StringToVal(tstr,M45Val);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure CalculatePURowSum(val qtyp,val aupricep,string extras,var val costp,val shipcostp,
+                            val extra1,val extra2,val extra3,val extra4,val extra5,
+                            string customs,var val sump,Boolean backf,string curncycode,
+                            val frrat,val to1,val to2,val b1,val b2)
+BEGIN
+  val v,t,custom,extra;
+  val upricep,vat,t1;
+
+  upricep = aupricep;
+  if (backf==false) then begin
+    v = MulRateToBase1(curncycode,upricep,frrat,to1,to2,b1,b2,SetRoundModeD(5));
+    upricep = v;
+    t = v;
+    if (nonblank(extras)) then begin
+      PUCalcPerc(upricep,extras,extra);
+    end;
+    t = t + extra;
+    t = t + shipcostp;
+    t = t + extra1;
+    t = t + extra2;
+    t = t + extra3;
+    t = t + extra4;
+    t = t + extra5;
+    if (nonblank(customs)) then begin
+      if (HasLocalization("POL")) then begin
+        upricep = upricep + shipcostp;
+        upricep = Round(upricep,SetRoundModeD(0));
+      end;    
+      PUCalcPerc(upricep,customs,custom);
+    end;
+    t = t + custom;
+    sump = qtyp*t;
+    sump = Round(sump,DefaultRoundMode);
+  end else begin
+    if (nonblank(customs)) then begin
+      PUCalcPerc(sump,customs,custom);
+    end;
+    t = sump - custom;
+    t = sump - shipcostp;
+    t = sump - extra1;
+    t = sump - extra2;
+    t = sump - extra3;
+    t = sump - extra4;
+    t = sump - extra5;
+    if (nonblank(extras)) then begin
+      PUCalcPerc(t,extras,extra);
+    end;
+    t = t - extra;
+    costp = t/qtyp;
+    costp = costp + custom;
+    costp = costp + shipcostp;
+    costp = costp + extra1;
+    costp = costp + extra2;
+    costp = costp + extra3;
+    costp = costp + extra4;
+    costp = costp + extra5;
+    costp = costp + extra;
+    RoundRowSum(curncycode,"","",sump);// round row sum is for 2 and sump is M45Val but I think it should be 2
+  end;
+  RETURN;
+END;
+
+global
+procedure AddXSRow(var record XSVc XSr,string filename,string curncy,
+                   val frrate,val to1,val to2,val br1,val br2,
+                   string item,val qp,val gpp,val sump,Integer rownr)
+BEGIN
+  Integer rwcnt;
+  row XSVc XSrw;
+  
+  rwcnt = MatRowCnt(XSr);
+  ClearRow(XSr,XSrw,1);
+  XSrw.FromFileName = filename;
+  XSrw.xSerNr = 0;
+  XSrw.CurncyCode = curncy;
+  XSrw.FrRate = frrate;
+  XSrw.ToRateB1 = to1;
+  XSrw.ToRateB2 = to2;
+  XSrw.BaseRate1 = br1;
+  XSrw.BaseRate2 = br2;
+  XSrw.Item = item;
+  XSrw.Qty = qp;
+  XSrw.GP = gpp;
+  XSrw.Sum = sump;
+  XSrw.Row = rownr;
+  MatRowPut(XSr,rwcnt,XSrw);
+  RETURN;
+END;
+
+global
+procedure ClassTypef(string CType,string custclass,var boolean testf)
+//This function will allow multiple Classification types in specify
+//use form A,B,C
+begin
+  record CClassVc CClassr;
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer i,res,j,k,rwcnt;
+  string 60 tstr;
+  boolean commaf;
+ 
+  res = 0;
+  tstr="";
+  j=0;
+  k=1;
+  commaf = false;
+  
+  for(i=0;i<=LEN(CType);i=i+1) begin
+    if (CharacterMatch(CType,",",i)==true) then begin
+      k=i-1-j;
+      tstr=MID(CType,j,k);
+      ClearRow(SMr,SMrw,res);
+      SMrw.Objects=tstr;
+      MatRowPut(SMr,res,SMrw);
+      res=res+1;
+      j=k+j+1;
+      commaf = true;
+    end;
+    if (commaf) then begin
+      if (i==LEN(CType)) then begin
+        k=i-j;
+        tstr= MID(CType,j,k);
+        ClearRow(SMr,SMrw,res);
+        SMrw.Objects=tstr;
+        MatRowPut(SMr,res,SMrw);
+      end;
+    end else begin
+      ClearRow(SMr,SMrw,res);
+      SMrw.Objects=CType;
+      MatRowPut(SMr,res,SMrw);
+    end;
+  end;
+//loop over ALL classifications  
+  while (LoopMain(CClassr,1,true)) begin
+    if (SetInSet(CClassr.Code,custclass)==true) then begin
+      rwcnt=MatRowCnt(SMr);
+      for(i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SMr,i,SMrw);
+        if (CClassr.CType == SMrw.Objects) then begin
+          testf = true;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure ItemClassTypef(string CType,string itemclass,var boolean testf)
+begin
+  record DIVc DIr;
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer i,res,j,k,rwcnt;
+  string 60 tstr;
+  boolean commaf;
+ 
+  res = 0;
+  tstr="";
+  j=0;
+  k=1;
+  commaf = false;
+  
+  for(i=0;i<=LEN(CType);i=i+1) begin
+    if (CharacterMatch(CType,",",i)==true) then begin
+      k=i-1-j;
+      tstr=MID(CType,j,k);
+      ClearRow(SMr,SMrw,res);
+      SMrw.Objects=tstr;
+      MatRowPut(SMr,res,SMrw);
+      res=res+1;
+      j=k+j+1;
+      commaf = true;
+    end;
+    if (commaf) then begin
+      if (i==LEN(CType)) then begin
+        tstr= MID(CType,j,k);
+        ClearRow(SMr,SMrw,res);
+        SMrw.Objects=tstr;
+        MatRowPut(SMr,res,SMrw);
+      end;
+    end else begin
+      ClearRow(SMr,SMrw,res);
+      SMrw.Objects=CType;
+      MatRowPut(SMr,res,SMrw);
+    end;
+  end;
+  while (LoopMain(DIr,1,true)) begin
+    if (SetInSet(DIr.Code,itemclass)==true) then begin
+      rwcnt=MatRowCnt(SMr);
+      for(i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SMr,i,SMrw);
+        if (DIr.CType == SMrw.Objects) then begin
+          testf = true;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;

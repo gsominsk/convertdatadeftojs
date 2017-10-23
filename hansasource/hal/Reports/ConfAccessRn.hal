@@ -1,0 +1,182 @@
+external function Integer CheckConfAccess(record ConfVc,record ConfVc);
+
+function Boolean SetConfAccess(record ConfVc Confr,var array record ConfVc aConfr,var array Integer aaccessf,Integer cnt)
+begin
+  record ConfVc Mailboxr;
+  record ConfVc MotherConfr;
+  row ConfVc Confrw;
+  Integer i,accessf;
+  Boolean res;
+  
+  res = true;
+  for (i=0;i<cnt;i=i+1) begin
+    Mailboxr = aConfr[i];
+    accessf = CheckConfAccess(Mailboxr,Confr);
+    if (accessf==0) then begin
+      aaccessf[i] = 0;
+      res = false;
+    end;
+  end;
+  MotherConfr.SerNr = Confr.MotherConf;
+  if (ReadFirstMain(MotherConfr,1,true)) then begin
+    if (SetConfAccess(MotherConfr,aConfr,aaccessf,cnt)==false) then begin
+      res = false;
+    end;
+  end;
+  SetConfAccess = res;
+  return;
+end;
+
+function string 255 AcccessAsString(record ConfVc Confr)
+begin
+  row ConfVc Confrw;
+  Integer rwcnt,i;
+  string 255 res;
+  
+  res = "";
+  rwcnt = MatRowCnt(Confr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Confr,i,Confrw);
+    if (nonblank(res)) then begin
+      res = res & ", ";
+    end;
+    res = res & Confrw.Group;
+  end;
+  AcccessAsString = res;
+  return;
+end;
+
+function LongInt PrintConfAndAccess(record ConfVc Confr,var array record ConfVc aConfr,var array Integer aaccessf,Integer cnt)
+begin
+  record ConfVc Mailboxr;
+  Integer i;
+  LongInt res;
+  string 200 drilld;
+
+  res = 0;
+  StartFormat(15);
+  OutStringID(0,"DblConfVc",Confr.AddrName,false,Confr.SerNr);
+  OutString(2,0,Confr.Comment,false);
+  OutString(3,0,AcccessAsString(Confr),false);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (SetConfAccess(Confr,aConfr,aaccessf,cnt)==false) then begin
+    for (i=0;i<cnt;i=i+1) begin
+      if (aaccessf[i]!=0) then begin
+        StartFormat(15);
+        Mailboxr = aConfr[i];
+        OutStringID(4,"DblConfVc",Mailboxr.AddrName,false,Mailboxr.SerNr);
+        OutString(5,0,Mailboxr.Comment,false);
+        OutString(6,0,AcccessAsString(Mailboxr),false);
+        EndFormat;
+        res = res + 1;
+      end;
+    end;
+  end else begin
+    StartFormat(15);
+    OutString(4,0,USetStr(13245),false);
+    EndFormat;
+  end;
+  PrintConfAndAccess = res;
+  return;
+end;
+
+procedure ClearAccessArray(var array Integer aaccessf,Integer cnt)
+begin
+  Integer i;
+  
+  for (i=0;i<cnt;i=i+1) begin
+    aaccessf[i] = 1;
+  end;
+  return;
+end;
+
+global
+procedure ConfAccessRn(record RcVc RepSpec)
+begin
+  record ConfVc Confr;
+  string 200 ckey;
+  Boolean foundf,testf;
+  Array record ConfVc aConfr;
+  Array string 60 addrname;
+  Array LongInt aconfser;
+  Array Integer aaccessf;
+  Integer cnt;
+  LongInt canread,totcanread;
+
+  StartReportJob(USetStr(13204));
+  EndHeader;
+  SetRepCol(2,130);
+  SetRepCol(3,250);
+  SetRepCol(4,15);
+  SetRepCol(5,145);
+  SetRepCol(6,265);
+  StartFormat(15);
+  OutString(0,0,USetStr(13236),false);
+  OutString(2,0,USetStr(13202),false);
+  OutString(3,0,USetStr(13204),false);
+  EndFormat;
+  totcanread = 0;
+  cnt = 0;
+  foundf = true;
+  Confr.SerNr = -1;
+  ckey = "SubConfAddrName:" & "-1";
+  while (LoopKey(ckey,Confr,1,foundf)) begin
+    testf = foundf;
+    if (Confr.Closed!=0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      aConfr[cnt] = Confr;
+      aaccessf[cnt] = 1;
+      cnt = cnt + 1;
+    end;
+  end;
+  ResetLoop(Confr);
+  Confr.AddrName = RepSpec.f1;
+  foundf = true;
+  while (LoopKey("AddrName",Confr,1,foundf)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (RepSpec.f1!=Confr.AddrName) then begin
+        foundf = false;
+      end;
+    end;    
+    testf = foundf;
+    if (Confr.Closed!=0) then begin
+      if (Confr.Class!=kConfClassFolder) then begin
+        testf = false;
+      end;
+    end;
+    if (Confr.Class==kConfClassMailbox) then begin
+      testf = false;
+    end;
+    if (nonblank(Confr.AddrCode)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      Black_Divider(0,1);
+      ClearAccessArray(aaccessf,cnt);
+      canread = PrintConfAndAccess(Confr,aConfr,aaccessf,cnt);
+      totcanread = totcanread + canread;
+      if (canread>0) then begin
+        Gray_Divider(0,1);
+        StartFormat(15);
+        OutString(0,0,USetStr(13246),false);
+        OutString(3,0,canread,false);
+        EndFormat;
+        StartFormat(15);
+        EndFormat;
+      end;
+    end;
+  end;
+  if (totcanread!=canread) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(0,0,USetStr(13247),false);
+    OutString(3,0,totcanread,false);
+    EndFormat;
+  end;
+  EndJob;
+  return;
+end;
+

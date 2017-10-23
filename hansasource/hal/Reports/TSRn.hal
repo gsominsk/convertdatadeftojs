@@ -1,0 +1,569 @@
+external function Boolean ItemInItemGroupOrClass(string,string,string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure FindPrTransPrice(string,Integer,LongInt,Integer,string,string,var val,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure EmpListPrItem(record RcVc);
+external procedure EmpListPrProject(record RcVc);
+external procedure EmpListPrItemGroup(record RcVc);
+external procedure TSPrintHeader(record RcVc);
+
+procedure PrintEmpTotals(Integer strnr,val etotp,var val totp,record RcVc RepSpec)
+BEGIN
+  if (etotp<>0) then begin
+    StartFormat(15);
+    OutString(100,0,USetStr(strnr),false);
+    OutVal(240,0,etotp,M4Val,true);
+    if (RepSpec.flags[0]==1) then begin
+      OutVal(320,0,totp,M4Val,true);
+    end;  
+    totp = blankval;
+    EndFormat;
+  end;
+  RETURN;
+END;
+
+global
+function Integer FindItemType(string item)
+BEGIN
+  Integer res;
+  record INVc INr;
+
+  INr.Code = item;
+  if (ReadFirstMain(INr,1,true)) then begin
+    res = INr.ItemType;
+  end;
+  FindItemType = res;
+  RETURN;
+END;
+
+procedure GetInvTBIVQty(LongInt TSSerNr,Integer ovc,string prcode,var val resp)
+BEGIN
+  record TBIVVc TBIVr;
+
+  resp = blankval;
+  TBIVr.SerNr = TSSerNr;
+  TBIVr.oVc = ovc;
+  TBIVr.PRCode = prcode;
+  if (ReadFirstMain(TBIVr,3,true)) then begin
+    if (TBIVr.Invoice>0) then begin
+      resp = TBIVr.InvQty;
+    end;
+  end;
+END;
+
+global
+procedure TSRn(record RcVc RepSpec)
+BEGIN
+  record PErsVc PErsr;
+  record TSVc TSr;
+  record UserVc EMr;
+  record PRVc PRr;
+  row TSVc TSrw;
+  row TSVc TS2rw;
+  Integer i,rwcnt;
+  Integer rwcnt2;
+  string 255 frcu,tocu;
+  string 255 frem,toem;
+  string 255 lastem,lastemname,lastitem;
+  string 255 emp;
+  Boolean testf,tsfound,itemout,empout,first;
+  Boolean found,emfound;
+  val t,t2,t3,r;
+  val totval,ptotal;
+  val totval2,ptotal2;
+  val totval3,ptotal3;
+  val itotal;
+  val etotal,etotal2,etotal3,ttotal,ttotal2,ttotal3;
+  val totserv,totplain;
+  val einvtotal,teinvtotal;
+  string 5 frit, toit;
+  record GeneralOptionBlock GenOptRec;
+  record ProjectBlock ProjectRec;
+  record CalDispGroupBlock CalDispGroupRec;
+  row CalDispGroupBlock CalDispGrouprw;
+  string 255 dispgroup;
+  Integer pos;
+  record ActVc Actr;
+
+  BlockLoad(GenOptRec);
+  BlockLoad(ProjectRec);
+  first = true;
+  empout = false;
+  itemout = false;
+  if (RepSpec.ArtMode==2) then begin
+    EmpListPrItem(RepSpec);
+    goto LTSRn;
+  end;
+  if (RepSpec.ArtMode==3) then begin
+    EmpListPrProject(RepSpec);
+    goto LTSRn;
+  end;
+  if (RepSpec.ArtMode==4) then begin
+    EmpListPrItemGroup(RepSpec);
+    goto LTSRn;
+  end;
+  StartReportJob(USetStr(4881));
+   TSPrintHeader(RepSpec);
+  EndHeader;
+  frit = FirstInRange(RepSpec.f4,5);
+  toit = LastInRange(RepSpec.f4,5);
+  switch (RepSpec.ArtMode) begin
+    case 0:
+      StartFormat(15);
+      OutString(0,0,USetStr(4882),false);
+      OutString(70,0,USetStr(4883),false);
+      OutString(120,0,USetStr(4884),false);
+      OutString(240,0,USetStr(4885),true);
+      if (RepSpec.flags[0]==1) then begin
+        OutString(320,0,USetStr(4887),true);
+      end;  
+      OutString(330,0,USetStr(4886),false);
+      EndFormat;
+    case 1:
+      StartFormat(15);
+      OutString(15,0,USetStr(4830),false);
+      OutString(220,0,USetStr(4842),true);
+      OutString(280,0,USetStr(4890),true);
+      if (RepSpec.flags[3]==0) then begin      
+        OutString(340,0,USetStr(5335),true);
+        OutString(400,0,USetStr(4837),true);
+        OutString(480,0,USetStr(4891),true);
+      end else begin
+        OutString(340,0,USetStr(6826),true);
+        OutString(400,0,USetStr(4837),true);
+      end;
+      EndFormat;
+  end;
+  if (nonblank(RepSpec.AccStr)) then begin
+    BlockLoad(CalDispGroupRec);
+    rwcnt = MatRowCnt(CalDispGroupRec);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(CalDispGroupRec,i,CalDispGrouprw);
+      if (CalDispGrouprw.Code==RepSpec.AccStr) then begin
+        dispgroup = CalDispGrouprw.DefStr;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  
+  Gray_Divider(0,1);
+  first = true;
+  frcu = FirstInRange(RepSpec.f5,20);
+  tocu = LastInRange(RepSpec.f5,20);
+  frem = FirstInRange(RepSpec.f1,5);
+  toem = LastInRange(RepSpec.f1,5);
+  EMr.Code = frem;
+  emfound = true;
+  while (LoopMain(EMr,1,emfound)) begin
+    if (nonblank(toem) and (EMr.Code>toem)) then begin emfound = false; end;
+    if (emfound) then begin
+      PErsr.Person = EMr.Code;
+      PErsr.Item = "";
+      totserv = blankval;
+      totplain = blankval;
+      PErsr.Date = RepSpec.sStartDate;
+      PErsr.TSSerNr = -1;
+      found = true;
+      ResetLoop(PErsr);
+
+      if (nonblank(dispgroup)) then begin
+        pos = 0;
+        ExtractObj(dispgroup,pos,emp);
+        while (nonblank(emp)) begin
+          if (emp==EMr.Code) then begin 
+            goto LBREAK;
+          end;
+          ExtractObj(dispgroup,pos,emp);
+        end;
+        found = false;
+LBREAK:;
+      end;
+      while (LoopMain(PErsr,3,found)) begin
+        testf = false;
+        if (found) then begin
+          if (EMr.Code==PErsr.Person) then begin
+            if ((nonblankdate(RepSpec.sStartDate)) and (PErsr.Date<RepSpec.sStartDate)) then begin found = false; end;
+            if ((nonblankdate(RepSpec.sEndDate)) and (PErsr.Date>RepSpec.sEndDate)) then begin found = false; end;
+          end else begin
+            found = false;
+          end;
+        end;
+        tsfound = false;
+        if (found) then begin
+          testf = true;
+          if ((PErsr.FileName!="TSVc") and (PErsr.FileName!="ActVc")) then begin testf = false; end;
+          if (RepSpec.flags[4]==0) then begin
+            if (PErsr.FileName=="TSVc") then begin testf = false; end;
+          end;
+          if (RepSpec.flags[9]==0) then begin
+            if (PErsr.FileName=="ActVc") then begin testf = false; end;
+          end;
+          if ((nonblankdate(RepSpec.sStartDate)) and (PErsr.Date<RepSpec.sStartDate)) then begin testf = false; end;
+          if ((nonblankdate(RepSpec.sEndDate)) and (PErsr.Date>RepSpec.sEndDate)) then begin testf = false; end;
+          if (nonblank(RepSpec.f3)) then begin
+            if (RepSpec.f3<>PErsr.Item) then begin testf = false; end;
+          end;  
+          if (nonblank(RepSpec.f4)) then begin
+            if (PErsr.INGroup<frit) then begin testf = false; end;
+            if (PErsr.INGroup>toit) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            testf = ItemInItemGroupOrClass(PErsr.Item,"",RepSpec.f8);
+          end;
+          if (testf) then begin
+            if (PErsr.FileName=="TSVc") then begin
+              TSr.SerNr = PErsr.TSSerNr;
+              if (ReadFirstMain(TSr,1,true)) then begin 
+                tsfound = true; 
+                PRr.Code = PErsr.PRCode;
+                if (ReadFirstMain(PRr,1,true)==false) then begin testf = false; end;
+                if (testf) then begin
+                  if (nonblank(RepSpec.f5)) then begin
+//StopAlert("frcu " & frcu & " tocu " & tocu & " PRr.CustCode " & PRr.CustCode);
+                    if (PRr.CustCode<frcu) then begin testf = false; end;
+                    if (PRr.CustCode>tocu) then begin testf = false; end;
+                  end;
+                end;
+                if (testf) then begin
+                  testf = ContactInGroupClass(PRr.CustCode,RepSpec.f7,RepSpec.f6,"CUST","","");
+                end;
+              end else begin
+                testf = false;
+              end;
+            end;
+            if (PErsr.FileName=="ActVc") then begin
+              Actr.SerNr = PErsr.TSSerNr;
+              if (ReadFirstMain(Actr,1,true)) then begin
+                if (nonblank(RepSpec.f5)) then begin
+                  if (Actr.CUCode<frcu) then begin testf = false; end;
+                  if (Actr.CUCode>tocu) then begin testf = false; end;
+                end;
+                if (testf) then begin
+                  testf = ContactInGroupClass(Actr.CUCode,RepSpec.f7,RepSpec.f6,"CUST","","");
+                end;                
+              end else begin
+                testf = false; 
+              end;
+            end;
+            if (testf) then begin
+            if (RepSpec.flags[1]==0) then begin
+              if (PErsr.FileName=="TSVc") then begin
+                if (tsfound) then begin
+                  rwcnt2 = MatRowCnt(TSr);
+                  for (i=0;i<rwcnt2;i=i+1) begin
+                    MatRowGet(TSr,i,TSrw);
+                    if (TSrw.ArtCode==PErsr.Item) then begin
+                      if (TSrw.ItemType!=3) then begin
+                        testf = false;
+                      end else begin
+                        testf = true;
+                      end;  
+                      goto L30;
+                    end;
+                    testf = false;
+                  end;
+                end;
+              end;
+L30:;
+              if (PErsr.FileName=="ActVc") then begin
+                if (FindItemType(PErsr.Item)==3) then begin
+                  testf = true;
+                end else begin
+                  testf = false;
+                end;
+                if (blank(PErsr.PRCode)) then begin
+                  testf = false;
+                end;
+              end;
+            end;
+            end;
+          end;
+        end;
+        if (testf) then begin
+          itemout = false;
+          if (lastem!=PErsr.Person) then begin
+            switch (RepSpec.ArtMode) begin
+              case 0:
+                if (empout==true) then begin 
+                  Black_Divider(160,400);
+                  PrintEmpTotals(4845,etotal,totval,RepSpec);
+                  PrintEmpTotals(4890,etotal2,totval2,RepSpec);
+                  PrintEmpTotals(5335,etotal3,totval3,RepSpec);
+                  StartFormat(15);
+                  EndFormat;
+                end;
+              case 1:
+                if (first==false) then begin
+                  StartFormat(15);
+                  OutString(15,0,lastem,false);
+                  OutString(70,0,lastemname,false);
+                  t = etotal + etotal2;
+                  OutVal(220,0,etotal,M4Val,true);
+                  OutVal(280,0,etotal2,M4Val,true);
+                  if (RepSpec.flags[3]==0) then begin
+                    OutVal(340,0,etotal3,M4Val,true);
+                    t = t + etotal3;
+                    OutVal(400,0,t,M4Val,true);
+                    t = t - etotal3;
+                    t2 = etotal * 100;
+                    t2 = t2 / t;
+                    OutVal(480,0,t2,M4Prcnt,true);
+                  end else begin
+                    OutVal(340,0,etotal3,M4Val,true);
+                    t = etotal*etotal3;
+                    OutVal(400,0,t,M4Val,true);
+                    t = t + etotal3;
+                    ttotal3 = ttotal3 + t;
+                  end;
+                  EndFormat;
+                end;
+            end;
+            etotal = blankval;
+            etotal2 = blankval;
+            etotal3 = blankval;
+            first = false;
+            lastem = EMr.Code;
+            lastemname = EMr.Name;
+            if (RepSpec.ArtMode==1) then begin
+              if (RepSpec.flags[3]!=0) then begin
+                etotal3 = EMr.CostPrHour;
+                if (etotal3==0) then begin
+                  etotal3 = ProjectRec.DefServCostPrice;
+                end;
+              end;
+            end;                  
+            empout = false;
+          end;
+          lastitem = PErsr.Item;
+          if (PErsr.FileName=="TSVc") then begin
+            if (tsfound==false) then begin
+              TSr.SerNr = PErsr.TSSerNr;
+              tsfound = ReadFirstMain(TSr,1,true);
+            end;
+            if (tsfound) then begin
+              rwcnt = MatRowCnt(TSr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(TSr,i,TS2rw);
+                if ((TS2rw.stp==1) and (TS2rw.ovst==0)) then begin
+                if ((TS2rw.EMCode==PErsr.Person) and (TS2rw.date==PErsr.Date)) then begin
+                  if ((blank(RepSpec.f2)) or (TS2rw.PRCode==RepSpec.f2)) then begin
+                    if ((TS2rw.ArtCode==PErsr.Item) and (TS2rw.PRCode==PErsr.PRCode)) then begin
+                      if (RepSpec.ArtMode==0) then begin
+                        if (empout==false) then begin
+                          StartFormat(15);
+                          OutString(15,0,EMr.Code,false);
+                          OutString(70,0,EMr.Name,false);
+                          EndFormat;
+                          empout = true;
+                        end;
+                        StartFormat(15);
+                        OutDate(0,0,TS2rw.date,false);
+                        OutString(70,0,TS2rw.PRCode,false);
+                        OutString(120,0,TS2rw.ArtCode,false);
+                        OutVal(240,0,TS2rw.Qty,M4Qty,true);
+                        FindPrTransPrice(TS2rw.PRCode,1,TSr.SerNr,i,TS2rw.ArtCode,"",t2,r);
+                        CalcSum(TS2rw.Qty,t2,0,r,t,GenOptRec.UseDiscount);
+                        if (RepSpec.flags[0]==1) then begin
+                          OutVal(320,0,t,M4Val,true);
+                        end;  
+                        OutString(330,0,TS2rw.Spec,false);
+                        EndFormat;
+                        if (TS2rw.ItemType==0) then begin
+                          totplain = totplain + TS2rw.Qty;
+                        end;  
+                        if (TS2rw.ItemType==3) then begin
+                          totserv = totserv + TS2rw.Qty;
+                        end;  
+                      end;
+                      PRr.Code = TS2rw.PRCode;
+                      if (ReadFirstMain(PRr,1,true)) then begin
+                        switch (PRr.Type) begin
+                          case 0:
+                            etotal = etotal + TS2rw.Qty;
+                            ttotal = ttotal + TS2rw.Qty;
+                            totval = totval + t;
+                            ptotal = ptotal + t;
+                            if (RepSpec.flags[10]!=0) then begin
+                              GetInvTBIVQty(TSr.SerNr,1,TS2rw.PRCode,t);
+                              einvtotal = einvtotal + t;
+                              teinvtotal = teinvtotal + t;
+                            end;
+                          case 1:
+                            etotal2 = etotal2 + TS2rw.Qty;
+                            ttotal2 = ttotal2 + TS2rw.Qty;
+                            totval2 = totval2 + t;
+                            ptotal2 = ptotal2 + t;
+                          case 2:
+                            if (RepSpec.flags[3]==0) then begin
+                              etotal3 = etotal3 + TS2rw.Qty;
+                              ttotal3 = ttotal3 + TS2rw.Qty;
+                              totval3 = totval3 + t;
+                              ptotal3 = ptotal3 + t;
+                            end;
+                        end;
+                      end else begin
+                        etotal = etotal + TS2rw.Qty;
+                        ttotal = ttotal + TS2rw.Qty;
+                        totval = totval + t;
+                        ptotal = ptotal + t;
+                      end;
+                    end;
+                  end;
+                end;
+                end;
+              end;
+            end;
+          end;
+          if (PErsr.FileName=="ActVc") then begin
+            Integer intyp;
+
+            Actr.SerNr = PErsr.TSSerNr;
+            if (ReadFirstMain(Actr,1,true)) then begin
+              if ((nonblank(Actr.PRCode)) and ((blank(RepSpec.f2)) or (Actr.PRCode==RepSpec.f2))) then begin
+                t3 = TimeToVal(Actr.CostTime);
+                if (RepSpec.ArtMode==0) then begin
+                  if (empout==false) then begin
+                    StartFormat(15);
+                    OutString(15,0,EMr.Code,false);
+                    OutString(70,0,EMr.Name,false);
+                    EndFormat;
+                    empout = true;
+                  end;
+                  StartFormat(15);
+                  OutDate(50,0,Actr.TransDate,true);
+                  OutString(60,0,Actr.PRCode,false);
+                  OutString(120,0,Actr.ItemCode,false);
+                  OutVal(240,0,t3,M4Val,true);
+                  FindPrTransPrice(Actr.PRCode,1,Actr.SerNr,i,Actr.ItemCode,EMr.Code,t2,r);
+                  CalcSum(t3,t2,0,r,t,GenOptRec.UseDiscount);
+                  if (RepSpec.flags[0]==1) then begin              
+                    OutVal(320,0,t,M4Val,true);
+                  end;
+                  OutString(330,0,Actr.Comment,false);
+                  EndFormat;
+                  intyp = FindItemType(Actr.ItemCode);
+                  if (intyp==0) then begin
+                    totplain = totplain + t3;
+                  end;
+                  if (intyp==3) then begin
+                    totserv = totserv + t3;
+                  end;
+                end;
+                PRr.Code = Actr.PRCode;
+                if (ReadFirstMain(PRr,1,true)) then begin
+                  switch (PRr.Type) begin
+                    case 0: 
+                      etotal = etotal + t3;
+                      ttotal = ttotal + t3;
+                      totval = totval + t;
+                      ptotal = ptotal + t;
+                    case 1:  
+                      etotal2 = etotal2 + t3;
+                      ttotal2 = ttotal2 + t3;
+                      totval2 = totval2 + t;
+                      ptotal2 = ptotal2 + t;
+                    case 2:  
+                      if (RepSpec.flags[3]==0) then begin
+                        etotal3 = etotal3 + t3;
+                        ttotal3 = ttotal3 + t3;
+                        totval3 = totval3 + t;
+                        ptotal3 = ptotal3 + t;
+                      end;
+                  end;
+                end else begin
+                  etotal = etotal + t3;
+                  ttotal = ttotal + t3;
+                  totval = totval + t;
+                  ptotal = ptotal + t;
+                end;
+              end;
+            end;
+          end;
+        end;      
+      end;
+    end;
+    if (((totserv<>0) or (totplain<>0)) and (RepSpec.flags[2]==1)) then begin
+       Gray_Divider(100,320);
+       StartFormat(15);
+       OutString(100,0,USetStr(4892),false);
+       OutVal(240,0,totplain,M4Val,true);
+       EndFormat;
+       StartFormat(15);
+       OutString(100,0,USetStr(4893),false);
+       OutVal(240,0,totserv,M4Val,true);
+       EndFormat;
+     end; 
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    if ((etotal<>0) or (etotal2<>0) or (etotal3<>0)) then begin
+      StartFormat(15);
+      OutString(15,0,lastem,false);
+      OutString(70,0,lastemname,false);
+      t = etotal + etotal2;
+      OutVal(220,0,etotal,M4Val,true);
+      OutVal(280,0,etotal2,M4Val,true);
+      if (RepSpec.flags[3]==0) then begin
+        OutVal(340,0,etotal3,M4Val,true);
+        t = t + etotal3;
+        OutVal(400,0,t,M4Val,true);
+        t = t - etotal3;
+        t2 = etotal*100;
+        t2 = t2/t;
+        if (RepSpec.flags[10]!=0) then begin
+          OutVal(440,0,einvtotal,M4Val,true);
+        end;
+        OutVal(480,0,t2,M4Prcnt,true);
+      end else begin
+        OutVal(340,0,etotal3,M4Val,true);
+        T = etotal*etotal3;
+        T2 = etotal2*etotal3;
+        T = t + t2;
+        OutVal(400,0,t,M4Val,true);        
+        ttotal3 = ttotal3 + t;
+      end;      
+      EndFormat;
+    end;
+  end;
+  if ((etotal<>0) or (etotal2<>0) or (etotal3<>0)) then begin
+    if (RepSpec.ArtMode==0) then begin
+      Black_Divider(100,320);
+      PrintEmpTotals(4845,etotal,totval,RepSpec);
+      PrintEmpTotals(5335,etotal3,totval3,RepSpec);
+      PrintEmpTotals(4890,etotal2,totval2,RepSpec);
+      StartFormat(15);
+      EndFormat;
+    end;
+    if (RepSpec.ArtMode==0) then begin
+      Black_Divider(100,320);
+      PrintEmpTotals(4845,ttotal,ptotal,RepSpec);
+      PrintEmpTotals(4890,ttotal2,ptotal2,RepSpec);
+      PrintEmpTotals(5335,ttotal3,ptotal3,RepSpec);
+    end;
+    if (RepSpec.ArtMode==1) then begin
+      Black_Divider(160,400);
+      StartFormat(15);
+      t = ttotal + ttotal2;
+      OutVal(220,0,ttotal,M4Val,true);
+      OutVal(280,0,ttotal2,M4Val,true);
+      if (RepSpec.flags[3]==0) then begin
+        OutVal(340,0,ttotal3,M4Val,true);
+        t = ttotal3 + t;
+        OutVal(400,0,t,M4Val,true);
+        t = t - etotal3;
+        t2 = ttotal * 100;
+        t2 = t2 / t;
+        if (RepSpec.flags[10]!=0) then begin
+          OutVal(440,0,teinvtotal,M4Val,true);
+        end;
+        OutVal(480,0,t2,M4Prcnt,true);
+      end else begin
+        OutVal(400,0,ttotal3,M4Val,true);
+      end;      
+      EndFormat;
+    end;
+  end;
+  EndJob;
+LTSRn:;
+  RETURN;
+END;

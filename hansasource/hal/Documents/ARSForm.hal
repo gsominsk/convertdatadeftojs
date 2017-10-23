@@ -1,0 +1,931 @@
+external procedure PrintCurrencyCode(string,string);
+external procedure PortugueseFormFields(Integer);
+external procedure AddCurncyTotals(var array string,var array val,var Integer,string,val);
+external procedure BeginCurncyTotals(var Integer);
+external function LongInt CalculateLateDays(Date,Date,Date,Boolean,Boolean);
+//external function Integer DefaultCurRoundOff();
+external function Boolean CheckIfPrepaymentOpen(string,Date,LongInt,LongInt,val,var val);
+external procedure PrintValueInclZero(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external function Boolean CheckIfIVOpen(Date,record IVVc,string,var val,Boolean,Boolean);
+external procedure OutAddress(string,string,string,string,string,string,string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function LongInt DateDiff(Date,Date);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure CommonDocumentFields(record RcVc);
+external procedure SumAged(Date,Integer,Integer,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external procedure GetBaseCurncy(Integer,var string);
+external procedure CreateKIDNoCheck(string,LongInt,var string);
+external procedure CreateKIDCheckNor(val,LongInt,var string);
+external procedure CreateKIDCode(string,LongInt,var string);
+external procedure InvoiceType(Integer,var string);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external procedure DoARSFunction(record RcVc,Integer);
+external procedure SetFaxInfo(string,string,string,string);
+
+procedure SetZeroAged(var val s0,var val s1,var val s2,var val s3,var val s4,var val s5,var val s6,var val s7)
+begin
+  s0 = 0;
+  s1 = 0;
+  s2 = 0;
+  s3 = 0;
+  s4 = 0;
+  s5 = 0;
+  s6 = 0;
+  s7 = 0;
+  return;
+end;
+
+global
+procedure CustAged(record CUVc CUp,Date ondate,Date startdate,Date enddate,var val ARSum,var val sact,var val s0,var val s1,var val s16,var val s31,var val s61,var val s91,var val s121,var val s151,boolean agedoninvdate)
+begin
+  record ARVc ARr;
+  Boolean TrHs;
+  LongInt latedays;
+  val rval,t;
+  val fr,to1,to2,br1,br2;
+  Boolean testf,found;
+  record IPrsVc IPrsr;
+  Date td;
+  record IVVc IVr;
+  record IPVc IPr;
+  row IPVc IPrw;
+  record CLInVc CLInr;
+  row CLInVc CLInrw;
+  Integer i,rwcnt;
+  string 20 curncy;
+  record AgedBlock Agedb;
+  vector Boolean vprepaymentf;
+  
+  BlockLoad(Agedb);
+  GetFullCurncyRate(CUp.CurncyCode,ondate,fr,to1,to2,br1,br2);
+  ARSum = 0;
+  SetZeroAged(s0,s1,s16,s31,s61,s91,s121,s151);  
+  if (ondate==CurrentDate and agedoninvdate==false) then begin
+    ARr.CustCode = CUp.Code;
+    ARr.InvoiceNr = 0;
+    TrHs = true;
+    while (LoopKey("CustCode",ARr,2,TrHs)) begin
+      testf = true;
+      if (TrHs) then begin
+        if (CUp.Code!=ARr.CustCode) then begin TrHs = false; end;
+      end;
+      if (TrHs==false) then begin testf = false; end;
+      if (testf) then begin    
+        IVr.SerNr = ARr.InvoiceNr;
+        ReadFirstMain(IVr,1,true);
+        latedays = CalculateLateDays(IVr.InvDate,ARr.DueDate,CurrentDate,false,true);
+        if (ARr.ARCurncyCode==CUp.CurncyCode) then begin
+          rval = ARr.RVal;
+        end else begin
+          if (blank(CUp.CurncyCode)) then begin
+            rval = ARr.BookRVal;
+          end else begin
+            rval = DivRateToBase1(CUp.CurncyCode,ARr.BookRVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+          end;
+        end;
+        ARSum = ARSum + rval;
+        SumAged(CurrentDate,latedays,Agedb.ActualInvoices,rval,sact,s0,s1,s16,s31,s61,s91,s121,s151);
+      end;
+    end;
+  end else begin
+// Aged should include ALL invoices....how it used to look on that day...
+//    if (blankdate(startdate)) then begin
+      td.year = 1980;
+      td.month = 1;
+      td.day = 1;
+      IPrsr.TransDate = td;
+//    end else begin
+//      IPrsr.TransDate = startdate;
+//    end;
+    IPrsr.CustCode = CUp.Code;
+    found = true;
+    while (LoopKey("CustTransKey",IPrsr,2,found)) begin
+      if (found) then begin
+        if (IPrsr.CustCode!=CUp.Code) then begin found = false; end;
+        if (IPrsr.TransDate>ondate) then begin found = false; end; // ondate is now enddate OR specified
+      end;
+      if (found) then begin
+        switch (IPrsr.TransType) begin
+          case kIPrsTransTypeInvoice:
+            IVr.SerNr = IPrsr.TransNr;
+            testf = true;
+            if (ReadFirstMain(IVr,1,true)==false) then begin testf = false;; end;        
+            if (IVr.Invalid!=0) then begin testf = false; end;          
+            if (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin testf = false; end;          
+            if (IVr.InvType==kInvoiceTypeDownpayment) then begin testf = false; end;          
+            if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              if (IVr.CredInv!=-1) then begin testf = false; end;
+            end;          
+            if (testf) then begin
+              testf = CheckIfIVOpen(ondate,IVr,"",rval,true,false);
+            end;
+            if (testf) then begin
+/*            
+              if (agedoninvdate) then begin
+                latedays = DateDiff(IVr.InvDate,ondate);
+              end else begin
+                latedays = DateDiff(IVr.PayDate,ondate);
+              end;
+*/              
+              latedays = CalculateLateDays(IVr.InvDate,IVr.PayDate,ondate,agedoninvdate,true);
+              if (IVr.CurncyCode==CUp.CurncyCode) then begin
+                rval = rval;
+              end else begin
+                rval = MulRateToBase1(IVr.CurncyCode,rval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                if (blank(CUp.CurncyCode)) then begin
+                  rval = rval;
+                end else begin
+                  rval = DivRateToBase1(CUp.CurncyCode,rval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                end;
+              end;
+              ARSum = ARSum + rval;
+              SumAged(ondate,latedays,Agedb.ActualInvoices,rval,sact,s0,s1,s16,s31,s61,s91,s121,s151);
+            end;
+          case kIPrsTransTypeReceipt:
+            testf = false;
+            rval = blankval;
+            if (IPrsr.IVNr==-1) then begin
+              IPr.SerNr = IPrsr.TransNr;
+              if (ReadFirstMain(IPr,1,true)) then begin
+                rwcnt = MatRowCnt(IPr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(IPr,i,IPrw);
+                  if ((blankdate(IPrw.PayDate)) or (IPrw.PayDate==IPrsr.CustDate)) then begin
+                    if (IPrw.InvoiceNr==-1) and (IPrw.CUPNr>0) then begin
+                      if (vprepaymentf[IPrw.CUPNr]==false) then begin
+                        vprepaymentf[IPrw.CUPNr] = true;
+                        testf = CheckIfPrepaymentOpen("IPVc",ondate,IPr.SerNr,IPrw.CUPNr,IPrw.RecVal,rval);
+                        curncy = IPrw.RecCurncy;
+                      end;
+                      i = rwcnt;
+                    end;
+                  end;
+                end;
+              end;
+            end;
+            if (testf) then begin
+              latedays = DateDiff(IPrsr.CustDate,ondate);
+              
+              if (curncy==CUp.CurncyCode) then begin
+                rval = rval;
+              end else begin
+                rval = MulRateToBase1(curncy,rval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                if (blank(CUp.CurncyCode)) then begin
+                  rval = rval;
+                end else begin
+                  rval = DivRateToBase1(curncy,rval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                end;
+              end;
+              ARSum = ARSum + rval;
+//              SumAged(ondate,latedays,Agedb.ActualInvoices,rval,sact,s0,s1,s16,s31,s61,s91,s121,s151); // Per cust stat should show same as SL Aged
+            end;          
+          case kIPrsTransTypeCashIn:
+            testf = false;
+            if (IPrsr.IVNr==-1) then begin
+              CLInr.SerNr = IPrsr.TransNr;
+              if (ReadFirstMain(CLInr,1,true)) then begin
+                rwcnt = MatRowCnt(CLInr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(CLInr,i,CLInrw);
+                  if (CLInrw.Type==4) and (CLInrw.TransNr>0) then begin
+                    testf = CheckIfPrepaymentOpen("CLInVc",ondate,CLInr.SerNr,CLInrw.TransNr,CLInrw.Sum,rval);
+                    i = rwcnt;
+                    curncy = IPrw.RecCurncy;
+                  end;
+                end;
+              end;
+            end;
+            if (testf) then begin
+              latedays = DateDiff(IPrsr.CustDate,ondate);
+              
+              if (curncy==CUp.CurncyCode) then begin
+                rval = rval;
+              end else begin
+                rval = MulRateToBase1(curncy,rval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                if (blank(CUp.CurncyCode)) then begin
+                  rval = rval;
+                end else begin
+                  rval = DivRateToBase1(curncy,rval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+                end;
+              end;
+              ARSum = ARSum + rval;
+              SumAged(ondate,latedays,Agedb.ActualInvoices,rval,sact,s0,s1,s16,s31,s61,s91,s121,s151);
+            end;          
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure FaktText(Integer type,LongInt InvoiceNr,var string res)
+BEGIN
+  InvoiceType(type,res);
+  res = res & " ";
+  res = res & InvoiceNr;
+  RETURN;
+END;
+
+procedure GetReference(LongInt transnr,Integer type,var string res)
+BEGIN
+  record IVVc IVr;
+  
+  res = "";
+  switch (type) begin
+    case 1:  // Invoice 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.OurContact;
+      end;
+    case 2:  // Cash 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.OurContact;
+      end;
+    case 3:  // Credit 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.OurContact;
+      end;
+    case 4:  // Interest 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.OurContact;
+      end;
+  end;
+  RETURN;
+END;
+
+procedure GetComment(LongInt transnr,Integer type,var string res)
+BEGIN
+  record IVVc IVr;
+  record IPVc IPr;
+  
+  res = "";
+  switch (type) begin
+    case 6:  // receipt 
+      IPr.SerNr = transnr;
+      if (ReadFirstMain(IPr,1,true)) then begin
+        res = IPr.Comment;
+      end;
+    case 7:  // On Account receipt 
+      IPr.SerNr = transnr;
+      if (ReadFirstMain(IPr,1,true)) then begin
+        res = IPr.Comment;
+      end;
+    case 1:  // Invoice 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.InvComment;
+        OUTFORMFIELD("F_KUNDORDNRFROMINV",IVr.CustOrdNr);
+      end;
+    case 2:  // Cash 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.InvComment;
+        OUTFORMFIELD("F_KUNDORDNRFROMINV",IVr.CustOrdNr);
+      end;
+    case 3:  // Credit 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.InvComment;
+        OUTFORMFIELD("F_KUNDORDNRFROMINV",IVr.CustOrdNr);
+      end;
+    case 4:  // Interest 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = IVr.InvComment;
+        OUTFORMFIELD("F_KUNDORDNRFROMINV",IVr.CustOrdNr);
+      end;
+  end;
+  RETURN;
+END;
+
+global
+procedure ShortInvType(Integer tp,var string res)
+BEGIN
+
+  res = "";
+  switch (tp) begin
+    case 1: res = USetStr(2485);
+    case 2: res = USetStr(2488);
+    case 3: res = USetStr(2487);
+    case 4: res = USetStr(2478);
+    case -3:res = USetStr(2487);
+    case 6: res = USetStr(2486);
+    case 7: res = USetStr(2497);
+    case 8: res = USetStr(2530);
+    case 9: res = USetStr(1193);    
+    case 10: res = USetStr(1635);    
+    case 11: res = USetStr(1194);    
+    case 12: res = USetStr(1153);
+    case 13: res = USetStr(1193);
+  end;
+  RETURN;
+END;
+
+global
+procedure GetRemFee(var val resp)
+BEGIN
+  record INVc INr;
+  record IIBlock IIRec;
+  
+  resp = blankval;
+  BlockLoad(IIRec);
+  if (nonblank(IIRec.FeeItem)) then begin
+    INr.Code = IIRec.FeeItem;
+    if (ReadFirstMain(INr,1,true)) then begin
+      resp = INr.UPrice1;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure RemText(string lang,LongInt aremnr,Integer rn,var string res)
+BEGIN
+  Integer i;
+  record RMVc Remr;
+  Boolean rmfound;
+  LongInt remnr;
+  
+  res = "";
+  remnr = aremnr;
+  if (remnr>3) then begin remnr = 3; end;
+  Remr.LangCode = lang;
+  rmfound = ReadFirstMain(Remr,1,true);
+  if (rmfound==false) then begin
+    Remr.LangCode = "";
+    rmfound = ReadFirstMain(Remr,1,true);
+  end;
+  if (rmfound==false) then begin goto LRemText; end;
+  if ((remnr==0) or (remnr==-1) or (remnr>3)) then begin goto LRemText; end;
+  i = (remnr-1)*3+rn;
+  switch (i) begin
+    case 0: res = Remr.txts0;
+    case 1: res = Remr.txts1;
+    case 2: res = Remr.txts2;
+    case 3: res = Remr.txts3;
+    case 4: res = Remr.txts4;
+    case 5: res = Remr.txts5;
+    case 6: res = Remr.txts6;
+    case 7: res = Remr.txts7;
+    case 8: res = Remr.txts8;
+  end;
+LRemText:;
+  RETURN;
+END;
+
+function string 255 NumberSeriesComment_IVVc(LongInt sernr)
+BEGIN
+  string 255 res;
+  record IVSerBlock IVSerb;
+  row IVSerBlock IVSerw;
+  Integer i,rwcnt;
+
+  BlockLoad(IVSerb);
+  rwcnt = MatRowCnt(IVSerb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVSerb,i,IVSerw);
+    if ((sernr>=IVSerw.TSerStart) and (sernr<=IVSerw.TSerEnd)) then begin
+      res = IVSerw.TSerCom;
+      goto LNumberSeriesComment_IVVc;
+    end;
+  end;
+LNumberSeriesComment_IVVc:;  
+  NumberSeriesComment_IVVc = res;
+  RETURN;
+END;
+
+function string 255 NumberSeriesComment_IPVc(LongInt sernr)
+BEGIN
+  string 255 res;
+  record IPSerBlock IPSerb;
+  row IPSerBlock IPSerw;
+  Integer i,rwcnt;
+
+  BlockLoad(IPSerb);
+  rwcnt = MatRowCnt(IPSerb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IPSerb,i,IPSerw);
+    if ((sernr>=IPSerw.TSerStart) and (sernr<=IPSerw.TSerEnd)) then begin
+      res = IPSerw.TSerCom;
+      goto LNumberSeriesComment_IPVc;
+    end;
+  end;
+LNumberSeriesComment_IPVc:;  
+  NumberSeriesComment_IPVc = res;
+  RETURN;
+END;
+
+function string 255 FindNumberSeriesComment(Integer type,LongInt sernr)
+BEGIN
+  string 255 res;
+  
+  switch (type) begin
+    case 1:
+      res = NumberSeriesComment_IVVc(sernr);
+    case 2:
+      res = NumberSeriesComment_IVVc(sernr);
+    case 3:
+      res = NumberSeriesComment_IVVc(sernr);
+    case 4:
+      res = NumberSeriesComment_IVVc(sernr);
+    case 6: 
+      res = NumberSeriesComment_IPVc(sernr);
+    case 7:
+      res = NumberSeriesComment_IPVc(sernr);
+  end;
+  FindNumberSeriesComment = res;
+  RETURN;
+END;
+
+global
+procedure DoPrintARSForm2(record RcVc RepSpec,record CUVc CUp,
+                   val ARSSum,val ARSOnAccBal,val ARSOnAccBalB1,val ARSIntSum,val ARSSumLate,val ARSARSum,val ARSStartBal,val ARSSumNotLate,
+                   Integer ARSLateCount,Integer ARSNotLateCount,
+                   val ARSsact,val ARSs0,val ARSs1,val ARSs16,val ARSs31,val ARSs61,val ARSs91,val ARSs121,val ARSs151,
+                   val ARSARSumod,val ARSsactod,val ARSs0od,val ARSs1od,val ARSs16od,val ARSs31od,val ARSs61od,val ARSs91od,val ARSs121od,val ARSs151od,
+                   Array Integer aRwtype,Array string aInvoiceNr,Array LongInt alatedays,Array LongInt aRemndr,
+                   Array Date aInvDate,Array Date aDueDate,Array val aIntVal,Array val aRVal,Array val aRValCur,Array val aSum4,
+                   Array string aVEInvNo,Array string aCurncyCode,Array string aOfficialSerNo,Array string aCustOrdNo,Integer acnt)
+BEGIN
+  Integer i;
+  string 255 tstr;
+  val v,t,bal,ARSARSumodPrint;
+  record SysFormatBlock SFb;
+  record LangNrVc LangNrr;
+  Integer maxrem;
+  record AgedBlock Ab;
+  
+  array string 20 acur;
+  array val av1;
+  Integer curcnt;
+
+  BlockLoad(Ab);
+  GetLangNr("",LangNrr);  
+  BlockLoad(SFb);
+  BeginCurncyTotals(curcnt);
+
+  bal = ARSStartBal;
+  if (HasLocalization("PRT")) then begin
+    PortugueseFormFields(2480);
+  end;
+  for (i=0;i<acnt;i=i+1) begin
+    AddCurncyTotals(acur,av1,curcnt,aCurncyCode[i],aRValCur[i]);
+    PrintValueInclZero("F_FAKTBELOPP",aSum4[i],M4Val,LangNrr,SFb,false);
+    OUTFORMFIELD("F_FAKTNR",aInvoiceNr[i]);
+    OUTFORMFIELD("F_OFFICIALSERNO",aOfficialSerNo[i]);
+    OUTFORMFIELD("F_KUNDORDNR",aCustOrdNo[i]);
+    OUTFORMFIELD("F_KOMMENTAR",FindNumberSeriesComment(aRwtype[i],aInvoiceNr[i]));
+    OUTFORMFIELD("F_FAKTDAG",aInvDate[i]);
+    OUTFORMFIELD("F_FORFALLODATUM",aDueDate[i]);
+    if (Ab.ShowDelayDays!=0) then begin
+      if (alatedays[i]<0) then begin
+        OUTFORMFIELD("F_FORSENAT",-alatedays[i]);
+      end else begin
+        OUTFORMFIELD("F_FORSENAT",0);
+      end;
+    end else begin      
+      OUTFORMFIELD("F_FORSENAT",alatedays[i]);
+    end;
+    if (aRemndr[i]!=-1) then begin
+      OUTFORMFIELD("F_PAMINNELSENR",aRemndr[i]);
+    end;
+    PrintValueInclZero("F_RANTA",aIntVal[i],M4Val,LangNrr,SFb,false);
+    if (aRwtype[i]!=kInvoiceTypeCash and aRwtype[i]!=kInvoiceTypeCashInvoiceReceiptPRT) then begin
+      if (RepSpec.flags[4]==0) then begin
+        bal = bal + aRVal[i];
+      end else begin
+        bal = bal + aRValCur[i];
+      end;
+    end;
+    if (aRwtype[i]==kInvoiceTypeCash or aRwtype[i]==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+      if (RepSpec.flags[4]==0) then begin
+        bal = bal - (aRVal[i] - aIntVal[i]);
+      end else begin
+        bal = bal - (aRValCur[i] - aIntVal[i]);
+      end;
+    end;
+    
+    PrintValueInclZero("F_SALDO",bal,M4Val,LangNrr,SFb,false);
+    PrintValue("F_RECVALUE",aSum4[i]-aRVal[i],M4Val,LangNrr,SFb,false);
+    PrintValueInclZero("F_INVOUTSTAND",aRValCur[i],M4Val,LangNrr,SFb,false);
+    PrintValueInclZero("F_INVOUTSTANDBASE1",aRVal[i],M4Val,LangNrr,SFb,false);
+    OUTFORMFIELD("F_TRANSNR",aInvoiceNr[i]);
+    PrintCurrencyCode("F_VALUTA",aCurncyCode[i]);
+    ShortInvType(aRwtype[i],tstr)
+    OUTFORMFIELD("F_FAKTTYP",tstr);
+    InvoiceType(aRwtype[i],tstr)
+    OUTFORMFIELD("F_FAKTURATYP",tstr);
+    GetComment(aInvoiceNr[i],aRwtype[i],tstr)
+    OUTFORMFIELD("F_COMMENT",tstr);
+    GetReference(aInvoiceNr[i],aRwtype[i],tstr)
+    OUTFORMFIELD("F_OURREF",tstr);
+    if (FIELDINFORM("F_KID")) then begin
+      CreateKIDCode(CUp.Code,aInvoiceNr[i],tstr);
+      OUTFORMFIELD("F_KID",tstr);
+    end;
+    if (FIELDINFORM("F_KIDCHECK")) then begin
+      CreateKIDCheckNor(aRVal[i],aInvoiceNr[i],tstr);
+      OUTFORMFIELD("F_KIDCHECK",tstr);
+    end;
+    if (FIELDINFORM("F_KIDNOCHECK")) then begin
+      CreateKIDNoCheck(CUp.Code,aInvoiceNr[i],tstr);
+      OUTFORMFIELD("F_KIDNOCHECK",tstr);
+    end;  
+    if ((aRwtype[i]==-3) or (aRwtype[i]==2)) then begin
+      if (aIntVal[i]<0) then begin
+        t = -aIntVal[i];
+      end else begin
+        t = aIntVal[i];
+      end;
+      PrintValueInclZero("F_DEBVAL",t,M4Val,LangNrr,SFb,false);
+      PrintValueInclZero("F_CREDVAL",t,M4Val,LangNrr,SFb,false);
+    end else begin
+      PrintValueInclZero("F_DEBVAL",aIntVal[i],M4DVal,LangNrr,SFb,false);
+      PrintValueInclZero("F_CREDVAL",aIntVal[i],M4CVal,LangNrr,SFb,false);
+    end;    
+    FaktText(aRwtype[i],aInvoiceNr[i],tstr);
+    OUTFORMFIELD("F_FAKTTEXT",tstr);
+    EndFormRow;
+  end;  
+  if (FIELDINFORM("F_ACCBALPERCURRENCY")) then begin
+    for (i=0;i<curcnt;i=i+1) begin
+      OUTFORMFIELD("F_ACCBALCURRENCY",acur[i]);
+      PrintValueInclZero("F_ACCBALPERCURRENCY",av1[i],M4Val,LangNrr,SFb,false);
+    end;
+  end;
+  
+  if (FIELDINFORM("F_ACCBAL")) then begin
+    t = blankval;
+    for (i=0;i<acnt;i=i+1) begin
+      if (aCurncyCode[i]==CUp.CurncyCode) then begin
+        v = aRVal[i];
+      end else begin
+        if (blank(CUp.CurncyCode)) then begin
+          v = MulWithRateToBase1(aCurncyCode[i],CurrentDate,aRVal[i],DefaultCurRoundOff);
+        end else begin
+          if (RepSpec.repname=="CuPerForm") then begin
+            v = aRVal[i];
+          end else begin
+            CurValToOtherCur(CurrentDate,aCurncyCode[i],aRVal[i],CUp.CurncyCode,v,DefaultCurRoundOff);
+          end;
+        end;
+      end;
+      switch (aRwtype[i]) begin
+        case 1: t = t + v;
+        case 2: t = t + v;
+        case 4: t = t + v;
+        case 3: t = t + v;
+      end;
+    end;
+    PrintValueInclZero("F_ACCBAL",t,M4Val,LangNrr,SFb,false);
+  end;
+  if (FIELDINFORM("F_DEBETPERIOD")) then begin
+    t = blankval;
+    if (RepSpec.repname=="CuPerForm") then begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 1: t = t + aRVal[i];
+          case 2: t = t + aRVal[i];
+  //        case 3: t = t + aRVal[i];
+          case 4: t = t + aRVal[i];
+        end;
+      end;
+    end else begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 1: t = t + aIntVal[i];
+          case 2: t = t + aIntVal[i];
+  //        case 3: t = t + aIntVal[i];
+          case 4: t = t + aIntVal[i];
+        end;
+      end;
+    end;
+    PrintValueInclZero("F_DEBETPERIOD",t,M4Val,LangNrr,SFb,false);
+  end;
+  if (FIELDINFORM("F_CREDITPERIOD")) then begin
+    t = blankval;
+    if (RepSpec.repname=="CuPerForm") then begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 2: t = t - aRVal[i];
+          case 3: t = t + aRVal[i];
+          case 6: t = t + aRVal[i];
+          case 7: t = t + aRVal[i];
+          case 8: t = t + aRVal[i];
+          case 9: t = t + aRVal[i];
+        end;
+      end;
+    end else begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 2: t = t - aIntVal[i];
+          case 3: t = t + aIntVal[i];
+          case 6: t = t + aIntVal[i];
+          case 7: t = t + aIntVal[i];
+          case 8: t = t + aIntVal[i];
+          case 9: t = t + aIntVal[i];
+        end;
+      end;
+    end;
+    t = t * -1;
+    PrintValueInclZero("F_CREDITPERIOD",t,M4Val,LangNrr,SFb,false);
+  end;
+  if (FIELDINFORM("F_DEBETPERIODNOCASH")) then begin
+    t = blankval;
+    if (RepSpec.repname=="CuPerForm") then begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 1: t = t + aRVal[i];
+          case 3: t = t + aRVal[i];
+          case 4: t = t + aRVal[i];
+        end;
+      end;
+    end else begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 1: t = t + aIntVal[i];
+          case 3: t = t + aIntVal[i];
+          case 4: t = t + aIntVal[i];
+        end;
+      end;
+    end;
+    PrintValueInclZero("F_DEBETPERIODNOCASH",t,M4Val,LangNrr,SFb,false);
+  end;
+  if (FIELDINFORM("F_CREDITPERIODNOCASH")) then begin
+    t = blankval;
+    if (RepSpec.repname=="CuPerForm") then begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 6: t = t - aRVal[i];
+          case 7: t = t - aRVal[i];
+        end;
+      end;
+    end else begin
+      for (i=0;i<acnt;i=i+1) begin
+        switch (aRwtype[i]) begin
+          case 6: t = t - aIntVal[i];
+          case 7: t = t - aIntVal[i];
+        end;
+      end;
+    end;
+    PrintValueInclZero("F_CREDITPERIODNOCASH",t,M4Val,LangNrr,SFb,false);
+  end;
+  if (FIELDINFORM("F_TURNPERIOD")) then begin
+    t = blankval;
+    for (i=0;i<acnt;i=i+1) begin
+      switch (aRwtype[i]) begin
+        case 1: t = t + aIntVal[i];
+        case 4: t = t + aIntVal[i];
+        case 3: t = t + aIntVal[i];
+      end;
+    end;
+    PrintValueInclZero("F_TURNPERIOD",t,M4Val,LangNrr,SFb,false);
+  end;
+  if (FIELDINFORM("F_REMTEXT")) then begin
+    maxrem = -1;
+    for (i=0;i<acnt;i=i+1) begin
+      if (aRemndr[i]>maxrem) then begin maxrem = aRemndr[i]; end;
+    end;
+    if (maxrem>3) then begin maxrem = 3; end;
+    RemText(CUp.LangCode,maxrem,0,tstr);    
+    OUTFORMFIELD("F_REMTEXT",tstr);
+    RemText(CUp.LangCode,maxrem,1,tstr);    
+    OUTFORMFIELD("F_REMTEXT",tstr);
+    RemText(CUp.LangCode,maxrem,2,tstr);    
+    OUTFORMFIELD("F_REMTEXT",tstr);
+  end;
+
+  if ((FIELDINFORM("F_INTERESTFEE")) or (FIELDINFORM("F_SUMPLUSFEE")) or (FIELDINFORM("F_SUMPLUSRANTAPLUSFEE"))) then begin
+    GetRemFee(t);
+    PrintValueInclZero("F_INTERESTFEE",t,M4Val,LangNrr,SFb,false);
+    PrintValueInclZero("F_SUMPLUSFEE",ARSSum + t,M4Val,LangNrr,SFb,false);
+    PrintValueInclZero("F_SUMPLUSRANTAPLUSFEE",ARSSum + ARSIntSum + t,M4Val,LangNrr,SFb,false);
+  end;
+  OUTFORMFIELD("F_KUNDNAMN",CUp.Name);
+  OUTFORMFIELD("F_KUNDNR",CUp.Code);
+  OutAddress("F_ADRESS",CUp.Name,CUp.InvAddr0,CUp.InvAddr1,CUp.InvAddr2,CUp.InvAddr3,CUp.InvAddr4);
+  OUTFORMFIELD("F_KUNDFAX",CUp.Fax);
+  OUTFORMFIELD("F_KUNDTEL",CUp.Phone);
+  OUTFORMFIELD("F_KUNDMOMSNR",CUp.VATNr);
+  OUTFORMFIELD("F_REGNUMBER1",CUp.RegNr1);
+  OUTFORMFIELD("F_REGNUMBER2",CUp.RegNr2);
+  OUTFORMFIELD("F_KONTAKT",CUp.Person);
+  if (nonblank(CUp.CurncyCode)) then begin
+    tstr = CUp.CurncyCode;
+  end else begin
+    GetBaseCurncy(1,tstr);
+  end;
+  OUTFORMFIELD("F_KUNDVALUTA",tstr);
+  if (RepSpec.d1==CurrentDate) then begin  
+    ARSARSumodPrint = ARSARSumod + ARSOnAccBal;
+  end else begin
+    ARSARSumodPrint = ARSARSumod  + ARSOnAccBal;    
+  end;
+  PrintValueInclZero("F_EXTRAKOSTNAD",RepSpec.vals1,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_SUMMA",ARSSum + RepSpec.vals1,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_RANTESUMMA",ARSIntSum,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_SUMMAPLUSRANTA",ARSSum + ARSIntSum + RepSpec.vals1,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_FORSENATPLUSRANTA",ARSSumLate + ARSIntSum,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGEDTOTAL",ARSARSum,M4Val,LangNrr,SFb,false);
+//  PrintValueInclZero("F_AGEDTOTAL",(ARSARSum + ARSOnAccBal),M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_STARTBAL",ARSStartBal,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_CHANGEPERIOD",ARSSum - ARSStartBal,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGEDCURRENT",ARSsact,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED0",ARSs0+ARSOnAccBal,M4Val,LangNrr,SFb,false);// same as SL Aged report
+//  PrintValueInclZero("F_AGED0",ARSs0,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED1",ARSs1,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED2",ARSs16,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED3",ARSs31,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED4",ARSs61,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED5",ARSs91,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED6",ARSs121,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED7",ARSs151,M4Val,LangNrr,SFb,false);
+
+  PrintValueInclZero("F_AGEDTOTALPAYABLEONDATE",ARSsactod+ARSs1od+ARSs16od+ARSs31od+ARSs61od+ARSs91od+ARSs121od+ARSs151od+ARSOnAccBal,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGEDTOTALONDATE",ARSARSumodPrint,M4Val,LangNrr,SFb,false);
+//  PrintValueInclZero("F_AGEDTOTALONDATE",ARSARSumod,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGEDCURRENTONDATE",ARSsactod,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED0ONDATE",ARSs0od+ARSOnAccBal,M4Val,LangNrr,SFb,false);// same as SL Aged report
+//  PrintValueInclZero("F_AGED0ONDATE",ARSs0od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED1ONDATE",ARSs1od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED2ONDATE",ARSs16od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED3ONDATE",ARSs31od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED4ONDATE",ARSs61od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED5ONDATE",ARSs91od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED6ONDATE",ARSs121od,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_AGED7ONDATE",ARSs151od,M4Val,LangNrr,SFb,false);
+
+  PrintValueInclZero("F_SUMMAFORSENAT",ARSSumLate,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_SUMMAEJFORSENAT",ARSSumNotLate,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_ONACC",ARSOnAccBal,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_TOTPLUSONACC",ARSSum + ARSIntSum + ARSOnAccBal,M4Val,LangNrr,SFb,false);
+  PrintValueInclZero("F_TOTSUM",ARSSum + ARSOnAccBal,M4Val,LangNrr,SFb,false);
+
+  OUTFORMFIELD("F_RANTEFRANDAG",RepSpec.d1);
+  OUTFORMFIELD("F_STARTDATE",RepSpec.d1);
+  OUTFORMFIELD("F_ANTALFORSENAT",ARSNotLateCount);
+  OUTFORMFIELD("F_ANTALEJFORSENAT",ARSLateCount);
+  RETURN;
+END;
+
+global
+procedure DoPrintARSForm(record RcVc RepSpec,record CUVc CUp,
+                   val ARSSum,val ARSOnAccBalB1,val ARSIntSum,val ARSSumLate,val ARSARSum,val ARSStartBal,val ARSSumNotLate,
+                   Integer ARSLateCount,Integer ARSNotLateCount,
+                   val ARSsact,val ARSs0,val ARSs1,val ARSs16,val ARSs31,val ARSs61,val ARSs91,val ARSs121,val ARSs151,
+                   val ARSARSumod,val ARSsactod,val ARSs0od,val ARSs1od,val ARSs16od,val ARSs31od,val ARSs61od,val ARSs91od,val ARSs121od,val ARSs151od,
+                   Array Integer aRwtype,Array string aInvoiceNr,Array LongInt alatedays,Array LongInt aRemndr,
+                   Array Date aInvDate,Array Date aDueDate,Array val aIntVal,Array val aRVal,Array val aRValCur,Array val aSum4,
+                   Array string aVEInvNo,Array string aCurncyCode,Array string aOfficialSerNo,Array string aCustOrdNo,Integer acnt)
+begin
+  DoPrintARSForm2(RepSpec,CUp,
+                  ARSSum,blankval,ARSOnAccBalB1,ARSIntSum,ARSSumLate,ARSARSum,ARSStartBal,ARSSumNotLate,
+                  ARSLateCount,ARSNotLateCount,
+                  ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,
+                  ARSARSumod,ARSsactod,ARSs0od,ARSs1od,ARSs16od,ARSs31od,ARSs61od,ARSs91od,ARSs121od,ARSs151od,
+                  aRwtype,aInvoiceNr,alatedays,aRemndr,
+                  aInvDate,aDueDate,aIntVal,aRVal,aRValCur,aSum4,
+                  aVEInvNo,aCurncyCode,aOfficialSerNo,aCustOrdNo,acnt);
+  return;
+end;
+
+global
+procedure PrintARSForm2(record RcVc RepSpec,record CUVc CUp,
+                   val ARSSum,val ARSOnAccBal,val ARSOnAccBalB1,val ARSIntSum,val ARSSumLate,val ARSARSum,val ARSStartBal,val ARSSumNotLate,
+                   Integer ARSLateCount,Integer ARSNotLateCount,
+                   val ARSsact,val ARSs0,val ARSs1,val ARSs16,val ARSs31,val ARSs61,val ARSs91,val ARSs121,val ARSs151,
+                   val ARSARSumod,val ARSsactod,val ARSs0od,val ARSs1od,val ARSs16od,val ARSs31od,val ARSs61od,val ARSs91od,val ARSs121od,val ARSs151od,
+                   Array Integer aRwtype,Array string aInvoiceNr,Array LongInt alatedays,Array LongInt aRemndr,
+                   Array Date aInvDate,Array Date aDueDate,Array val aIntVal,Array val aRVal,Array val aRValCur,Array val aSum4,
+                   Array string aVEInvNo,Array string aCurncyCode,Array string aOfficialSerNo,Array string aCustOrdNo,Integer acnt)
+BEGIN
+  Integer i,rwcnt;  
+  Boolean printf,langf;
+  Integer intdocnr;
+  string 30 formcode,langcode;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+
+  if (blank(RepSpec.Language)) then begin
+    langcode = CUp.LangCode;
+  end else begin
+    langcode = RepSpec.Language;
+  end;
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LPrintARSForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;
+
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,-1,FDrw.PrintGroupCode,
+                      langcode,intdocnr,"",formcode)) then
+      begin
+        goto LBREAKARS;
+      end;
+    end;
+LBREAKARS:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+        NumberofDocumentPages(FDrw.FPCode,acnt);
+        SetFaxInfo(CUp.Person,CUp.Name,CUp.Fax,USetStr(2541));
+        DoPrintARSForm2(RepSpec,CUp,ARSSum,ARSOnAccBal,ARSOnAccBalB1,ARSIntSum,ARSSumLate,ARSARSum,ARSStartBal,ARSSumNotLate,ARSLateCount,ARSNotLateCount,
+                       ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,
+                       ARSARSumod,ARSsactod,ARSs0od,ARSs1od,ARSs16od,ARSs31od,ARSs61od,ARSs91od,ARSs121od,ARSs151od,
+                       aRwtype,aInvoiceNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRValCur,aSum4,aVEInvNo,aCurncyCode,aOfficialSerNo,
+                       aCustOrdNo,acnt);
+        CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+  end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LPrintARSForm:;  
+  RETURN;
+END;
+
+global
+procedure PrintARSForm(record RcVc RepSpec,record CUVc CUp,
+                   val ARSSum,val ARSOnAccBalB1,val ARSIntSum,val ARSSumLate,val ARSARSum,val ARSStartBal,val ARSSumNotLate,
+                   Integer ARSLateCount,Integer ARSNotLateCount,
+                   val ARSsact,val ARSs0,val ARSs1,val ARSs16,val ARSs31,val ARSs61,val ARSs91,val ARSs121,val ARSs151,
+                   val ARSARSumod,val ARSsactod,val ARSs0od,val ARSs1od,val ARSs16od,val ARSs31od,val ARSs61od,val ARSs91od,val ARSs121od,val ARSs151od,
+                   Array Integer aRwtype,Array string aInvoiceNr,Array LongInt alatedays,Array LongInt aRemndr,
+                   Array Date aInvDate,Array Date aDueDate,Array val aIntVal,Array val aRVal,Array val aRValCur,Array val aSum4,
+                   Array string aVEInvNo,Array string aCurncyCode,Array string aOfficialSerNo,Array string aCustOrdNo,Integer acnt)
+begin
+  PrintARSForm2(RepSpec,CUp,
+                ARSSum,blankval,ARSOnAccBalB1,ARSIntSum,ARSSumLate,ARSARSum,ARSStartBal,ARSSumNotLate,
+                ARSLateCount, ARSNotLateCount,
+                ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,
+                ARSARSumod,ARSsactod,ARSs0od,ARSs1od,ARSs16od,ARSs31od,ARSs61od,ARSs91od,ARSs121od,ARSs151od,
+                aRwtype,aInvoiceNr,alatedays,aRemndr,
+                aInvDate,aDueDate,aIntVal,aRVal,aRValCur,aSum4,
+                aVEInvNo,aCurncyCode,aOfficialSerNo,aCustOrdNo,acnt);
+  return;
+end;
+
+global
+procedure DoARSForm(record RcVc Dummyr,record RcVc RepSpec)
+BEGIN
+  DoARSFunction(RepSpec,0);
+  RETURN;
+END;
+
+global
+procedure ARSForm(record RcVc RepSpec)
+BEGIN
+  Boolean tmpf;
+  
+  tmpf = PrintDocument(RepSpec,"ARSForm",false);
+  RETURN;
+END;
+
+global
+procedure DoDebtorLetForm(record RcVc Dummyr,record RcVc RepSpec)
+BEGIN
+  DoARSFunction(RepSpec,0);
+  RETURN;
+END;
+
+global
+procedure DebtorLetForm(record RcVc RepSpec)
+BEGIN
+  Boolean tmpf;
+  
+  tmpf = PrintDocument(RepSpec,"ARSForm",false);
+  RETURN;
+END;

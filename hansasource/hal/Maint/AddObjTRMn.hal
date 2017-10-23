@@ -1,0 +1,102 @@
+external procedure CheckFlush(var Integer,Integer);
+external updating procedure UpdateROHis(record TRVc,record TRVc,Integer);
+external updating procedure BatchMain(record TRVc);
+external updating procedure AddTrans(record TRVc,Boolean,Boolean,Boolean);
+external procedure NegateTrans(Integer,var record TRVc);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean DateLocked(Date,string);
+external function Boolean ObjIncluded(string,string);
+external procedure ExtractObj(string,var Integer,var string);
+
+procedure Add3Objs(var string objstr,string nobjstr,string accnumber,Boolean checkf)
+BEGIN
+  Integer pos,errcode;
+  string 255 ostr,errstr;
+  string 255 tmpobjstr;
+  
+  tmpobjstr = objstr;
+  pos = 0;
+  ExtractObj(nobjstr,pos,ostr);
+  while (nonblank(ostr)) begin
+    if (ObjIncluded(ostr,objstr)==false) then begin
+      if (nonblank(tmpobjstr)) then begin
+        tmpobjstr = tmpobjstr & ",";
+      end;  
+      tmpobjstr = tmpobjstr & ostr;
+      if (checkf) then begin
+        errcode = CheckObjs(accnumber,tmpobjstr,errstr);
+      end;
+      if (errcode==0) then begin
+        if (len(ostr)+len(objstr)>=59) then begin goto L19; end;
+        if (nonblank(objstr)) then begin
+          objstr = objstr & ",";
+        end;  
+        objstr = objstr & ostr;
+      end;
+    end;
+    ExtractObj(nobjstr,pos,ostr);
+  end;
+L19:;
+  RETURN;
+END;
+
+global
+updating procedure AddObjTRMn(record RcVc RepSpec)
+BEGIN
+  record TRVc TRr;
+  record TRVc oldTRr;
+  record TRVc TR2r;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  Boolean TrHs,changedf,testf;
+  string 60 objstr;
+  record RTViiteNumBlock RTr;
+  Integer cnt;
+  
+  cnt = 0;
+  if (blank(RepSpec.f1)) then begin goto LAddObjTRMn; end;
+  TrHs = true;
+  TRr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",TRr,1,TrHs)) begin
+    if (TRr.TransDate>RepSpec.sEndDate) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (DateLocked(TRr.TransDate,"TRVc")) then begin testf = false; end;
+      if (testf) then begin
+        changedf = false;
+        RecordCopy(oldTRr,TRr);
+        rwcnt = MatRowCnt(TRr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(TRr,i,TRrw);
+          objstr = TRrw.Objects;
+          Add3Objs(objstr,RepSpec.f1,TRrw.AccNumber,RepSpec.flags[0]==0);
+          if (TRrw.Objects!=objstr) then begin
+            TRrw.Objects = objstr;
+            MatRowPut(TRr,i,TRrw);
+            changedf = true;
+          end;
+        end;
+        if (changedf) then begin
+          if (RepSpec.flags[0]==0) then begin
+            if (RecordUpdate(oldTRr,TRr,true)==0) then begin end;
+          end else begin
+            RecordCopy(TR2r,oldTRr);
+            TRr.LastChangeDate = CurrentDate;
+            if (RecordUpdate(oldTRr,TRr,false)==0) then begin end;
+            NegateTrans(0,TR2r);
+            AddTrans(TR2r,false,false,false);
+            BatchMain(TRr);
+            AddTrans(TRr,false,false,false);
+            BlockLoad(RTr);
+            if (RTr.RT==1) then begin
+              UpdateROHis(TRr,oldTRr,1);
+            end;
+          end;
+          CheckFlush(cnt,2); // Not sure how many we can handle, Transactions can be large.
+        end;
+      end;
+    end;
+  end;
+LAddObjTRMn:;  
+  RETURN;
+END;

@@ -1,0 +1,300 @@
+external procedure BuildCredManPayPlan(record CredManVc,var record CredManPayPlanVc,record CredManSetBlock,Boolean,Boolean);
+external procedure SplitEclass(string,var Array string);
+external function val GetPlanTypeVal(Integer,val);
+external function string 255 GetPlanTypeText(Integer);
+external procedure CalcCredManSums(record CredManVc,record CredManPayPlanVc,record CredManSetBlock,var val,var val,var val,var val,var val,var val,var val,var val,
+                                   var val,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val,
+                                   var val,var Date,var val,var val,var LongInt);
+
+procedure PrintLeft(string col1str,string col1val,string col2str,string col2val)
+begin
+  StartFormat(15);
+  OutString(0,0,col1str,false);
+  OutString(80,0,col1val,false);
+  OutString(180,0,col2str,false);
+  OutString(280,0,col2val,false);
+  EndFormat;
+end;
+
+procedure PrintRight(string col1str,string col1val,string col2str,string col2val,string col3str,string col3val)
+begin
+  StartFormat(15);
+  OutString(0,0,col1str,false);
+  OutString(150,0,col1val,true);
+  OutString(160,0,col2str,false);
+  OutString(310,0,col2val,true);
+  OutString(320,0,col3str,false);
+  OutString(470,0,col3val,true);
+  EndFormat;
+end;
+
+procedure PrintCredManTop(record CredManVc CredManr,record CredManPayPlanVc CredManPayPlanr,record CredManSetBlock CredManSetb)
+begin
+  record CredManPayPlanVc CredManPayPlan2r;
+  row CredManPayPlanVc CredManPayPlanrw;
+  val planinst,planint,planfee,plandep;
+  val suginst,sugint,sugfee,sugdep;
+  val invdinst,invdint,invdfee,invddep;
+  val paidinst,paidint,paidfee,paiddep;
+  val addinst,addint,addfee,adddep;
+  val lastpaid,curbal,cursuginst;
+  val settlesum,due,overdue,totsum;
+  Date lastpaiddate,bldat,theday,d;
+  LongInt missednow,missedworst,missedtot,contractage;
+  LongInt i,rwcnt,i2,rwcnt2,agecnt,l,lasti,lasti2;
+  val shouldbeint,shouldbesug,v,v2;
+  Boolean stopnextzero;
+
+  rwcnt = MatRowCnt(CredManPayPlanr);
+  CalcCredManSums(CredManr,CredManPayPlanr,CredManSetb,planinst,planint,planfee,plandep,suginst,sugint,sugfee,sugdep,
+                  invdinst,invdint,invdfee,invddep,paidinst,paidint,paidfee,paiddep,addinst,addint,addfee,adddep,
+                  lastpaid,lastpaiddate,curbal,cursuginst,contractage);
+
+  totsum = CredManr.InvSum4 - CredManr.DepositSum;
+  if (contractage>CredManr.SettleLimit) then begin
+    settlesum = curbal;
+  end else begin
+    settlesum = CredManr.InvSum4 + addfee - paidinst - addint - paiddep; //  - paidfee
+  end;
+
+  BuildCredManPayPlan(CredManr,CredManPayPlan2r,CredManSetb,false,false); // This build is for what was originally planned
+  agecnt = 0;
+  stopnextzero = false;
+  rwcnt2 = MatRowCnt(CredManPayPlan2r);
+  for (i2=0;i2<rwcnt2;i2=i2+1) begin
+    MatRowGet(CredManPayPlan2r,i2,CredManPayPlanrw);
+    if (CredManPayPlanrw.PlanType==1) then begin
+      shouldbeint = shouldbeint + CredManPayPlanrw.Sum;
+      agecnt = agecnt + 1;
+    end;
+    if (CredManPayPlanrw.PlanType>=5 and CredManPayPlanrw.PlanType<=8) then begin
+      shouldbesug = shouldbesug + CredManPayPlanrw.Sum;
+    end;
+    if (CredManPayPlanrw.PlanType==0) then begin
+      if (stopnextzero) then begin
+        i2 = rwcnt2;
+      end;
+    end;
+    if (agecnt>=contractage) then begin
+      stopnextzero = true;
+    end;
+  end;
+  v = 0;
+  v2 = 0;
+  lasti = 0;
+  lasti2 = 0;
+  missedtot = 0;
+  missedworst = 0;
+  for (l=0;l<contractage;l=l+1) begin
+    theday = bldat;
+    for (i=lasti;i<rwcnt;i=i+1) begin
+      MatRowGet(CredManPayPlanr,i,CredManPayPlanrw);
+      if (CredManPayPlanrw.PlanType==17) then begin
+        theday = CredManPayPlanrw.TransDate;
+        v = CredManPayPlanrw.Bal;
+      end;
+      if (nonblankdate(theday)) then begin
+        if (CredManPayPlanrw.TransDate!=theday) then begin
+          lasti = i;
+          i = rwcnt;
+        end else begin
+          v = CredManPayPlanrw.Bal;
+        end;
+      end;
+    end;
+    theday = bldat;
+    for (i2=lasti2;i2<rwcnt2;i2=i2+1) begin
+      MatRowGet(CredManPayPlan2r,i2,CredManPayPlanrw);
+      if (CredManPayPlanrw.PlanType==1) then begin
+        theday = CredManPayPlanrw.TransDate;
+        v2 = CredManPayPlanrw.Bal;
+      end;
+      if (nonblankdate(theday)) then begin
+        if (CredManPayPlanrw.TransDate!=theday) then begin
+          lasti2 = i2;
+          i2 = rwcnt2;
+        end else begin
+          v2 = CredManPayPlanrw.Bal;
+        end;
+      end;
+    end;
+    if (v>v2) then begin
+      missedtot = missedtot + 1;
+    end else begin
+      if (missedtot>missedworst) then begin
+        missedworst = missedtot;
+      end;
+      missedtot = 0;
+    end;
+  end;
+  if (missedtot>missedworst) then begin
+    missedworst = missedtot;
+  end;
+  due = shouldbesug - paidinst - paidint - paidfee - paiddep + addint - shouldbeint;
+  missednow = (due / CredManr.MonthlySum);
+  
+  BuildCredManPayPlan(CredManr,CredManPayPlan2r,CredManSetb,true,true); // This build is ONLY for Next Suggested Instalment......
+  CalcCredManSums(CredManr,CredManPayPlanr,CredManSetb,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,v,d,v,cursuginst,l);
+
+  PrintLeft(USetStr(17317),CredManr.SerNr,USetStr(17310),StringFromSet(368,CredManr.InstalmentType));
+  PrintLeft("Customer",CredManr.CustCode,USetStr(17315),CredManr.startDate);
+  PrintLeft(USetStr(17309),CredManr.Type,"First Invoice Date",CredManr.FirstInvDate);
+  PrintLeft(USetStr(17313),CredManr.InvSum4,"First Interest Date",CredManr.FirstIntDate);
+  PrintLeft(USetStr(17311),CredManr.IntRate,USetStr(17316),CredManr.endDate);
+  PrintLeft(USetStr(17312),CredManr.InstalmentMonths,USetStr(17318),CredManr.TransDate);
+  PrintLeft("","","","");
+  
+  PrintRight("Deposit",CredManr.DepositSum,"Deposit Paid",paiddep,"Deposit Due",CredManr.DepositSum - paiddep);
+  PrintRight("Current Balance",curbal,"Next Instal.",cursuginst,"Original Instal.",CredManr.MonthlySum);
+  PrintRight("Amount Now Due",due,"","","","");
+  PrintRight("Arrear Instalments",missednow,"Arrear Periods",missedtot,"Worst Arrear Period",missedworst);
+  PrintRight("Contract Age",contractage,"Settlement Sum",settlesum,"","");
+  PrintRight("Paid to Date",paidinst + paidint + paidfee + paiddep,"Last Paid Amount",lastpaid,"Last Paid Date",lastpaiddate);
+  PrintRight("Fees to Date",addfee,"Interest to Date",addint,"","");
+  
+  StartFormat(15);
+  EndFormat;
+  return;
+end;
+
+procedure PrintCredManInfo(record CredManVc CredManr,record CredManSetBlock CredManSetb,Integer detaillevel,Boolean withactuals,Boolean suggestedonsameday)
+begin
+  record CredManPayPlanVc CredManPayPlanr;
+  row CredManPayPlanVc CredManPayPlanrw;
+  LongInt i,rwcnt;
+  string 40 dblstr;
+  Integer prevtype;
+
+  BuildCredManPayPlan(CredManr,CredManPayPlanr,CredManSetb,withactuals,suggestedonsameday);
+  PrintCredManTop(CredManr,CredManPayPlanr,CredManSetb);
+  StartFormat(15);
+  OutString(0,0,USetStr(17326),false);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(17300),false);
+  OutString(6,0,USetStr(17305),true);
+  OutString(7,0,USetStr(17331),true);
+  OutString(8,0,USetStr(17327),true);
+  OutString(9,0,USetStr(17304),true);
+  OutString(1,0,USetStr(17308),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(17303),false);
+  OutVal(1,0,CredManr.InvSum4,M4Val,true);
+  EndFormat;
+  Gray_Divider(0,1);
+  rwcnt = MatRowCnt(CredManPayPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CredManPayPlanr,i,CredManPayPlanrw);
+    if (i==0) then begin
+      prevtype = CredManPayPlanrw.PlanType;
+    end;
+    if (CredManPayPlanrw.IssuedNr>0) then begin
+      dblstr = "DblCredManEventVc";
+    end else begin
+      dblstr = "";
+    end;
+    if ((prevtype==0 and CredManPayPlanrw.PlanType!=0) or (prevtype!=0 and CredManPayPlanrw.PlanType==0)) then begin
+      Gray_Divider(0,1);
+    end;
+    switch (CredManPayPlanrw.PlanType) begin
+      case 0:
+        StartFormat(15);
+        OutDate(0,0,CredManPayPlanrw.TransDate,false);
+        OutVal(6,0,CredManPayPlanrw.Sum,M45Val,true);
+        OutVal(7,0,CredManPayPlanrw.AcumulatedInt,M45Val,true);
+        OutVal(8,0,CredManPayPlanrw.Bal + CredManPayPlanrw.AcumulatedInt,M4Val,true);
+        OutVal(1,0,CredManPayPlanrw.Bal,M4Val,true);
+        EndFormat;
+      otherwise
+        StartFormat(15);
+        OutString(0,0,CredManPayPlanrw.PlanType,false);
+        OutDate(6,0,CredManPayPlanrw.TransDate,false);
+        OutStringID(7,dblstr,GetPlanTypeText(CredManPayPlanrw.PlanType),false,CredManPayPlanrw.IssuedNr);
+        OutVal(9,0,GetPlanTypeVal(CredManPayPlanrw.PlanType,CredManPayPlanrw.Sum),M4Val,true);
+        OutVal(1,0,CredManPayPlanrw.Bal,M4Val,true);
+        EndFormat;
+    end;
+    prevtype = CredManPayPlanrw.PlanType;
+  end;
+  StartFormat(15);
+  EndFormat;
+  return;
+end;
+
+global
+procedure CredManInfoRn(record RcVc RepSpec)
+begin
+  record CredManVc CredManr;
+  record CredManSetBlock CredManSetb;
+  LongInt frcr,tocr;
+  Boolean foundf,testf;
+  
+  BlockLoad(CredManSetb);
+  frcr = FirstInRange(RepSpec.f1,10);
+  tocr = LastInRange(RepSpec.f1,10);
+  
+  StartReportJob(USetStr(17319));
+  EndHeader;
+  SetRepCol(2,80);
+  SetRepCol(3,180);
+  SetRepCol(4,280);
+//  SetRepCol(5,180);
+  SetRepCol(6,160);
+  SetRepCol(7,240);
+  SetRepCol(8,320);
+  SetRepCol(9,400);
+  CredManr.SerNr = frcr;
+  foundf = true;
+  while (LoopMain(CredManr,1,foundf)) begin
+    if (CredManr.SerNr>tocr) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (testf) then begin
+      if (RepSpec.flags[1]>0) then begin
+        CredManr.InstalmentType = RepSpec.flags[1] - 1;
+      end;
+      PrintCredManInfo(CredManr,CredManSetb,RepSpec.flags[0],RepSpec.flags[2]==1,RepSpec.flags[3]==1,);
+    end;
+  end;
+  EndJob;
+  return;
+end;
+
+global
+procedure CredManInfoSelRn(record RcVc RepSpec)
+begin
+  record CredManEventVc CredManEventr;
+  array string 20 ac;
+  Integer i;
+  
+  StartReportJob(USetStr(17319));
+  EndHeader;
+  SetRepCol(2,80);
+  SetRepCol(3,400);
+  StartFormat(15);
+  OutString(0,0,USetStr(17325),false);
+  OutString(2,0,USetStr(17324),false);
+  OutString(3,0,USetStr(17322),true);
+  OutString(1,0,USetStr(17323),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  i = 0;
+  SplitEclass(RepSpec.f1,ac);
+  while (nonblank(ac[i])) begin
+    CredManEventr.SerNr = StringToLongInt(ac[i]);
+    if (ReadFirstMain(CredManEventr,1,true)) then begin
+      StartFormat(15);
+      OutStringID(0,"DblCredManEventVc",CredManEventr.TransDate,false,CredManEventr.SerNr);
+      OutString(2,0,CredManEventr.Comment,false);
+      OutVal(3,0,CredManEventr.InvSum,M4Val,true);
+      OutVal(1,0,CredManEventr.PaidSum,M4Val,true);
+      EndFormat;
+    end;
+    i = i + 1;
+  end;
+  EndJob;
+  return;
+end;

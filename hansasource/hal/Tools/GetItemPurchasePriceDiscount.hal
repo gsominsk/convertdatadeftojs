@@ -1,0 +1,585 @@
+external procedure GetINPurchaseControlAcc(record INVc,var string,string,string,Integer);
+external function Boolean FindItemVAR2(string,var string,var string,var string);
+external procedure FindPLQPrice(record PLQVc,record INVc,var val,var val);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val DivWithRateToBase1(string,Date,val,roundmode);
+external procedure GetStaffReb(record INVc,string,val,var val,record RebVc,Integer,var val,var Boolean);
+external procedure SetDefProjectUnit(string,var string);
+external function Boolean GetItemNameStr(Integer,var string,string,string,string);
+external function Boolean FindLocationAccRow(string,row LocationAccBlock);
+external function Boolean FindItemVAR(string,var string,var string,var string,var string);
+external procedure FillMaskVAR(string,string,string,Array string,Array string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean GetFirstItem(var string,var record INVc);
+external function string 5 FindPLVATCode(record PLDefVc,string,string);
+external function string 10 FindPLTaxTemplateCode(record PLDefVc,string,string);
+
+function boolean FindDefaultPI(var record PIVc PIr,string item, string supplier,string location)
+begin
+  boolean pifound,infound;
+  record  INVc orgINr;
+
+  PIr.ItemCode = item;
+  PIr.VECode = supplier;
+  PIr.Location = location;
+  pifound = ReadFirstKey("Vendor",PIr,3,true);
+  pifound = pifound and (PIr.DefaultChoice==1);
+  if (pifound==false) then begin 
+    PIr.ItemCode = item;
+    PIr.VECode = supplier;
+    PIr.Location = "";
+    pifound = ReadFirstKey("Vendor",PIr,3,true);
+  end;
+  pifound = pifound and (PIr.DefaultChoice==1);
+  if (pifound==false) then begin 
+    infound = ReadFirstItem(item,orgINr,true,false);
+    if (infound) then begin 
+      PIr.ItemCode = orgINr.Code;
+      PIr.VECode = supplier;
+      PIr.Location = location;
+      pifound = ReadFirstKey("Vendor",PIr,3,true);
+      pifound = pifound and (PIr.DefaultChoice==1);
+    end;
+  end;
+  if (pifound==false) and (infound) then begin 
+    PIr.ItemCode = orgINr.Code;
+    PIr.VECode = supplier;
+    PIr.Location = "";
+    pifound = ReadFirstKey("Vendor",PIr,3,true);
+    pifound = pifound and (PIr.DefaultChoice==1);
+  end;
+  FindDefaultPI = pifound;
+  return;
+end;
+
+function Boolean FindPI(var record PIVc PIr,string item,record INVc INr,string supplier,string location)
+begin
+  Boolean pifound;
+  
+  if (nonblank(location)) then begin
+    PIr.DefaultChoice = 1;
+    PIr.ItemCode = item;
+    PIr.VECode = supplier;
+    PIr.Location = location;
+    pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    
+    if (pifound==false) then begin
+      PIr.DefaultChoice = 0;
+      PIr.ItemCode = item;
+      PIr.VECode = supplier;
+      PIr.Location = location;
+      pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    end;
+  end;
+  
+  if (pifound==false) then begin
+    PIr.DefaultChoice = 1;
+    PIr.ItemCode = item;
+    PIr.VECode = supplier;
+    PIr.Location = "";
+    pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    
+    if (pifound==false) then begin
+      PIr.DefaultChoice = 0;
+      PIr.ItemCode = item;
+      PIr.VECode = supplier;
+      PIr.Location = "";
+      pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    end;
+  end;
+  
+  if (pifound==false and nonblank(location)) then begin
+    PIr.DefaultChoice = 1;
+    PIr.ItemCode = INr.Code;
+    PIr.VECode = supplier;
+    PIr.Location = location;
+    pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    
+    if (pifound==false) then begin
+      PIr.DefaultChoice = 0;
+      PIr.ItemCode = INr.Code;
+      PIr.VECode = supplier;
+      PIr.Location = location;
+      pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    end;
+  end;
+  
+  if (pifound==false) then begin
+    PIr.DefaultChoice = 1;
+    PIr.ItemCode = INr.Code;
+    PIr.VECode = supplier;
+    PIr.Location = "";
+    pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    
+    if (pifound==false) then begin
+      PIr.DefaultChoice = 0;
+      PIr.ItemCode = INr.Code;
+      PIr.VECode = supplier;
+      PIr.Location = "";
+      pifound = ReadFirstKey("DefaultChoice",PIr,4,true);
+    end;
+  end;
+  
+  FindPI = pifound;
+end;
+
+global
+function Boolean GetPurchaseRebate(record INVc INr,var val pricep,var val qtp,string cucat,string reb2code,var val rebvp,var Boolean foundstaff,Date tdp)
+begin
+  Boolean res;
+  record CCatVc CCatr;
+  record RebVc Rebr;
+  row RebVc Rebrw;
+  Integer rwcnt;
+  Integer i;
+  string 5 rebcode;
+  Boolean rebfound;
+  
+  rebvp = 0;
+  rebcode = reb2code;
+  if (blank(rebcode)) then begin
+    if (nonblank(cucat)) then begin
+      CCatr.Code = cucat;
+      if (ReadFirstMain(CCatr,1,true)) then begin
+        if (nonblank(CCatr.RebCode)) then begin
+          rebcode = CCatr.RebCode;
+        end;
+      end;
+    end;
+  end;      
+  if (nonblank(rebcode)) then begin
+    if (GetYear(tdp)>0) then begin
+      Rebr.Replaces = rebcode;
+      Rebr.FromDate = tdp;
+      rebfound = ReadLastKey("Replaces",Rebr,2,false); 
+      if (Rebr.Replaces<>rebcode) then begin rebfound = false; end;
+      if (DateInRange(tdp,Rebr.FromDate,Rebr.ToDate)==false) then begin rebfound = false; end;
+      if (rebfound) then begin rebcode = Rebr.Code; end;
+    end;  
+    if (rebfound==false) then begin
+      Rebr.Code = rebcode;
+      rebfound = ReadFirstMain(Rebr,1,true);
+    end; 
+    if (rebfound) then begin
+      rwcnt = MatRowCnt(Rebr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Rebr,i,Rebrw);
+        if (Rebrw.CodeType==0) then begin
+          if (INr.Group==Rebrw.ITCode) then begin
+//            GetStaffReb(INr,Rebrw.StaffCode,qtp,pricep,Rebr,rebvp,foundstaff);
+            GetStaffReb(INr,Rebrw.StaffCode,qtp,pricep,Rebr,i,rebvp,foundstaff);
+            res = true;
+            goto LGetPurchaseRebate;
+          end;
+        end;
+        if (Rebrw.CodeType==1) then begin
+          if (INr.Code==Rebrw.ITCode) then begin
+            GetStaffReb(INr,Rebrw.StaffCode,qtp,pricep,Rebr,i,rebvp,foundstaff);
+            res = true;
+            goto LGetPurchaseRebate;
+          end;
+        end;
+      end;
+      GetStaffReb(INr,Rebr.StaffCode,qtp,pricep,Rebr,-1,rebvp,foundstaff);
+      res = true;
+    end;
+  end;
+LGetPurchaseRebate:;
+  GetPurchaseRebate = res;
+  return;
+end;
+
+global
+function Boolean GetItemPurchasePriceDiscount(
+         string vecode,string location,Date tdp,string crncycode,string item,val qtp,
+         string langcode,string custcat,string pricelist,string rebcode,
+         Integer aexport,Boolean forcepropervar,
+         val frrate,val torate1,val torate2,val basrate1,val basrate2,
+         var record INVc INr,var record PIVc PIr,var Boolean pifound,
+         var val price,var string descstr,var val discount,
+         var string vatcode,var string purchacc,
+         var Boolean nomoreremotecalls,var string taxtempletecode)
+begin
+  Boolean res;
+  record ITVc ITr;
+  record PLVc PLr;
+  record PLQVc PLQr;
+  record PLDefVc PLDefr;
+  Boolean pldeffound,infound,qtydepf,foundstaff;
+  val tprice,tdisc;
+  string 255 lang2,pricelist2;
+  val fr,to1,to2,br1,br2;  
+  record APAccBlock APAccb;
+  record CostAccBlock CAb;
+  string 60 theitemcode,thepiitemcode;
+  string 200 comment;
+  Integer exportf;
+  Boolean plf,varf;
+  string 10 itemsize;
+  string 255 mask;
+  Array string 20 maskvar;
+  Array string 2 maskvarsz;
+  string 60 sz,msk,mskrep;
+  string 200 varsubset;
+  Boolean nomorepricing,rebfound,qtyplfound;
+  string 10 plvatcode,pltaxtemplatecode;
+  row LocationAccBlock LAbrw;
+  record INVc IN2r;
+  val t;
+  record CUVc VEr;
+
+  RecordClear(INr);
+  if (pifound==false) then begin
+    RecordClear(PIr);
+  end;
+  nomorepricing = false;
+  exportf = aexport;
+  res = false;
+  pldeffound = false;  
+  foundstaff = false;
+  qtydepf = false;
+  pricelist2 = pricelist;
+  BlockLoad(APAccb);
+  
+  descstr = "";
+  vatcode = "";
+  purchacc = "";
+  taxtempletecode = "";
+  tprice = price;
+  tdisc = discount;
+
+  infound = GetFirstItem(item,INr);
+  theitemcode = INr.Code;
+  thepiitemcode = INr.Code;
+  if (infound==false) then begin
+    infound = ReadFirstItem(item,INr,true,forcepropervar);
+    if (infound) then begin
+      theitemcode = item;
+      thepiitemcode = INr.Code;
+      if (item<>INr.Code) then begin
+        INr.Code = item;
+      end;
+    end;
+  end;  
+  if (FindItemVAR(INr.Code,sz,msk,mskrep,varsubset)) then begin
+    varf = true;
+    FillMaskVAR(item,itemsize,mask,maskvar,maskvarsz);
+  end;
+  if (INr.Terminated<>0) then begin infound = false; end;
+  if (infound) then begin
+    if (pifound==false) then begin
+      pifound = FindPI(PIr,item,INr,vecode,location);
+      if (pifound==false) then begin
+        pifound = FindPI(PIr,thepiitemcode,INr,vecode,location);
+      end else begin
+        thepiitemcode = theitemcode;
+        if (FindItemVAR2(item,sz,msk,varsubset)) then begin
+          if (ReadFirstItem(item,IN2r,true,true)) then begin
+            descstr = IN2r.Name;
+          end;
+        end;
+      end;
+    end;
+    tprice = PIr.PurPrice;
+    if (PIr.CurncyCode!=crncycode) then begin
+      t = MulWithRateToBase1(PIr.CurncyCode,tdp,PIr.PurPrice,DefaultCurRoundOff);
+      tprice = DivRateToBase1(crncycode,t,frrate,torate1,torate2,basrate1,basrate2,DefaultCurRoundOff);
+    end;
+    vatcode = INr.VATCode;
+    switch (exportf) begin
+      case 1: vatcode = INr.VATCodeEU;
+      case 2: vatcode = INr.VATCodeExp;
+      case 3: vatcode = INr.VATCodeEU;
+      case 4: vatcode = INr.VATCodeExp;
+    end;
+    taxtempletecode = INr.TaxTemplateCode;
+    switch (exportf) begin
+      case 1: taxtempletecode = INr.TaxTemplateCodeEU;
+      case 2: taxtempletecode = INr.TaxTemplateCodeExp;
+      case 3: taxtempletecode = INr.TaxTemplateCodeEU;
+      case 4: taxtempletecode = INr.TaxTemplateCodeExp;
+    end;
+    if ((nonblank(INr.Group)) and ((blank(vatcode)))) then begin
+      ITr.Code = INr.Group;
+      if (ReadFirstMain(ITr,1,true)) then begin
+        if (blank(vatcode)) then begin
+          vatcode = ITr.VATCodeDom;
+          switch (exportf) begin
+            case 1: vatcode = ITr.VATCodeEU;
+            case 2: vatcode = ITr.VATCodeExp;
+            case 3: vatcode = ITr.VATCodeEU;
+            case 4: vatcode = ITr.VATCodeExp;
+          end;          
+        end;        
+        if (blank(taxtempletecode)) then begin
+          taxtempletecode = ITr.TaxTemplateCode;
+          switch (exportf) begin
+            case 1: taxtempletecode = ITr.TaxTemplateCodeEU;
+            case 2: taxtempletecode = ITr.TaxTemplateCodeExp;
+            case 3: taxtempletecode = ITr.TaxTemplateCodeEU;
+            case 4: taxtempletecode = ITr.TaxTemplateCodeExp;
+          end;
+        end;
+      end;
+    end;
+    res = true;
+    if (pifound==false) then begin
+      tprice = INr.InPrice;
+      if (PIr.CurncyCode!=crncycode) then begin
+        tprice = MulWithRateToBase1(PIr.CurncyCode,tdp,tprice,DefaultCurRoundOff);
+        tprice = DivRateToBase1(crncycode,tprice,frrate,torate1,torate2,basrate1,basrate2,DefaultCurRoundOff);
+      end;
+    end;
+    if (nonblank(vecode)) then begin
+      if (pifound==false) then begin
+        PLr.PLCode = pricelist2;
+        PLr.ArtCode = thepiitemcode;
+        PLr.CustCode = vecode;
+        plf = ReadFirstMain(PLr,3,true);
+        if ((plf==false) and varf) then begin
+          PLr.PLCode = pricelist2;
+          PLr.ArtCode = maskvar[0];
+          PLr.CustCode = vecode;
+          plf = ReadFirstMain(PLr,3,true);
+        end;
+        if (plf) then begin
+//          tprice = PLr.ExVatPrice;//SALES price for PURCHASES ? 
+//*          if (PLr.NoOtherPricing!=0) then begin
+//*            nomorepricing = true;
+//*          end;
+          plvatcode = FindPLVATCode(PLDefr,INr.Code,INr.Group);
+          if (nonblank(plvatcode)) then begin
+            vatcode = plvatcode;
+          end;
+          pltaxtemplatecode = FindPLTaxTemplateCode(PLDefr,INr.Code,INr.Group);
+          if (nonblank(pltaxtemplatecode)) then begin
+            taxtempletecode = pltaxtemplatecode;
+          end;
+          goto L44GetItemPurchasePriceDiscount;  
+        end;
+      end;
+    end;    
+    if (nonblank(pricelist2)) then begin
+      if (GetYear(tdp)>0) then begin
+        PLDefr.PLReplCode = pricelist2;
+        PLDefr.StartDate = tdp;
+        pldeffound = ReadLastKey("PLReplCode",PLDefr,2,false); 
+        if (PLDefr.PLReplCode<>pricelist2) then begin pldeffound = false; end;
+        if (DateInRange(tdp,PLDefr.StartDate,PLDefr.EndDate)==false) then begin pldeffound = false; end;
+        if (pldeffound) then begin pricelist2 = PLDefr.Code; end;
+      end;  
+      if (pldeffound==false) then begin
+        PLDefr.Code = pricelist2;
+        pldeffound = ReadFirstMain(PLDefr,1,true);        
+        if (pldeffound) then begin        
+          if (nonblankdate(tdp)) then begin
+            if (DateInRange(tdp,PLDefr.StartDate,PLDefr.EndDate)==false) then begin
+              goto L44GetItemPurchasePriceDiscount;
+            end;
+          end;
+        end;    
+      end;  
+      if (pldeffound) then begin
+        if (PLDefr.DepPrice==1) then begin qtydepf = true; end;
+        plvatcode = FindPLVATCode(PLDefr,INr.Code,INr.Group);
+        if (nonblank(plvatcode)) then begin
+          vatcode = plvatcode;
+        end;
+        pltaxtemplatecode = FindPLTaxTemplateCode(PLDefr,INr.Code,INr.Group);
+        if (nonblank(pltaxtemplatecode)) then begin
+          taxtempletecode = pltaxtemplatecode;
+        end;
+      end;  
+      switch (PLDefr.DepPrice) begin
+        case 2:
+          PLr.PLCode = pricelist2;
+          PLr.ArtCode = thepiitemcode;        
+          plf = ReadFirstMain(PLr,2,true);
+          if (plf==false) and (pricelist!=pricelist2) then begin
+            PLr.PLCode = pricelist;
+            PLr.ArtCode = thepiitemcode;        
+            plf = ReadFirstMain(PLr,2,true);
+          end;
+          if ((plf==false) and varf) then begin
+            PLr.PLCode = pricelist2;
+            PLr.ArtCode = maskvar[0];        
+            plf = ReadFirstMain(PLr,2,true);
+          end;
+          if (plf) then begin 
+            if (nonblank(vecode)) then begin
+              if (nonblank(PLr.CustCode)) then begin
+                if (PLr.CustCode!=vecode) then begin
+                  plf = false;
+                end;
+              end;
+            end;
+          end;
+          if (plf) then begin 
+            if (pifound==false) then begin
+//            tprice = PLr.ExVatPrice;//SALES price for PURCHASES ? 
+            end;
+            plvatcode = FindPLVATCode(PLDefr,INr.Code,INr.Group);
+            if (nonblank(plvatcode)) then begin
+              vatcode = plvatcode;
+            end;
+            pltaxtemplatecode = FindPLTaxTemplateCode(PLDefr,INr.Code,INr.Group);
+            if (nonblank(pltaxtemplatecode)) then begin
+              taxtempletecode = pltaxtemplatecode;
+            end;
+            if (PLr.NoOtherPricing!=0) then begin
+              nomorepricing = true;
+            end;
+          end else begin
+            pldeffound = false;
+          end;
+
+        case 1:
+          PLQr.PLCode = pricelist2;
+          PLQr.ArtCode = thepiitemcode;
+          plf = ReadFirstMain(PLQr,2,true);
+          if ((plf==false) and varf) then begin
+            PLQr.PLCode = pricelist2;
+            PLQr.ArtCode = maskvar[0];
+            plf = ReadFirstMain(PLQr,2,true);
+          end;
+          if (plf) then begin
+            if (pifound==false) then begin
+              qtyplfound = true;
+              FindPLQPrice(PLQr,INr,qtp,tprice);
+            end;
+          end else begin
+            pldeffound = false;
+          end;
+        case 0:
+          PLr.PLCode = pricelist2;
+          PLr.ArtCode = thepiitemcode;        
+          plf = ReadFirstMain(PLr,2,true);
+          if (plf==false) and (pricelist!=pricelist2) then begin
+            PLr.PLCode = pricelist;
+            PLr.ArtCode = thepiitemcode;        
+            plf = ReadFirstMain(PLr,2,true);
+          end;
+          if ((plf==false) and varf) then begin
+            PLr.PLCode = pricelist2;
+            PLr.ArtCode = maskvar[0];        
+            plf = ReadFirstMain(PLr,2,true);
+          end;
+          if (plf) then begin 
+            if (nonblank(vecode)) then begin
+              if (nonblank(PLr.CustCode)) then begin
+                if (PLr.CustCode!=vecode) then begin
+                  plf = false;
+                end;
+              end;
+            end;
+          end;
+          if (plf) then begin 
+            if (pifound==false) then begin
+//            tprice = PLr.ExVatPrice;//SALES price for PURCHASES ? 
+            end;
+            plvatcode = FindPLVATCode(PLDefr,INr.Code,INr.Group);
+            if (nonblank(plvatcode)) then begin
+              vatcode = plvatcode;
+            end;
+            pltaxtemplatecode = FindPLTaxTemplateCode(PLDefr,INr.Code,INr.Group);
+            if (nonblank(pltaxtemplatecode)) then begin
+              taxtempletecode = pltaxtemplatecode;
+            end;
+            if (PLr.NoOtherPricing!=0) then begin
+              nomorepricing = true;
+            end;
+          end else begin
+            pldeffound = false;
+          end;
+        end;
+    end;
+    if (pldeffound) then begin
+      if (crncycode==PLDefr.CurncyCode) then begin goto L44GetItemPurchasePriceDiscount; end;// do not touch price 
+      if (pifound) then begin goto L44GetItemPurchasePriceDiscount; end;// do not touch price 
+      if (nonblank(PLDefr.CurncyCode)) then begin
+        if (blank(crncycode)) then begin           
+          tprice = MulWithRateToBase1(PLDefr.CurncyCode,CurrentDate,tprice,DefaultCurRoundOff);
+          goto L44GetItemPurchasePriceDiscount;
+        end else begin
+          tprice = MulWithRateToBase1(PLDefr.CurncyCode,CurrentDate,tprice,DefaultCurRoundOff);
+          if (frrate==0 and torate1==0 and torate2==0 and basrate1==0 and basrate2==0) then begin
+            tprice = DivWithRateToBase1(crncycode,CurrentDate,tprice,DefaultCurRoundOff);
+          end else begin
+            tprice = DivRateToBase1(crncycode,tprice,frrate,torate1,torate2,basrate1,basrate2,DefaultCurRoundOff);
+          end;
+          goto L44GetItemPurchasePriceDiscount;
+        end;
+      end;
+    end;    
+/*
+done cpl of lines above
+    if (PIr.CurncyCode!=crncycode) or (pifound==false) then begin
+      if (frrate==0 and torate1==0 and torate2==0 and basrate1==0 and basrate2==0) then begin
+        tprice = DivWithRateToBase1(crncycode,CurrentDate,tprice,DefaultCurRoundOff);
+      end else begin
+        tprice = DivRateToBase1(crncycode,tprice,frrate,torate1,torate2,basrate1,basrate2,DefaultCurRoundOff);
+      end;
+    end;
+*/
+L44GetItemPurchasePriceDiscount:;
+    price = tprice;
+    lang2 = langcode;
+    if (GetItemNameStr(1,descstr,lang2,INr.Name,theitemcode)) then begin end;
+    if (nomorepricing==false) then begin
+      rebfound = GetPurchaseRebate(INr,tprice,qtp,custcat,rebcode,tdisc,foundstaff,tdp);
+      if (foundstaff) then begin
+        discount = tdisc;
+      end else begin
+        if (discount==blankval) then begin
+          discount = tdisc;
+        end;        
+      end;        
+    end;    
+    if (blank(vatcode)) then begin
+      vatcode = APAccb.VATCodeDom;
+      switch (exportf) begin
+        case 1: vatcode = APAccb.VATCodeEU;
+        case 2: vatcode = APAccb.VATCodeExp;
+        case 3: vatcode = APAccb.VATCodeEU;
+        case 4: vatcode = APAccb.VATCodeExp;
+      end;
+    end;
+    if (blank(taxtempletecode)) then begin
+      taxtempletecode = APAccb.TaxTemplateCode;
+      switch (exportf) begin
+        case 1: taxtempletecode = APAccb.TaxTemplateCodeEU;
+        case 2: taxtempletecode = APAccb.TaxTemplateCodeExp;
+        case 3: taxtempletecode = APAccb.TaxTemplateCodeEU;
+        case 4: taxtempletecode = APAccb.TaxTemplateCodeExp;
+      end;
+    end;
+    GetINPurchaseControlAcc(INr,purchacc,vecode,location,PIr.DefStockType);
+
+    if (INr.ItemType==kItemTypeService) then begin
+      if (blank(INr.Unittext)) then begin
+        SetDefProjectUnit(INr.Code,INr.Unittext);
+      end;
+      VEr.Code = vecode;
+      if (ReadFirstMain(VEr,1,true)) then begin
+        if (nonblank(VEr.AccCost)) then begin
+          purchacc = VEr.AccCost;
+        end;
+      end;
+    end;
+/*    
+    if ((INr.InPrice==blankval) and (INr.ItemType==2) and (nonblank(INr.Recepy))) then begin
+      GetStructureCostPrice(INr.Recepy,price);
+    end;        
+*/  
+  end else begin
+    price = blankval;
+    discount = blankval;
+  end;    
+  if (discount==0) then begin
+    discount = blankval;
+  end;
+  nomoreremotecalls =  !rebfound and !qtyplfound;
+  GetItemPurchasePriceDiscount = res;
+  return;
+end;

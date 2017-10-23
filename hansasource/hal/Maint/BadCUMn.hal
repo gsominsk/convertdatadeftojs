@@ -1,0 +1,205 @@
+external procedure CheckFlush(var Integer,Integer);
+external function Integer GetIntYc(Date);
+external function LongInt DateDiff(Date,Date);
+external updating procedure SaveTrans(record TRVc);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external procedure AddEuroCurncyNomARTrRow(record TRVc,string,string,string,string,val,val,Boolean,
+                                  Boolean,var val,string,val,val,val,val,val,
+                                  val,val,string,LongInt,Integer,val,Date,LongInt,Boolean,string,string,string);
+
+updating                                  
+procedure UpdateInvoice(record IVVc oldIVr,string badaracc,var Integer flushcnt)
+BEGIN
+  record IVVc IVr;
+  
+  RecordCopy(IVr,oldIVr);
+  IVr.DisputedFlag = 1;
+  IVr.ARAcc = badaracc;
+  if (RecordUpdate(oldIVr,IVr,false)==0) then begin
+  end;
+  CheckFlush(flushcnt,10);
+  RETURN;
+END;
+
+updating function Integer MakeBadDebtorsTrans(LongInt InvoiceNr,val rval,val bookrval,Integer ARUseObj,string badaracc,Date transdate,LongInt oldsernr,var Integer flushcnt)
+BEGIN
+  Integer res;
+  record IVVc IVr;
+  record TRVc gTRp;
+  string 255 tstr;
+  string 255 cuobj;
+  val TotSum,nilv;
+  Boolean dc1,dc2;
+  
+  dc1 = false;
+  dc2 = true;
+  IVr.SerNr = InvoiceNr;
+  if (ReadFirstMain(IVr,1,true)) then begin
+    if (IVr.DisputedFlag!=0) then begin
+      res = 0;
+      goto LMakeBadDebtorsTrans;
+    end;
+    RecordNew(gTRp);
+    gTRp.RegDate = CurrentDate;
+    gTRp.TransDate = transdate;
+    if (blankdate(gTRp.TransDate)) then begin
+      gTRp.TransDate = CurrentDate;
+    end;
+    gTRp.IntYc = GetIntYc(gTRp.TransDate);                
+    gTRp.Number = NextSerNr("TRVc",gTRp.TransDate,oldsernr,false,"");
+    gTRp.RefStr = USetStr(1150) & "." ;
+    gTRp.RefStr = gTRp.RefStr & IVr.SerNr;
+    gTRp.Comment = USetStr(11780);
+    
+    if (ARUseObj!=0) then begin
+      if (nonblank(IVr.Objects)) then begin
+        if (nonblank(cuobj)) then begin
+          cuobj = cuobj & ",";
+        end;  
+        cuobj = cuobj & IVr.Objects;
+      end;
+    end;    
+    if (GetAccName(IVr.ARAcc,tstr,60)==false) then begin 
+      res = 1908;
+      goto LMakeBadDebtorsTrans;
+    end;
+    if (IVr.ARonTR!=0) then begin
+//      AddEuroCurncyNomARTrRow(gTRp,IVr.ARAcc,cuobj,"",tstr,bookrval,blankval,false,dc1,TotSum,
+//                              IVr.CurncyCode,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,rval,nilv,
+//                              IVr.CustCode,IVr.SerNr,1,nilv,IVr.PayDate,-1,false,"","","");
+
+      AddEuroCurncyNomARTrRow(gTRp,IVr.ARAcc,cuobj,"",tstr,bookrval,blankval,false,dc1,TotSum,
+                              IVr.CurncyCode,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,rval,nilv,
+                              "",-1,1,nilv,IVr.PayDate,-1,false,"","","");
+//otherwise we think inocei is paid
+
+    end else begin
+      AddEuroCurncyTrRow(gTRp,IVr.ARAcc,cuobj,"",tstr,bookrval,false,dc1,TotSum,
+                         IVr.CurncyCode,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,rval,nilv,-1,false,"");
+    end;
+    if (GetAccName(badaracc,tstr,60)==false) then begin 
+      res = 1908;
+      goto LMakeBadDebtorsTrans;
+    end;
+    if (IVr.ARonTR!=0) then begin
+      AddEuroCurncyNomARTrRow(gTRp,badaracc,cuobj,"",tstr,bookrval,blankval,false,dc2,TotSum,
+                              IVr.CurncyCode,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,rval,nilv,
+                              "",-1,0,nilv,IVr.PayDate,-1,false,"","","");
+    end else begin
+      AddEuroCurncyTrRow(gTRp,badaracc,cuobj,"",tstr,bookrval,false,dc2,TotSum,
+                         IVr.CurncyCode,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,rval,nilv,-1,false,"");
+    end;
+    if (gTRp.Number>0) then begin
+      SaveTrans(gTRp);
+      UpdateInvoice(IVr,badaracc,flushcnt);
+      res = 0;
+    end else begin
+      res = 1747;
+    end;  
+  end;
+LMakeBadDebtorsTrans:;
+  MakeBadDebtorsTrans = res;
+  RETURN;
+END;
+
+global
+updating procedure BadCUMn(record RcVc RepSpec)
+BEGIN
+  record ARVc ARr;
+  record CUVc CUr;
+  record CCatVc CCatr;
+  record AccBlock ARAccRec;
+  Boolean TrHs,testf;
+  string 20 frcu,tocu;
+  LongInt latedays;
+  LongInt friv,toiv;
+  string 10 badaracc;
+  string 30 keys;
+  Integer sorting,flushcnt;
+  Integer err;
+  
+  if (RepSpec.long1==-1) then begin
+    MessageBox(0,USetStr(2240));
+    goto LBadCUMn;
+  end;
+  BlockLoad(ARAccRec);
+  frcu = FirstInRange(RepSpec.f1,20);
+  tocu = LastInRange(RepSpec.f1,20);
+  friv = FirstInRange(RepSpec.f2,20);
+  toiv = LastInRange(RepSpec.f2,20);
+  if (nonblank(RepSpec.f2)) then begin
+    keys = "InvoiceNr";
+    ARr.InvoiceNr = friv;
+    sorting = 0;
+  end else begin
+    keys = "CustCode";
+    ARr.CustCode = frcu;
+    sorting = 1;
+  end;
+  TrHs = true;
+  while LoopKey(keys,ARr,1,TrHs) begin
+    switch (sorting) begin
+      case 0:
+        if (ARr.InvoiceNr>toiv) then begin
+          TrHs = false;
+         end;
+      case 1:
+        if (nonblank(RepSpec.f1)) then begin
+          if (ARr.CustCode>tocu) then begin
+            TrHs = false;
+          end;
+        end;
+    end;
+    if (TrHs) then begin
+     testf = true;
+     switch (sorting) begin
+        case 0:
+          if (nonblank(RepSpec.f1)) then begin
+            if (ARr.CustCode<frcu) then begin
+              testf = false;
+            end;
+            if (ARr.CustCode>tocu) then begin
+              testf = false;
+            end;
+          end;          
+     end;
+     latedays = DateDiff(ARr.DueDate,CurrentDate);
+     if (-latedays<RepSpec.long1) then begin
+       testf = false;        
+     end;
+     if (testf) then begin
+        CUr.Code = ARr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin 
+        end;
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          if (CUr.CustCat!=RepSpec.FirstAcc) then begin 
+            testf = false; 
+          end;
+        end;
+        if (CUr.CUType==0) then begin testf = false; end;
+        if (testf) then begin
+          badaracc = ARAccRec.BadARAcc;
+          CCatr.Code = CUr.CustCat;
+          if (ReadFirstMain(CCatr,1,true)) then begin 
+            if (nonblank(CCatr.BadARAcc)) then begin
+              badaracc = CCatr.BadARAcc;
+            end;
+          end;
+          if (nonblank(badaracc)) then begin
+            err = MakeBadDebtorsTrans(ARr.InvoiceNr,ARr.RVal,ARr.BookRVal,ARAccRec.ARUseObj,badaracc,RepSpec.d1,RepSpec.long2,flushcnt);
+            if (err!=0) then begin
+              MessageBox(err,"");
+              switch (err) begin
+                case 1747:
+                  goto LBadCUMn;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+LBadCUMn:;  
+  RETURN;
+END;

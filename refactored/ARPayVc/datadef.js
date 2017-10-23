@@ -1,0 +1,18 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fCUPNr: { public: true, type: 'INTEGER' },
+     fRVal: { public: true, type: 'FLOAT' },
+     fPayDate: { public: true, type: 'DATE' },
+     fCustCode: { public: true, type: 'TEXT' },
+     fCurncyCode: { public: true, type: 'TEXT' },
+     fCustName: { public: true, type: 'TEXT' },
+     fBookRVal: { public: true, type: 'FLOAT' },
+     fIPNr: { public: true, type: 'INTEGER' },
+     fVATVal: { public: true, type: 'FLOAT' },
+     fVATCode: { public: true, type: 'TEXT' },
+     fVATBookVal: { public: true, type: 'FLOAT' },
+     fBankCurncy: { public: true, type: 'TEXT' },
+     fOrderNr: { public: true, type: 'INTEGER' },
+     fTAX1Sum: { public: true, type: 'FLOAT' },
+     fTAX1SumBook: { public: true, type: 'FLOAT' } },
+  indexes: { CUPNrIndex19: { fields: [ 'fCUPNr' ], indicesType: 'UNIQUE' } } }

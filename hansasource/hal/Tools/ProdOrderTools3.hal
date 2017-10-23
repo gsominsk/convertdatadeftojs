@@ -1,0 +1,1138 @@
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean PastePRInAct(var record ActVc,var string);
+external function Boolean PasteActTypeInAct(string,var record ActVc);
+external updating procedure ProdCalcItemCost(var record ProdVc,record ProdVc,Boolean);
+external procedure SetProdTime(record ProdVc,record ProdVc,Boolean);
+external function roundmode SetRoundModeD(Integer);
+external function time TimeAdd(time,time);
+external updating function LongInt DoProdVcRecordCheck(var record ProdVc,record ProdVc,LongInt,LongInt,Boolean,var record TRVc,var Integer,var string,var string);
+external function LongInt TimeToMinutes(Time);
+external function Boolean CurUserHasMailbox(var string);
+external procedure ProdSumup(var record ProdVc);
+external function Time AddTime2(Time,LongInt);
+external function LongInt DateDiff(Date,Date);
+external function Time TimeDiff(Time,Time);
+
+procedure CalculateActivityCostTime(record ActVc Actr)
+begin
+  LongInt days;
+
+  days = DateDiff(Actr.EndDate,Actr.TransDate);      
+  if (Actr.EndTime<Actr.StartTime) then begin
+    days = days - 1;
+  end;
+  Actr.CostTime = TimeDiff(Actr.StartTime,Actr.EndTime);  
+  if ((days==0) or (days>=1)) then begin//what if days are 2 or more?
+    Actr.CostTime = AddTime2(Actr.CostTime,days*24*60);
+  end;
+  return;
+end;
+
+procedure SetActivityComment(var record ActVc Actr,string actcomment,string preset,record ProdVc Prodr)
+begin
+  if (nonblank(preset)) then begin
+    Actr.Comment = preset;
+  end else begin
+    Actr.Comment = actcomment;
+  end;
+  if (Actr.ProdSerNr>0) then begin
+    if (nonblank(Actr.Comment)) then begin
+      Actr.Comment = Actr.Comment & ", ";
+    end;
+    Actr.Comment = Actr.Comment & Prodr.Qty & " * " & Prodr.RecName;
+  end;
+  return;
+end;
+
+global
+updating function Integer RegTimeActivity(record RcVc RepSpec,var string errstr,var LongInt prodnr,var LongInt prodordnr,var string mailboxnr)
+begin
+  Integer res;
+  record ActVc Actr;
+  record ActVc oldActr;
+  record ActTypeVc ActTyper;
+  record PRVc PRr;
+  string 255 keystr,tstr;
+  Boolean newf,foundf;
+  record ProdVc Prodr;
+  
+  ActTyper.Code = RepSpec.f1;
+  if (ReadFirstMain(ActTyper,1,true)==false) then begin
+    res = 1969;
+    errstr = " " & RepSpec.f1;
+    goto LRegTimeActivity;
+  end;
+  PRr.Code = RepSpec.f2;
+  if (ReadFirstMain(PRr,1,true)==false) then begin
+    res = 1232;
+    errstr = " " & RepSpec.f2;
+    goto LRegTimeActivity;
+  end;
+  newf = true;
+  Actr.MainPersons = RepSpec.AccStr;
+  Actr.ActType = RepSpec.f1;
+  keystr = "OKFlagUserMain:";
+  keystr = keystr & RepSpec.AccStr;  
+  Actr.OKFlag = 0;  
+  if (ReadLastKey(keystr,Actr,1,true)) then begin
+    foundf = true;
+    if (Actr.ActType==RepSpec.f1) then begin
+      newf = false;
+      res = 1;
+    end;
+    if (Actr.ProdSerNr>0) then begin
+      res = 2;
+      Prodr.SerNr = Actr.ProdSerNr;
+      if (ReadFirstMain(Prodr,1,true)) then begin
+        prodordnr = Prodr.ProdOrder;
+      end;
+      prodnr = Actr.ProdSerNr;
+      goto LRegTimeActivity;
+    end;
+  end;
+  if (foundf) then begin
+    RecordCopy(oldActr,Actr);
+    Actr.EndDate = CurrentDate;//clcurdate;
+    Actr.EndTime = CurrentTime;//clcurtime;
+    CalculateActivityCostTime(Actr);
+    Actr.OKFlag = 1;
+    if (RecordUpdate(oldActr,Actr,true)==0) then begin
+      newf = true;
+    end;
+  end;
+  if (newf) then begin
+    RecordNew(Actr);
+    Actr.MainPersons = RepSpec.AccStr;
+    Actr.ActType = RepSpec.f1;
+    PasteActTypeInAct("",Actr);
+    Actr.PRCode = RepSpec.f2;
+    PastePRInAct(Actr,tstr);
+    Actr.TodoFlag = 0;
+    Actr.CalTimeFlag = 1;
+    Actr.TransDate = CurrentDate;//clcurdate;
+    Actr.StartTime = CurrentTime;//clcurtime;
+    SetActivityComment(Actr,ActTyper.Comment,RepSpec.f3,Prodr);
+    if (Actr.SerNr==-1) then begin
+      Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");            
+    end;
+    res = 20760;
+    if (Actr.SerNr<=-1) then begin
+      goto LRegTimeActivity;
+    end;
+    if (RecordInsert(Actr,false)) then begin
+      res = 0;
+    end;
+  end;
+LRegTimeActivity:;  
+  if (CurUserHasMailbox(mailboxnr)) then begin
+  end;      
+  RegTimeActivity = res;
+  return;
+end;
+
+
+updating function Integer NewProductionFromProdOrder(record RcVc RepSpec,record ProdOrderVc ProdOr,var record ProdVc Prodr,var string outitem,LongInt smelsestartedprod)
+begin
+  Integer res;
+  row ProdOrderVc ProdOrw;
+  row ProdVc Prodrw;
+  Integer i,rwcnt;
+  Integer j,cnt;
+  record RecVc Recr;
+  row RecVc Recrw;
+  record ActVc Actr;
+  record MainStockBlock MSb;
+  record ProdSettingsBlock PSb;
+  record ProdOrderVc oldProdOr;
+  record ActTypeVc ActTyper;
+
+  res = 1746;  
+  if ((ProdOr.StatusFlag>=0) and (ProdOr.StatusFlag<3)) then begin
+    if (blank(ProdOr.Machine)) then begin
+      res = 1749;
+      goto LNewProductionFromProdOrder;
+    end; 
+    BlockLoad(MSb);
+    BlockLoad(PSb);
+    res = 20760;
+    Recr.Code = ProdOr.Recipe;
+    if (ReadFirstMain(Recr,1,true)) then begin end;
+    if (smelsestartedprod<=0) then begin
+      RecordNew(Prodr);
+      Prodr.ProdDate = CurrentDate;
+      Prodr.SerNr = -1;
+      Prodr.RecName = ProdOr.RecName;
+      Prodr.Recepy = ProdOr.Recipe;
+      Prodr.Comment  = ProdOr.Comment1;
+      Prodr.Comment2 = ProdOr.Comment2;
+      Prodr.Comment3 = ProdOr.Comment3;
+      Prodr.FixAssCode = ProdOr.Machine;
+      Prodr.Objects = ProdOr.Objects;
+      Prodr.ProdOrder = ProdOr.SerNr;
+      Prodr.Person = RepSpec.AccStr;
+      Prodr.Location = ProdOr.Location;
+      if (blank(Prodr.Location)) then begin
+        Prodr.Location = MSb.MainStock;
+      end;
+      Prodr.TotalIdleTime = ProdOr.SetUpTime;
+      Prodr.TotalProdOrdQty = ProdOr.Qty;
+      Prodr.Qty = Recr.StdBatch;
+      if (Prodr.Qty==0) then begin
+        Prodr.Qty = 1;
+      end;
+      Prodr.Qty = ProdOr.Qty - ProdOr.Finished;
+      Prodr.PRStatusFlag = 2;
+      rwcnt = MatRowCnt(ProdOr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(ProdOr,i,ProdOrw);
+        Prodrw.Item = ProdOrw.Item;
+        Prodrw.Comment = ProdOrw.Comment;
+        switch (Prodr.RowsHoldActualQty) begin
+          case 1:
+            if (ProdOrw.InQty!=0) then begin
+              Prodrw.InQty = ProdOrw.InQty*Prodr.Qty;
+              Prodrw.OutQty = blankval;
+            end;
+            if (ProdOrw.OutQty!=0) then begin
+              Prodrw.InQty = blankval;
+              Prodrw.OutQty = ProdOrw.OutQty*Prodr.Qty;
+            end;
+          otherwise
+            Prodrw.InQty = ProdOrw.InQty;
+            Prodrw.OutQty = ProdOrw.OutQty;
+        end;
+        Prodrw.Objects = ProdOrw.Objects;
+        Prodrw.OutBatchStatus = ProdOrw.OutBatchStatus;
+        Prodrw.UnitXval = ProdOrw.UnitXval;
+        Prodrw.UnitYval = ProdOrw.UnitYval;
+        Prodrw.UnitZval = ProdOrw.UnitZval;
+        Prodrw.Coefficient = ProdOrw.Coefficient;
+        MatRowPut(Prodr,cnt,Prodrw);
+        if (blank(outitem)) then begin
+          if (ProdOrw.OutQty>0) then begin
+            outitem = ProdOrw.Item;
+          end;
+        end;
+        cnt = cnt + 1;
+      end;
+      cnt = MatRowCnt(Recr);
+      rwcnt = MatRowCnt(Prodr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Prodr,i,Prodrw);
+        for (j=0;j<cnt;j=j+1) begin
+          MatRowGet(Recr,j,Recrw);
+          if (Recrw.Item==Prodrw.Item) then begin
+            Prodrw.ItemCost = Recrw.ItemCost;
+            Prodrw.RelVal = Recrw.RelVal;
+            Prodrw.ExtraCost = Recrw.ExtraCost;
+            Prodrw.FIFORowVal = Prodrw.InQty * Prodrw.ItemCost;
+            Prodrw.FIFORowVal = Round(Prodrw.FIFORowVal,SetRoundModeD(5));
+            MatRowPut(Prodr,i,Prodrw);
+            j = cnt;
+          end;
+        end;        
+      end;
+      ProdSumup(Prodr);
+      Prodr.StartDate = CurrentDate;//clcurdate;
+      Prodr.StartTime = CurrentTime;//clcurtime;
+      if (Prodr.SerNr==-1) then begin
+        Prodr.SerNr = NextSerNr("ProdVc",Prodr.ProdDate,-1,false,"");            
+      end;
+      res = 20760;
+      if (Prodr.SerNr<=0) then begin
+        res = 1745;
+        goto LNewProductionFromProdOrder;
+      end;
+      if (RecordInsert(Prodr,false)) then begin
+        RecordNew(Actr);
+        Actr.MainPersons = RepSpec.AccStr;
+        Actr.ActType = PSb.ActType;
+        Actr.TodoFlag = 0;
+        Actr.CalTimeFlag = 1;
+        Actr.TransDate = Prodr.StartDate;
+        Actr.StartTime = Prodr.StartTime;
+        Actr.ProdSerNr = Prodr.SerNr;
+        ActTyper.Code = Actr.ActType;
+        if (ReadFirstMain(ActTyper,1,true)) then begin
+        end;
+        SetActivityComment(Actr,ActTyper.Comment,Prodr.Comment,Prodr);
+        if (Actr.SerNr==-1) then begin
+          Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");            
+        end;
+        if (Actr.SerNr<=0) then begin
+          goto LNewProductionFromProdOrder;
+        end;
+        if (RecordInsert(Actr,false)) then begin
+          res = 0;
+        end;
+        RecordCopy(oldProdOr,ProdOr);
+        ProdOr.StatusFlag = 2;
+        if (RecordUpdate(oldProdOr,ProdOr,true)) then begin
+        end;
+      end;
+    end else begin
+      RecordNew(Actr);
+      Actr.MainPersons = RepSpec.AccStr;
+      Actr.ActType = PSb.ActType;
+      Actr.TodoFlag = 0;
+      Actr.CalTimeFlag = 1;
+      Actr.TransDate = CurrentDate;
+      Actr.StartTime = CurrentTime;
+      ActTyper.Code = Actr.ActType;
+      Actr.ProdSerNr = smelsestartedprod;
+      if (ReadFirstMain(ActTyper,1,true)) then begin
+      end;
+      SetActivityComment(Actr,ActTyper.Comment,"",Prodr);
+      if (Actr.SerNr==-1) then begin
+        Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");            
+      end;
+      if (Actr.SerNr<=0) then begin
+        goto LNewProductionFromProdOrder;
+      end;
+      if (RecordInsert(Actr,false)) then begin
+        res = 0;
+        rwcnt = MatRowCnt(ProdOr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(ProdOr,i,ProdOrw);
+          if (ProdOrw.OutQty>0) then begin
+            outitem = ProdOrw.Item;
+            i = rwcnt;
+          end;
+        end;        
+      end;
+    end;
+  end;
+LNewProductionFromProdOrder:;  
+  NewProductionFromProdOrder = res;
+  return;
+end;
+
+updating procedure LinkAllOpenActivities()
+begin
+  record ActVc Actr;
+  record ActVc Act2r;
+  Boolean foundf,found2f,testf;
+  string 200 keystr;
+  Integer curcomp;
+  
+  keystr = "OKFlagUserMain:";
+  keystr = keystr & CurrentUser;
+  Actr.MainPersons = CurrentUser;
+  Actr.OKFlag = 0;  
+  foundf = true;
+  while (LoopKey(keystr,Actr,1,foundf)) begin
+    if (Actr.OKFlag!=0) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      ResetLoop(Act2r);
+      Act2r.MainPersons = CurrentUser;
+      Act2r.OKFlag = 0;  
+      found2f = true;
+      while (LoopKey(keystr,Act2r,1,found2f)) begin
+        if (Act2r.OKFlag!=0) then begin
+          found2f = false;
+        end;
+        testf = found2f;
+        if (Actr.SerNr==Act2r.SerNr) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          curcomp = CurrentCompany;
+          CreateRecordLink(Actr,curcomp,Act2r,curcomp);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+function Boolean SomeoneElseStartedWrkOnProductionOrder(record ProdOrderVc ProdOr,string skipperson,var LongInt smelsestartedprodnr)
+begin
+  Boolean res;
+  record ProdVc Prodr;
+  Boolean found;
+  
+  found = true;
+  Prodr.ProdOrder = ProdOr.SerNr;
+  while (LoopKey("ProdOrder",Prodr,1,found)) begin
+    if (Prodr.ProdOrder!=ProdOr.SerNr) then begin found = false; end;
+    if (found) then begin
+      if (Prodr.Person!=skipperson) then begin
+        if (Prodr.PRStatusFlag!=3) and (Prodr.PRStatusFlag!=4) and (Prodr.PRStatusFlag!=5) then begin
+          res = true;
+          smelsestartedprodnr = Prodr.SerNr;
+          goto LSomeoneElseStartedWrkOnProductionOrder;
+        end;
+      end;
+    end;
+  end;  
+LSomeoneElseStartedWrkOnProductionOrder:;  
+  SomeoneElseStartedWrkOnProductionOrder = res;
+  return;
+end;
+
+function Boolean SomeoneElseWorkignOnProductionOrder(record ProdVc Prodr,string skipperson)
+begin
+  Boolean res;
+  record ActVc Actr;
+  Boolean found;
+  
+  found = true;
+  Actr.ProdSerNr = Prodr.SerNr;
+  Actr.OKFlag = 0;
+  while (LoopKey("ProdNrOKFlag",Actr,2,found)) begin
+    if (Actr.ProdSerNr!=Prodr.SerNr) then begin found = false; end;
+    if (Actr.OKFlag!=0) then begin found = false; end;
+    if (found) then begin
+      if (SetInSet(skipperson,Actr.MainPersons)==false) then begin
+        res = true;
+        goto LSomeoneElseWorkignOnProductionOrder;
+      end;
+    end;
+  end;  
+LSomeoneElseWorkignOnProductionOrder:;  
+  SomeoneElseWorkignOnProductionOrder = res;
+  return;
+end;
+
+function Boolean OneOpenProdOrderForPerson(record RcVc RepSpec,LongInt SkipProdOrdNr)
+begin
+  Boolean res;
+  record ProdVc Prodr;
+  Boolean found;
+  
+  res = true;
+  found = true;
+  Prodr.Person = RepSpec.AccStr;
+  Prodr.PRStatusFlag = 0;  
+  while (LoopKey("PersonStatus",Prodr,2,found)) begin
+    if (Prodr.Person!=RepSpec.AccStr) then begin
+      found = false;
+    end;
+    if (Prodr.PRStatusFlag!=0) then begin
+      found = false;
+    end;
+    if (found) then begin
+      if (Prodr.ProdOrder!=SkipProdOrdNr) then begin
+        res = false;
+        goto LOneOpenProdOrderForPerson;
+      end;
+    end;
+  end;
+  ResetLoop(Prodr);
+  RecordNew(Prodr);
+  found = true;
+  Prodr.Person = RepSpec.AccStr;
+  Prodr.PRStatusFlag = 2;  
+  while (LoopKey("PersonStatus",Prodr,2,found)) begin
+    if (Prodr.Person!=RepSpec.AccStr) then begin
+      found = false;
+    end;
+    if (Prodr.PRStatusFlag!=2) then begin
+      found = false;
+    end;
+    if (found) then begin
+      if (Prodr.ProdOrder!=SkipProdOrdNr) then begin
+        res = false;
+        goto LOneOpenProdOrderForPerson;
+      end;
+    end;
+  end;
+LOneOpenProdOrderForPerson:;  
+  OneOpenProdOrderForPerson = res;
+  return;
+end;
+
+global
+updating function Integer RegTimeProduction(record RcVc RepSpec,var string errstr,var record ProdVc resProdr,var record ProdOrderVc resProdOr,var Boolean oneopenprodordf,var string mailboxnr)
+begin
+  Integer res;
+  Boolean foundprodf,newprodf,foundactf,TrHs;
+  record ProdOrderVc ProdOr;
+  record ProdVc Prodr;
+  record ActVc Actr;
+  record ActVc oldActr;
+  string 255 keystr;
+  LongInt smelsestartedprodnr;
+  Boolean smelsewrkprodf,smelsestartedprodf;
+
+  RecordNew(resProdr);
+  RecordNew(resProdOr);
+  ProdOr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(ProdOr,1,true)==false) then begin
+    res = 1290;
+    errstr = errstr & USetStr(1830) & " " & RepSpec.f1;
+    goto LRegTimeProduction;
+  end;
+  if (ProdOr.StatusFlag==3) or (ProdOr.StatusFlag==4) then begin
+    res = 1746;
+    goto LRegTimeProduction;
+  end;
+
+  Prodr.Person = RepSpec.AccStr;
+  Prodr.PRStatusFlag = 0;  
+  Prodr.ProdOrder = ProdOr.SerNr;  
+  foundprodf = ReadFirstKey("PersonStatus",Prodr,3,true);
+  if (foundprodf==false) then begin
+    Prodr.Person = RepSpec.AccStr;
+    Prodr.PRStatusFlag = 2;
+    Prodr.ProdOrder = ProdOr.SerNr;  
+    foundprodf = ReadFirstKey("PersonStatus",Prodr,3,true);
+  end;
+  if (foundprodf==false) then begin
+    Prodr.Person = RepSpec.AccStr;
+    Prodr.PRStatusFlag = 0;
+    foundprodf = ReadFirstKey("PersonStatus",Prodr,2,true);
+  end;
+  if (foundprodf==false) then begin
+    Prodr.Person = RepSpec.AccStr;
+    Prodr.PRStatusFlag = 2;
+    foundprodf = ReadFirstKey("PersonStatus",Prodr,2,true);
+  end;
+  if (foundprodf==false) then begin
+    Prodr.Person = RepSpec.AccStr;
+    Prodr.PRStatusFlag = 2;
+    foundprodf = ReadFirstKey("PersonStatus",Prodr,2,true);
+  end;
+  
+  if (foundprodf==false) then begin
+    smelsestartedprodf = SomeoneElseStartedWrkOnProductionOrder(ProdOr,RepSpec.AccStr,smelsestartedprodnr);
+  end;
+  if (foundprodf) then begin    
+    if (smelsestartedprodf==false) then begin
+      smelsewrkprodf = SomeoneElseWorkignOnProductionOrder(Prodr,RepSpec.AccStr);
+    end;
+    if (smelsewrkprodf) then begin
+      res = 3;
+      errstr = ProdOr.SerNr;
+      goto LRegTimeProduction;
+    end;
+    res = 1;//Finish    
+    RecordCopy(resProdr,Prodr);
+    ProdOr.SerNr = Prodr.ProdOrder;
+    if (ReadFirstMain(ProdOr,1,true)) then begin
+    end;
+    RecordCopy(resProdOr,ProdOr);
+    oneopenprodordf = OneOpenProdOrderForPerson(RepSpec,ProdOr.SerNr);
+    goto LRegTimeProduction;
+  end;
+
+  newprodf = true;
+  foundactf = false;
+  
+  if (Prodr.SerNr>=0) then begin
+    TrHs = true;
+    Actr.ProdSerNr = Prodr.SerNr;
+    Actr.OKFlag = 0;
+    while (LoopBackKey("ProdNrOKFlag",Actr,2,TrHs)) begin
+      if (Actr.ProdSerNr!=Prodr.SerNr) then begin TrHs = false; end;
+      if (Actr.OKFlag!=0) then begin TrHs = false; end;
+      if (TrHs) then begin
+        if (SetInSet(Actr.MainPersons,RepSpec.AccStr)) then begin
+          foundactf = true;
+          goto LAfterActSearch;
+        end;
+      end;
+    end;
+  end;
+  
+LAfterActSearch:;  
+  if (foundactf) then begin
+    RecordCopy(oldActr,Actr);
+    Actr.EndDate = CurrentDate;//clcurdate;
+    Actr.EndTime = CurrentTime;//clcurtime;
+    CalculateActivityCostTime(Actr);
+    Actr.OKFlag = 1;
+    if (RecordUpdate(oldActr,Actr,true)) then begin
+    end;
+    if (smelsestartedprodf) then begin
+      newprodf = false;
+    end;
+  end;  
+  if (newprodf) then begin
+//    res = NewProductionFromProdOrder(RepSpec,ProdOr,Prodr,errstr,smelsestartedprodnr);// 2 persosn can work on same production order and they need separate productions
+    res = NewProductionFromProdOrder(RepSpec,ProdOr,Prodr,errstr,-1);
+    if (res==0) then begin
+      RecordCopy(resProdr,Prodr);
+      RecordCopy(resProdOr,ProdOr);  
+      res = 2;//New    
+    end;
+  end;  
+LRegTimeProduction:;  
+  if (CurUserHasMailbox(mailboxnr)) then begin
+  end;      
+  RegTimeProduction = res;
+  return;
+end;
+
+global
+updating function Integer ManyActiveProdConfirmRemote(record RcVc RepSpec,var string errstr,var record ProdVc resProdr,var record ProdOrderVc resProdOr)
+begin
+  Integer res;
+  Boolean foundf;
+  record ProdOrderVc ProdOr;
+  record ProdVc Prodr;
+
+  RecordNew(resProdr);
+  RecordNew(resProdOr);
+  ProdOr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(ProdOr,1,true)==false) then begin
+    res = 1290;
+    errstr = errstr & USetStr(1830) & " " & RepSpec.f1;
+    goto LManyActiveProdConfirmRemote;
+  end;
+  if (ProdOr.StatusFlag==3) or (ProdOr.StatusFlag==4) then begin
+    res = 1746;
+    goto LManyActiveProdConfirmRemote;
+  end;
+  res = NewProductionFromProdOrder(RepSpec,ProdOr,Prodr,errstr,-1);
+  LinkAllOpenActivities;
+  if (res==0) then begin
+    RecordCopy(resProdr,Prodr);
+    RecordCopy(resProdOr,ProdOr);  
+    res = 2;//New    
+  end;
+LManyActiveProdConfirmRemote:;  
+  ManyActiveProdConfirmRemote = res;
+  return;
+end;
+
+procedure AddDiscardedCost(record ProdVc Prodr,string user) 
+begin
+  Boolean found,testf;
+  record ProdVc discProdr;
+  row ProdVc discProdrw;
+  row ProdVc Prodrw;
+  Integer i,rwcnt;
+  val discval;
+  record ProdSettingsBlock PSb;
+  record INVc INr;
+
+  BlockLoad(PSb);
+  if (PSb.AddDiscardedCost==0) then begin
+    goto LAddDiscardedCost;
+  end;
+  found = true;
+  discProdr.OrgProdNr = Prodr.SerNr;
+  while (LoopKey("OrgProdNr",discProdr,1,found)) begin
+    if (discProdr.OrgProdNr!=Prodr.SerNr) then begin
+      found = false;
+    end;
+    testf = true;
+    if (found==false) then begin testf = false; end;
+    if (nonblank(user)) then begin
+      if (SetInSet(user,Prodr.Person)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (SetInSet(user,Prodr.Person)==false) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      rwcnt = MatRowCnt(discProdr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(discProdr,i,discProdrw);
+        if (discProdrw.InQty!=0) then begin
+          switch (discProdr.RowsHoldActualQty) begin
+            case 1: discval = discval + discProdrw.InQty*discProdrw.ItemCost;
+            otherwise discval = discval + discProdr.Qty*discProdrw.InQty*discProdrw.ItemCost;
+          end;                
+        end;
+      end;
+    end;
+  end;
+  if (discval>0) then begin
+    rwcnt = MatRowCnt(Prodr);
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      if (Prodrw.InQty!=0) then begin
+        ReadFirstItem(Prodrw.Item,INr,true,true);
+        if (INr.ItemType==kItemTypeStocked) then begin
+          switch (Prodr.RowsHoldActualQty) begin
+            case 1: Prodrw.ExtraCost = Prodrw.ExtraCost + discval/Prodrw.InQty;
+            otherwise Prodrw.ExtraCost = Prodrw.ExtraCost + (discval/Prodr.Qty)/Prodrw.InQty;
+          end;              
+          MatRowPut(Prodr,i,Prodrw);
+          i = -1;
+        end;
+      end;
+    end;
+  end;
+LAddDiscardedCost:;  
+  return;
+end;
+
+function val AddWorkCostofOtherPersons(record ProdVc Prodr,string skipperson)
+begin
+  Boolean found,testf;
+  record ActVc Actr;
+  val wtime;
+
+  found = true;
+  Actr.ProdSerNr = Prodr.SerNr;
+  Actr.OKFlag = 1;
+  while (LoopKey("ProdNrOKFlag",Actr,2,found)) begin
+    if (Actr.ProdSerNr!=Prodr.SerNr) then begin
+      found = false;
+    end;
+    if (Actr.OKFlag!=1) then begin
+      found = false;
+    end;    
+    testf = true;
+    if (found==false) then begin testf = false; end;
+    if (nonblank(skipperson)) then begin
+      if (SetInSet(skipperson,Actr.MainPersons)) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (SetInSet(skipperson,Actr.CCPersons)) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      wtime = wtime + TimeToVal(Actr.CostTime);
+    end;
+  end;
+  AddWorkCostofOtherPersons = wtime;
+  return;
+end;
+
+updating function Boolean RedistribueTime(record ActVc Actr)
+begin
+  record ActVc Act2r;
+  record ActVc oldActr;
+  record RLinkVc RLr;
+  Integer cnt;
+  Time st,et;
+  Integer actcnt;
+  LongInt lst,let,l;
+  Boolean res;
+  
+  res = false;
+  st = Actr.StartTime;
+  et = CurrentTime;
+  cnt = 1;
+  actcnt = 1;
+  while (ReadRecordLink(Actr,cnt,Act2r,RLr)) begin
+    if (Act2r.OKFlag==0) then begin
+      if (Act2r.StartTime<st) then begin
+        st = Act2r.StartTime;
+      end;
+      actcnt = actcnt + 1;
+    end;
+    cnt = cnt + 1;
+  end;
+  if (actcnt>1) then begin
+    lst = TimeToMinutes(st);
+    let = TimeToMinutes(et);
+    l = let - lst;
+    l = l / actcnt;
+    RecordCopy(oldActr,Actr);
+    Actr.StartTime = st;
+    Actr.EndTime = AddTime2(Actr.StartTime,l);
+    if (RecordUpdate(oldActr,Actr,false)==0) then begin
+    end;
+    st = AddTime2(Actr.EndTime,1);
+    cnt = 1;
+    while (ReadRecordLink(Actr,cnt,Act2r,RLr)) begin
+      if (Act2r.OKFlag==0) then begin
+        RecordCopy(oldActr,Act2r);
+        Act2r.StartTime = st;
+        Act2r.EndTime = AddTime2(Act2r.StartTime,l);
+        if (RecordUpdate(oldActr,Act2r,false)==0) then begin
+        end;
+        st = AddTime2(Act2r.EndTime,1);
+      end;
+      cnt = cnt + 1;
+    end;
+    res = true;
+  end;
+  RedistribueTime = res;
+  return;
+end;
+
+updating procedure RegisterSetupTime(LongInt prodnr,string user,LongInt timespent)
+begin
+  Integer res;
+  record ActVc oldworkActr;
+  record ActVc workActr;
+  record ActVc setupActr;
+  record ActTypeVc ActTyper;
+  record ProdSettingsBlock PSb;
+  time blankt;
+  string 255 keystr;
+  Boolean found,setupactf,multif;
+  record ProdVc Prodr;
+  
+  BlockLoad(PSb);
+  if (PSb.AddWorkCost==0) then begin
+    goto LRegisterSetupTime;
+  end;
+  if (blank(PSb.SetupActType)) then begin
+    goto LRegisterSetupTime;
+  end;
+  if (timespent==0) then begin
+    goto LRegisterSetupTime;
+  end;
+  ActTyper.Code = PSb.SetupActType;
+  if (ReadFirstMain(ActTyper,1,true)==false) then begin
+    goto LRegisterSetupTime;
+  end;
+  RecordNew(setupActr);
+  setupActr.EndDate = CurrentDate;
+  setupActr.EndTime = CurrentTime;
+  
+  setupactf = true;
+  
+  workActr.MainPersons = user;
+  workActr.ActType = PSb.ActType;
+  keystr = "OKFlagUserMain:";
+  keystr = keystr & user;
+  workActr.OKFlag = 0;  
+  found = true;
+  while (LoopKey(keystr,workActr,1,found)) begin
+    if (workActr.OKFlag!=0) then begin 
+      found = false;
+    end;
+    if (found) then begin
+      if (workActr.ProdSerNr==prodnr) then begin
+        multif = RedistribueTime(workActr);
+        setupactf = false;
+        setupActr.TransDate = workActr.TransDate;
+        setupActr.StartTime = workActr.StartTime;
+        setupActr.CostTime = blankt;
+        setupActr.CostTime = AddTime2(setupActr.CostTime,timespent);
+        setupActr.EndTime = TimeAdd(setupActr.StartTime,setupActr.CostTime);
+        RecordCopy(oldworkActr,workActr);
+        workActr.StartTime = TimeAdd(workActr.StartTime,setupActr.CostTime);
+        workActr.EndDate = workActr.TransDate;//shouldnt be start date + cost time ? 
+        if (multif==false) then begin
+          workActr.EndTime = CurrentTime;
+          if (workActr.EndDate==workActr.TransDate) then begin
+            if (workActr.EndTime<workActr.StartTime) then begin
+              workActr.EndTime = workActr.StartTime;
+            end;
+          end;
+        end;
+        CalculateActivityCostTime(workActr);
+        if (TimeToVal(setupActr.CostTime)<=TimeToVal(workActr.CostTime)) then begin
+//          workActr.CostTime = AddTime2(workActr.CostTime,-TimeToMinutes(setupActr.CostTime));
+          if (RecordUpdate(oldworkActr,workActr,false)==0) then begin
+          end;
+          setupactf = true;
+          found = false;
+        end;
+      end;
+    end;
+  end;
+    
+  if (setupactf) then begin
+    if (blankdate(setupActr.TransDate)) then begin
+      setupActr.TransDate = CurrentDate;
+      setupActr.StartTime = CurrentTime;
+      setupActr.CostTime = blankt;
+      setupActr.CostTime = AddTime2(setupActr.CostTime,timespent);
+    end;
+    setupActr.ProdSerNr = prodnr;
+    setupActr.ActType = PSb.SetupActType;
+    setupActr.MainPersons = user;
+    setupActr.TodoFlag = 0;
+    setupActr.CalTimeFlag = 1;
+    setupActr.Comment = ActTyper.Comment;  
+    Prodr.SerNr = setupActr.ProdSerNr;
+    if (ReadFirstMain(Prodr,1,true)) then begin
+    end;
+    SetActivityComment(setupActr,ActTyper.Comment,"",Prodr);
+    setupActr.OKFlag = 0;
+    if (setupActr.SerNr==-1) then begin
+      setupActr.SerNr = NextSerNr("ActVc",setupActr.TransDate,-1,false,"");            
+    end;
+    if (setupActr.SerNr>0) then begin
+      if (RecordInsert(setupActr,false)) then begin
+        res = 0;
+      end;
+    end;
+  end;
+
+LRegisterSetupTime:;  
+  return;
+end;
+
+updating procedure OKAndAddWorkCost(record ProdVc Prodr,string user,LongInt timespent)
+begin
+  Boolean found,testf,calccostf;
+  record ActVc Actr;
+  record ActVc oldActr;
+  row ProdVc Prodrw;
+  record RecVc Recr;
+  Integer i,rwcnt;
+  val wtime,setuptime;
+  record ProdSettingsBlock PSb;
+  Time blankt;
+  val numprod;
+  record INVc INr;
+
+  BlockLoad(PSb);
+  Recr.Code = Prodr.Recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin end;
+  found = true;
+  Actr.ProdSerNr = Prodr.SerNr;
+  Actr.OKFlag = 0;
+  while (LoopKey("ProdNrOKFlag",Actr,2,found)) begin
+    if (Actr.ProdSerNr!=Prodr.SerNr) then begin
+      found = false;
+    end;
+    if (Actr.OKFlag!=0) then begin
+      found = false;
+    end;
+    
+    testf = true;
+    if (found==false) then begin testf = false; end;
+    if (testf) then begin
+      RecordCopy(oldActr,Actr);
+      if (blankdate(Actr.TransDate)) then begin
+        Actr.TransDate = Prodr.ProdDate;
+        calccostf = true;
+      end;
+      if (CurrentDate!=Actr.EndDate) then begin 
+        Actr.EndDate = CurrentDate;
+        calccostf = true;
+      end;      
+      if (blanktime(Actr.EndTime)) then begin
+        Actr.EndTime = Prodr.EndTime;
+        calccostf = true;
+      end;
+      if (timespent>0) then begin
+//        calccostf = false;
+      end;
+      if (calccostf) then begin
+        CalculateActivityCostTime(Actr);
+      end else begin
+        if (timespent>0) then begin
+          Actr.CostTime = blankt;
+          Actr.CostTime = AddTime2(Actr.CostTime,timespent);
+        end;
+      end;
+      Actr.OKFlag = 1;
+      if (RecordUpdate(oldActr,Actr,false)) then begin
+      end;
+      if (Actr.ActType==PSb.SetupActType) then begin 
+        setuptime = setuptime + TimeToVal(Actr.CostTime);
+      end else begin   
+        wtime = wtime + TimeToVal(Actr.CostTime);
+      end;
+      StepBack(Actr);
+    end;
+  end;
+  if (PSb.AddWorkCost==0) then begin
+    goto LOKAndAddWorkCost;
+  end;
+  wtime = wtime + AddWorkCostofOtherPersons(Prodr,user);
+  if (wtime>0) then begin
+    rwcnt = MatRowCnt(Prodr);
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      if (Prodrw.InQty!=0) then begin
+        ReadFirstItem(Prodrw.Item,INr,true,true);
+        if (INr.ItemType==kItemTypeStocked) then begin
+          switch (Prodr.RowsHoldActualQty) begin
+            case 1: Prodrw.ExtraCost = Prodrw.ExtraCost + ((wtime*PSb.WorkCostPerHour));///Prodrw.InQty;
+            otherwise  Prodrw.ExtraCost = Prodrw.ExtraCost + ((wtime*PSb.WorkCostPerHour)/Prodr.Qty);///Prodrw.InQty;
+          end;              
+          numprod = Recr.NumProd;
+          if (numprod==0) then begin
+            numprod = 1;
+          end;
+          switch (Prodr.RowsHoldActualQty) begin
+            case 1:  Prodrw.ExtraCost = Prodrw.ExtraCost + (setuptime*PSb.WorkCostPerHour);///Prodrw.InQty;
+            otherwise  Prodrw.ExtraCost = Prodrw.ExtraCost + ((setuptime*PSb.WorkCostPerHour)/Prodr.Qty);///Prodrw.InQty;
+          end;              
+          MatRowPut(Prodr,i,Prodrw);
+          i = -1;
+        end;
+      end;
+    end;
+  end;
+LOKAndAddWorkCost:;  
+  return;
+end;
+
+global
+updating function Integer RecordProdQtys(record RcVc RepSpec,var LongInt prodnr,var LongInt prodordnr,var string errstr)
+begin
+  Integer res;
+  record ProdVc Prodr;
+  record ProdVc oldProdr;
+  row ProdVc Prodrw;
+  record ProdVc DiscProdr;
+  record ProdVc dummyProdr;
+  record ProdOrderVc oldProdOrderr;
+  record ProdOrderVc ProdOrderr;
+  record ProdSettingsBlock PSb;
+  Time bt;
+  Boolean foundprodf;
+  LongInt prodres;
+  record TRVc gTRp;
+  string 100 extracom,fieldnam;
+  Integer rowno,rwcnt,i,oPRStatusFlag;
+  Boolean goahead;
+  Integer curcomp;
+  Boolean discexists;
+  val t;
+  transaction Boolean gProdDoNotCalcTimeCostf;
+
+  errstr = "";
+  Prodr.SerNr = RepSpec.long2;
+  goahead = true;
+  discexists = false;
+  if (ReadFirstMain(Prodr,1,true)) then begin 
+/*
+    if (Prodr.Qty<(RepSpec.vals0 + RepSpec.vals1)) then begin // Must be able to produce 10 + 5 discared if you actually want 10....
+      res = 1733;
+      goto LRecordProdQtys;
+    end;
+*/
+    if (RepSpec.vals0!=0) then begin
+      RecordCopy(DiscProdr,Prodr);
+      DiscProdr.StandProblem = RepSpec.TransStr;
+      DiscProdr.Qty = RepSpec.vals0;
+      DiscProdr.ProdDate = CurrentDate;
+      DiscProdr.EndTime = CurrentTime;
+      DiscProdr.OrgProdNr = Prodr.SerNr;
+      DiscProdr.SerNr = NextSerNr("ProdVc",DiscProdr.ProdDate,-1,false,"");            
+      res = 20760; // Wierd default....
+      if (DiscProdr.SerNr<=0) then begin
+        res = 1745;
+        goto LRecordProdQtys;
+      end;
+      DiscProdr.PRStatusFlag = 5;
+      BlockLoad(PSb);
+      if (PSb.MakeSDFromDiscard==0) then begin
+        rwcnt = MatRowCnt(DiscProdr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(DiscProdr,i,Prodrw);
+          if (Prodrw.OutQty!=0) then begin
+            Prodrw.OutQty = 0;
+            MatRowPut(DiscProdr,i,Prodrw);
+          end;
+        end;
+      end;
+      prodres = DoProdVcRecordCheck(DiscProdr,oldProdr,1,1,false,gTRp,rowno,extracom,fieldnam);
+      RecordClear(dummyProdr);
+      t = DiscProdr.Qty;
+      DiscProdr.Qty = RepSpec.vals0 + RepSpec.vals1;
+      SetProdTime(DiscProdr,dummyProdr,true);
+      ProdCalcItemCost(DiscProdr,dummyProdr,true);
+      DiscProdr.Qty = t;
+      switch (prodres) begin
+        case 0:
+//        case 1247: // Produce even if not enough in stock... Is not correct.
+        otherwise  goahead = false;
+      end;
+      if (goahead) then begin
+        DiscProdr.PRStatusFlag = 0;
+        if (RecordStore(DiscProdr,false)==false) then begin
+          res = 20760;
+          goto LRecordProdQtys;
+        end;
+        RecordCopy(oldProdr,DiscProdr);
+        DiscProdr.PRStatusFlag = 5;
+        gProdDoNotCalcTimeCostf = false;
+        if (RecordUpdate(oldProdr,DiscProdr,true)!=0) then begin
+          res = 20760;
+          goto LRecordProdQtys;
+        end;
+        res = 0;
+        discexists = true;
+      end else begin
+        res = prodres;
+        goto LRecordProdQtys;
+      end;
+    end;
+    if (RepSpec.LastVer>0) then begin
+    end;
+    if (RepSpec.vals1!=0) then begin
+      RecordCopy(oldProdr,Prodr);
+      Prodr.ProdDate = CurrentDate;
+      Prodr.EndTime = CurrentTime;
+      Prodr.Qty = RepSpec.vals1;
+      oPRStatusFlag = Prodr.PRStatusFlag;
+      Prodr.PRStatusFlag = 3;
+      prodres = DoProdVcRecordCheck(Prodr,oldProdr,1,1,false,gTRp,rowno,extracom,errstr);
+      Prodr.PRStatusFlag = oPRStatusFlag;
+      if (prodres!=0) then begin
+        MessageBox(prodres,"");
+        goto LRecordProdQtys;
+      end;
+      AddDiscardedCost(Prodr,"");
+      RegisterSetupTime(Prodr.SerNr,RepSpec.AccStr,RepSpec.LastVer);        
+      OKAndAddWorkCost(Prodr,RepSpec.AccStr,RepSpec.FirstVer);
+      Prodr.PRStatusFlag = 3;
+      prodres = DoProdVcRecordCheck(Prodr,oldProdr,1,1,false,gTRp,rowno,extracom,errstr);
+      RecordClear(dummyProdr);
+      t = Prodr.Qty;
+      Prodr.Qty = RepSpec.vals0 + RepSpec.vals1;
+      SetProdTime(Prodr,dummyProdr,true);
+      ProdCalcItemCost(Prodr,dummyProdr,true);
+      Prodr.Qty = t;
+      switch (prodres) begin
+        case 0:
+//        case 1247: // Produce even if not enough in stock... Is not correct.
+        otherwise  
+          goahead = false;
+      end;
+      if (goahead) then begin
+        gProdDoNotCalcTimeCostf = false;
+        if (RecordUpdate(oldProdr,Prodr,true)!=0) then begin
+          res = 20760;
+          goto LRecordProdQtys;
+        end;
+        res = 0;
+      end else begin
+        res = prodres;
+        goto LRecordProdQtys;
+      end;
+      if (discexists) then begin
+        curcomp = CurrentCompany;
+        CreateRecordLink(Prodr,curcomp,DiscProdr,curcomp);
+        CreateRecordLink(DiscProdr,curcomp,Prodr,curcomp);
+      end;
+      Prodr.Person = RepSpec.AccStr;
+      Prodr.PRStatusFlag = 0;  
+      foundprodf = ReadFirstKey("PersonStatus",Prodr,2,true);
+      if (foundprodf==false) then begin
+        Prodr.Person = RepSpec.AccStr;
+        Prodr.PRStatusFlag = 2;
+        foundprodf = ReadFirstKey("PersonStatus",Prodr,2,true);
+      end;
+      if (foundprodf) then begin
+        prodnr = Prodr.SerNr;
+        prodordnr = Prodr.ProdOrder;
+        res = 1;
+      end;
+    end;
+  end;
+  if ((res==1) or (res==0)) then begin
+    ProdOrderr.SerNr = RepSpec.long1;
+    if (ReadFirstMain(ProdOrderr,1,true)) then begin
+      if (RepSpec.flags[0]!=0) then begin
+        if (ProdOrderr.StatusFlag!=3) then begin
+          RecordCopy(oldProdOrderr,ProdOrderr);
+          ProdOrderr.StatusFlag = 3;
+          if (RecordUpdate(oldProdOrderr,ProdOrderr,true)!=0) then begin
+          end;
+        end;
+      end else begin
+        if (ProdOrderr.Finished==ProdOrderr.Qty) then begin
+        end;
+      end;
+    end;
+  end;
+LRecordProdQtys:;  
+  RecordProdQtys = res;
+  return;
+end;

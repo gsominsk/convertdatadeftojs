@@ -1,0 +1,308 @@
+external updating function LongInt ValidatePaymentRecord(record OPVc,record OPVc,LongInt,LongInt,Boolean);
+external function Integer PMCheckType(string,var string,var string);
+external function Integer OPTestApprovalStatus(record OPVc);
+
+function Boolean FindOwnCheck(record RcVc RepSpec,var vector Boolean vchequsedf,string vecode,string curncy,val bankval,var record OwnCheckVc resOwnCheckr)
+begin
+  Boolean res;
+  Boolean found,testf;
+  record OwnCheckVc OwnCheckr;
+  record OPrsVc OPrsr;
+
+  RecordClear(resOwnCheckr);
+  OwnCheckr.CheckNr = RepSpec.FirstAcc;
+  found = true;
+  while (LoopKey("OpenCheckNr",OwnCheckr,1,found)) begin
+    if (blank(OwnCheckr.CheckNr)) then begin found = false; end;
+    if (found)  then begin
+      testf = true;
+      if (vchequsedf[OwnCheckr.CheckNr]) then begin testf = false; end;
+      if (nonblank(OwnCheckr.CurncyCode)) then begin
+        if (OwnCheckr.CurncyCode!=curncy) then begin testf = false; end;
+      end;
+      if (nonblank(OwnCheckr.VECode)) then begin
+        if (OwnCheckr.VECode!=vecode) then begin testf = false; end;
+      end;
+      if (nonblank(OwnCheckr.Amount)) then begin
+        if (OwnCheckr.Amount<bankval) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        OPrsr.CheckType = 2;
+        OPrsr.ChequeNr = OwnCheckr.SerNr;
+        OPrsr.TransType = kOPrsTransTypePayment;
+        if (ReadFirstKey("ChequeNr",OPrsr,3,true)) then begin testf = false; end;
+      end;
+      
+      if (testf) then begin
+        res = true;
+        vchequsedf[OwnCheckr.CheckNr] = true;
+        RecordCopy(resOwnCheckr,OwnCheckr); 
+        goto LFindOwnCheck;
+      end; 
+    end;
+  end;
+LFindOwnCheck:; 
+  FindOwnCheck = res;
+  return;
+end;
+
+procedure AddTempPaymentToResultPayment(record OPVc tmpOPr,var record OPVc resOPr)
+begin
+  row OPVc tmpOPrw;
+  Integer tmprwcnt,tmpi;
+
+  tmprwcnt = MatRowCnt(tmpOPr);
+  for (tmpi=0;tmpi<tmprwcnt;tmpi=tmpi+1) begin
+    MatRowGet(tmpOPr,tmpi,tmpOPrw);
+    MatRowPut(resOPr,MatRowCnt(resOPr),tmpOPrw);
+  end;
+  return;
+end;
+
+procedure ClearPayment(record OPVc orgOPr,var record OPVc resOPr)
+begin
+  RecordCopy(resOPr,orgOPr);
+  while (MatRowCnt(resOPr)) begin
+    MatRowDelete(resOPr,0);
+  end;
+  return;
+end;
+
+procedure PrepareCheque(record OPVc tmpOPr,var record RcVc RepSpec,
+                        var vector Boolean vchequsedf,var val bankval,var Boolean owncheckf,var record OwnCheckVc OwnCheckr,
+                        var Array record OwnCheckVc aorgOwnCheckr,var Array record OwnCheckVc aupdOwnCheckr,var Integer aowncheck)
+begin
+  Integer tmpi,tmprwcnt,cht;
+  row OPVc tmpOPrw;
+  string 255 thepm,tstr;
+  record CUVc VEr;
+  
+  RecordClear(OwnCheckr);
+  owncheckf = false;
+  bankval = blankval;
+  
+  tmprwcnt = MatRowCnt(tmpOPr);
+  for (tmpi=0;tmpi<tmprwcnt;tmpi=tmpi+1) begin
+    MatRowGet(tmpOPr,tmpi,tmpOPrw);
+    if (tmpOPrw.stp!=5) then begin // settlement discount
+      bankval = bankval + tmpOPrw.BankVal;
+    end;
+  end;
+  
+  for (tmpi=0;tmpi<tmprwcnt;tmpi=tmpi+1) begin
+    MatRowGet(tmpOPr,tmpi,tmpOPrw);
+    tmpOPrw.ChequeNr = OwnCheckr.SerNr;
+    thepm = tmpOPrw.PayMode;
+    if (blank(thepm)) then begin thepm = tmpOPr.PayMode; end;
+    cht = PMCheckType(thepm,tstr,tstr);
+    switch (cht) begin
+      case kPayModeTypeOwnCheque:
+        owncheckf = FindOwnCheck(RepSpec,vchequsedf,tmpOPrw.VECode,tmpOPrw.BankCurncy,tmpOPrw.BankVal,OwnCheckr);
+        if (owncheckf) then begin
+          aorgOwnCheckr[aowncheck] = OwnCheckr;
+
+          RepSpec.FirstAcc = OwnCheckr.CheckNr;
+          if (blank(OwnCheckr.CurncyCode)) then begin
+            OwnCheckr.CurncyCode = tmpOPrw.BankCurncy;
+          end;
+          if (blank(OwnCheckr.VECode)) then begin
+            OwnCheckr.VECode = tmpOPrw.VECode;
+            VEr.Code = OwnCheckr.VECode;
+            if (ReadFirstMain(VEr,1,true)) then begin
+              OwnCheckr.VEName = VEr.Name;
+              OwnCheckr.VATNr = VEr.VATNr;
+            end;
+          end;
+          if (blank(OwnCheckr.Amount)) then begin
+            OwnCheckr.Amount = bankval;
+          end;
+          OwnCheckr.EffectDate = tmpOPr.TransDate;
+          
+          aupdOwnCheckr[aowncheck] = OwnCheckr;
+          aowncheck = aowncheck + 1;
+          tmpi = tmprwcnt;              
+        end;
+    end;
+  end;
+  return;
+end;
+
+procedure AssignChequeNumbertoTempPayment(record RcVc RepSpec,record OwnCheckVc OwnCheckr,var record OPVc tmpOPr)
+begin
+  val bankval;
+  Integer tmpi,tmprwcnt;
+  row OPVc tmpOPrw;
+  row OPVc OP2rw;
+  
+  bankval = blankval;
+  tmprwcnt = MatRowCnt(tmpOPr);
+  for (tmpi=0;tmpi<tmprwcnt;tmpi=tmpi+1) begin
+    MatRowGet(tmpOPr,tmpi,tmpOPrw);
+    tmpOPrw.ChequeNr = OwnCheckr.SerNr;
+    MatRowPut(tmpOPr,tmpi,tmpOPrw);
+    bankval = bankval + tmpOPrw.BankVal;
+  end;
+
+  if (bankval<OwnCheckr.Amount) then begin
+    MatRowGet(tmpOPr,0,tmpOPrw);
+    CopyRow(tmpOPr,OP2rw,tmpOPrw);
+    OP2rw.BankVal = OwnCheckr.Amount - bankval;
+    OP2rw.VISerNr = -1;
+    MatRowPut(tmpOPr,MatRowCnt(tmpOPr),OP2rw);
+  end;
+  return;
+end;
+
+procedure PrepareTempPayment(record OPVc orgOPr,row OPVc orgOPrw,Integer start,var vector Boolean vrowtreatedf,var record OPVc tmpOPr)
+begin
+  string 255 thepm,thepm2,tstr;
+  Integer i,rwcnt;
+  row OPVc OPrw;
+  Boolean testf;
+
+  rwcnt = MatRowCnt(orgOPr);
+  thepm = orgOPrw.PayMode;
+  if (blank(thepm)) then begin thepm = orgOPr.PayMode; end;
+  MatRowPut(tmpOPr,MatRowCnt(tmpOPr),orgOPrw);
+
+  for (i=start;i<rwcnt;i=i+1) begin
+    MatRowGet(orgOPr,i,OPrw);
+    testf = true;
+    if (OPrw.VECode!=orgOPrw.VECode) then begin testf = false; end;
+    if (OPrw.BankCurncy!=orgOPrw.BankCurncy) then begin testf = false; end;
+    thepm2 = OPrw.PayMode;
+    if (blank(thepm2)) then begin thepm2 = orgOPr.PayMode; end;
+    if (thepm2!=thepm) then begin testf = false; end;
+    if (testf) then begin
+      MatRowPut(tmpOPr,MatRowCnt(tmpOPr),OPrw);
+      vrowtreatedf[i] = true;
+    end;
+  end;
+  return;
+end;
+
+updating function Boolean ChequeRunforOnePamyent(var record RcVc RepSpec,var record OPVc orgOPr,
+                          Array record OwnCheckVc aorgOwnCheckr,Array record OwnCheckVc aupdOwnCheckr,var Integer aowncheck)
+begin
+  Boolean res;
+  record OPVc resOPr;
+  record OPVc tmpOPr;
+  row OPVc orgOPrw;
+  row OPVc OP2rw;
+  row OPVc tmpOPrw;
+
+  Integer i,j,rwcnt,tmprwcnt,tmpi;
+  Boolean testf,owncheckf;  
+  string 255 thepm,thepm2,tstr;
+  vector Boolean vrowtreatedf;
+  val bankval;
+  vector Boolean vchequsedf;
+  record OwnCheckVc OwnCheckr;
+  
+  res = true;
+  ClearPayment(orgOPr,resOPr);
+  
+  rwcnt = MatRowCnt(orgOPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(orgOPr,i,orgOPrw);
+    testf = true;
+    if (vrowtreatedf[i]) then begin testf = false; end;    
+    if (testf) then begin
+      ClearPayment(orgOPr,tmpOPr);
+      vrowtreatedf[i] = true;
+      PrepareTempPayment(orgOPr,orgOPrw,i+1,vrowtreatedf,tmpOPr);      
+      PrepareCheque(tmpOPr,RepSpec,vchequsedf,bankval,owncheckf,OwnCheckr,aorgOwnCheckr,aupdOwnCheckr,aowncheck);
+      if (owncheckf) then begin
+        AssignChequeNumbertoTempPayment(RepSpec,OwnCheckr,tmpOPr);        
+        AddTempPaymentToResultPayment(tmpOPr,resOPr);
+      end else begin
+        res = false;
+        goto LChequeRunforOnePamyent;
+      end;            
+    end;        
+  end;
+LChequeRunforOnePamyent:;  
+  if (res) then begin
+    RecordCopy(orgOPr,resOPr);
+    for (i=0;i<aowncheck;i=i+1) begin
+      RecordUpdate(aorgOwnCheckr[i],aupdOwnCheckr[i],true);
+    end;
+  end;
+  ChequeRunforOnePamyent = res;
+  return;
+end;
+
+global
+updating function Boolean ChequeRunforPayments(var record RcVc RepSpec,Boolean singlef,var LongInt prevlooppos)
+begin
+  Boolean res;
+  record OPVc oldOPr;
+  record OPVc OPr;
+  Boolean found,testf;
+  LongInt frop,toop;
+  Integer err;
+  Array record OwnCheckVc aorgOwnCheckr;
+  Array record OwnCheckVc aupdOwnCheckr;
+  Integer i,aowncheck;
+  record OwnCheckVc OwnCheckr;
+
+  frop = FirstInRange(RepSpec.f1,10);
+  toop = LastInRange(RepSpec.f1,10);
+  found = true;
+  OPr.SerNr = frop;
+  SetLoopPosition(OPr,RepSpec.long1);
+  while (LoopMain(OPr,1,found)) begin
+    if (OPr.SerNr>toop) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (OPr.OrderedFlag!=0) then begin testf = false; end;
+      if (OPr.DoneFlag!=0) then begin testf = false; end;
+      if (OPTestApprovalStatus(OPr)!=0) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        RecordCopy(oldOPr,OPr);
+        if (ChequeRunforOnePamyent(RepSpec,OPr,aorgOwnCheckr,aupdOwnCheckr,aowncheck)) then begin
+          OPr.OrderedFlag = 1;
+          err = ValidatePaymentRecord(oldOPr,OPr,Rs_update,1,false);
+          RecordUpdate(oldOPr,OPr,true);
+          if (RepSpec.flags[0]!=0) then begin
+            for (i=0;i<aowncheck;i=i+1) begin
+              OwnCheckr = aupdOwnCheckr[i];
+              ReadFirstMain(OwnCheckr,1,true);
+              if (PrintDocument(OwnCheckr,"OwnChkForm",false)) then begin end;
+            end;
+          end;          
+        end;
+        res = true;
+        if (singlef) then begin
+          RepSpec.long1 = GetLoopPosition(OPr);
+          if (RepSpec.long1==prevlooppos) then begin
+            res = false;
+          end;
+        end;
+      end;
+    end;
+  end;
+  ChequeRunforPayments = res;
+  return;
+end;
+
+global
+procedure ChequeRunOPMn(record RcVc RepSpec)
+begin  
+  LongInt prevlooppos;
+  
+  if (blank(RepSpec.f1)) then begin
+    MessageBox(2277,"");
+    goto LChequeRunOPMn;
+  end;
+  if (blank(RepSpec.FirstAcc)) then begin
+    MessageBox(2277,"");
+    goto LChequeRunOPMn;
+  end;
+  while (qupdating.ChequeRunforPayments(RepSpec,true,prevlooppos)) begin
+  end;  
+LChequeRunOPMn:;  
+  return;
+end;

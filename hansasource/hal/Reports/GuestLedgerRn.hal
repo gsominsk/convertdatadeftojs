@@ -1,0 +1,218 @@
+// *******************************************************
+// REPORT: Guest Ledger
+// DESC:   Shows all current guests with their balances and credit limit. Has the option to show
+//         only those guests who exceeded their credit limits. It shows the checkin and planned checkout
+//         dates as well.
+external function string 20 FindJobCustomerCode(record JobVc);
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external Function Val GetCustLimit(String);
+external Function Val GetCustAccount(LongInt,String,Boolean,Boolean);
+external Function Val GetDownGuest(Record JobVc);
+external procedure ListAlreadyPaid(LongInt,String,var val,Boolean);
+external procedure ListAlreadyInvoiced1(LongInt,String,var val,var val,Boolean);
+
+
+procedure PrintCustRow(Record JobVc Jobr,String CustCode,Var val Total)
+begin
+  val limit,spent,spentb1,Invoiced,downpay,SaldoGuest,SaldoInvoiced,TotalSb; 
+   
+//  SaldoInvoiced = 0;
+  Invoiced = 0;
+  TotalSb = GetCustAccount(Jobr.SerNr,CustCode,true,false);
+  limit = GetCustLimit(CustCode);
+  spent = GetCustAccount(Jobr.SerNr,CustCode,false,false);
+  spentb1 = GetCustAccount(Jobr.SerNr,CustCode,true,true);
+  ListAlreadyInvoiced1(Jobr.SerNr,CustCode,Invoiced,SaldoInvoiced,false);
+  if (SaldoInvoiced>0) then begin
+  end;
+  ListAlreadyPaid(Jobr.SerNr,CustCode,downpay,false);
+  SaldoGuest = SaldoInvoiced + spentb1 - downpay;
+  OutString(4,0,CustCode,false);
+  OutVal(2,0,TotalSb,M4Val,true);
+  OutVal(5,0,spent,M4Val,true);
+  OutVal(6,0,Invoiced,M4Val,true);
+  OutVal(7,0,SaldoInvoiced,M4Val,true);
+  OutVal(8,0,downpay,M4Val,true);
+  OutVal(9,0,SaldoGuest,M4Val,true);
+  EndFormat;
+  Total = Total + SaldoGuest;
+  return;       
+end;         
+
+function boolean JobCustOK(Record RcVc RepSpec,String CustCode)
+begin
+  boolean res;
+  record HotelBlock HotelSettings;
+  Record CUVc CUr;
+   
+  res = true;
+  if blank(CustCode) then begin
+    res = false;
+  end;
+  if ((CustCode<>RepSpec.f2) and nonblank(RepSpec.f2)) then begin
+    res = false;
+  end;
+  if (res) then begin 
+    res = ContactInGroupClass(CustCode,RepSpec.f4,RepSpec.f3,"CUST","","");
+  end;
+  if (res) then begin 
+    if (RepSpec.flags[2]>0) then begin
+      BlockLoad(HotelSettings); 
+      CUr.Code = CustCode;
+      if readfirstmain(CUr,1,true) then begin
+        if ((CUr.CustCat<>HotelSettings.CustCat1) and RepSpec.flags[2]==1) then begin
+          res = false;
+        end;
+        if ((CUr.CustCat<>HotelSettings.CustCat2) and RepSpec.flags[2]==2) then begin
+          res = false;
+        end;
+      end;
+    end;
+  end;
+  JobCustOK = res;
+  return;
+end;
+
+function boolean IsCustinJob(Record JobVc Jobr,String CustCode) 
+begin
+  Integer rwcnt,i;
+  Row JobVc Jobrw;
+  Boolean res;
+  
+  res = false;
+  if ((CustCode==Jobr.CUCode) or (CustCode==Jobr.Source)) then begin
+    res = true;
+  end else begin
+    rwcnt = MatRowCnt(Jobr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Jobr,i,Jobrw);
+      if (CustCode==Jobrw.CUCode) then begin
+        res = true;
+      end;
+    end;
+  end;    
+  IsCustinJob = res;
+  return;          
+end;            
+
+global
+procedure GuestLedgerRn(record RcVc RepSpec)
+begin
+   Integer i,rwcnt,rw;
+   record JobVc Jobr;
+   row JobVc Jobrw;
+   Boolean TsHr,Skip,testf;
+   Val tt;
+   String 50 tstr,OnlyStatus,custcode;
+   record HotelBlock HotelSettings;
+
+   // Get parameters & Init
+   tt = 0;
+   TsHr = true;
+   
+  BlockLoad(HotelSettings); 
+  StartReportJob(USetStr(9995));
+  rw=1;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;  
+  EndHeader;
+
+  SetRepCol(3,45);  
+  SetRepCol(4,135); 
+  SetRepCol(2,200);
+  SetRepCol(5,255); 
+  SetRepCol(6,310);
+  SetRepCol(7,365); 
+  SetRepCol(8,430); 
+  SetRepCol(9,480); 
+
+  StartFormat(15);
+  OutString(0,0,USetStr(9996),false);
+  OutString(3,0,USetStr(10005),false);
+  OutString(4,0,USetStr(10006),false);
+  OutString(2,0,USetStr(10004),true);
+  OutString(5,0,USetStr(10007),true);
+  OutString(6,0,USetStr(10008),true);
+  OutString(7,0,USetStr(10003),true);
+  OutString(8,0,USetStr(10001),true);
+  OutString(9,0,USetStr(10002),true);
+  EndFormat;
+  Gray_Divider(0,1);
+
+   if blank(RepSpec.f1) then begin
+     OnlyStatus = HotelSettings.ChInSt; 
+   end else begin
+     OnlyStatus = RepSpec.f1;
+   end;
+   Jobr.ResStatus = OnlyStatus;
+   while (LoopKey("ResStatus",Jobr,1,TsHr)) begin   
+     Skip = false;
+      if (DateInRange(Jobr.EndDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        skip = true;
+      end;
+      if (Jobr.ResStatus <> OnlyStatus) then begin
+        TsHr = false;
+        Skip = true;
+      end;
+      if (Jobr.Mother<>-1) then begin
+        Skip = true;
+      end;
+      custcode = FindJobCustomerCode(Jobr);
+      if nonblank(RepSpec.f2) then begin
+        if (custcode!=RepSpec.f2) then begin
+          Skip = true;
+        end;
+      end;      
+      if (Skip==false) then begin 
+        Skip = (ContactInGroupClass(custcode,RepSpec.f4,RepSpec.f3,"CUST","","")==false);
+      end;
+      If (not Skip) then begin
+        StartFormat(15);
+        OutString(0,"DblJobVc",Jobr.SerNr,false);
+        OutString(3,0,Left(Jobr.CUName,25),false);
+        if (RepSpec.flags[3]==0) then begin
+          PrintCustRow(Jobr,"",tt);
+        end else begin
+          if JobCustOK(RepSpec,Jobr.CUCode) then begin
+            PrintCustRow(Jobr,Jobr.CUCode,tt);
+          end;  
+          if JobCustOK(RepSpec,Jobr.Source) then begin
+            PrintCustRow(Jobr,Jobr.Source,tt);
+          end;  
+          rwcnt = MatRowCnt(Jobr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(Jobr,i,Jobrw);
+            if JobCustOK(RepSpec,Jobrw.CUCode) then begin
+              PrintCustRow(Jobr,Jobrw.CUCode,tt);
+            end;
+          end;  
+        end;  
+      end;
+   end;
+
+  // Footer
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(10004),false);
+  OutVal(9,0,tt,M4Val,true);
+  EndFormat;
+
+  EndJob;
+  return;
+end;

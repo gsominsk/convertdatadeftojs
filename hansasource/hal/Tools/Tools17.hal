@@ -1,0 +1,321 @@
+external function Boolean HasModIN();
+external function Boolean HasModSO();
+external function roundmode SetRoundModeD(Integer);
+external function string 20 FindJobCustomerCode(record JobVc);
+external procedure FindUserMailboxName(string,var string,var string);
+
+global
+updating procedure UpdateProjFromShip(record SHVc SHp)
+BEGIN
+  record PRrsVc PRrsr;  
+  
+  if (nonblank(SHp.PRCode)) then begin
+    PRrsr.PRCode = SHp.PRCode;
+    PRrsr.Date = SHp.ShipDate;
+    PRrsr.RecType = 2;
+    PRrsr.SerNr = SHp.SerNr;
+    if (RecordStore(PRrsr,false)) then begin
+    end;
+  end;
+  RETURN;
+END;
+
+// sf = 0, blank
+// sf = 1, v
+// inf = 0, blank
+// inf = 1, v
+// inf = 2, -
+global
+procedure SetORFlags(record ORVc ORp)
+BEGIN
+  record MainStockBlock MainStockRec;
+  row ORVc ORrw;
+  Integer i,rwcnt;
+  Integer sf,inf;
+  val shipsum;
+  val invd;
+  val ord;
+  Integer AllowInvBeforeShip;
+  
+  sf = 1;
+  inf = 2;
+  BlockLoad(MainStockRec);
+  AllowInvBeforeShip = ORp.InvBeforeShip;
+  if (AllowInvBeforeShip==0) then begin
+//    AllowInvBeforeShip = MainStockRec.AllowInvBeforeShip;
+  end;    
+  if (HasModSO and HasModIN==false) then begin AllowInvBeforeShip = 1; end;
+  rwcnt = MatRowCnt(ORp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ORp,i,ORrw);
+    if (AllowInvBeforeShip==0) then begin
+      if (ORrw.Invd<ORrw.Shipd2) then begin inf = 0; end;
+      if (ORrw.Invd>ORrw.Shipd2) then begin inf = 0; end;
+      if (ORrw.Quant>ORrw.Shipd1) then begin sf = 0; end;
+    end else begin
+      inf = 0;
+      if (ORrw.Quant>ORrw.Shipd1) then begin sf = 0; end;
+    end;
+    shipsum = shipsum + ORrw.Shipd2;
+    invd = invd + ORrw.Invd;
+    ord = ord + ORrw.Quant;
+  end;
+  if (MainStockRec.DelOrdQty == 0) then begin
+    if (ord<=invd) then begin inf = 2; end;
+  end;
+  if (AllowInvBeforeShip==0) then begin
+    if (shipsum==0) then begin inf = 1; end;
+  end else begin
+    if (invd>=ord) then begin inf = 2; end;
+  end;
+  if (ORp.Closed!=0) then begin
+    sf = 1;
+  end;
+  ORp.InvFlag = inf;
+  ORp.ShipFlag = sf;
+  ORp.OSFlag = 0;
+  if (MainStockRec.DelOrdQty == 1) then begin
+    if (invd>ord) then begin
+      ORp.OSFlag = 1;
+    end;
+  end;
+  if (AllowInvBeforeShip==0) then begin
+    if (ord>invd) then begin 
+      ORp.OSFlag = 1; 
+    end else begin
+      if (ord>shipsum) then begin ORp.OSFlag = 1; end;//when we do return goods invoice remoins but delivered doesn't
+    end;
+  end else begin
+    if (ord>shipsum) then begin ORp.OSFlag = 1; end;
+    if (ord>invd) then begin ORp.OSFlag = 1; end;
+  end;  
+  switch (inf) begin
+    case 0: ORp.InvMark = 0;
+    case 1: ORp.InvMark = 45;
+    case 2: ORp.InvMark = 18;
+  end;
+  switch (sf) begin
+    case 0: ORp.ShipMark = 0;
+    case 1: ORp.ShipMark = 18;//checkMarkChar
+  end;
+  RETURN;
+END;
+
+global
+procedure SDSumUp(var record SDVc SDp)
+BEGIN
+  Integer i,rwcnt;
+  row SDVc SDrw;
+  val totqty;
+  
+  SDp.TotQty = blankval;
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDp,i,SDrw);
+    totqty = totqty + SDrw.Qty;
+  end;
+  SDp.TotQty = Round(totqty,SetRoundModeD(2));
+  RETURN;
+END;
+
+global
+procedure SRSumUp(var record SRVc SRp)
+begin
+  Integer i,rwcnt;
+  row SRVc SRrw;
+  
+  SRp.TotDiff = blankval;
+  SRp.TotQty = blankval;
+  rwcnt = MatRowCnt(SRp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SRp,i,SRrw);
+    SRp.TotQty = SRp.TotQty + SRrw.Qty;
+    SRp.TotDiff = SRp.TotDiff + SRrw.Qty*SRrw.DiffFIFO; 
+  end;
+  SRp.TotQty = Round(SRp.TotQty,SetRoundModeD(2));
+  return;
+end;
+
+global
+procedure GetVATproc(string vatc,Integer InclVAT,var val VATproc)
+begin
+  record VATCodeBlock vcb;
+  row VATCodeBlock vcbrow;
+  integer rwcnt,i;
+
+  BlockLoad(vcb);
+  rwcnt = MatRowCnt(vcb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(vcb,i,vcbrow);
+    if (vcbrow.VATCode == vatc) then begin
+      if (InclVAT==0) then begin
+        VATproc  =  vcbrow.ExVatpr;
+      end else begin
+        VATproc  =  vcbrow.IncVatpr;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+function Boolean SetupMail(var record MailVc Mailr,String CustCode,Integer Custf)
+begin
+  string 60 mailboxcode;
+  string 60 mailboxname;
+  record CUVc CUr;
+  record CUVc VEr;
+  Row MailVc Mailrw;
+  Boolean Res;
+  String 60 MailAddr;
+  
+  Res = false;
+  FindUserMailboxName(CurrentUser,mailboxcode,mailboxname);
+  if blank(mailboxcode) then begin goto LSetupMail; end;
+    
+  if (Custf==0) then begin
+    CUr.Code = CustCode;
+    if not readfirstmain(CUr,1,true) then begin goto LSetupMail; end;
+    MailAddr = CUr.eMail;
+  end;
+  if (Custf==1) then begin
+    VEr.Code = CustCode;
+    if not readfirstmain(VEr,1,true) then begin goto LSetupMail; end;
+    MailAddr = VEr.eMail;
+  end;    
+  RecordNew(Mailr);
+  Mailr.SendFlag = 0;
+  Mailr.LockedFlag = 0;
+  Mailr.TransDate = CurrentDate;
+  Mailr.TransTime = CurrentTime;
+  Mailr.Header = "Los Notros";
+
+  Mailrw.RowTyp = 1;
+  Mailrw.AddrCode = mailboxname;
+  MatRowPut(Mailr,0,Mailrw);
+  Mailrw.RowTyp = 0;
+  Mailrw.AddrCode = MailAddr;
+  MatRowPut(Mailr,1,Mailrw);
+
+  res = true;
+LSetupMail:;  
+  SetupMail = Res;
+  return;
+end;
+
+global
+procedure LTxttoMail(Record LTxtVc sText,var record MailVc Mailr) 
+begin
+  String 255 tstr;
+  Integer i,rwcnt;
+  
+  rwcnt = LineTextCnt(sText);  
+  for (i=1;i<=rwcnt;i=i+1) begin
+    tstr = LineTextGet(sText,i);
+    AddToText(tstr,Mailr);
+    AddToText(Chr(13) & Chr(10),Mailr);
+  end;  
+  return;
+end;
+
+global
+function boolean CheckFollowUp(Record JobVc Jobr,String UserCode,var String PayDeal)
+begin
+  record CUVc CUr;
+  String 30 CustCode;
+  Record FollowUpVc FollowUpr;
+  Record UserVc Userr;
+  Boolean res;
+
+  res = false;
+  if (Jobr.Mother==-1) then begin
+    Userr.Code = UserCode;
+    if readfirstmain(Userr,1,true) then begin
+        FollowUpr.JobNr = Jobr.SerNr;
+        if (readfirstkey("JobNr",FollowUpr,1,true)==false) then begin
+          CustCode = Jobr.Source;  // Agent
+          if blank(CustCode) then begin CustCode = FindJobCustomerCode(Jobr); end;
+          CUr.Code = CustCode;
+          if readfirstmain(CUr,1,true) then begin
+            PayDeal = CUr.PayDeal;
+            res = true;
+          end;  
+        end;     
+    end;
+  end;
+  CheckFollowUp = res;
+  return
+end;
+
+function
+Boolean GetITName(Integer tnr,var string tstr,record ITVc ITp,string langcod2,string deftext)
+BEGIN
+  Boolean res;
+  Integer i,rwcnt;
+  row ITVc ITrw;
+  Integer hcnt;
+  string 5 langcode;
+  Boolean hit;
+  
+  langcode = langcod2;
+  if ((nonblank(langcode)) and (MatRowCnt(ITp)>0)) then begin
+    rwcnt = MatRowCnt(ITp);
+    hit = false;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(ITp,i,ITrw);
+      if (langcode==ITrw.LangCode) then begin
+        hit = true;
+      end;
+    end;
+    if (hit==false) then begin
+      langcode = "";
+    end;
+  end;  
+  tstr = deftext;
+  if (blank(langcode)) then begin
+    hcnt = hcnt + 1;
+  end;
+  if ((hcnt==1) and (tnr==1)) then begin
+    res = true;
+    goto LGetITName;
+  end;
+  if (MatRowCnt(ITp)==0) then begin
+    goto LGetITName;
+  end;
+  rwcnt = MatRowCnt(ITp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ITp,i,ITrw);
+    if (langcode==ITrw.LangCode) then begin
+      if (hcnt==tnr) then begin
+        tstr = ITrw.Text;
+        res = true;
+        goto LGetITName;
+      end;
+      hcnt = hcnt + 1;
+    end;
+  end;
+LGetITName:;
+  GetITName = res;
+  RETURN;
+END;
+
+global
+procedure IVVcITMultiLineText(record IVVc IVr,record INVc INp,string langcode,Integer arow)
+BEGIN
+  string 255 tstr;
+  Integer tcnt;
+  record ITVc ITr;
+  row IVVc IVrw;
+ 
+  ITr.Code = INp.Group;
+  if (ReadFirstMain(ITr,1,true)) then begin
+    tcnt = 0;
+    while (GetITName(tcnt,tstr,ITr,langcode,INp.Name)) begin
+      ClearRow(IVr,IVrw,1);
+      IVrw.Spec = tstr;
+      MatRowInsert(IVr,arow+tcnt-1,IVrw);
+      tcnt = tcnt + 1;
+    end;
+  end;  
+  RETURN;
+END;

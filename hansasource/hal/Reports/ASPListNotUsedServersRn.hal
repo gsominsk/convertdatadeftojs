@@ -1,0 +1,168 @@
+external function string 255 FileSizeToString(Val);
+external procedure GetRemoteCloudServersData(array record RemoteCloudServerVc,var array Date,var array val,var array Integer);
+external function LongInt DateDiff(Date,Date);
+
+procedure PrintRemoteCloudServerData(array record RemoteCloudServerVc aRCSr,array record CUVc aCUr)
+begin
+  record RemoteCloudServerVc RCSr;
+  Integer i;
+  array Date aRCSLastActDate;
+  array val aRCSDBSize;
+  array Integer aRCShals;
+  string 255 tstr;
+  record CUVc CUr;
+  
+  GetRemoteCloudServersData(aRCSr,aRCSLastActDate,aRCSDBSize,aRCShals);
+
+  for (i=0;i<aRCSr.length;i=i+1) begin
+    RecordCopy(RCSr,aRCSr[i]);
+    RecordCopy(CUr,aCUr[i]);
+
+    tstr = RCSr.Name;
+    if (len(tstr)>22) then begin
+      tstr = left(tstr,19) & "...";
+    end;
+    if (blank(tstr)) then begin
+      tstr = "[blank name]";
+    end;
+
+    StartFormat(15);
+    OutStringID(0,"DblRCSVc",tstr,false,RCSr.UUID);
+    OutString(2,"DblCUVc",RCSr.CUCode,false);
+    OutString(3,0,CUr.eMail,false);
+    OutString(4,0,FileSizeToString(aRCSDBSize[i]),true);
+    OutDate(5,0,RCSr.CreatedDate,false);
+    OutDate(6,0,RCSr.LastStartDate,false);
+    OutString(9,0,DateDiff(RCSr.LastStartDate,RCSr.CreatedDate),true);
+    OutString(1,0,DateDiff(CurrentDate,RCSr.LastStartDate),true);
+    EndFormat;
+  end;
+  return;
+end;
+
+global
+procedure ASPListNotUsedServersRn(record RcVc RepSpec)
+begin
+  record RemoteCloudServerVc RCSr;
+  record CloudNodeVc CNr;
+  array record RemoteCloudServerVc aRCSr;
+  array record CUVc aCUr;
+  record CUVc CUr;
+  Boolean found,testf;
+  string 255 lastcontroller,tstr;
+  Integer rw,pos;
+  LongInt totcnt;
+
+  StartReportJob("List not used On-Demand servers");
+  
+  rw = 1;
+  if (nonblank(RepSpec.f1)) then begin
+    tstr = "Cloud Node: " & RepSpec.f1;
+    Header(rw,tstr,1);
+  end;
+  if (nonblank(RepSpec.f4)) then begin
+    Header(rw,"Customer: " & RepSpec.f4,1); rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f2)) then begin
+    Header(rw,"Country: " & RepSpec.f2,1); rw = rw + 1;
+  end;
+  EndHeader;
+  SetRepCol(2,120);
+  SetRepCol(3,180);
+  SetRepCol(4,310);
+  SetRepCol(5,330);
+  SetRepCol(6,380);
+  SetRepCol(9,450);
+  
+  StartFormat(15);
+  OutString(1,0,"From Last",true);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,"Server Name",false);
+  OutString(2,0,"Customer",false);
+  OutString(3,0,"Email",false);
+  OutString(4,0,"DB Size",true);
+  OutString(5,0,"Created",false);
+  OutString(6,0,"Started",false);
+  OutString(9,0,"Used",true);
+  OutString(1,0,"Started",true);
+  EndFormat;
+  Gray_Divider(0,1);
+  totcnt = 0;
+  RCSr.Controller = RepSpec.f1;
+  found = true;
+  while (LoopKey("Controller",RCSr,1,found)) begin
+    if (nonblank(RepSpec.f1) and RCSr.Controller!=RepSpec.f1) then begin
+      found = false;
+    end;
+    if (found) then begin
+      testf = true;
+      if (RCSr.OnDemandFlag==0) then begin testf = false; end;
+      if (nonblank(RepSpec.f4)) then begin
+        if (RCSr.CUCode!=RepSpec.f4) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        CUr.Code = RCSr.CUCode;
+        if (ReadFirstMain(CUr,1,true)) then begin
+          if (nonblank(RepSpec.f5) and RepSpec.f5!=CUr.CountryCode) then begin
+            testf = false;
+          end;
+        end else begin
+          if (nonblank(RepSpec.f5)) then begin
+            testf = false;
+          end;
+        end;
+      end;  
+      if (RepSpec.long1>=0) then begin
+        if (DateDiff(RCSr.LastStartDate,RCSr.CreatedDate)>RepSpec.long1) then begin 
+          testf = false;
+        end;
+      end;
+      if (RepSpec.long2>=0) then begin
+        if (DateDiff(CurrentDate,RCSr.LastStartDate)<RepSpec.long2) then begin 
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        if (lastcontroller!=RCSr.Controller) then begin
+          StartFormat(15);
+          CNr.Code = lastcontroller;
+          if (ReadFirstMain(CNr,1,true)) then begin
+            OutString(0,0,CNr.Code,false);
+            OutString(80,0,CNr.AmazonInstanceType,false);
+            OutString(130,0,CNr.HostName,false);
+          end;
+          EndFormat;
+          Gray_Divider(0,200);
+          PrintRemoteCloudServerData(aRCSr,aCUr);
+          totcnt = totcnt + aRCSr.length;
+          ClearArray(aRCSr);
+          ClearArray(aCUr);
+        end;
+        pos = aRCSr.length;
+        aRCSr[pos] = RCSr;
+        aCUr[pos] = CUr;
+        lastcontroller = RCSr.Controller;
+      end;
+    end;
+  end;
+  StartFormat(15);
+  CNr.Code = lastcontroller;
+  if (ReadFirstMain(CNr,1,true)) then begin
+    OutString(0,0,CNr.Code,false);
+    OutString(80,0,CNr.AmazonInstanceType,false);
+    OutString(130,0,CNr.HostName,false);
+  end;
+  EndFormat;
+  Gray_Divider(0,200);
+  PrintRemoteCloudServerData(aRCSr,aCUr);
+  totcnt = totcnt + aRCSr.length;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(400,0,"Total:",false);
+  OutLongInt(1,0,totcnt,true);
+  EndFormat;
+
+  EndJob;
+  return;
+end;

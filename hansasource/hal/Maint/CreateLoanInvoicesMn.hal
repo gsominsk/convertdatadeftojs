@@ -1,0 +1,214 @@
+external function roundmode DefaultRoundMode();
+external function string 255 FindNextLegalSerNr(record IVVc,string);
+external procedure CheckFlush(var Integer,Integer);
+external procedure IVSumup(var record IVVc,Boolean);
+external function Boolean GetCuAccUseRow(string,var row CuAccBlock);
+external procedure Int2CuAcc(record RcVc,record CuAccVc,var val,var LongInt,var LongInt);
+external function Boolean PasteCustInInv(var record IVVc);
+external procedure GetAccStartBalance(string,string,Date,record ObjBalVc,Integer,Integer,string,Integer,var val);
+external function Boolean GetObjBal(string,string,var record ObjBalVc);
+
+procedure FillIVrow(string cuacc,string objects,val sump,string loanacc,string vatcode,var row IVVc IVrwp)
+BEGIN  
+  IVrwp.CuAccCode = cuacc;
+  IVrwp.Objects = objects;
+  IVrwp.Sum = sump;
+  IVrwp.SalesAcc = loanacc;
+  IVrwp.VATCode = vatcode;
+  RETURN;
+END;
+
+global
+updating procedure CreateLoanInvoicesMn(record RcVc RepSpec)
+BEGIN
+  record CuAccVc CuAccr;
+  record ObjBalVc ObjBalr;
+  record IVVc IVr;
+  record ObjVc Objr;
+  row IVVc IVrw;
+  row CuAccVc CuAccrw;
+  Integer i,rwcnt,ivrow;
+  val CurBalLoan,interest,instnr,t1,TopayLoanBal;
+  Boolean TrHs,testf,updcuaccf;
+  string 255 frcu,tocu,frloan,toloan;
+  row CuAccBlock CuAccRec;
+  Date td,startdate,enddate;
+  LongInt totdays,delaydays;
+  Integer keys,diy,flushcnt;
+  string 255 ckey,tstr;
+  val t365,t;
+  record CUVc CUr;
+  
+//  RepSpec.Stext = RepSpec.sStartDate2 & ":" & RepSpec.sEndDate2;
+//only when reportnigperiods on
+  totdays = 0;
+  if (nonblank(RepSpec.Stext)) then begin
+    frcu = FirstInRange(RepSpec.Stext,10);
+    tocu = LastInRange(RepSpec.Stext,10);
+    startdate = StringToDate(frcu);
+    enddate = StringToDate(tocu);
+  end;  
+  frcu = FirstInRange(RepSpec.f1,20);
+  tocu = LastInRange(RepSpec.f1,20);
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+  if (nonblank(frcu)) then begin
+    CuAccr.CUCode = frcu;
+    ckey = "CUCode";
+    keys = 2;
+  end else begin
+    ckey = "Code";
+    keys = 1;
+  end; 
+  CuAccr.Code = frloan;
+  TrHs = true;
+  while (LoopKey(ckey,CuAccr,keys,TrHs)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (CuAccr.CUCode>tocu) then begin
+        TrHs = false;
+      end;
+    end;
+    if (nonblank(RepSpec.f2)) then begin
+      if (CuAccr.Code>toloan) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      rwcnt = MatRowCnt(CuAccr);
+    end;
+    if (rwcnt==0) then begin
+      goto L88;
+    end;
+    if (GetObjBal(CuAccr.MainAcc,CuAccr.Objects,ObjBalr)==false) then begin
+      goto L88;
+    end;
+    GetAccStartBalance(CuAccr.MainAcc,CuAccr.Objects,RepSpec.d1,ObjBalr,0,0,"",0,CurBalLoan);
+    if (CurBalLoan==0) then begin goto L88; end;
+    testf = false;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(CuAccr,i,CuAccrw);
+      if (CuAccrw.InvNr==-1) then begin
+        if (RepSpec.d1==CuAccrw.PlanDate) then begin 
+          testf = true; 
+          goto LBREAK;
+        end;
+      end;
+    end;
+LBREAK:;    
+    if (nonblank(RepSpec.ObjType)) then begin
+      Objr.Code = CuAccr.Objects;
+      if (ReadFirstMain(Objr,1,true)==false) then begin 
+        testf = false;
+      end else begin
+         if (Objr.OTCode!=RepSpec.ObjType) then begin testf = false; end;
+      end;
+    end;  
+    if (testf) then begin
+      ivrow = 0;
+      updcuaccf = false;
+      td = RepSpec.d1;
+      instnr = CuAccr.InstNr;
+      RecordNew(IVr);
+      IVr.CustCode = CuAccr.CUCode;
+      IVr.InvComment = RepSpec.Stext;
+      IVr.InvDate = RepSpec.d2;
+      IVr.InclVAT = 1;
+      if (blankdate(IVr.InvDate)) then begin IVr.InvDate = CurrentDate; end;
+      if (PasteCustInInv(IVr)) then begin
+      end;
+      IVr.IntCode = RepSpec.vals0;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(CuAccr,i,CuAccrw);
+        if (CuAccrw.InvNr!=-1) then begin
+          instnr = instnr - t1;
+          td = CuAccrw.PlanDate;
+        end else begin
+          if (instnr!=0) then begin
+            if (RepSpec.d1==CuAccrw.PlanDate) then begin 
+              if (nonblank(CuAccrw.ValStr)) then begin
+                RepSpec.ArtMode = 5;   
+                if ((nonblankdate(startdate)) and (nonblankdate(enddate))) then begin 
+                  RepSpec.sStartDate = startdate;
+                  RepSpec.sEndDate = enddate;
+                end else begin
+                  if (RepSpec.d1==td) then begin 
+                    RepSpec.sStartDate = td;                  
+                    RepSpec.sStartDate = AddDay(RepSpec.sStartDate,-GetDay(RepSpec.sStartDate)+1);
+                    RepSpec.sStartDate = AddMonth(RepSpec.sStartDate,-GetMonth(RepSpec.sStartDate)+1);
+                  end else begin
+                    RepSpec.sStartDate = td;                  
+                  end;
+                  RepSpec.sEndDate = RepSpec.d1;
+                end;  
+                interest = blankval;
+                delaydays = -1;
+                Int2CuAcc(RepSpec,CuAccr,interest,totdays,delaydays);                  
+                ivrow = MatRowCnt(IVr);
+                ClearRow(IVr,IVrw,8);
+                if (GetCuAccUseRow(CuAccr.Objects,CuAccRec)) then begin end;
+                FillIVrow(CuAccr.Code,CuAccr.Objects,interest,CuAccRec.TopayInterestAcc,CuAccRec.VATCode,IVrw);
+                MatRowPut(IVr,ivrow,IVrw);
+                ivrow = ivrow + 1;
+                if (delaydays>RepSpec.long1) then begin
+                  if (RepSpec.vals0>0) then begin
+                    if (CuAccRec.YearDays>0) then begin
+                      diy = 365;
+                    end else begin
+                      diy = 360;
+                    end;;
+                    t365 = diy;
+                    interest = StringToVal(CuAccrw.ValStr,M4Val);
+                    t = interest*RepSpec.vals0;
+                    t = t/100;
+                    t = t*delaydays;
+                    interest = t/t365;
+                    interest = Round(interest,DefaultRoundMode);
+                    ClearRow(IVr,IVrw,8);
+                    FillIVrow(CuAccr.Code,CuAccr.Objects,interest,CuAccRec.TopayInterestAcc,CuAccRec.VATCode,IVrw);
+                    MatRowPut(IVr,ivrow,IVrw);
+                    ivrow = ivrow + 1;
+                  end;
+                end;                                    
+                interest = StringToVal(CuAccrw.ValStr,M4Val);
+                ivrow = MatRowCnt(IVr);
+                ClearRow(IVr,IVrw,7);
+                FillIVrow(CuAccr.Code,CuAccr.Objects,interest,CuAccRec.TopayLoanDebAcc,CuAccRec.VATCode,IVrw);
+                MatRowPut(IVr,ivrow,IVrw);
+                ivrow = ivrow + 1;
+                TopayLoanBal = blankval;
+                ClearRow(IVr,IVrw,1);
+                IVrw.Spec = RepSpec.Stext;
+                MatRowPut(IVr,ivrow,IVrw);
+                ivrow = ivrow + 1;                  
+                IVSumup(IVr,true);
+                if (IVr.SerNr==-1) then begin
+                  IVr.SerNr = NextSerNr("IVVc",IVr.TransDate,-1,false,IVr.LangCode);
+                end;
+                CUr.Code = IVr.CustCode;
+                if (ReadFirstMain(CUr,1,true)) then begin end;
+                CuAccrw.InvNr = IVr.SerNr;
+                MatRowPut(CuAccr,i,CuAccrw);
+                updcuaccf = true;
+              end;  
+            end;  
+          end else begin
+            goto L22;
+          end;
+        end;
+      end;
+L22:;  
+      if (MatRowCnt(IVr)>0) then begin
+//        IVr.OfficialSerNr = FindNextLegalSerNr(IVr,CUr.Classification);  //POSN
+        if (RecordStore(IVr,false)) then begin end;
+        CheckFlush(flushcnt,10);
+      end;
+      if (updcuaccf) then begin
+        if (RecordStore(CuAccr,true)) then begin end;
+        CheckFlush(flushcnt,10);
+      end;     
+   end;//TrHs
+L88:;   
+    UserTrace(CuAccr.Code,M4Code);                          
+  end;
+ RETURN;
+END;

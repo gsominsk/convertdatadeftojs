@@ -1,0 +1,771 @@
+remote updating function Integer CreateIVFromOYD(record OYVc,var record IVVc,var string);
+remote updating function Integer CreateORFromOYD(record OYVc,var record ORVc,var string);
+remote updating function Integer CreateQTFromOYD(record OYVc,var record QTVc,var string);
+remote updating function LongInt CancelApprovalRequest(string,string,var Integer);
+remote updating function Integer RequestApproval_OYVc(record OYVc,var record RcVc,var Integer);
+remote function Integer OYTestApprovalStatus(record OYVc);
+remote function Boolean GetNextItemNr(var string);
+remote function Boolean GetNextCustNr(var string);
+external function string 40 ObjSClassPasteSpecialWindowClass(string);
+external procedure ActVcRecordDefClient(var record ActVc);
+external function val ValFromString(string,string,string);
+external function Integer CountObjects(string);
+external function Integer OpenArtStat(Integer,record RcVc,Boolean);
+external function roundmode DefaultRoundMode();
+external procedure RecalcOYSubtotal(var record OYVc);
+external procedure IVOpenPrepExists(string);
+external procedure SetupCustPS2Rn(string,var record RcVc);
+external updating procedure SMSWhenOR(record ORVc,Integer);
+external procedure FindOTforAcc(string,var string);
+external function string 40 DelAddrSClassSpecPName(string);
+remote procedure OYDUpdatePrices(var record OYVc,Boolean);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+remote updating function Integer CreateTBBUFromOYD(var record OYVc,var record TBBUVc);
+remote updating function Boolean MakeActFromOY(record OYVc,var record ActVc);
+remote procedure RecalcDiscountOYD(var record OYVc);
+remote procedure RecalculetWeightVolumeOYVc(var record OYVc);
+remote updating function Integer CreateMailFromOYD(record OYVc,var record MailVc,var string,string);
+external procedure CustMessages(string,string);
+external updating procedure RecordActionOY_Print(var record OYVc,string,Boolean);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external procedure CalcProc(val,val,var val);
+external procedure SendArtStat(string,string,string,val,val,val,Date,Integer);
+external updating procedure OYCreateHtmlFile(record OYVc,record MailVc);
+remote function Boolean OYVc_AllowSales(record OYVc,var Integer,var LongInt);
+
+global 
+procedure UpdatePricesOYDsm()
+begin
+  Integer wn;
+  record OYVc OYr;
+  Boolean readf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin//normal
+    readf = true;
+  end;
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,OYr);
+    OYDUpdatePrices(OYr,readf);
+    PutWindowRecord(wn,OYr);  
+  return;
+end;
+            
+global 
+updating procedure CreateTBBUFromOYDsm()
+begin
+  Integer wn,nwn,err;
+  record OYVc OYr;
+  record TBBUVc TBBUr;
+  Boolean testf;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,OYr);  
+  if (nonblank(OYr.PRCode)) then begin
+    if ((OYr.Closed==0) and (OYr.Rejected!=1)) then begin
+      testf = true;
+      err = OYTestApprovalStatus(OYr);
+      if (err!=0) then begin
+        MessageBox(err,"");
+        testf = false;
+      end;
+      if (testf) then begin
+        err = CreateTBBUFromOYD(OYr,TBBUr);
+        if (err==0) then begin
+          PutWindowRecord(wn,OYr);
+          if (WindowDoOK(wn,0)) then begin
+          end;
+          nwn = OpenWindow("TBBUDClass",1,0,"","",TBBUr);
+          UpdateBrowses("OYVc");
+          UpdateBrowses("TBBUVc");
+        end else begin
+          MessageBox(err,"");
+        end;
+      end;
+    end else begin
+      Beep;
+    end;
+  end;      
+  return;
+end;
+
+procedure AddOYLineType(Integer t,Boolean firstf)
+begin
+  record OYVc OYr;
+  row OYVc OYrw;
+  Integer wn,rownr;
+  string 20 tstr;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    DoUpdate(wn);
+  end;
+  if (WindowState(wn)!=Rs_update and WindowState(wn)!=Rs_insert) then begin
+    goto LAddOYLineType;
+  end;
+  GetWindowRecord(wn,OYr);
+  if ((OYr.Closed==0) and (OYr.Rejected==0)) then begin
+    rownr = WindowActiveRow(wn);
+//    DeselectWindow(wn,false);
+    if (rownr==-1) then begin
+      if (firstf) then begin
+        rownr = 0;
+      end else begin
+        rownr = MatRowCnt(OYr);
+      end;
+    end else begin
+      rownr = rownr;
+    end;
+    ClearRow(OYr,OYrw,t);
+    OYrw.Spec = "";
+    MatRowInsert(OYr,rownr,OYrw);
+    PutWindowRecord(wn,OYr);
+    switch (t) begin
+      case 17:
+        WindowFieldGoto(wn,OYr,rownr,"Spec",true);
+    end;
+  end;
+LAddOYLineType:;  
+  return;
+end;
+
+global
+procedure OYAddHidLine()
+begin
+  if (UserCanAction("HiddenLine",true)) then begin
+    AddOYLineType(kInvoiceRowTypeHidden,false);
+  end;
+  return;
+end;
+
+global
+procedure OYAddHeaderLine()
+begin
+  AddOYLineType(17,true);
+  return;
+end;
+
+global
+procedure OYStatusDsm()
+begin
+  record RcVc RepSpec;
+  record OYVc OYr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,OYr);
+  RepSpec.f1 = OYr.SerNr;
+  RepSpec.flags[1] = 1;
+  RepSpec.flags[2] = 1;
+  RepSpec.flags[3] = 1;
+  RepSpec.repname = "OYStatusRn";
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+updating function Boolean OYDClassPrint(Integer wn,Boolean previewf)
+begin
+  record OYVc OYr;
+  Boolean testf;
+  Integer err;
+ 
+  testf = true;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,OYr); 
+  if (UserCanAction("PrintPreviewNotApproved",false)==false) then begin
+    err = OYTestApprovalStatus(OYr);
+  end;
+  if (err!=0) then begin
+    MessageBox(err,"");
+    testf = false;
+  end;
+  if (testf) then begin
+    RecordActionOY_Print(OYr,false,true);
+  end;
+  OYDClassPrint = true;
+  return;
+end;
+
+global
+updating procedure PrintOYL(Integer wn,Boolean previewf)
+begin
+  record OYVc OYr;
+  Integer i,r;
+  Boolean testf;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(OYr,wn,i)) begin
+    testf = true;
+    r = OYTestApprovalStatus(OYr);
+    if (r!=0) then begin
+      MessageBox(r,"");
+      testf = false;
+    end;
+    if (testf) then begin
+      RecordActionOY_Print(OYr,previewf,true);
+    end;
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  return;
+end;
+
+global
+function Boolean OYDClassSwitchRow(Integer wn,Integer rownr)
+begin
+  record OYVc OYr;
+  row OYVc OYrw;
+  row OYVc OY2rw; 
+  Integer i,rwcnt;
+  string 255 tstr,location,recepy;
+  val t,tproc,unitprdisc;
+  val rowsum,rowinbase;
+  Boolean res;
+  record TaxMatrixVc TMr;
+  
+  res = true;
+  GetWindowRecord(wn,OYr);
+  rwcnt = MatRowCnt(OYr);  
+  if ((rownr<rwcnt) and (rownr>=0)) then begin
+    MatRowGet(OYr,rownr,OYrw);
+    location = OYr.Location;
+    tstr = OYrw.ArtCode;
+    t = OYrw.rowGP;
+    rowinbase = MulRateToBase1(OYr.CurncyCode,OYrw.Sum,OYr.FrRate,OYr.ToRateB1,OYr.ToRateB2,OYr.BaseRate1,OYr.BaseRate2,DefaultCurRoundOff);
+    UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+    FindSalesExVat(TMr,OYrw.VATCode,rowinbase,OYr.InclVAT,OYr.NoTAXonVAT,rowsum);
+    unitprdisc = OYrw.Sum/OYrw.Quant;
+    unitprdisc = Round(unitprdisc,DefaultRoundMode);
+    recepy = OYrw.Recepy;
+    for (i=rownr+1;i<rwcnt;i=i+1) begin
+      MatRowGet(OYr,i,OY2rw);
+      switch (OY2rw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          if (OY2rw.MotherArtCode==OYrw.ArtCode) then begin
+            t = t + OY2rw.rowGP;
+          end;
+        otherwise
+          i = rwcnt;
+      end;
+    end;    
+//      if (blankstrp(recepy)) then GetRecepy(OYrw.ArtCode,recepy); This makes one extra call, I can see why but we need another solution
+  end;
+  CalcProc(rowsum,t,tproc);
+  SendArtStat(tstr,location,recepy,t,tproc,unitprdisc,OYr.OYDate,1);
+  SetWindowNameArg(wn,tstr & ":" & location);
+  OYDClassSwitchRow = res;
+  return
+end;
+
+
+global
+procedure ItemStatusOYDsm()
+begin
+  Integer wn,nwn;
+  Boolean testf;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  nwn = OpenArtStat(wn,RepSpec,true);
+  RepSpec.UsedOnly = 1;
+  PutWindowRecord(nwn,RepSpec);
+  testf = OYDClassSwitchRow(wn,WindowActiveRow(wn));
+  return
+end;
+
+global 
+updating procedure CreateMailFromOYDsm()
+begin
+  Integer wn,nwn;
+  record MailVc Mailr;
+  record OYVc OYr;
+  Integer err;
+  string 255 tstr;
+  string 255 docname;
+  Boolean testf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    testf = true;
+    GetWindowRecord(wn,OYr);  
+    err = OYTestApprovalStatus(OYr);
+    if (err!=0) then begin
+      MessageBox(err,"");
+      testf = false;
+    end;
+    if (testf) then begin
+      err = CreateMailFromOYD(OYr,Mailr,tstr,WindowFormName(wn));
+      if (err!=0) then begin
+        MessageBox(err,": " & tstr);
+      end else begin
+        nwn = OpenWindow("MailDClass",1,0,"","",Mailr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CreateActFromOYDsm()
+begin
+  record OYVc OYr;
+  record ActVc Actr;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    GetWindowRecord(wn,OYr);
+    RecordNew(Actr);
+    ActVcRecordDefClient(Actr);
+    if (MakeActFromOY(OYr,Actr)) then begin
+      nwn = OpenWindow("ActDClass",1,0,"","",Actr);
+      SetRlink(wn,true);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure OYVcCreateActivity()
+begin
+  CreateActFromOYDsm;
+  return;
+end;
+
+global
+procedure SubtotalOYDsm()
+begin
+  record OYVc OYr;
+  row OYVc OYrw;
+  Integer wn,i,rwcnt,rownr;
+  val pt;
+
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    DoUpdate(wn);
+  end;
+  if (WindowState(wn)!=Rs_update and WindowState(wn)!=Rs_insert) then begin
+    goto LSubtotalOYDsm;
+  end;
+  GetWindowRecord(wn,OYr);
+  if (OYr.Rejected==0 and OYr.Closed==0) then begin
+    rownr = WindowActiveRow(wn);
+    WindowDeactivatefield(wn);
+//    DeselectWindow(wn,false);
+    rwcnt = MatRowCnt(OYr);
+    if ((rownr==-1) or (rownr>rwcnt)) then begin
+      rownr = rwcnt;
+    end;
+    ClearRow(OYr,OYrw,9);
+    MatRowInsert(OYr,rownr,OYrw);
+    RecalcOYSubtotal(OYr);
+    PutWindowRecord(wn,OYr);
+    WindowFieldGoto(wn,OYr,rownr,"Spec",false);
+  end;
+LSubtotalOYDsm:;  
+  return;
+end;
+
+global 
+procedure RecalcWeightOYDsm()
+begin
+  record OYVc OYr;
+  Integer wn;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  if (WindowState(wn)==0)then begin//Rs_normal
+    GetWindowRecord(wn,OYr);
+    if (OYr.Closed==0) then begin
+      RecalculetWeightVolumeOYVc(OYr);
+      PutWindowRecord(wn,OYr);
+    end;
+  end;
+  return;
+end;
+
+global 
+procedure RecalcDiscountOYDsm()
+begin
+  record OYVc OYr;
+  Integer wn;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  if (WindowState(wn)==0)then begin//Rs_normal
+    GetWindowRecord(wn,OYr);
+    if (OYr.Closed==0) then begin
+      RecalcDiscountOYD(OYr);
+      PutWindowRecord(wn,OYr);
+    end;
+  end;
+  return;
+end;
+
+procedure OYDClassSpecPasteNameObjects(Integer wn,var string psname)
+begin
+  record OYVc OYr;
+  row OYVc OYrw;
+  Integer rownr;
+  string 200 typ;
+
+  GetWindowRecord(wn,OYr);
+  rownr = WindowActiveRow(wn);
+  typ="";
+  if (rownr>=0) then begin
+    MatRowGet(OYr,rownr,OYrw);
+    FindOTforAcc(OYrw.SalesAcc,typ);
+  end else begin
+    FindOTforAcc("",typ);
+  end;
+  if (nonblank(typ)) then begin
+    psname = "TRObjSClass";
+  end else begin    
+    psname = ObjSClassPasteSpecialWindowClass("ObjSClass");
+  end;
+  return;
+end;
+
+procedure OYDClassSpecPasteNameArtCode(Integer wn,var string psname)
+begin
+  record OYVc OYr;
+  Integer rownr;
+
+  GetWindowRecord(wn,OYr);
+  rownr = WindowActiveRow(wn);
+  DeselectWindow(wn,false);
+  WindowFieldGoto(wn,OYr,rownr,"ArtCode",false);
+  return;
+end;
+
+global
+function string 40 OYDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "DelAddrCode": psname = DelAddrSClassSpecPName(defpsname);
+    case "Objects": OYDClassSpecPasteNameObjects(wn,psname);
+    case "ArtCode": OYDClassSpecPasteNameArtCode(wn,psname);
+  end;
+  OYDClassSpecPasteName = psname;
+  return;
+end;
+
+global
+procedure CUStatusOYDsm()
+begin
+  record RcVc RepSpec;
+  record OYVc OYr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,OYr);
+  SetupCustPS2Rn(OYr.CustCode,RepSpec);
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+updating procedure OYSendforAcceptanceOYDsmExecute(Integer wn,string acceptanceby,string acceptancefyi)
+begin
+  Integer err,nwn;
+  record OYVc OYr;
+  Integer ApproverSelection,ApprovalStatusFlag;
+  record RcVc RepSpec;
+  
+  GetWindowRecord(wn,OYr);
+  if (WindowState(wn)!=Rs_normal) then begin
+    if (WindowDoOK(wn,0)==false) then begin
+      goto LOYSendforAcceptanceOYDsm;
+    end;
+    GetWindowRecord(wn,OYr);
+  end;
+  OYr.AcceptanceBy = acceptanceby;
+  OYr.AcceptanceFYI = acceptancefyi;
+  err = RequestApproval_OYVc(OYr,RepSpec,ApprovalStatusFlag);
+  ApproverSelection = RepSpec.ArtMode;
+  if ((ApproverSelection==kAcceptanceApproverSelectionManual) and (blank(OYr.AcceptanceBy))) then begin
+    switch (err) begin  
+      case 0:
+        if (CountObjects(RepSpec.f12)==1) then begin
+          RepSpec.f1 = RepSpec.f12;
+        end;
+        if (CountObjects(RepSpec.f11)==1) then begin
+          RepSpec.f2 = RepSpec.f11;
+        end;
+        nwn = OpenWindow("SelectApproverWClass",0,wn,"","",RepSpec);
+      otherwise
+        MessageBox(err,"");
+    end;
+  end else begin
+    switch (err) begin  
+      case 0:
+        PutWindowRecord(wn,OYr);
+        if (WindowDoOK(wn,0)) then begin
+        end;
+        PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+        CheckmarkBox(37501,"");
+      otherwise
+        MessageBox(err,"");
+    end;
+  end;
+LOYSendforAcceptanceOYDsm:;  
+  return;
+end;
+
+global
+updating procedure OYSendforAcceptanceOYDsm()
+begin
+  OYSendforAcceptanceOYDsmExecute(CurWindow,"","");
+  return;
+end;
+
+global
+updating procedure OYCancelApprovalRequest(Integer wn)
+begin
+  record OYVc OYr;
+  Integer ApprovalStatusFlag;
+  LongInt err;
+
+  GetWindowRecord(wn,OYr);
+  err = CancelApprovalRequest("OYVc",OYr.SerNr,ApprovalStatusFlag);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    goto LOYCancelApprovalRequest;
+  end;
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+LOYCancelApprovalRequest:;
+  return;
+end;
+
+global
+procedure OpenVatMatrixOYDsm()
+begin
+  record TaxMatrixVc TMr;
+  record OYVc OYr;
+  row OYVc OYrw;
+  longint nwn,wn,rowno;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,OYr);
+  rowno = WindowActiveRow(wn);
+  
+  if (rowno>=0) then begin
+    MatRowGet(OYr,rowno,OYrw);
+    UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+  end else begin
+    UnpackFieldMatrix(OYr,"TaxMatrix",TMr);
+  end;
+  
+  nwn = OpenWindow("TaxMatrixVClass",0,wn,"","",TMr);
+  PutWindowString(nwn,"TaxMatrixActiveRow",rowno);
+  
+  PutWindowRecord(nwn,TMr);
+  PutWindowPrevRecord(nwn,TMr);
+  SetWindowState(nwn,Rs_normal);
+  
+  return;
+end;
+
+global
+updating procedure SignOYDsm()
+begin
+  record RcVc RepSpec;
+  Integer nwn,wn;
+  record OYVc OYr;
+  
+  wn = CurWindow;
+  if (WindowState(wn)!=Rs_insert) then begin
+    GetWindowRecord(wn,OYr);
+    RepSpec.vals0 = OYr.SumOther;
+    nwn = OpenWindow("SignatureWClass",1,wn,"","",RepSpec);
+    PutWindowRecord(nwn,RepSpec); //Shouldn't be needed?
+  end else begin
+    Beep;
+  end;
+end;
+
+global  
+procedure OYLastSPrsm()
+begin
+  record OYVc OYr;
+  row OYVc OYrw;
+  record RcVc RepSpec;
+  Integer wn,rownr;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,OYr);
+  rownr = GetWindowCurRow(wn);
+  if (rownr>=0) then begin
+    MatRowGet(OYr,rownr,OYrw);
+    ReportDefaults(RepSpec,"INLastSPriceRClass");  
+    RepSpec.repname = "INLastSPriceRn";
+    RepSpec.f1 = OYr.CustCode;
+    RepSpec.f2 = OYrw.ArtCode;
+    RepSpec.vals0 = OYrw.Price;
+    RepSpec.long1 = 5;
+    RepSpec.ArtMode = 2;
+    RepSpec.Media = 6;    
+    RepSpec.UsedOnly = wn;
+    RepSpec.FirstAcc = "OYVc";
+    RepSpec.flags[0] = rownr;
+    RunReport(RepSpec,1);
+  end;  
+  return;
+end;
+
+global
+procedure MgrsDiscOverrideOYDsm()
+begin
+  Integer wn;
+  Integer rownr;
+  record RcVc RepSpec;
+  record OYVc OYr;
+  row OYVc OYrw;
+  
+  wn = CurWindow;
+  rownr = WindowActiveRow(wn);
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,OYr);
+    MatRowGet(OYr,rownr,OYrw);
+    RepSpec.f1 = OYrw.ArtCode;
+    RepSpec.AccStr = "";
+    RepSpec.FirstAcc = "";
+    RepSpec.long1 = WindowActiveRow(wn);
+    OpenWindow("MgrsDiscOverrideOClass",0,wn,"","",RepSpec);
+  end else begin
+    MessageBox(0,USetStr(22057));
+  end;
+end;
+
+global
+procedure AddCustomerOYDsm()
+begin
+  record CUVc CUr;
+  Integer nwn;
+  
+  RecordNew(CUr);
+  nwn = OpenWindow("CUDClass",0,CurWindow,"","",CUr);
+  PutWindowString(nwn,"OperationMenuAction","AddContact");
+  if (blank(CUr.Code)) then begin
+    GetNextCustNr(CUr.Code);
+  end;
+  return;
+end;
+
+global
+procedure AddItemOYDsm()
+begin
+  record INVc INr;
+  Integer nwn;
+  
+  RecordNew(INr);
+  nwn = OpenWindow("INDClass",0,CurWindow,"","",INr);
+  PutWindowString(nwn,"OperationMenuAction","AddItem");
+  if (blank(INr.Code)) then begin
+    GetNextItemNr(INr.Code);
+  end;
+  return;
+end;
+
+global 
+updating procedure CreateQTFromOYDsm()
+begin
+  Integer wn,nwn;
+  record QTVc QTr;
+  record OYVc OYr;
+  Integer err;
+  string 255 tstr;
+  string 255 docname;
+  Boolean testf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    testf = true;
+    GetWindowRecord(wn,OYr);  
+    err = OYTestApprovalStatus(OYr);
+    if (err!=0) then begin
+      MessageBox(err,"");
+      testf = false;
+    end;
+    if (testf) then begin
+      err = CreateQTFromOYD(OYr,QTr,tstr);
+      if (err!=0) then begin
+        MessageBox(err,": " & tstr);
+      end else begin
+        nwn = OpenWindow("QTDClass",1,0,"","",QTr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global 
+updating procedure CreateORFromOYDsm()
+begin
+  Integer wn,nwn;
+  record ORVc ORr;
+  record OYVc OYr;
+  Integer err;
+  string 255 tstr;
+  string 255 docname;
+  Boolean testf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    testf = true;
+    GetWindowRecord(wn,OYr);  
+    err = OYTestApprovalStatus(OYr);
+    if (err!=0) then begin
+      MessageBox(err,"");
+      testf = false;
+    end;
+    if (testf) then begin
+      err = CreateORFromOYD(OYr,ORr,tstr);
+      if (err!=0) then begin
+        MessageBox(err,": " & tstr);
+      end else begin
+        nwn = OpenWindow("ORDClass",1,0,"","",ORr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global 
+updating procedure CreateIVFromOYDsm()
+begin
+  Integer wn,nwn;
+  record IVVc IVr;
+  record OYVc OYr;
+  Integer err;
+  string 255 tstr;
+  string 255 docname;
+  Boolean testf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    testf = true;
+    GetWindowRecord(wn,OYr);  
+    err = OYTestApprovalStatus(OYr);
+    if (err!=0) then begin
+      MessageBox(err,"");
+      testf = false;
+    end;
+    if (testf) then begin
+      err = CreateORFromOYD(OYr,IVr,tstr);
+      if (err!=0) then begin
+        MessageBox(err,": " & tstr);
+      end else begin
+        nwn = OpenWindow("IVDClass",1,0,"","",IVr);
+      end;
+    end;
+  end;
+  return;
+end;

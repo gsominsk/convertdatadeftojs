@@ -1,0 +1,113 @@
+external procedure PrintCurrencyCode(string,string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure CommonDocumentFields(record RcVc);
+external function Boolean FindFormcode(Integer,Integer);
+external procedure ValToText(val,Integer,string,string,var string);
+external procedure GetFullCurncyRateText(Boolean,var string,val,val,val,val,val);
+
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+
+global
+procedure DoPersPayForm(record RcVc RepSpec,record PPVc PPr)
+BEGIN
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  record SysFormatBlock SysFormatRec;
+  record LangNrVc LangNrr;
+  row PPVc PPrw;
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+  Integer doci,doccnt;
+  Integer i,rwcnt;
+  string 255 tstr;
+  Integer tmp;
+  record UserVc Userr;
+    
+  BlockLoad(SysFormatRec);  
+  GetLangNr("",LangNrr);
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoPersPayForm;
+  end;
+  doccnt = MatRowCnt(FDr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (doci=doccnt-1;doci>=0;doci=doci-1) begin
+      MatRowGet(FDr,doci,FDrw);
+      if (FindFormcode(PPr.DoneFlag,FDrw.Typ)) then begin 
+        if (Getformcode(doci,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,PPr.SerNr,FDrw.PrintGroupCode,
+                        "",intdocnr,"PPVc",formcode)) then
+        begin
+          goto LBREAK;
+        end;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+        NumberofDocumentPages(formcode,MatRowCnt(PPr));          
+        rwcnt = MatRowCnt(PPr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(PPr,i,PPrw);
+          OUTFORMFIELD("F_PERSON",PPrw.Person);
+          Userr.Code = PPrw.Person;
+          if (ReadFirstMain(Userr,1,true)) then begin
+          end;          
+          OUTFORMFIELD("F_PERSNAME",Userr.Name);
+          OUTFORMFIELD("F_PERSONACCOUNT",Userr.PersAcc);
+          OUTFORMFIELD("F_TILLBANK",PPrw.BankAcc);
+          PrintValue("F_AMOUNT",PPrw.PayVal,M4Val,LangNrr,SysFormatRec,false);
+          OUTFORMFIELD("F_KOMMENTAR",PPrw.Comment);
+          OUTFORMFIELD("F_CHECKNR",PPrw.ChequeNr);
+          EndFormRow;
+        end;
+        OUTFORMFIELD("F_DOCTYPE",USetStr(23472));
+        OUTFORMFIELD("F_NUMMER",PPr.SerNr);
+        OUTFORMFIELD("F_BANKACC",PPr.BankAcc);
+        OUTFORMFIELD("F_FAKTSIGN",PPr.Sign);
+        PrintValue("F_SUMMA",PPr.PayVal,M4Val,LangNrr,SysFormatRec,false);
+        OUTFORMFIELD("F_TRANSDATE",PPr.RegDate);
+        OUTFORMFIELD("F_UTBETDATUM",PPr.PayDate);
+        OUTFORMFIELD("F_TRANSDATUM",PPr.PayDate);
+        OUTFORMFIELD("F_PAYMODE",PPr.PayMode);
+        PrintCurrencyCode("F_VALUTA",PPr.CurncyCode);
+        OUTFORMFIELD("F_COMMENT",PPr.Comment);
+        if (FIELDINFORM("F_RATE")) then begin
+          GetFullCurncyRateText(false,tstr,PPr.FrRate,PPr.ToRateB1,PPr.ToRateB2,PPr.BaseRate1,PPr.BaseRate2);
+          OUTFORMFIELD("F_RATE",tstr);
+        end;
+        if (FIELDINFORM("F_BASERATE")) then begin
+          GetFullCurncyRateText(true,tstr,PPr.FrRate,PPr.ToRateB1,PPr.ToRateB2,PPr.BaseRate1,PPr.BaseRate2);
+          OUTFORMFIELD("F_BASERATE",tstr);
+        end;
+        PrintValue("F_EXTRAKOSTNAD",PPr.ExtraCost,M4Val,LangNrr,SysFormatRec,false);
+        PrintValue("F_TOTPRIS",PPr.BasePayVal,M4Val,LangNrr,SysFormatRec,false);
+        PrintValue("F_ATTBETALA",PPr.PayVal,M4Val,LangNrr,SysFormatRec,false);
+        if (FIELDINFORM("F_ATTBETALATEXT")) then begin
+          ValToText(PPr.PayVal,M4Val,PPr.CurncyCode,"",tstr);
+          OUTFORMFIELD("F_ATTBETALATEXT",tstr);  
+        end;
+        CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoPersPayForm:;  
+  RETURN;
+END;

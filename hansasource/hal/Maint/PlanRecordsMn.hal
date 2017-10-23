@@ -1,0 +1,1156 @@
+external function val AbsoluteVal(val);
+external function roundmode SetRoundModeD(Integer);
+external procedure ProdSumup(var record ProdVc);
+external updating procedure UpdateProdPlanned(record ProdVc,string,Boolean);
+external updating procedure UpdateProdOrderPlanned(record ProdOrderVc,Boolean);
+external updating procedure UpdateProdOrd(record ProdOrderVc,Boolean,val);
+external function Boolean POVc_PasteLocation(var record POVc);
+external procedure CalcExtra(val,string,var val);
+external procedure CheckFlush(var Integer,Integer);
+external procedure CalcPlannedStartDate(string,Date,var val,Time);
+external function Boolean TestArtCodeMatch(string,string);
+external function LongInt TimeToMinutes(Time);
+external updating procedure UpdatePRPO(record POVc,Boolean);
+external updating procedure UpdatePOOut(record POVc,Boolean,Boolean);
+external procedure SetPOFlags(record POVc,Boolean);
+external procedure POSumup(var record POVc);
+external procedure AddPORow(record POVc,record INVc,LongInt,string,Integer,record PIVc,val,string);
+external function Boolean PasteVEInPO(var record POVc,Boolean);
+external function Boolean PasteRecInProd(var record ProdVc);
+external function Boolean PasteRecInProdOrder(var record ProdOrderVc);
+external updating procedure UpdateProdOut(record ProdVc,Boolean,Boolean);
+external updating procedure OrderComponents(record RcVc,record RecVc,string,string,string,Integer,Boolean);
+external procedure Find2StockValue(string,string,var val,Date);
+external procedure CalcProdDuration(var record ProdOrderVc);
+external procedure CalcProdTime(record RecVc,val,var val,var time);
+external function LongInt POVcRecordRemoveTest(var record POVc,record POVc,LongInt,LongInt);
+
+forward procedure UpdateProdLines(var record ProdVc,val);
+
+procedure RecalcFutOrd(record ItemHistVc IHr,var val curstp,string incode)
+BEGIN
+  record ORVc ORr;
+  row ORVc ORrw;
+  Integer i,rwcnt;
+  
+  ORr.SerNr = IHr.TransNr;
+  if (ReadFirstMain(ORr,1,true)) then begin
+    rwcnt = MatRowCnt(ORr);
+    i = IHr.Row;
+    if (ORr.Closed==0) then begin
+      if (i<rwcnt) then begin
+        MatRowGet(ORr,i,ORrw);
+        if (ORrw.ArtCode==incode) then begin
+          if ((ORrw.Shipd1 - ORrw.Quant)<0) then begin
+            curstp = curstp + (ORrw.Shipd1 - ORrw.Quant);
+          end;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure RecalcFutPO(record ItemHistVc IHr,var val curstp,string incode)
+BEGIN
+  record POVc POr;
+  row POVc POrw;
+  Integer i,rwcnt;
+
+  POr.SerNr = IHr.TransNr;
+  if (ReadFirstMain(POr,1,true)) then begin
+    rwcnt = MatRowCnt(POr);
+    i = IHr.Row;
+    if (POr.Closed==0) then begin
+      if (i<rwcnt) then begin
+        MatRowGet(POr,i,POrw);
+        if (POrw.ArtCode==incode) then begin
+          if ((POrw.Quant - POrw.Shipd1)>0) then begin
+            curstp = curstp + (POrw.Quant - POrw.Shipd1);
+          end;
+        end;
+      end;  
+    end;
+  end;
+  RETURN;
+END;
+
+procedure RecalcFutProd(record ItemHistVc IHr,var val curstp,var Date thedatp,Boolean outf)
+BEGIN
+  record ProdVc Prodr;
+  Boolean testf;
+
+  Prodr.SerNr = IHr.TransNr;
+  if (ReadFirstMain(Prodr,1,true)) then begin
+    if (Prodr.PRStatusFlag!=3 and Prodr.PRStatusFlag!=4 and Prodr.PRStatusFlag!=5) then begin
+      testf = false;
+      if (outf) then begin
+        if (IHr.Qty < 0) then begin
+          testf = true;
+        end;
+      end else begin
+        if (IHr.Qty > 0) then begin
+          testf = true;
+        end;
+      end;
+      if (testf) then begin
+        thedatp = IHr.TransDate;
+        curstp = curstp + Round(IHr.Qty,SetRoundModeD(3));
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure RecalcFutProdOrd(record ItemHistVc IHr,var val curstp,var Date thedatp,Boolean outf)
+BEGIN
+  record ProdOrderVc Prodr;
+  Boolean testf;
+
+  Prodr.SerNr = IHr.TransNr;
+  if (ReadFirstMain(Prodr,1,true)) then begin
+    if (Prodr.StatusFlag!=3 and Prodr.StatusFlag!=4) then begin
+      testf = false;
+      if (outf) then begin
+        if (IHr.Qty < 0) then begin
+          testf = true;
+        end;
+      end else begin
+        if (IHr.Qty > 0) then begin
+          testf = true;
+        end;
+      end;
+      if (testf) then begin
+        thedatp = IHr.TransDate;
+        curstp = curstp + Round(IHr.Qty,SetRoundModeD(3));
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+function Boolean FindPlanPI(string itemcode,string location,record PIVc PIp)
+BEGIN
+  Boolean res;
+  record POSettingBlock POSetRec;
+  
+  PIp.DefaultChoice = 1;
+  PIp.ItemCode = itemcode;
+  PIp.Location = location;
+  res = ReadFirstKey("DefaultChoice",PIp,3,true);
+  if (res==false) then begin
+    if (nonblank(location)) then begin
+      res = FindPlanPI(itemcode,"",PIp);
+    end;
+  end;
+  if (res==false) then begin
+    BlockLoad(POSetRec);
+    if (nonblank(POSetRec.DefaultSupplier)) then begin
+      RecordNew(PIp);
+      PIp.ItemCode = itemcode;
+      PIp.VEItemCode = itemcode;
+      PIp.VECode = POSetRec.DefaultSupplier;
+      res = true;
+    end;
+  end;
+  FindPlanPI = res;
+  RETURN;
+END;
+
+function Boolean SearchPOforVEandIN3(string vecode,string itemcode,string location,Date bythisdat,Date atleast,record POVc POp)
+BEGIN
+  Boolean found;
+  Boolean testf;
+  Integer rwcnt;
+  Date plandat;
+  Boolean res;
+  
+  res = false;
+  POp.VECode = vecode;
+  POp.OKFlag = 0;
+  found = true;
+  while (LoopKey("VECode",POp,2,found)) begin
+    if (found) then begin
+      if (POp.VECode!=vecode) then begin found = false; end;
+      if (POp.OKFlag!=0) then begin found = false; end;
+    end;
+    if (found and POp.Closed==0) then begin
+      testf = true;
+      rwcnt = MatRowCnt(POp);
+      if (rwcnt>=150) then begin testf = false; end;
+      if (POp.OrdNr!=-1) then begin testf = false; end;
+      if (POp.Closed!=0) then begin testf = false; end;
+      if (location!=POp.Location) then begin testf = false; end;
+      if (StringIsDate(POp.PlanShip)) then begin
+        plandat = StringToDate(POp.PlanShip);
+        if (plandat>bythisdat) then begin testf = false; end;
+      end else begin
+        testf = false;
+      end;
+      if (POp.TransDate!=atleast) then begin testf = false; end;
+      if (testf) then begin
+        res = true;
+        goto LSearchPOforVEandIN3;
+      end;
+    end;
+  end;
+LSearchPOforVEandIN3:; 
+  SearchPOforVEandIN3 = res; 
+  RETURN;
+END;
+
+
+global
+updating procedure DeleteProd ()
+begin 
+  record ProdSettingsBlock PSBr;
+  record ProdVc Prodr;
+  record ProdOrderVc ProdOrderr;
+  boolean TrHs, testf;
+  
+  
+  BlockLoad(PSBr);
+  
+  if (PSBr.AutoGenProd==0) then begin
+    TrHs = true;
+    Prodr.Comment = "ZZZZZZZZZZ";
+    while (LoopKey("Comment",Prodr,1,TrHs)) begin
+      if (TrHs) then begin
+        if (Prodr.Comment <> "ZZZZZZZZZZ") then begin
+          TrHs = false;
+        end;
+      end;
+      if (TrHs) then begin
+        RecordRemove(Prodr);      
+        StepBack(Prodr);
+       end;
+     end;
+   end;
+   if (PSBr.AutoGenProd==1) then begin
+    TrHs = true;
+    ProdOrderr.Comment1 = "ZZZZZZZZZZ";
+    while (LoopKey("Comment",ProdOrderr,1,TrHs)) begin
+      if (TrHs) then begin
+        if (ProdOrderr.Comment1 <> "ZZZZZZZZZZ") then begin
+          TrHs = false;
+        end;
+      end;
+      if (TrHs) then begin
+        RecordRemove(ProdOrderr);      
+        StepBack(ProdOrderr);
+      end;
+    end; 
+  end;
+  return;
+end;
+  
+global
+updating procedure DeletePO ()
+begin 
+  record POVc POr;
+  boolean TrHs, testf;
+  
+  TrHs = true;
+  POr.Reference = "ZZZZZZZ";
+  while (LoopKey("Reference",POr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (POr.Reference <> "ZZZZZZZ") then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      RecordRemove(POr);
+      StepBack(POr);
+    end;
+  end; 
+  return;
+end;
+  
+
+updating function Boolean CreatePlannedPO(record RcVc RepSpec,var Date tdp,record INVc INp,string location,var val curstp,var Date newstartdat,var Boolean addminlevelf,Boolean debugf)
+BEGIN
+  Boolean res;
+  record POVc oldPOr;
+  record POVc POr;
+  record PIVc PIr;
+  record MainStockBlock MainStockRec;
+  string 30 loc;
+  val t;
+  Boolean found;
+  LongInt adday;
+  Date atleast;
+  
+  res = false;
+  if (FindPlanPI(INp.Code,location,PIr)) then begin
+    loc = location;
+    if (blank(loc)) then begin
+      BlockLoad(MainStockRec);
+      loc = MainStockRec.MainStock;
+    end;
+    adday = PIr.PlannedDelDays;
+    atleast = AddDay(tdp,-adday);
+    found = SearchPOforVEandIN3(PIr.VECode,PIr.ItemCode,loc,tdp,atleast,POr);
+    if (found==false) then begin
+      RecordNew(POr);
+      POr.VECode = PIr.VECode;
+      if (PasteVEInPO(POr,false)) then begin end;
+      POr.TransDate = atleast;
+      if (POr.TransDate<newstartdat) then begin
+        newstartdat = POr.TransDate;
+      end;
+      POr.PlanShip = tdp;
+      POr.Location = loc;
+      if (POVc_PasteLocation(POr)) then begin end;
+      if (POr.SerNr==-1) then begin
+        POr.SerNr = NextSerNr("POVc",POr.TransDate,-1,false,"");
+      end;
+      if (RepSpec.flags[2] == 0) then begin
+        POr.Reference = "ZZZZZZZ";
+      end;
+    end;
+    if (found==false) then begin
+      if (RecordStore(POr,false)) then begin // Need to store it with Empty lines first, to avoid updating support registers twice
+        found = true;
+      end;
+    end;
+    RecordCopy(oldPOr,POr);
+    if (POr.TransDate>atleast) then begin POr.TransDate = atleast; end;// Powerfull... 
+    if (debugf) then begin
+      ExportString("R Needing = " & curstp);
+      NewLine;
+    end;
+    if (addminlevelf) then begin
+      if (INp.MinLevel!=0) then begin
+        curstp = curstp + INp.MinLevel;
+      end;
+      addminlevelf = false;
+    end;
+//    if (curstp<PIr.MinPOQty) then begin curstp = PIr.MinPOQty; end; Is now done in AddPORow
+    if (debugf) then begin
+      ExportString("R But Ordering = " & curstp);
+      NewLine;
+    end;
+    AddPORow(POr,INp,-1,"",0,PIr,curstp,"");
+    POSumup(POr);
+    SetPOFlags(POr,false);
+    if (POr.SerNr!=-1) then begin
+      if (found) then begin      
+        if (RecordUpdate(oldPOr,POr,false)==0) then begin end;
+//      end else begin
+//        if (RecordStore(POr,false)) then begin end;
+      end;
+      t = blankval;
+      if (found) then begin
+        UpdatePOOut(oldPOr,false,false);
+        UpdatePRPO(oldPOr,false);
+      end;
+      UpdatePOOut(POr,true,false);
+      UpdatePRPO(POr,true);
+    end else begin
+      goto LCreatePlannedPO;
+    end;
+  end else begin
+    goto LCreatePlannedPO;
+  end;
+  UserTrace(INp.Code,M4Str);
+  res = true;
+  tdp = POr.TransDate;
+LCreatePlannedPO:;
+  CreatePlannedPO = res;
+  RETURN;
+END;
+
+updating procedure AddToExistingProdOrd(var record ProdOrderVc ProdOrdr,var record ProdOrderVc oldProdOrdr)
+begin
+  record ProdOrderVc locProdOrdr;
+  record ProdOrderVc delProdOrdr;
+  Boolean foundf,testf;
+  
+  foundf = true;
+  locProdOrdr.DueDate = ProdOrdr.DueDate;
+  while (LoopKey("DueDate",locProdOrdr,1,foundf)) begin
+    if (locProdOrdr.DueDate!=ProdOrdr.DueDate) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (locProdOrdr.SerNr==ProdOrdr.SerNr) then begin testf = false; end;
+    if (locProdOrdr.Recipe!=ProdOrdr.Recipe) then begin testf = false; end;
+    if (locProdOrdr.StatusFlag!=ProdOrdr.StatusFlag) then begin testf = false; end;
+    if (ProdOrdr.SalesOrder!=-1 and locProdOrdr.SalesOrder!=ProdOrdr.SalesOrder) then begin testf = false; end;
+    if (testf) then begin
+      RecordCopy(delProdOrdr,ProdOrdr);
+      RecordCopy(oldProdOrdr,locProdOrdr);
+      locProdOrdr.Qty = locProdOrdr.Qty + ProdOrdr.Qty;
+      RecordCopy(ProdOrdr,locProdOrdr);
+      RecordDelete(delProdOrdr);
+      foundf = false;
+    end;
+  end;
+  return;
+end;
+
+updating procedure AddToExistingProd(var record ProdVc Prodr,var record ProdVc oldProdr)
+begin
+  record ProdVc locProdr;
+  record ProdVc delProdr;
+  Boolean foundf,testf;
+  
+  foundf = true;
+  locProdr.ProdDate = Prodr.ProdDate;
+  while (LoopKey("ProdDate",locProdr,1,foundf)) begin
+    if (locProdr.ProdDate!=Prodr.ProdDate) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (locProdr.SerNr==Prodr.SerNr) then begin testf = false; end;
+    if (locProdr.Recepy!=Prodr.Recepy) then begin testf = false; end;
+    if (locProdr.PRStatusFlag!=Prodr.PRStatusFlag) then begin testf = false; end;
+    if (Prodr.OrderNr!=-1 and locProdr.OrderNr!=Prodr.OrderNr) then begin testf = false; end;
+    if (testf) then begin
+      RecordCopy(delProdr,Prodr);
+      RecordCopy(oldProdr,locProdr);
+      UpdateProdLines(locProdr,locProdr.Qty + Prodr.Qty);
+      RecordCopy(Prodr,locProdr);
+      RecordDelete(delProdr);
+      foundf = false;
+    end;
+  end;
+  return;
+end;
+
+procedure UpdateProdLines(var record ProdVc Prodr,val newqty)
+begin
+  row ProdVc Prodrw;
+  Integer rwcnt,i;
+  
+  if (Prodr.RowsHoldActualQty==1) then begin
+    rwcnt = MatRowCnt(Prodr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      MatRowPut(Prodr,i,Prodrw);
+    end;
+    if (Prodr.Qty>0) then begin
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Prodr,i,Prodrw);
+        if (Prodrw.InQty>0) then begin
+          Prodrw.InQty = Prodrw.InQty/Prodr.Qty;
+        end;
+        if (Prodrw.OutQty>0) then begin
+          Prodrw.OutQty = Prodrw.OutQty/Prodr.Qty;
+        end;
+        MatRowPut(Prodr,i,Prodrw);
+      end;
+    end;
+    Prodr.Qty = newqty;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      if (Prodrw.InQty>0) then begin
+        Prodrw.InQty = Prodrw.InQty*Prodr.Qty;
+      end;
+      if (Prodrw.OutQty>0) then begin
+        Prodrw.OutQty = Prodrw.OutQty*Prodr.Qty;
+      end;
+      MatRowPut(Prodr,i,Prodrw);
+    end;
+    ProdSumup(Prodr);
+  end else begin
+    Prodr.Qty = newqty;
+  end;
+  return;
+end;
+
+function Boolean FindPlannedQty(record INVc INp,record RecVc Recp,var val curstp)
+BEGIN
+  Boolean res;
+  val outsum,t,t2;
+  row RecVc Recrw;
+  Integer i,rwcnt;
+  
+  Recp.Code = INp.Recepy;
+  res = ReadFirstMain(Recp,1,true);
+  t2 = 1;
+  rwcnt = MatRowCnt(Recp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recp,i,Recrw);
+    if (INp.Code==Recrw.Item) then begin
+      outsum = outsum + Recrw.OutQty;
+    end;
+  end;
+  if (outsum>0) then begin
+    t = curstp/outsum;
+//    curstp = Round(t,SetRoundModeD(0));  rounding to zero decimals but why ? 
+    curstp = Round(t,SetRoundModeD(3));
+    outsum = Round(outsum,SetRoundModeD(3));
+    t = curstp*outsum;
+    t = Round(t,SetRoundModeD(3));
+/*    
+rounding to zero decimals but why ? 
+    if (t<t2) then begin
+      curstp = 1;
+    end;
+*/    
+  end else begin
+    res = false;
+  end;
+  FindPlannedQty = res;
+  RETURN;
+END;
+
+function Boolean ProdExistsForOrder(LongInt OrderNr)
+begin
+  record ProdVc Prodr;
+  Boolean res;
+  
+  if (OrderNr>0) then begin
+    Prodr.OrderNr = OrderNr;
+    if (ReadFirstKey("OrderNr",Prodr,1,true)) then begin
+      res = true;
+    end;
+  end;
+  
+  ProdExistsForOrder = res;
+  return;
+end;
+
+function Boolean ProdOrderExistsForOrder(LongInt OrderNr)
+begin
+  record ProdOrderVc ProdOrderr;
+  Boolean res;
+  
+  if (OrderNr>0) then begin
+    ProdOrderr.SalesOrder= OrderNr;
+    if (ReadFirstKey("SalesOrder",ProdOrderr,1,true)) then begin
+      res = true;
+    end;
+  end;
+  
+  ProdOrderExistsForOrder = res;
+  return;
+end;
+
+updating function Boolean CreatePlannedProd2(Date tdp,record INVc INp,string location,var val curstp,string firstitem,record RecVc Recp,var Date newstartdat,var Boolean addminlevelf,Boolean debugf, record RcVc RepSpec,LongInt OrderNr)
+BEGIN
+  Boolean res;
+  record ProdVc Prodr;
+  record ProdVc oldProdr;
+  record ProdOrderVc ProdOrdr;
+  record ProdOrderVc oldProdOrdr;
+  record ORVc ORr;
+  val daystoadd,t,minlevel;
+  Time timeqty;
+  LongInt adday,mins;
+  record ProdSettingsBlock PSBr;
+
+  BlockLoad(PSBr);
+  if (PSBr.AutoGenProd==0) then begin
+    if (ProdExistsForOrder(OrderNr)) then begin
+      goto LCreatePlannedProd2;
+    end;
+    RecordNew(Prodr);
+    Prodr.ProdDate = tdp;
+    if (Prodr.SerNr==-1) then begin
+      Prodr.SerNr = NextSerNr("ProdVc",Prodr.ProdDate,-1,false,"");
+    end;
+    if (RepSpec.flags[1] == 0) then begin
+      Prodr.Comment = "ZZZZZZZZZZ";
+    end;
+    if (nonblank(RepSpec.f6)) then begin
+      Prodr.Location = RepSpec.f6;
+    end else begin
+      Prodr.Location = location;
+    end;
+    Prodr.OrderNr = OrderNr;
+    if (PSBr.OrdClassToProd!=0) then begin
+      if (Prodr.OrderNr>0) then begin
+        ORr.SerNr = Prodr.OrderNr;
+        if (ReadFirstMain(ORr,1,true)) then begin
+          Prodr.ProdClass = ORr.OrderClass;
+        end;
+      end;
+    end;
+    Prodr.Recepy = Recp.Code;
+    if (Prodr.SerNr!=-1) then begin
+      if (RecordStore(Prodr,false)) then begin // Need to store it with Empty lines first, to avoid updating support registers twice
+      end;
+    end;
+    RecordCopy(oldProdr,Prodr);
+    if (PasteRecInProd(Prodr)) then begin end;//changing prod nr
+    Prodr.SerNr = oldProdr.SerNr;
+    if (addminlevelf) then begin
+      if (INp.MinLevel!=0) then begin
+        minlevel = INp.MinLevel;
+        if (FindPlannedQty(INp,Recp,minlevel)) then begin
+        end;
+        curstp = curstp + minlevel;
+      end;
+      addminlevelf = false;
+    end;
+    if (INp.SerNrf!=1) then begin
+      if (curstp<Recp.MinProdQty) then begin curstp = Recp.MinProdQty; end;
+    end;
+//    Prodr.Qty = curstp;
+    UpdateProdLines(Prodr,curstp);
+    if (Prodr.SerNr!=-1) then begin
+      Prodr.ProdDate = tdp;
+      AddToExistingProd(Prodr,oldProdr);
+      if (PSBr.SetNormalPlanned!=0) then begin
+        if (Prodr.Qty<Recp.NormProdQty) then begin
+//          Prodr.Qty = Recp.NormProdQty; // If Prodr.Qty is larger than Recp.NormProdQty it might be needed to order X * Recp.NormProdQty..
+          UpdateProdLines(Prodr,Recp.NormProdQty);
+        end;
+      end;
+      CalcProdTime(Recp,Prodr.Qty,daystoadd,timeqty);
+      if (PSBr.RoundUpToOneDay!=0) then begin
+        mins = TimeToMinutes(timeqty);
+        if (mins>60) then begin
+          daystoadd = daystoadd + 1;
+        end;
+      end;
+      daystoadd = daystoadd + PSBr.DayBuffer;
+      adday = -daystoadd;
+      Prodr.StartDate = AddDay(tdp,adday);
+      if (Prodr.StartDate<newstartdat) then begin
+        newstartdat = Prodr.StartDate;
+      end;
+      UserTrace(INp.Code,M4Code);
+      if (RecordUpdate(oldProdr,Prodr,false)==0) then begin end;
+      if (debugf) then begin
+        ExportString("H Prodr = " & Prodr.SerNr);
+        NewLine;
+        ExportString("H INp.Code = " & INp.Code);
+        NewLine;
+      end;
+      UpdateProdOut(oldProdr,false,true);
+      UpdateProdOut(Prodr,true,true);
+    end else begin
+      goto LCreatePlannedProd2;
+    end;
+    res = true;
+  end else begin
+    if (ProdOrderExistsForOrder(OrderNr)) then begin
+      goto LCreatePlannedProd2;
+    end;
+    RecordNew(ProdOrdr);
+    if (ProdOrdr.SerNr==-1) then begin
+      ProdOrdr.SerNr = NextSerNr("ProdOrderVc",ProdOrdr.DueDate,-1,false,"");
+    end;
+    if (RepSpec.flags[1] == 0) then begin
+      ProdOrdr.Comment1 = "ZZZZZZZZZZ";
+    end;
+    if (nonblank(RepSpec.f6)) then begin
+      ProdOrdr.Location = RepSpec.f6;
+    end else begin
+      ProdOrdr.Location = location;
+    end;
+    ProdOrdr.SalesOrder = OrderNr;
+    if (PSBr.OrdClassToProd!=0) then begin
+      if (ProdOrdr.SalesOrder>0) then begin
+        ORr.SerNr = ProdOrdr.SalesOrder;
+        if (ReadFirstMain(ORr,1,true)) then begin
+          ProdOrdr.ProdClass = ORr.OrderClass;
+        end;
+      end;
+    end;
+    ProdOrdr.Recipe = Recp.Code;
+    if (ProdOrdr.SerNr!=-1) then begin
+      if (RecordStore(ProdOrdr,false)) then begin // Need to store it with Empty lines first, to avoid updating support registers twice
+      end;
+    end;
+    RecordCopy(oldProdOrdr,ProdOrdr);
+    if (PasteRecInProdOrder(ProdOrdr)) then begin end;
+    if (addminlevelf) then begin
+      if (INp.MinLevel!=0) then begin
+        minlevel = INp.MinLevel;
+        if (FindPlannedQty(INp,Recp,minlevel)) then begin
+        end;
+        curstp = curstp + minlevel;
+      end;
+      addminlevelf = false;
+    end;
+    if (INp.SerNrf!=1) then begin
+      if (curstp<Recp.MinProdQty) then begin curstp = Recp.MinProdQty; end;
+    end;
+    ProdOrdr.Qty = curstp;
+    if (PSBr.SetNormalPlanned!=0) then begin
+      if (ProdOrdr.Qty<Recp.NormProdQty) then begin
+        ProdOrdr.Qty = Recp.NormProdQty; // If Prodr.Qty is larger than Recp.NormProdQty it might be needed to order X * Recp.NormProdQty..
+      end;
+    end;   
+    CalcProdTime(Recp,ProdOrdr.Qty,daystoadd,timeqty);
+    if (PSBr.RoundUpToOneDay!=0) then begin
+      mins = TimeToMinutes(timeqty);
+      if (mins>60) then begin
+        daystoadd = daystoadd + 1;
+      end;
+    end;
+    CalcPlannedStartDate(ProdOrdr.Machine,tdp,daystoadd,timeqty);
+    daystoadd = daystoadd + PSBr.DayBuffer;
+    adday = -daystoadd;
+    ProdOrdr.PlannedStartDate = AddDay(tdp,adday);
+    if (ProdOrdr.PlannedStartDate<newstartdat) then begin
+      newstartdat = ProdOrdr.PlannedStartDate;
+    end;
+    ProdOrdr.DueDate = tdp;
+    UserTrace(INp.Code,M4Code);
+    if (ProdOrdr.SerNr!=-1) then begin
+      AddToExistingProdOrd(ProdOrdr,oldProdOrdr);
+      CalcProdDuration(ProdOrdr);
+      if (debugf) then begin
+        ExportString("I ProdOrdr.SerNr = " & ProdOrdr.SerNr);
+        NewLine;
+        ExportString("I ProdOrdr.Location = " & ProdOrdr.Location);
+        NewLine;
+        ExportString("I ProdOrdr.DueDate = " & ProdOrdr.DueDate);
+        NewLine;
+        ExportString("I ProdOrdr.PlannedStartDate = " & ProdOrdr.PlannedStartDate);
+        NewLine;
+        ExportString("I INp.Code = " & INp.Code);
+        NewLine;
+      end;
+      if (RecordUpdate(oldProdOrdr,ProdOrdr,true)==0) then begin 
+      end else begin
+        goto LCreatePlannedProd2;
+      end;
+      UpdateProdOrd(oldProdOrdr,false,blankval); //Changed from only planned to actual stocks...
+      UpdateProdOrd(ProdOrdr,true,blankval);
+    end else begin
+      goto LCreatePlannedProd2;
+    end;
+    res = true;
+  end;
+LCreatePlannedProd2:;
+  if (debugf) then begin
+    ExportString("J Out of CreatePlannedProd2 = " & res);
+    NewLine;
+  end;
+  CreatePlannedProd2 = res;
+  RETURN;
+END;
+
+updating function Boolean CreatePlannedProd(Date tdp,record INVc INp,string location,val curstp,string firstitem,var Date newstartdat,var Boolean addminlevelf,Boolean debugf, record RcVc RepSpec,LongInt OrderNr)
+BEGIN
+  Boolean res;
+  record RecVc Recr;
+  LongInt number,i;
+  val qty;
+
+  if (FindPlannedQty(INp,Recr,curstp)) then begin
+    res = CreatePlannedProd2(tdp,INp,location,curstp,firstitem,Recr,newstartdat,addminlevelf,debugf,RepSpec,OrderNr);
+/*  
+why like that ? , makes no sense to me
+it leads to really wierd Produciton order being created
+I guess this was meant to fix productions but isnt fixing either
+    if (INp.SerNrf==1) then  begin
+      qty = 1;
+      number = curstp ;
+      for (i=0;i<number;i=i+1) begin
+        res = CreatePlannedProd2(tdp,INp,location,qty,firstitem,Recr,newstartdat,debugf,RepSpec);
+        if (res==false) then begin goto LCreatePlannedProd; end;
+      end;
+    end else begin
+      res = CreatePlannedProd2(tdp,INp,location,curstp,firstitem,Recr,newstartdat,debugf,RepSpec);
+    end;  
+*/    
+  end;
+LCreatePlannedProd:; 
+  CreatePlannedProd = res; 
+  RETURN;
+END;
+
+updating function Boolean CreateRecords(record RcVc RepSpec,record INVc INp,var val curstp,string firstitem,string location,var Date thedatp,Date deficdatp,var Date lasttp,var Date newstartdat,var Boolean addminlevelf,Boolean debugf,LongInt OrderNr)
+BEGIN
+  Boolean res;
+
+  res = true;
+  if (nonblankdate(deficdatp)) then begin
+    thedatp = deficdatp;
+  end;
+  curstp = -curstp;
+  if (nonblank(INp.Recepy)) then begin
+    if (CreatePlannedProd(thedatp,INp,location,curstp,firstitem,newstartdat,addminlevelf,debugf,RepSpec,OrderNr)==false) then begin res = false; end;
+  end else begin
+    if (CreatePlannedPO(RepSpec,thedatp,INp,location,curstp,newstartdat,addminlevelf,debugf)==false) then begin res = false; end;
+  end;
+LCreateRecords:;  
+  lasttp = thedatp;
+  CreateRecords = res;
+  return;
+end;
+
+global
+updating function Boolean CreatePlannedRecords(record RcVc RepSpec,record INVc INp,string location,Integer ignorestock,string fritem,LongInt fror,LongInt toor,Boolean debugf)
+begin
+  Boolean res;
+  record RecVc Recr;
+  record ItemHistVc IHr;
+  Boolean foundf,testf,addminlevelf;
+  val stock,ord,purch,t;
+  val curst;
+  Date lasttd;
+  Date thedat;
+  Date deficdat;
+  string 20 firstitem;
+  Integer cnt;
+  Date blankd;
+  Date newstartdat,tempdat;
+  Boolean forcecreatef,dontcreatef,ihloopf;
+  LongInt OrderNr;
+  val origcurst;
+  vector boolean vcrord;
+
+  UserTrace(INp.Code,M4Str);
+  if (RepSpec.flags[4]!=0) then begin thedat = CurrentDate; end;
+  lasttd = RepSpec.sStartDate;
+  newstartdat = RepSpec.sStartDate;
+  addminlevelf = true;
+LBEGINCreatePlannedRecords:;
+  cnt = cnt + 1;
+//  if (cnt>100) then begin goto LCreatePlannedRecords; end;
+  stock = 0;
+  ord = 0;
+  purch = 0;
+  if (ignorestock==0) then begin
+    Find2StockValue(INp.Code,location,stock,lasttd);
+    if (nonblank(RepSpec.f6)) then begin
+      Find2StockValue(INp.Code,RepSpec.f6,t,lasttd);
+      stock = stock + t;
+    end;
+  end;
+  curst = stock - INp.MinLevel;
+  curst = Round(curst,SetRoundModeD(3)); //ProdOrderVc Qty is M4UVal, max 3 decimal places
+  if (curst==0 or (stock<INp.MinLevel and cnt>1)) then begin
+    lasttd = thedat;
+    deficdat = blankd;
+  end;
+  if (debugf) then begin
+    ExportString("P INp.Code = " & INp.Code);
+    NewLine;
+    ExportString("P location = " & location);
+    NewLine;
+    ExportString("P instock = " & curst);
+    NewLine;
+  end;  
+  OrderNr = -1;
+  forcecreatef = false;
+  dontcreatef = false;
+  IHr.ArtCode = INp.Code;
+  IHr.TransDate = lasttd;
+  IHr.FileName = "Fut";
+  foundf = true;
+  ResetLoop(IHr);
+  while (LoopKey("FutArtFile",IHr,3,foundf)) begin
+    if (IHr.ArtCode!=INp.Code) then begin foundf = false; end;
+    if (IHr.TransDate>RepSpec.sEndDate) then begin foundf = false; end;
+    testf = true;
+    if (foundf==false) then begin testf = false; end;
+    if (IHr.Invalid!=0) then begin testf = false; end;
+    if (testf) then begin
+      if ((IHr.FileName!="Fut2ProdOrderInVc") and 
+          (IHr.FileName!="Fut2ProdOrderOutVc") and 
+          (IHr.FileName!="Fut2ProdInVc") and 
+          (IHr.FileName!="Fut2ProdOutVc") and 
+          (IHr.FileName!="Fut1POVc") and 
+          (IHr.FileName!="Fut3ORVc")) then begin testf = false; end;
+//      if (IHr.FIFO!=0) then begin testf = false; end;
+      if (nonblank(location)) then begin
+        if (location!=IHr.Location) then begin testf = false; end;
+      end;
+    end;
+    if (IHr.Invalid!=0) then begin testf = false; end;
+    if (testf) then begin
+      ihloopf = true;
+      thedat = IHr.TransDate;
+      if (blankdate(lasttd)) then begin lasttd = thedat; end;
+      if (curst==0) then begin
+        lasttd = thedat;
+        deficdat = blankd;
+      end;
+      if (debugf) then begin
+        ExportString("A forcecreatef = " & forcecreatef);
+        NewLine;
+        ExportString("A dontcreatef = " & dontcreatef);
+        NewLine;
+        ExportString("A curst = " & curst);
+        NewLine;
+        ExportString("A deficdat = " & deficdat);
+        NewLine;
+        ExportString("A lasttd = " & lasttd);
+        NewLine;
+        ExportString("A thedat = " & thedat);
+        NewLine;
+      end;
+      if (forcecreatef or nonblankdate(deficdat)) then begin
+        if (forcecreatef or lasttd<=thedat) then begin
+          if (curst<0 and dontcreatef==false) then begin
+            if (debugf) then begin
+              ExportString("C INp = " & INp.Code);
+              NewLine;
+              ExportString("C curst = " & curst);
+              NewLine;
+              ExportString("C lasttd = " & lasttd);
+              NewLine;
+              ExportString("C thedat = " & thedat);
+              NewLine;
+            end;
+            if (CreateRecords(RepSpec,INp,curst,firstitem,location,thedat,deficdat,lasttd,newstartdat,addminlevelf,debugf,OrderNr)==false) then begin goto LCreatePlannedRecords; end;
+            goto LBEGINCreatePlannedRecords;
+          end;
+        end;
+      end;
+      dontcreatef = false;
+      switch (IHr.FileName) begin
+        case "Fut2ProdOrderInVc": RecalcFutProdOrd(IHr,curst,thedat,false);
+        case "Fut2ProdOrderOutVc": RecalcFutProdOrd(IHr,curst,thedat,true);
+        case "Fut2ProdInVc": RecalcFutProd(IHr,curst,thedat,false);
+        case "Fut2ProdOutVc": RecalcFutProd(IHr,curst,thedat,true);
+        case "Fut1POVc": RecalcFutPO(IHr,curst,INp.Code);
+        case "Fut3ORVc": RecalcFutOrd(IHr,curst,INp.Code);
+      end;
+      if (debugf) then begin
+        ExportString("Q INp = " & INp.Code);
+        NewLine;
+        ExportString("Q IHr.SerNr = " & IHr.SerNr);
+        NewLine;
+        ExportString("Q IHr.FileName = " & IHr.FileName);
+        NewLine;
+        ExportString("Q IHr.TransNr = " & IHr.TransNr);
+        NewLine;
+        ExportString("Q curst = " & curst);
+        NewLine;
+        ExportString("Q lasttd = " & lasttd);
+        NewLine;
+        ExportString("Q thedat = " & thedat);
+        NewLine;
+      end;
+// This routine doesn't care about "normal" transactions such as Deliveries, Goods Receipts, Stock Movements etc. 
+// The idea is that this should be run for Future Orders...
+      if (lasttd==thedat) then begin
+        if (curst<0) then begin
+          deficdat = thedat;
+        end;
+      end;
+      if (fror<0 and lasttd<thedat) then begin
+        if (curst<0) then begin
+          if (debugf) then begin
+            ExportString("D INp = " & INp.Code);
+            NewLine;
+            ExportString("D curst = " & curst);
+            NewLine;
+            ExportString("D lasttd = " & lasttd);
+            NewLine;
+            ExportString("D thedat = " & thedat);
+            NewLine;
+          end;
+          if (CreateRecords(RepSpec,INp,curst,firstitem,location,thedat,deficdat,lasttd,newstartdat,addminlevelf,debugf,-1)==false) then begin goto LCreatePlannedRecords; end;
+          goto LBEGINCreatePlannedRecords;
+        end;
+      end;
+      if (fror<0 and RepSpec.flags[5]!=0) then begin
+        if (curst<0) then begin
+          if (debugf) then begin
+            ExportString("E INp = " & INp.Code);
+            NewLine;
+            ExportString("E curst = " & curst);
+            NewLine;
+            ExportString("E lasttd = " & lasttd);
+            NewLine;
+            ExportString("E thedat = " & thedat);
+            NewLine;
+          end;
+          if (CreateRecords(RepSpec,INp,curst,firstitem,location,thedat,deficdat,lasttd,newstartdat,addminlevelf,debugf,-1)==false) then begin goto LCreatePlannedRecords; end;
+          goto LBEGINCreatePlannedRecords;
+        end;
+      end;
+      if (IHr.FileName=="Fut3ORVc") then begin
+        if (fror>-1) then begin
+          if (IHr.TransNr>=fror) then begin forcecreatef = true; OrderNr = IHr.TransNr; end else begin dontcreatef = true; end;
+        end;
+        if (toor>-1) then begin
+          if (IHr.TransNr>toor) then begin forcecreatef = false; dontcreatef = true; OrderNr = -1; end;
+        end;
+        if (forcecreatef) then begin
+          if (vcrord[OrderNr]==true) then begin
+            forcecreatef = false;
+            dontcreatef = true;
+          end else begin
+            vcrord[OrderNr] = true;
+          end;
+        end;
+        if (forcecreatef) then begin
+          deficdat = thedat;
+          origcurst = curst;
+          origcurst = Round(origcurst,SetRoundModeD(3));
+          curst = Round(IHr.Qty,SetRoundModeD(3));
+        end;
+      end;
+    end;
+  end;
+  if (forcecreatef or (fror<0 and nonblankdate(thedat) and curst<0)) then begin
+    if (forcecreatef) then begin
+      if (origcurst>curst) then begin
+        curst = origcurst;
+      end;
+    end;
+    if (debugf) then begin
+      ExportString("F INp = " & INp.Code);
+      NewLine;
+      ExportString("F curst = " & curst);
+      NewLine;
+      ExportString("F lasttd = " & lasttd);
+      NewLine;
+      ExportString("F thedat = " & thedat);
+      NewLine;
+    end;
+    if (CreateRecords(RepSpec,INp,curst,firstitem,location,thedat,deficdat,lasttd,newstartdat,addminlevelf,debugf,OrderNr)==false) then begin goto LCreatePlannedRecords; end;
+
+    if (ihloopf==false) then begin
+      goto LCreatePlannedRecords;
+    end;
+    cnt = cnt + 1; 
+//    goto LBEGINCreatePlannedRecords;
+  end;
+LCreatePlannedRecords:;
+  res = false;
+  if (cnt>1) then begin // At least something has been ordered 
+    if (fror<0) then begin //when running per order, skip this.
+      res = true;
+  // This code is VERY odd....I don't belive it should be here... All productions and it's components are created already in this maintenance
+  // I don't understand why making this would do any good... Anyway, I won't remove it but I think the person who wrote it doesn't understand this maintenance
+      if (nonblank(INp.Recepy)) then begin
+        Recr.Code = INp.Recepy;
+        if (ReadFirstMain(Recr,1,true)) then begin
+          tempdat = RepSpec.sStartDate;
+          RepSpec.sStartDate = newstartdat;
+          if (debugf) then begin
+            ExportString("G Recr.Code = " & Recr.Code);
+            NewLine;
+            ExportString("G INp.Code = " & INp.Code);
+            NewLine;
+          end;
+          OrderComponents(RepSpec,Recr,INp.Code,location,firstitem,ignorestock,debugf);
+          RepSpec.sStartDate = tempdat;
+        end;
+      end;
+    end;
+  end;
+  CreatePlannedRecords = res;
+  return;
+end;
+
+global
+updating procedure PlanRecordsMn(record RcVc RepSpec)
+begin
+  record INVc INr;
+  record LocationVc Locr;
+  string 20 frin,toin;
+  string 20 frloc,toloc;
+  Boolean foundf,testf;
+  Boolean locfoundf,lbeginf;
+  Boolean debugf;
+  
+  debugf = false;
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  frloc = FirstInRange(RepSpec.f3,20);
+  toloc = LastInRange(RepSpec.f3,20);
+  if (debugf) then begin
+    CreateFile("PlanRecordsMn.TXT");
+  end;
+LBEGIN:;
+  ResetLoop(INr);
+  INr.Code = frin;
+  foundf = true;
+  while (LoopMain(INr,1,foundf)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (INr.Code>toin) then begin foundf = false; end;
+      if (INr.Code<frin) then begin foundf = false; end;
+    end;
+    testf = true;
+    if (foundf==false) then begin testf = false; end;
+    if (testf) then begin
+      if (INr.ItemType!=1) then begin testf = false; end;
+      if (nonblank(INr.Recepy)) then begin
+       //Commented out. Doesn´t create PO if this test is run
+       // Delete routine at the end fixes this problem
+       //  if (RepSpec.flags[1]==0) then begin testf = false; end;
+      end else begin
+        if (RepSpec.flags[2]==0) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (RepSpec.f2!=INr.Group) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.f4)) then begin
+        if (SetInSet(RepSpec.f4,INr.DispGroups)==false) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      if ((nonblank(RepSpec.f3)) and (frloc!=toloc)) then begin
+        Locr.Code = frloc;
+        ResetLoop(Locr);
+        locfoundf = true;
+        lbeginf = false;
+        while (LoopMain(Locr,1,locfoundf)) begin
+          if (Locr.Code>toloc) then begin locfoundf = false; end;
+          if (Locr.Code<frloc) then begin locfoundf = false; end;
+          if (locfoundf) then begin
+            if (CreatePlannedRecords(RepSpec,INr,Locr.Code,RepSpec.flags[3],frin,-1,-1,debugf)) then begin lbeginf = true; end;
+          end;
+        end;
+        if (lbeginf) then begin goto LBEGIN; end;
+      end else begin
+        if (CreatePlannedRecords(RepSpec,INr,RepSpec.f3,RepSpec.flags[3],frin,-1,-1,debugf)) then begin
+          goto LBEGIN;
+        end;
+      end;
+    end;
+    UserTrace(INr.Code,M4Code);
+  end;
+  if (RepSpec.flags[2] == 0) then begin
+    DeletePO;
+  end;
+  if (RepSpec.flags[1] == 0) then begin
+    DeleteProd;
+  end;
+  if (debugf) then begin
+    CloseFile;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure FixPlanProdMn(record RcVc RepSpec)
+BEGIN
+  record ProdVc Prodr;
+  record ProdOrderVc ProdOrderr;
+  record ItemHistVc IHr;
+  Boolean foundf;
+  record MainStockBlock MainStockRec;
+  string 255 location;
+  
+  if (RepSpec.flags[1]!=0) then begin
+    BlockLoad(MainStockRec);
+    foundf = true;
+    Prodr.SerNr = -1;
+    while (LoopMain(Prodr,1,foundf)) begin
+      location = Prodr.Location;
+      if (blank(location)) then begin
+        location = MainStockRec.MainStock;
+      end;
+      UpdateProdPlanned(Prodr,location,false);
+      UpdateProdPlanned(Prodr,location,true);
+    end;
+  end;
+  if (RepSpec.flags[2]!=0) then begin
+    foundf = true;
+    ProdOrderr.SerNr = -1;
+    while (LoopMain(ProdOrderr,1,foundf)) begin
+      UpdateProdOrderPlanned(ProdOrderr,false);
+      UpdateProdOrderPlanned(ProdOrderr,true);
+    end;
+  end;
+  RETURN;
+END;

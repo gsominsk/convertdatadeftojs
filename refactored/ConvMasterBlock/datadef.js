@@ -1,0 +1,16 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fConvAccFlag: { public: true, type: 'INTEGER' },
+     fDualBaseCurrencyFlag: { public: true, type: 'INTEGER' },
+     fBase1ToBase2Flag: { public: true, type: 'INTEGER' },
+     fConvActTypeFlag: { public: true, type: 'INTEGER' },
+     fConvCustFlag: { public: true, type: 'INTEGER' },
+     fConvItemFlag: { public: true, type: 'INTEGER' },
+     fConvCustClassFlag: { public: true, type: 'INTEGER' },
+     fConvCurncyCodeFlag: { public: true, type: 'INTEGER' },
+     fConvUserFlag: { public: true, type: 'INTEGER' },
+     fConvConfAddrFlag: { public: true, type: 'INTEGER' },
+     fConvObjectFlag: { public: true, type: 'INTEGER' },
+     fConvVendFlag: { public: true, type: 'INTEGER' },
+     fConvQuoteClass: { public: true, type: 'INTEGER' },
+     fConvLocation: { public: true, type: 'INTEGER' } } }

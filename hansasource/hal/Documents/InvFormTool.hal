@@ -1,0 +1,175 @@
+remote updating procedure UpdateOffSerNr(LongInt,string,Integer,string,Boolean);
+remote procedure FindNextIVVcOfficialSerialNr2(var record IVVc);
+external function Integer RemLevelOneUpQueued(LongInt,Integer,Boolean,Boolean);
+
+function
+Boolean srlIVLPrint(record RcVc RepSpec,var record IVVc IVp,string arg1,Boolean orgflag)
+BEGIN
+  Boolean res;
+  Boolean previewf;
+  string 255 docname,repclass;
+  Boolean testf,prntdf,remf;
+  
+  testf = true;
+  if (orgflag) then begin
+    IVp.Prntdf = 0;
+  end;  
+  if (nonblank(arg1)) then begin
+    if (StringToInt(arg1)!=0) then begin
+      previewf = true;
+    end;
+  end;      
+  docname = "InvForm"; repclass = "IVRClass";
+  switch (RepSpec.repname) begin
+    case "Inv1Form": docname = "Inv1Form";
+    case "Inv2Form": docname = "Inv2Form";
+    case "Inv3Form": docname = "Inv3Form";
+    case "CLIn2Form": docname = "CLIn2Form";
+    case "CLIn3Form": docname = "CLIn3Form";
+    case "CashInvForm":
+      if (IVp.InvType!=kInvoiceTypeCash) then begin
+        testf = false;
+      end;
+      repclass = "KIVRClass";
+    case "CashInvRecPRTForm":
+      if (IVp.InvType!=kInvoiceTypeCashInvoiceReceiptPRT) then begin
+        testf = false;
+      end;
+      repclass = "KIVRClass";
+    case "CredInvForm":
+      if (IVp.InvType!=kInvoiceTypeCredit and IVp.InvType!=kInvoiceTypeCreditSpecialSales) then begin
+        testf = false;
+      end;
+      repclass = "CIVRClass";
+    case "IIInvForm":
+      if (IVp.InvType!=kInvoiceTypeInterest) then begin
+        testf = false;
+      end;
+      repclass = "IIVRClass";
+    case "ProjInvForm":
+      if (blank(IVp.PRCode)) then begin
+        testf = false;
+      end;
+      repclass = "PIVRClass";
+  end;
+  if (docname=="InvForm") then begin
+    if (IVp.InvType==kInvoiceTypeCash) then begin docname = "CashInvForm"; end;
+    if (IVp.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin docname = "CashInvRecPRTForm"; end;
+    if (IVp.InvType==kInvoiceTypeCredit or IVp.InvType==kInvoiceTypeCreditSpecialSales) then begin docname = "CredInvForm"; end;
+    if (IVp.InvType==kInvoiceTypeInterest) then begin docname = "IIInvForm"; end;
+    if ((nonblank(IVp.PRCode)) and (IVp.InvType==kInvoiceTypeNormal or IVp.InvType==kInvoiceTypeNormalSpecialSales)) then begin
+      docname = "ProjInvForm";
+    end;
+  end;
+  testf = true;    
+  if (HasLocalization("PRT")) then begin
+    if (IVp.OKFlag==0) then begin
+      testf = false;
+      MessageBox(23637,"");
+    end;
+  end;
+  
+  if (testf) then begin
+    if (blankdate(IVp.PrintDate)) then begin
+      IVp.PrintDate = CurrentDate;
+    end;
+
+    if (HasLocalization("POL")) then begin
+      FindNextIVVcOfficialSerialNr2(IVp);
+      res = true;
+    end;
+//    if (PrintDocument(IVp,docname,previewf)) then begin
+
+    if (RepSpec.Media<0) then begin
+      ReportDefaults(RepSpec,repclass);
+      SetMedia(mtPrinter); 
+    end else begin
+      SetMedia(RepSpec.Media); 
+    end;
+    if (PrintDocumentWithSpec(IVp,docname,previewf,RepSpec)) then begin
+      res = true;
+      if (IVp.Prntdf==0) then begin
+        prntdf = true;
+      end;
+      
+      if (RepSpec.flags[29]<>0) then begin
+        remf = true;
+      end;
+      
+//      if (prntdf or remf) then begin //this cannot be corect
+      if (remf) then begin
+        RemLevelOneUpQueued(IVp.SerNr,0,remf,prntdf);
+      end;
+    end else begin
+      IVp.PrintDate = "";
+    end;
+  end;
+  srlIVLPrint = res;
+  return;
+end;
+
+global
+updating procedure RecordActionIV_Print_UpdateOffSerNr_Queued(record IVVc oldIVr,Date printdate,string officialsernr2)
+begin
+  record IVVc newIVr;
+  
+  if (ReadFirstMain(oldIVr,1,true)) then begin
+    RecordCopy(newIVr,oldIVr);
+    newIVr.PrintDate = printdate;
+    newIVr.OfficialSerNr2 = officialsernr2;
+    if (RecordUpdate(oldIVr,newIVr,false)==0) then begin
+      UpdateOffSerNr(newIVr.SerNr,"IVVc2",0,newIVr.OfficialSerNr2,false);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure RecordActionIV_Print2(record RcVc RepSpec,var record IVVc IVp,string arg1,Boolean readf)
+begin
+  record IVVc oldIVr;
+
+  if (readf) then begin
+    if (ReadFirstMain(IVp,0,true)) then begin end;  
+  end;
+  RecordCopy(oldIVr,IVp);
+
+  if (srlIVLPrint(RepSpec,IVp,arg1,false)) then begin
+    if (IVp.FiscalFlag!=0) then begin
+      queued.RecordActionIV_Print_UpdateOffSerNr_Queued(oldIVr,IVp.PrintDate,IVp.OfficialSerNr2);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure RecordActionIV_Print(var record IVVc IVp,string arg1,string repname,Integer flags29,Boolean readf)
+begin
+  record RcVc RepSpec;
+  
+  RepSpec.flags[29] = flags29;
+  RepSpec.repname = repname;
+  RecordActionIV_Print2(RepSpec,IVp,arg1,readf);
+  return;
+end;
+
+global
+procedure RecordActionIV_PrintOrg2(record RcVc RepSpec,var record IVVc IVp,string arg1,Boolean readf)
+begin
+  if (readf) then begin
+    if (ReadFirstMain(IVp,0,true)) then begin end;  
+  end;
+  srlIVLPrint(RepSpec,IVp,arg1,true);
+  return;
+end;
+
+global
+procedure RecordActionIV_PrintOrg(var record IVVc IVp,string arg1,string repname,Integer flags29,Boolean readf)
+begin
+  record RcVc RepSpec;
+  
+  RepSpec.flags[29] = flags29;
+  RepSpec.repname = repname;
+  RecordActionIV_PrintOrg2(RepSpec,IVp,arg1,readf);
+  return;
+end;

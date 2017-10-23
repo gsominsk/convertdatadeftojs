@@ -1,0 +1,280 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external function LongInt DateDiff(Date,Date);
+external procedure HTActTypes(string,string, var string);
+external procedure HTPers(string,var string);
+external procedure HTCusts(string, string, var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure vTimeDiff(Time,Time,var val);
+external procedure ExtractObj(string,var Integer,var string);
+
+global
+function Boolean CheckActTypeClass(string spec,string acttype)
+begin
+  Boolean res;
+  record ActTypeVc ActTyper;
+  record ActTypeGrVc ActTypeGrr;
+  
+  res = true;
+  if (nonblank(spec)) then begin
+    ActTyper.Code = acttype;
+    if (ReadFirstMain(ActTyper,1,true)) then begin
+      if (ActTyper.ActTypeGr!=spec) then begin 
+        res = false;
+      end;
+    end else begin
+      res = false;
+    end;
+  end;
+  CheckActTypeClass = res;
+  RETURN;
+end;
+
+procedure PersonLoop(string usercode,string username,record RcVc RepSpec,string frcu,string tocu,string fracttype,string toacttype,
+                     var val tottimev,var val totdiff,var LongInt totcnt)
+begin
+  record ActVc Actr;
+  Boolean TrHs,testf,printuserf;
+  string 50 keystr,dblstr;
+  val timev,usertimev;
+  LongInt usercnt;
+  val diff,userdiff;
+
+  userdiff = 0;
+  usercnt = 0;
+  printuserf = true;
+  TrHs = true;
+  switch (RepSpec.flags[0]) begin
+    case 0:
+      keystr = "UserMain:";
+      keystr = keystr & usercode;  
+      Actr.TodoFlag = 0;  
+      Actr.TransDate = RepSpec.sStartDate;  
+    case 1:
+      keystr = "CreationUserMain:";
+      keystr = keystr & usercode;  
+      Actr.CreationDate = RepSpec.sStartDate;  
+      Actr.TodoFlag = 0;  
+    case 2:
+      keystr = "ActTypeUserMain:";
+      keystr = keystr & usercode;  
+      Actr.ActType = fracttype;
+      Actr.TodoFlag = 0;  
+    case 3:
+      keystr = "CUCodeUserMain:";
+      keystr = keystr & usercode;  
+      Actr.CUCode = frcu;
+      Actr.TodoFlag = 0;  
+  end;
+  while (LoopKey(keystr,Actr,2,TrHs)) begin
+    if (SetInSet(usercode,Actr.MainPersons)==false) then begin
+      if (SetInSet(usercode,Actr.CCPersons)==false) then begin
+        TrHs = false;
+      end;
+    end;
+    if (Actr.TodoFlag!=0) then begin TrHs = false; end;
+    switch (RepSpec.flags[0]) begin
+      case 0:
+        if (Actr.TransDate>RepSpec.sEndDate) then begin TrHs = false; end;
+      case 1:
+        if (Actr.CreationDate>RepSpec.sEndDate) then begin TrHs = false; end;
+      case 2:
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (Actr.ActType>toacttype) then begin TrHs = false; end;
+        end;
+      case 3:
+        if (nonblank(RepSpec.f1)) then begin
+          if (Actr.CUCode>tocu) then begin TrHs = false; end;
+        end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      switch (RepSpec.flags[0]) begin
+        case 2: 
+          if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+        case 3:
+          if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;        
+        otherwise
+      end;
+      if (nonblank(RepSpec.LastAcc)) then begin
+        if (Actr.ActType<fracttype) then begin testf = false; end;
+        if (Actr.ActType>toacttype) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f1)) then begin
+        if (Actr.CUCode<frcu) then begin testf = false; end;
+        if (Actr.CUCode>tocu) then begin testf = false; end;
+      end;              
+      if (testf) then begin
+        testf = CheckActTypeClass(RepSpec.FirstAcc,Actr.ActType);
+      end;
+      switch (Actr.CalTimeFlag) begin
+        case 1: if (RepSpec.flags[1]==0) then begin testf = false; end;
+        case 2: if (RepSpec.flags[2]==0) then begin testf = false; end;
+        case 0: if (RepSpec.flags[3]==0) then begin testf = false; end;
+      end;
+      if (testf) then begin 
+        if (nonblank(Actr.CUCode)) then begin
+          testf = ContactInGroupClass(Actr.CUCode,RepSpec.f3,RepSpec.Stext,"CUST","","");    
+        end;
+      end;            
+      if (testf) then begin
+        if (printuserf) then begin
+          StartFormat(15);
+           OutString(0,0,usercode,false);
+           OutString(100,0,username,false);
+          EndFormat;  
+          Gray_Divider(0,200);
+          printuserf = false;
+        end;
+        //vTimeDiff(Actr.StartTime,Actr.EndTime,timev);
+        timev = TimeToVal(Actr.CostTime);     
+        diff = DateDiff(Actr.CreationDate,Actr.TransDate);
+        usertimev = usertimev + timev;
+        userdiff = userdiff + diff;
+        usercnt = usercnt + 1;
+        dblstr = "";
+        if (Actr.PrivateFlag==0) then begin
+          dblstr = "DblActRec";
+        end;
+        StartFormat(15);
+         OutStringID(0,dblstr,Actr.Comment,false,Actr.SerNr);
+         OutVal(200,0,timev,M4Val,true);
+         OutString(210,0,Actr.CreationDate,false);
+         OutString(280,0,Actr.TransDate,false);
+         OutVal(360,0,diff,M40Val,true);
+         OutString(370,0,Actr.CUName,false);
+        EndFormat;        
+      end;
+    end;
+  end;
+  if (printuserf==false) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+     OutVal(200,0,usertimev,M4Val,true);
+     OutVal(360,0,userdiff/usercnt,M4Val,true);
+    EndFormat;        
+  end;
+  tottimev = tottimev + usertimev;
+  totdiff = totdiff + userdiff;
+  totcnt = totcnt + usercnt;
+  RETURN;	
+end;
+
+procedure HTSorting(Integer flags0,var string res)
+begin
+  res = USetStr(2580) & ": " & USetStr(11670+flags0);
+  RETURN;
+end;
+
+global
+procedure ActCalBookRn(record RcVc RepSpec)
+begin
+  record UserVc Userr;
+  string 5 frus,tous,usercode;
+  string 20 frcu,tocu;
+  string 5 fracttype,toacttype;
+  string 255 tstr;
+  Boolean TrHs;
+  record CalDispGroupBlock CalDispGroupRec;
+  row CalDispGroupBlock CalDispGrouprw;
+  Integer i,rwcnt,pos,rw; 
+  val tottimev;
+  LongInt totcnt;
+  val totdiff;
+  
+  totcnt  = 0;
+  frcu = FirstInRange(RepSpec.f1,20);
+  tocu = LastInRange(RepSpec.f1,20);
+  frus = FirstInRange(RepSpec.f2,5);
+  tous = LastInRange(RepSpec.f2,5);
+  fracttype = FirstInRange(RepSpec.LastAcc,5);
+  toacttype = LastInRange(RepSpec.LastAcc,5);
+  StartReportJob(USetStr(11660));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTSorting(RepSpec.flags[0],tstr);
+  Header(rw,tstr,0);
+  HTCusts(frcu,tocu,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTPers(RepSpec.f2,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.FirstAcc)) then begin 
+    Header(rw,USetStr(11682) & ": " &  RepSpec.FirstAcc,0);
+  end;   
+  HTActTypes(fracttype,toacttype,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.Stext,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(11661),false);
+  OutString(200,0,USetStr(11662),true);
+  OutString(210,0,USetStr(11663),false);
+  OutString(280,0,USetStr(11664),false);
+  OutString(360,0,USetStr(11665),true);
+  OutString(370,0,USetStr(11666),false);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (blank(RepSpec.AccStr)) then begin
+    TrHs = true;
+    Userr.Code = frus;
+    while (LoopMain(Userr,1,TrHs)) begin  
+      if (nonblank(RepSpec.f2)) then begin
+        if (Userr.Code>tous) then begin TrHs = false; end;
+      end;
+      if (TrHs) then begin
+        PersonLoop(Userr.Code,Userr.Name,RepSpec,frcu,tocu,fracttype,toacttype,tottimev,totdiff,totcnt);
+      end;
+    end;
+  end else begin
+    BlockLoad(CalDispGroupRec);
+    rwcnt = MatRowCnt(CalDispGroupRec);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(CalDispGroupRec,i,CalDispGrouprw);
+      if (CalDispGrouprw.Code==RepSpec.AccStr) then begin
+        tstr = CalDispGrouprw.DefStr;
+        goto LBREAK;
+      end;
+    end;
+LBREAK:;    
+    pos = 0;
+    ExtractObj(tstr,pos,usercode);
+    while (nonblank(usercode)) begin
+      Userr.Code = usercode;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        PersonLoop(usercode,Userr.Name,RepSpec,frcu,tocu,fracttype,toacttype,tottimev,totdiff,totcnt);
+      end;
+      ExtractObj(tstr,pos,usercode);
+    end;
+  end;
+  if ((tottimev!=0) or (totdiff!=0)) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(0,0,USetStr(11683),false);
+    OutVal(200,0,tottimev,M4Val,true);
+    OutVal(360,0,totdiff/totcnt,M4Val,true);
+    EndFormat;
+  end;        
+  EndJob;
+  return;	
+end;

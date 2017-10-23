@@ -1,0 +1,1027 @@
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure ClassTypef(string,string,var Boolean);
+external procedure HTCustClassType(string,var string);
+external procedure HTLocations(string, string, var string);
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external procedure HTSaleMan(string,var string);
+external procedure HTOKF(integer,integer,var string);
+external procedure HTInvTypes2(Integer,Integer,Integer,Integer,Integer,Integer,var string);
+external procedure HTInv(string, var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTCusts(string, string, var string);
+
+procedure IVPerHourHeader(record RcVc RepSpec)
+begin
+  Integer rw;
+  string 255 tstr;
+  string 255 frcu,tocu;
+  
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;  
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+  HTCusts(frcu,tocu,tstr);
+  Header(rw,tstr,0);
+  HTInv(RepSpec.f1,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;  
+  HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+  Header(rw,tstr,0);
+  HTInvTypes2(RepSpec.flags[3],RepSpec.flags[4],RepSpec.flags[5],0,RepSpec.flags[11],RepSpec.flags[12],tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.AccStr)) then begin
+    HTSaleMan(RepSpec.AccStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f4)) then begin
+    HTCustClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (nonblank(RepSpec.f5)) then begin
+    HTCustClassType(RepSpec.f5,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end; 
+  end;
+  if (nonblank(RepSpec.f3)) then begin
+    HTCustCat(RepSpec.f3,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.LastAcc)) then begin
+    HTLocations(RepSpec.LastAcc,RepSpec.LastAcc,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  return;
+end;
+
+function val CountInvoiceRows(record IVVc IVr)
+begin
+  val res;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeNormal:
+        res = res + 1;
+      case kInvoiceRowTypeCorrection:
+        res = res + 1;
+    end;
+  end;
+  CountInvoiceRows = res;
+  return;
+end;
+
+function val CountPOSInvoiceRows(record IVCashVc IVCashr)
+begin
+  val res;
+  row IVCashVc IVCashrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(IVCashr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVCashr,i,IVCashrw);
+    switch (IVCashrw.stp) begin
+      case kInvoiceRowTypeNormal:
+        res = res + 1;
+      case kInvoiceRowTypeCorrection:
+        res = res + 1;
+    end;
+  end;
+  CountPOSInvoiceRows = res;
+  return;
+end;
+
+function val CountBarTabRows(record RestAccVc RestAccr)
+begin
+  val res;
+  row RestAccVc RestAccrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(RestAccr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RestAccr,i,RestAccrw);
+    switch (RestAccrw.stp) begin
+      case kInvoiceRowTypeNormal:
+        res = res + 1;
+      case kInvoiceRowTypeCorrection:
+        res = res + 1;
+    end;
+  end;
+  CountBarTabRows = res;
+  return;
+end;
+
+procedure AddToTimeArray_IVVc(record IVVc IVr,var Array date adate,var Array Integer ahour,var Integer acnt,var Array Integer athour,var Integer atcnt,vector val vdtval,vector val vdtcntinv,vector val vdtcntrows,vector val vtval,vector val vtcntinv,vector val vtcntrows,
+                              vector val vVATval,vector val vtVATval,vector val vtcntCRinv,vector val vdtcntCRinv)
+begin
+  Integer hour,i;
+  val v,v2;
+  Boolean changef;
+  
+  hour = GetHour(IVr.TransTime);
+  v = MulRateToBase1(IVr.CurncyCode,IVr.Sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+  v2 = MulRateToBase1(IVr.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);  
+  switch (IVr.InvType) begin
+    case kInvoiceTypeCredit: v = -v; v2 = -v2;
+    case kInvoiceTypeCreditSpecialSales: v = -v; v2 = -v2;
+  end;
+  
+  for (i=0;i<acnt;i=i+1) begin
+    if (adate[i]==IVr.InvDate) and (ahour[i]==hour) then begin
+      vdtval[adate[i] & ":" & ahour[i]] = vdtval[adate[i] & ":" & ahour[i]] + v;
+      vVATval[adate[i] & ":" & ahour[i]] = vVATval[adate[i] & ":" & ahour[i]] + v2;
+      vdtcntrows[adate[i] & ":" & ahour[i]] = vdtcntrows[adate[i] & ":" & ahour[i]] + CountInvoiceRows(IVr);
+      switch (IVr.InvType) begin
+        case kInvoiceTypeCredit:
+          vdtcntCRinv[adate[i] & ":" & ahour[i]] = vdtcntCRinv[adate[i] & ":" & ahour[i]] + 1;
+        case kInvoiceTypeCreditSpecialSales:
+          vdtcntCRinv[adate[i] & ":" & ahour[i]] = vdtcntCRinv[adate[i] & ":" & ahour[i]] + 1;
+        otherwise 
+          vdtcntinv[adate[i] & ":" & ahour[i]] = vdtcntinv[adate[i] & ":" & ahour[i]] + 1;
+      end;      
+      goto LDTAdded1;
+    end;
+  end;
+  adate[acnt] = IVr.InvDate;
+  ahour[acnt] = hour;
+  vdtval[adate[acnt] & ":" & ahour[acnt]] = vdtval[adate[acnt] & ":" & ahour[acnt]] + v;
+  vVATval[adate[acnt] & ":" & ahour[acnt]] = vVATval[adate[acnt] & ":" & ahour[acnt]] + v2;
+  vdtcntrows[adate[acnt] & ":" & ahour[acnt]] = vdtcntrows[adate[acnt] & ":" & ahour[acnt]] + CountInvoiceRows(IVr);
+  switch (IVr.InvType) begin
+    case kInvoiceTypeCredit:
+      vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+    case kInvoiceTypeCreditSpecialSales:
+      vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+    otherwise 
+      vdtcntinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+  end;      
+  acnt = acnt + 1;
+
+LDTAdded1:;
+  changef = true;
+  while (changef) begin
+    changef = false;
+    for (i=0;i<atcnt-1;i=i+1) begin
+      if (athour[i]>athour[i+1]) then begin
+        changef = true;
+        hour = athour[i];
+        athour[i] = athour[i+1];
+        athour[i+1] = hour;
+      end;
+    end;
+  end;
+
+  for (i=0;i<atcnt;i=i+1) begin
+    if (athour[i]==hour) then begin
+      vtVATval[athour[i]] = vtVATval[athour[i]] + v2;
+      vtval[athour[i]] = vtval[athour[i]] + v;
+      vtcntrows[athour[i]] = vtcntrows[athour[i]] + CountInvoiceRows(IVr);
+      switch (IVr.InvType) begin
+        case kInvoiceTypeCredit:
+          vtcntCRinv[athour[i]] = vtcntCRinv[athour[i]] + 1;
+        case kInvoiceTypeCreditSpecialSales:
+          vtcntCRinv[athour[i]] = vtcntCRinv[athour[i]] + 1;
+        otherwise 
+          vtcntinv[athour[i]] = vtcntinv[athour[i]] + 1;
+      end;       
+      goto LTAdded2;
+    end;
+  end;
+  athour[atcnt] = hour;
+  vtval[athour[atcnt]] = vtval[athour[atcnt]] + v;
+  vtVATval[athour[atcnt]] = vtVATval[athour[atcnt]] + v2;
+  vtcntrows[athour[atcnt]] = vtcntrows[athour[atcnt]] + CountInvoiceRows(IVr);
+  switch (IVr.InvType) begin
+    case kInvoiceTypeCredit:
+      vtcntCRinv[athour[atcnt]] = vtcntCRinv[athour[atcnt]] + 1;
+    case kInvoiceTypeCreditSpecialSales:
+      vtcntCRinv[athour[atcnt]] = vtcntCRinv[athour[atcnt]] + 1;
+    otherwise 
+      vtcntinv[athour[atcnt]] = vtcntinv[athour[atcnt]] + 1;
+  end;     
+  atcnt = atcnt + 1;
+LTAdded2:
+  return;
+end;
+
+procedure AddToTimeArray_IVCashVc(record IVCashVc IVCashr,var Array date adate,var Array Integer ahour,var Integer acnt,var Array Integer athour,var Integer atcnt,vector val vdtval,vector val vdtcntinv,vector val vdtcntrows,vector val vtval,vector val vtcntinv,vector val vtcntrows,
+                                  vector val vVATval,vector val vtVATval,vector val vtcntCRinv,vector val vdtcntCRinv)
+begin
+  Integer hour,i;
+  val v,v2;
+  Boolean changef;
+  
+  hour = GetHour(IVCashr.TransTime);
+  v = MulRateToBase1(IVCashr.CurncyCode,IVCashr.Sum4,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+  v2 = MulRateToBase1(IVCashr.CurncyCode,IVCashr.Sum3,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+
+  for (i=0;i<acnt;i=i+1) begin
+    if (adate[i]==IVCashr.InvDate) and (ahour[i]==hour) then begin
+      vdtval[adate[i] & ":" & ahour[i]] = vdtval[adate[i] & ":" & ahour[i]] + v;
+      vVATval[adate[i] & ":" & ahour[i]] = vVATval[adate[i] & ":" & ahour[i]] + v2;
+      if (v < 0) then begin 
+        vdtcntCRinv[adate[i] & ":" & ahour[i]] = vdtcntCRinv[adate[i] & ":" & ahour[i]] + 1;
+      end else begin
+        vdtcntinv[adate[i] & ":" & ahour[i]] = vdtcntinv[adate[i] & ":" & ahour[i]] + 1;
+      end;
+      vdtcntrows[adate[i] & ":" & ahour[i]] = vdtcntrows[adate[i] & ":" & ahour[i]] + CountPOSInvoiceRows(IVCashr);     
+      goto LDTAdded2;
+    end;
+  end;
+  adate[acnt] = IVCashr.InvDate;
+  ahour[acnt] = hour;
+  vdtval[adate[acnt] & ":" & ahour[acnt]] = vdtval[adate[acnt] & ":" & ahour[acnt]] + v;
+  vVATval[adate[acnt] & ":" & ahour[acnt]] = vVATval[adate[acnt] & ":" & ahour[acnt]] + v2;
+  if (v < 0) then begin 
+    vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+  end else begin
+    vdtcntinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+  end;    
+  vdtcntrows[adate[acnt] & ":" & ahour[acnt]] = vdtcntrows[adate[acnt] & ":" & ahour[acnt]] + CountPOSInvoiceRows(IVCashr);
+  acnt = acnt + 1;
+
+LDTAdded2:;
+  changef = true;
+  while (changef) begin
+    changef = false;
+    for (i=0;i<atcnt-1;i=i+1) begin
+      if (athour[i]>athour[i+1]) then begin
+        changef = true;
+        hour = athour[i];
+        athour[i] = athour[i+1];
+        athour[i+1] = hour;
+      end;
+    end;
+  end;
+
+  for (i=0;i<atcnt;i=i+1) begin
+    if (athour[i]==hour) then begin
+      vtVATval[athour[i]] = vtVATval[athour[i]] + v2;
+      vtval[athour[i]] = vtval[athour[i]] + v;
+      if (v < 0) then begin 
+        vtcntCRinv[athour[i]] = vtcntCRinv[athour[i]] + 1;
+      end else begin
+        vtcntinv[athour[i]] = vtcntinv[athour[i]] + 1;
+      end;
+      vtcntrows[athour[i]] = vtcntrows[athour[i]] + CountPOSInvoiceRows(IVCashr);
+      goto LTAdded2;
+    end;
+  end;
+  athour[atcnt] = hour;
+  vtval[athour[atcnt]] = vtval[athour[atcnt]] + v;
+  vtVATval[athour[atcnt]] = vtVATval[athour[atcnt]] + v2;
+  if (v < 0) then begin 
+    vtcntCRinv[athour[atcnt]] = vtcntCRinv[athour[atcnt]] + 1;
+  end else begin
+    vtcntinv[athour[atcnt]] = vtcntinv[athour[atcnt]] + 1;
+  end;  
+  vtcntrows[athour[atcnt]] = vtcntrows[athour[atcnt]] + CountPOSInvoiceRows(IVCashr);
+  atcnt = atcnt + 1;
+LTAdded2:
+  return;
+end;
+
+procedure AddToTimeArray_RestAccVc(record RestAccVc RAr,var Array date adate,var Array Integer ahour,var Integer acnt,var Array Integer athour,var Integer atcnt,vector val vdtval,vector val vdtcntinv,vector val vdtcntrows,vector val vtval,vector val vtcntinv,vector val vtcntrows,
+                                   vector val vVATval,vector val vtVATval,vector val vtcntCRinv,vector val vdtcntCRinv)
+begin
+  Integer hour,i;
+  val v,v2;
+  
+  hour = GetHour(RAr.TransTime);
+  v = RAr.Sum4;
+  v2 = RAr.Sum3;
+  
+  for (i=0;i<acnt;i=i+1) begin
+    if (adate[i]==RAr.ReportingDate) and (ahour[i]==hour) then begin
+      vdtval[adate[i] & ":" & ahour[i]] = vdtval[adate[i] & ":" & ahour[i]] + v;
+      vVATval[adate[i] & ":" & ahour[i]] = vVATval[adate[i] & ":" & ahour[i]] + v2;      
+      if (v < 0) then begin 
+        vdtcntCRinv[adate[i] & ":" & ahour[i]] = vdtcntCRinv[adate[i] & ":" & ahour[i]] + 1;
+      end else begin
+        vdtcntinv[adate[i] & ":" & ahour[i]] = vdtcntinv[adate[i] & ":" & ahour[i]] + 1;
+      end;      
+      vdtcntrows[adate[i] & ":" & ahour[i]] = vdtcntrows[adate[i] & ":" & ahour[i]] + CountBarTabRows(RAr);
+      goto LDTAdded3;
+    end;
+  end;
+  adate[acnt] = RAr.ReportingDate;
+  ahour[acnt] = hour;
+  vdtval[adate[acnt] & ":" & ahour[acnt]] = vdtval[adate[acnt] & ":" & ahour[acnt]] + v;
+  vVATval[adate[acnt] & ":" & ahour[acnt]] = vVATval[adate[acnt] & ":" & ahour[acnt]] + v2;  
+  if (v < 0) then begin 
+    vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntCRinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+  end else begin
+    vdtcntinv[adate[acnt] & ":" & ahour[acnt]] = vdtcntinv[adate[acnt] & ":" & ahour[acnt]] + 1;
+  end;  
+  vdtcntrows[adate[acnt] & ":" & ahour[acnt]] = vdtcntrows[adate[acnt] & ":" & ahour[acnt]] + CountBarTabRows(RAr);
+  acnt = acnt + 1;
+
+LDTAdded3:;
+  for (i=0;i<atcnt;i=i+1) begin
+    if (athour[i]==hour) then begin
+      vtVATval[athour[i]] = vtVATval[athour[i]] + v2;
+      vtval[athour[i]] = vtval[athour[i]] + v;
+      if (v < 0) then begin 
+        vtcntCRinv[adate[i] & ":" & ahour[i]] = vtcntCRinv[adate[i] & ":" & ahour[i]] + 1;
+      end else begin
+        vtcntinv[athour[i]] = vtcntinv[athour[i]] + 1;
+      end;      
+      vtcntrows[athour[i]] = vtcntrows[athour[i]] + CountBarTabRows(RAr);
+      goto LTAdded3;
+    end;
+  end;
+  athour[atcnt] = hour;
+  vtval[athour[atcnt]] = vtval[athour[atcnt]] + v;
+  if (v < 0) then begin 
+    vtcntCRinv[athour[atcnt]] = vtcntCRinv[athour[atcnt]] + 1;
+  end else begin
+    vtcntinv[athour[atcnt]] = vtcntinv[athour[atcnt]] + 1;
+  end;    
+  vtcntrows[athour[atcnt]] = vtcntrows[athour[atcnt]] + CountBarTabRows(RAr);
+  atcnt = atcnt + 1;
+LTAdded3:
+  return;
+end;
+
+procedure PrintTimeArray(record RcVc RepSpec,Array date adate,Array Integer ahour,Integer acnt,vector val vdtval,vector val vdtcntinv,vector val vdtcntrows,Array Integer athour,Integer atcnt,vector val vtval,vector val vtcntinv,vector val vtcntrows,var val totval,var val totcnt,var val totcntrows,
+                         vector val vVATval,var val totExVATval,vector val vtVATval,vector val vtcntCRinv,vector val vdtcntCRinv,var val totVATval,var val totCRcnt)
+begin
+  Integer i,hour;
+  string 255 tstr;
+  Date lastd,td;
+  Time t;
+  Boolean changef;
+  val ExVATval;
+
+  if (RepSpec.flags[6]==0) then begin
+
+    changef = true;
+    while (changef) begin
+      changef = false;
+      for (i=0;i<acnt-1;i=i+1) begin
+        if (adate[i]>adate[i+1]) or
+           ((adate[i]==adate[i+1]) and (ahour[i]>ahour[i+1])) then begin 
+          changef = true;
+          hour = ahour[i];
+          ahour[i] = ahour[i+1];
+          ahour[i+1] = hour;
+
+          td = adate[i];
+          adate[i] = adate[i+1];
+          adate[i+1] = td;
+        end;
+      end;
+    end;
+
+    for (i=0;i<acnt;i=i+1) begin
+      if (lastd!=adate[i]) then begin
+        StartFormat(15);
+         OutDate(0,0,adate[i],false);
+        EndFormat;      
+      end;
+      t = StringToTime(ahour[i]);
+      tstr = Left(t,5);
+      tstr = tstr & ":";
+      if (ahour[i]+1)==24 then begin
+        t.hour = 23; t.minute = 59;
+      end else begin
+        t = StringToTime(ahour[i]+1);
+      end;
+      tstr = tstr & Left(t,5);      
+      ExVATval = vdtval[adate[i] & ":" & ahour[i]]-vVATval[adate[i] & ":" & ahour[i]];
+      if (RepSpec.flags[7]==0) then begin
+        StartFormat(15);
+         OutString(15,0,tstr,false);
+         OutVal(7,0,ExVATval,M4Val,true);
+         OutVal(9,0,vVATval[adate[i] & ":" & ahour[i]],M4Val,true);
+         OutVal(2,0,vdtval[adate[i] & ":" & ahour[i]],M4Val,true); 
+         OutLongInt(3,0,vdtcntinv[adate[i] & ":" & ahour[i]],true);   
+         OutLongInt(8,0,vdtcntCRinv[adate[i] & ":" & ahour[i]],true);             
+         OutVal(6,0,vdtval[adate[i] & ":" & ahour[i]]/vdtcntinv[adate[i] & ":" & ahour[i]],M4Val,true);
+        EndFormat;      
+      end else begin
+        StartFormat(15);
+         OutString(15,0,tstr,false);
+         OutVal(7,0,ExVATval,M4Val,true);
+         OutVal(9,0,vVATval[adate[i] & ":" & ahour[i]],M4Val,true);
+         OutVal(2,0,vdtval[adate[i] & ":" & ahour[i]],M4Val,true);
+         OutLongInt(3,0,vdtcntinv[adate[i] & ":" & ahour[i]],true);   
+         OutLongInt(8,0,vdtcntCRinv[adate[i] & ":" & ahour[i]],true);                        
+         OutVal(4,0,vdtval[adate[i] & ":" & ahour[i]]/vdtcntinv[adate[i] & ":" & ahour[i]],M4Val,true);
+         OutVal(5,0,vdtcntrows[adate[i] & ":" & ahour[i]],M4Val,true);
+         OutVal(6,0,vdtcntrows[adate[i] & ":" & ahour[i]]/vdtcntinv[adate[i] & ":" & ahour[i]],M4Val,true);
+        EndFormat;      
+      end;
+      totExVATval = totExVATval + ExVATval;
+      totVATval = totVATval + vVATval[adate[i] & ":" & ahour[i]];
+      totval = totval + vdtval[adate[i] & ":" & ahour[i]];
+      totcnt = totcnt + vdtcntinv[adate[i] & ":" & ahour[i]];
+      totcntrows = totcntrows + vdtcntrows[adate[i] & ":" & ahour[i]];
+      totCRcnt = totCRcnt + vdtcntCRinv[adate[i] & ":" & ahour[i]];
+      lastd = adate[i];
+    end;
+  end else begin
+    changef = true;
+    while (changef) begin
+      changef = false;
+      for (i=0;i<atcnt-1;i=i+1) begin
+        if (athour[i]>athour[i+1]) then begin
+          changef = true;
+          hour = athour[i];
+          athour[i] = athour[i+1];
+          athour[i+1] = hour;
+        end;
+      end;
+    end;
+
+    for (i=0;i<atcnt;i=i+1) begin
+      t = StringToTime(athour[i]);
+      tstr = Left(t,5);
+      tstr = tstr & ":";
+      if (athour[i]+1)==24 then begin
+        t.hour = 23; t.minute = 59;
+      end else begin
+        t = StringToTime(athour[i]+1);
+      end;
+      tstr = tstr & Left(t,5);      
+      ExVATval = vtval[athour[i]]-vtVATval[athour[i]];
+      if (RepSpec.flags[7]==0) then begin
+        StartFormat(15);
+         OutString(15,0,tstr,false);
+         OutVal(7,0,ExVATval,M4Val,true);
+         OutVal(9,0,vtVATval[athour[i]],M4Val,true);
+         OutVal(2,0,vtval[athour[i]],M4Val,true);
+         OutLongInt(3,0,vtcntinv[athour[i]],true);   
+         OutLongInt(8,0,vtcntCRinv[athour[i]],true);        
+         OutVal(6,0,vtval[athour[i]]/vtcntinv[athour[i]],M4Val,true);
+        EndFormat;      
+      end else begin
+        StartFormat(15);
+         OutString(15,0,tstr,false);
+         OutVal(7,0,ExVATval,M4Val,true);
+         OutVal(9,0,vtVATval[athour[i]],M4Val,true);
+         OutVal(2,0,vtval[athour[i]],M4Val,true);
+         OutLongInt(3,0,vtcntinv[athour[i]],true); 
+         OutLongInt(8,0,vtcntCRinv[athour[i]],true); 
+         OutVal(4,0,vtval[athour[i]]/vtcntinv[athour[i]],M4Val,true);
+         OutVal(5,0,vtcntrows[athour[i]],M4Val,true);
+         OutVal(6,0,vtcntrows[athour[i]]/vtcntinv[athour[i]],M4Val,true);
+        EndFormat;      
+      end;
+      totExVATval = totExVATval + ExVATval;
+      totVATval = totVATval + vtVATval[athour[i]];
+      totval = totval + vtval[athour[i]];
+      totcnt = totcnt + vtcntinv[athour[i]];
+      totCRcnt = totCRcnt + vtcntCRinv[athour[i]];  
+      totcntrows = totcntrows + vtcntrows[athour[i]];
+    end;
+  end;
+  return;
+end;
+
+global
+procedure IVPerHourRn(record RcVc RepSpec)
+begin
+  string 255 mykey;
+  Integer mykeys;
+  Boolean TrHs,testf,printf;
+  record IVVc IVr;
+  record IVCashVc IVCashr;
+  record RestAccVc RAr;
+  record CUVc CUr;
+  LongInt afr,ato;
+  record MainStockBlock MSb;
+  Array Date adate;
+  Array Integer ahour;
+  Integer acnt;
+  Array Integer athour;
+  Integer atcnt;
+  vector val vdtcntrows;
+  vector val vdtcntinv;
+  vector val vdtval;
+  vector val vtcntrows;
+  vector val vtcntinv;
+  vector val vtval;
+  vector val vVATval;
+  vector val vtVATval;
+  vector val vtcntCRinv;
+  vector val vdtcntCRinv;
+
+  Date lastdate;
+  val totval,totcnt,totcntrows,totExVATval,totVATval,totCRcnt;
+  string 255 lastlocation;
+  string 255 frcu,tocu;
+    
+  BlockLoad(MSb);
+  afr = FirstInRange(RepSpec.f1,20);
+  ato = LastInRange(RepSpec.f1,20);
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+  
+  if (nonblank(RepSpec.LastAcc)) then begin
+    RepSpec.flags[10] = 2;
+  end;
+  
+  StartReportJob(USetStr(16600));
+   IVPerHourHeader(RepSpec);
+  EndHeader;
+  if (RepSpec.flags[7]==0) then begin
+    SetRepColBiDi(2,300,340);
+    SetRepColBiDi(3,360,390);
+    SetRepColBiDi(6,480,510);
+    SetRepColBiDi(7,180,130);
+    SetRepColBiDi(8,420,490);
+    SetRepColBiDi(9,240,270);
+
+    StartFormat(15);
+     OutString(15,0,USetStr(16601),false);            //  Hours
+     OutStringAdjust(7,0,USetStr(18846),true,M4Val);  //  Excl VAT             
+     OutStringAdjust(9,0,USetStr(18134),true,M4Val);  //  VAT   
+     OutStringAdjust(2,0,USetStr(16602),true,M4Val);  //  Sales
+     OutStringAdjust(3,0,USetStr(11564),true,M4Val);  //  Invoices
+     OutStringAdjust(8,0,USetStr(10673),true,M4Val);  //  Credit Notes
+     OutStringAdjust(6,0,USetStr(16604),true,M4Val);  //  Ave Sales
+    EndFormat;
+  end else begin
+    SetRepColBiDi(2,190,230);
+    SetRepColBiDi(3,235,275);
+    SetRepColBiDi(4,340,380);
+    SetRepColBiDI(5,410,440);
+    SetRepColBiDi(6,480,510);
+    SetRepColBiDi(7,110,140);
+    SetRepColBiDi(8,290,310);
+    SetRepColBiDi(9,150,180);
+    
+    StartFormat(15);
+     OutString(15,0,USetStr(16601),false);             
+     OutStringAdjust(7,0,USetStr(18846),true,M4Val);  //  Excl VAT    
+     OutStringAdjust(9,0,USetStr(18134),true,M4Val);  //  VAT
+     OutStringAdjust(2,0,USetStr(16602),true,M4Val);
+     OutStringAdjust(3,0,USetStr(11564),true,M4Val);  //  Invoices  
+     OutStringAdjust(8,0,USetStr(10673),true,M4Val);  //  Credit Notes
+     OutStringAdjust(4,0,USetStr(16604),true,M4Val);
+     OutStringAdjust(5,0,USetStr(16605),true,M4Val);
+     OutStringAdjust(6,0,USetStr(16606),true,M4Val);
+    EndFormat;
+  end;
+  
+  Gray_Divider(0,1);
+  switch (RepSpec.flags[10]) begin 
+    case 0: 
+      mykey = "InvDate";
+      IVr.InvDate = RepSpec.sStartDate;
+      mykeys = 1;
+    case 1: 
+      mykey = "SerNr";
+      IVr.SerNr = afr;
+      mykeys = 1;
+    case 2: 
+      mykey = "Location";
+      IVr.Location = RepSpec.LastAcc;
+      IVr.InvDate = RepSpec.sStartDate;
+      mykeys = 2;
+  end;
+  
+  if (RepSpec.flags[3]!=0 or RepSpec.flags[4]!=0 or RepSpec.flags[5]!=0) then begin
+    TrHs = true;
+  end else begin
+    TrHs = false;
+  end;
+  while (LoopKey(mykey,IVr,mykeys,TrHs)) begin
+    switch (RepSpec.flags[10]) begin 
+      case 0:
+        if (IVr.InvDate>RepSpec.sEndDate)  then begin
+          TrHs = false;
+        end;
+      case 1:
+        if (ato<>-1) then begin
+          if (IVr.SerNr>ato) then begin
+            TrHs = false;
+          end;
+        end;
+      case 2:
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (RepSpec.LastAcc!=IVr.Location) then begin
+            TrHs = false;
+          end;
+        end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (IVr.SerNr<afr) then begin
+          testf = false;
+        end;
+        if (IVr.SerNr>ato) then begin
+          testf = false;
+        end;
+      end;
+      if (DateInRange(IVr.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (SetInSet(RepSpec.AccStr,IVr.SalesMan)==false) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f6)) then begin
+        if (RepSpec.f6!=IVr.BranchID) then begin testf = false; end;
+      end;
+      switch (IVr.OKFlag) begin
+        case 0:
+          if (RepSpec.flags[1]==0) then begin
+            testf = false;
+          end;
+        otherwise
+          if (RepSpec.flags[2]==0) then begin
+            testf = false;
+          end;
+      end;
+      switch (IVr.InvType) begin
+        case kInvoiceTypeNormal:
+          if (RepSpec.flags[3]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeNormalSpecialSales:
+          if (RepSpec.flags[3]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeInterest:
+          if (RepSpec.flags[3]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCashInvoiceReceiptPRT:
+          if (RepSpec.flags[4]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCash:
+          if (RepSpec.flags[4]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCredit:
+          if (RepSpec.flags[5]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCreditSpecialSales:
+          if (RepSpec.flags[5]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypePrepayment:
+          testf = false;
+      end;
+
+      if (IVr.Invalid!=0) then begin testf = false; end;
+
+      if (nonblank(RepSpec.f2)) then begin
+        if (IVr.CustCode<frcu) then begin
+          testf = false;
+        end;
+        if (IVr.CustCode>tocu) then begin
+          testf = false;
+        end;
+      end;
+      
+      if (testf) then begin
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (IVr.Location!=RepSpec.LastAcc) then begin
+            testf = false;
+            if ((blank(IVr.Location)) and (RepSpec.LastAcc==MSb.MainStock)) then begin
+              testf = true;
+            end;
+          end;
+        end;
+      end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if (IVr.PayDeal!=RepSpec.TransStr) then begin testf = false; end;
+      end;
+      
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if ((nonblank(RepSpec.f3)) or (nonblank(RepSpec.f4)) or (nonblank(RepSpec.f5))) then begin
+          CUr.Code = IVr.CustCode;
+          if (ReadFirstMain(CUr,1,true)) then begin
+            if (nonblank(RepSpec.f3)) then begin
+              if (CUr.CustCat!=RepSpec.f3) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f4)) then begin
+              if (SetInSet(RepSpec.f4,CUr.Classification)==false) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f5)) then begin
+              if (testf) then begin
+                testf = false;
+                ClassTypef(RepSpec.f5,CUr.Classification,testf);
+              end;
+            end;
+          end;        
+        end;
+      end;
+      if (testf) then begin
+        AddToTimeArray_IVVc(IVr,adate,ahour,acnt,athour,atcnt,vdtval,vdtcntinv,vdtcntrows,vtval,vtcntinv,vtcntrows,vVATval,vtVATval,vtcntCRinv,vdtcntCRinv);
+      end;
+    end;
+  end;
+
+  switch (RepSpec.flags[10]) begin 
+    case 0: 
+      mykey = "InvDate";
+      IVCashr.InvDate = RepSpec.sStartDate;
+      mykeys = 1;
+    case 1: 
+      mykey = "SerNr";
+      IVCashr.SerNr = afr;
+      mykeys = 1;
+    case 2: 
+      mykey = "Location";
+      IVCashr.Location = RepSpec.LastAcc;
+      IVCashr.InvDate = RepSpec.sStartDate;
+      mykeys = 2;
+  end;
+  
+  if (RepSpec.flags[11]!=0) then begin
+    TrHs = true;
+  end else begin
+    TrHs = false;
+  end;
+  while (LoopKey(mykey,IVCashr,mykeys,TrHs)) begin
+    switch (RepSpec.flags[10]) begin 
+      case 0:
+        if (IVCashr.InvDate>RepSpec.sEndDate)  then begin
+          TrHs = false;
+        end;
+      case 1:
+        if (ato<>-1) then begin
+          if (IVCashr.SerNr>ato) then begin
+            TrHs = false;
+          end;
+        end;
+      case 2:
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (RepSpec.LastAcc!=IVCashr.Location) then begin
+            TrHs = false;
+          end;
+        end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (IVCashr.SerNr<afr) then begin
+          testf = false;
+        end;
+        if (IVCashr.SerNr>ato) then begin
+          testf = false;
+        end;
+      end;
+      if (DateInRange(IVCashr.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (SetInSet(RepSpec.AccStr,IVCashr.SalesMan)==false) then begin testf = false; end;
+      end;
+      switch (IVCashr.OKFlag) begin
+        case 0:
+          if (RepSpec.flags[1]==0) then begin
+            testf = false;
+          end;
+        otherwise
+          if (RepSpec.flags[2]==0) then begin
+            testf = false;
+          end;
+      end;
+
+      if (IVCashr.Invalid!=0) then begin testf = false; end;
+
+      if (nonblank(RepSpec.f2)) then begin
+        if (IVCashr.CustCode<frcu) then begin
+          testf = false;
+        end;
+        if (IVCashr.CustCode>tocu) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if (IVCashr.PayDeal!=RepSpec.TransStr) then begin testf = false; end;
+      end;
+      
+      if (nonblank(RepSpec.f6)) then begin
+        if (RepSpec.f6!=IVCashr.BranchID) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (IVCashr.Location!=RepSpec.LastAcc) then begin
+            testf = false;
+            if ((blank(IVCashr.Location)) and (RepSpec.LastAcc==MSb.MainStock)) then begin
+              testf = true;
+            end;
+          end;
+        end;
+      end;
+      
+      if (testf) then begin
+        if ((nonblank(RepSpec.f3)) or (nonblank(RepSpec.f4)) or (nonblank(RepSpec.f5))) then begin
+          CUr.Code = IVCashr.CustCode;
+          if (ReadFirstMain(CUr,1,true)) then begin
+            if (nonblank(RepSpec.f3)) then begin
+              if (CUr.CustCat!=RepSpec.f3) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f4)) then begin
+              if (SetInSet(RepSpec.f4,CUr.Classification)==false) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f5)) then begin
+              if (testf) then begin
+                testf = false;
+                ClassTypef(RepSpec.f5,CUr.Classification,testf);
+              end;
+            end;
+          end;        
+        end;
+      end;
+      if (testf) then begin
+        AddToTimeArray_IVCashVc(IVCashr,adate,ahour,acnt,athour,atcnt,vdtval,vdtcntinv,vdtcntrows,vtval,vtcntinv,vtcntrows,vVATval,vtVATval,vtcntCRinv,vdtcntCRinv);
+      end;
+    end;
+  end;
+
+  switch (RepSpec.flags[10]) begin 
+    case 0: 
+      mykey = "ReportingDate";
+      RAr.ReportingDate = RepSpec.sStartDate;
+      mykeys = 1;
+    case 1: 
+      mykey = "SerNr";
+      RAr.SerNr = afr;
+      mykeys = 1;
+    case 2: 
+/*    
+      mykey = "Location";
+      RAr.Location = RepSpec.LastAcc;
+      RAr.InvDate = RepSpec.sStartDate;
+      mykeys = 2;
+*/
+      mykey = "ReportingDate";
+      RAr.ReportingDate = RepSpec.sStartDate;
+      mykeys = 1;
+  end;
+  
+  if (RepSpec.flags[12]!=0) then begin
+    TrHs = true;
+  end else begin
+    TrHs = false;
+  end;
+  while (LoopKey(mykey,RAr,mykeys,TrHs)) begin
+    switch (RepSpec.flags[10]) begin 
+      case 0:
+        if (RAr.ReportingDate>RepSpec.sEndDate)  then begin
+          TrHs = false;
+        end;
+      case 1:
+        if (ato<>-1) then begin
+          if (RAr.SerNr>ato) then begin
+            TrHs = false;
+          end;
+        end;
+      case 2:
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (RepSpec.LastAcc!=RAr.Location) then begin
+            TrHs = false;
+          end;
+        end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (RAr.SerNr<afr) then begin
+          testf = false;
+        end;
+        if (RAr.SerNr>ato) then begin
+          testf = false;
+        end;
+      end;
+      if (DateInRange(RAr.ReportingDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (SetInSet(RepSpec.AccStr,RAr.Cashier)==false) then begin testf = false; end;
+      end;
+      switch (RAr.Closed) begin
+        case 0:
+          if (RepSpec.flags[1]==0) then begin
+            testf = false;
+          end;
+        otherwise
+          if (RepSpec.flags[2]==0) then begin
+            testf = false;
+          end;
+      end;
+
+      if (RAr.Invalid!=0) then begin testf = false; end;
+
+      if (nonblank(RepSpec.f2)) then begin
+        if (RAr.CUCode<frcu) then begin
+          testf = false;
+        end;
+        if (RAr.CUCode>tocu) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if (RAr.PayDeal!=RepSpec.TransStr) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f6)) then begin
+        if (RepSpec.f6!=RAr.BranchID) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (RepSpec.FirstAcc!=RAr.Class) then begin testf = false; end;
+      end;
+      
+      if (testf) then begin
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (RAr.Location!=RepSpec.LastAcc) then begin
+            testf = false;
+            if ((blank(RAr.Location)) and (RepSpec.LastAcc==MSb.MainStock)) then begin
+              testf = true;
+            end;
+          end;
+        end;
+      end;
+      
+      if (testf) then begin
+        if ((nonblank(RepSpec.f3)) or (nonblank(RepSpec.f4)) or (nonblank(RepSpec.f5))) then begin
+          CUr.Code = RAr.CUCode;
+          if (ReadFirstMain(CUr,1,true)) then begin
+            if (nonblank(RepSpec.f3)) then begin
+              if (CUr.CustCat!=RepSpec.f3) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f4)) then begin
+              if (SetInSet(RepSpec.f4,CUr.Classification)==false) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f5)) then begin
+              if (testf) then begin
+                testf = false;
+                ClassTypef(RepSpec.f5,CUr.Classification,testf);
+              end;
+            end;
+          end;        
+        end;
+      end;
+      if (testf) then begin
+        AddToTimeArray_RestAccVc(RAr,adate,ahour,acnt,athour,atcnt,vdtval,vdtcntinv,vdtcntrows,vtval,vtcntinv,vtcntrows,vVATval,vtVATval,vtcntCRinv,vdtcntCRinv);
+      end;
+    end;
+  end;
+
+  PrintTimeArray(RepSpec,adate,ahour,acnt,vdtval,vdtcntinv,vdtcntrows,athour,atcnt,vtval,vtcntinv,vtcntrows,totval,totcnt,totcntrows,vVATval,totExVATval,vtVATval,vtcntCRinv,vdtcntCRinv,totVATval,totCRcnt);
+  Gray_Divider(0,1);
+  if (RepSpec.flags[7]==0) then begin
+    StartFormat(15);
+     OutVal(7,0,totExVATval,M4Val,true);
+     OutVal(9,0,totVATval,M4Val,true);
+     OutVal(2,0,totval,M4Val,true);
+     OutLongInt(3,0,totcnt,true);
+     OutLongInt(8,0,totCRcnt,true); 
+     OutVal(6,0,totval/totcnt,M4Val,true);
+    EndFormat;
+  end else begin
+    StartFormat(15);
+     OutVal(7,0,totExVATval,M4Val,true);
+     OutVal(9,0,totVATval,M4Val,true);
+     OutVal(2,0,totval,M4Val,true);
+     OutLongInt(3,0,totcnt,true);
+     OutLongInt(8,0,totCRcnt,true); 
+     OutVal(4,0,totval/totcnt,M4Val,true);
+     OutVal(5,0,totcntrows,M4Val,true);
+     OutVal(6,0,totcntrows/totcnt,M4Val,true);
+    EndFormat;
+  end;
+  
+  EndJob;
+  return;
+end;

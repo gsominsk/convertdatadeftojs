@@ -1,0 +1,242 @@
+// checked by nk 27.03.01
+// The report showed  balances for every day,it should list  days only with turnovers.Fixed
+// Report calculation is slower than in C-version.
+
+external procedure FindAccSD(Date,var Date,var Boolean);
+external procedure HT2Per(Date, Date , var string);
+external procedure LstRegDat(var string);
+external procedure HTAccPer(Date,Date,var string);
+external procedure HTObj(string,var string);
+external procedure HTAccs(string,string,Integer, var string);
+external function Boolean DatePrel(Date);
+external function Boolean AccInRange(string,string);
+external procedure TransAccTurnover(string,string,Date,Date,Integer,Integer,Integer,string,string,var val,var val);
+external procedure FindNLAccBal(string,string,string,Integer,Date,Date,Integer,Integer,Boolean,string,Integer,string,string,var val);
+external procedure ListPerTrans(record RcVc);
+
+global
+procedure DayBalNL2Rn(var record RcVc RepSpec,Integer repsid)
+BEGIN
+  record AccVc Accr;
+  record CYBlock CompYear;
+  record BaseCurBlock BC;
+  Boolean Vws;
+  val Sb,Eb;
+  val Sbd,Pbd,Ebd;
+  val Sbs,Pbs,Ebs;
+  string 255 RU;
+  string 255 tstr;
+  string 1 lastgroup;
+  Boolean headerf,first,testf,resUseAccum;
+  val Pd,Pc,Pdt,Pct,OPd,OPc;
+  val SSb,tSSb,tPdt,tPct,tEb;
+  Integer salst,rw;
+  Date bd,d,AccumStartDate;
+  //nk
+  val Sb1,Pd1,Pc1,Eb1;
+
+  first = true;
+  BlockLoad(CompYear);
+  
+  BlockLoad(BC);
+
+  RepSpec.Comparison = 0;
+  RepSpec.FirstAcc = FirstInRange(RepSpec.AccStr,10);
+  RepSpec.LastAcc = LastInRange(RepSpec.AccStr,10);
+  FindAccSD(RepSpec.sStartDate,AccumStartDate,resUseAccum);
+
+
+  if (RepSpec.SimVerf!=0) then begin
+    salst = -1; 
+  end else begin
+    salst = 0;
+  end;    
+  StartReportJob(USetStr(repsid));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  LstRegDat(tstr);
+  Header(rw,tstr,0);
+  rw = 2;
+  if (resUseAccum) then begin
+    HTAccPer(AccumStartDate,RepSpec.sEndDate,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  HTAccs(RepSpec.FirstAcc,RepSpec.LastAcc,RepSpec.UsedOnly,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  
+  tstr = USetStr(2513);
+  if (repspec.basecurncy==0) then begin
+    tstr=tstr & BC.BaseCur1;
+  end;
+  if (repspec.basecurncy==1) then begin
+    tstr=tstr & " " & BC.BaseCur2;
+  end;
+  Header(rw,tstr,0);
+
+  if (nonblank(RepSpec.ObjStr)) then begin
+    HTObj(RepSpec.ObjStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (RepSpec.SimVerf==1) then begin
+    tstr = USetStr(3019);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (DatePrel(RepSpec.sEndDate)) begin
+    tstr = USetStr(3023);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (RepSpec.flags[4]==1) then begin
+    tstr = USetStr(6652);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  lastgroup = " ";
+  SetRepCol(3,320);
+  SetRepCol(4,400);
+  SetRepCol(5,465);
+  Accr.AccNumber = RepSpec.FirstAcc;
+  Vws = true;
+  while (LoopMain(Accr,1,Vws)) begin
+    headerf = false;
+    Pct = blankval;
+    Pdt = blankval;
+    if (nonblank(RepSpec.LastAcc)) then begin
+      if (Accr.AccNumber>RepSpec.LastAcc) then begin Vws = false; end;
+    end;   
+    if (Vws) then begin
+      testf = true;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (AccInRange(Accr.AccNumber,RepSpec.AccStr)==false) then begin
+          testf = false;
+          goto L30;
+        end;
+      end;
+      if ((Accr.blockedFlag!=0) or (Accr.GroupAcc!=0)) then begin
+        testf = false;
+        goto L30;
+      end;
+      RU = "";
+      d = RepSpec.sStartDate;
+      //nk 
+        Sb = blankval;
+        Pd = blankval;
+        Pc = blankval;
+        Eb = blankval;
+        
+      while (d<=RepSpec.sEndDate) begin
+      
+      //nk 
+        Sb1 = Sb;
+        Pd1 = Pd;
+        Pc1 = Pc;
+        Eb1 = Eb;
+        Pd = blankval;
+        Pc = blankval;
+        
+        FindNLAccBal(Accr.AccNumber,RU,"",Accr.AccType,bd,d,RepSpec.SimVerf,RepSpec.basecurncy,resUseAccum,RepSpec.CurncyCode,RepSpec.IncDaughter,"","",Sb);
+        TransAccTurnover(Accr.AccNumber,RU,d,d,RepSpec.SimVerf,RepSpec.basecurncy,0,RepSpec.CurncyCode,"",Pd,Pc);
+        Eb = Sb + Pd;
+        Eb = Eb - Pc;
+        testf = true;
+        if ((Pd==0) and (Pc==0)) then begin testf = false; end;
+        //nk
+        if (Sb1 == Sb1) and (Pd1 == Pd) and  (Pc1 == Pc) and (Eb1 == Eb) then begin testf = false; end;
+//L30:;it was here but I think it is wrong
+        if (testf) then begin
+          if (headerf==false) then begin
+            headerf = true;
+            StartFormat(15);
+            OutString(20,0,Accr.AccNumber,false);
+            OutString(100,0,Accr.Comment,false);
+            EndFormat;
+            StartFormat(15);
+            EndFormat;
+            StartFormat(20);
+            OutString(60,0,USetStr(3258),true);
+            OutString(240,0,USetStr(3254),true);
+            OutString(320,0,USetStr(3255),true);
+            OutString(400,0,USetStr(3256),true);
+            OutString(480,0,USetStr(3257),true);
+            EndFormat;
+            SSb = Sb;
+          end;
+          StartFormat(15);
+          OutDate(60,0,d,true);
+          OutVal(240,0,Sb,M4Val,true);
+          OutVal(320,0,Pd,M4Val,true);
+          OutVal(400,0,Pc,M4Val,true);
+          OutVal(480,0,Eb,M4Val,true);
+          EndFormat;
+          if (nonblank(RepSpec.ObjStr)) then begin
+            TransAccTurnover(Accr.AccNumber,RU,d,d,RepSpec.SimVerf,RepSpec.basecurncy,0,RepSpec.CurncyCode,"",OPd,OPc);
+            if ((OPd!=0) or (OPd!=0)) then begin
+              StartFormat(15);
+              OutString(100,0,RepSpec.ObjStr,false);
+              OutVal(320,0,OPd,M4Val,true);
+              OutVal(400,0,OPc,M4Val,true);
+              EndFormat;
+            end;
+          end;
+          Pdt = Pdt + Pd;
+          Pct = Pct + Pc;
+        end;
+        d = AddDay(d,1);
+      end;
+      if (headerf) then begin
+        Black_Divider(180,480);
+        StartFormat(15);
+        OutVal(240,0,SSb,M4Val,true);
+        OutVal(320,0,Pdt,M4Val,true);
+        OutVal(400,0,Pct,M4Val,true);
+        OutVal(480,0,Eb,M4Val,true);
+        EndFormat;
+        tSSb = tSSb + SSb;
+        tPdt = tPdt + Pdt;
+        tPct = tPct + Pct;
+        tEb = tEb + Eb;
+        StartFormat(15);
+        EndFormat;
+        Gray_Divider(0,1);
+      end;
+L30:;      
+    end;
+  end;
+  StartFormat(15);
+  EndFormat;
+  Black_Divider(180,480);
+  StartFormat(15);
+  OutVal(240,0,tSSb,M4Val,true);
+  OutVal(320,0,tPdt,M4Val,true);
+  OutVal(400,0,tPct,M4Val,true);
+  OutVal(480,0,tEb,M4Val,true);
+  EndFormat;
+  if (RepSpec.flags[4]!=0) then begin
+    ListPerTrans(RepSpec);
+  end;  
+  EndJob;
+  RETURN;
+END;
+
+global
+procedure DayBalNLRn(var record RcVc RepSpec)
+BEGIN
+  if (nonblank(RepSpec.AccStr)) then begin
+    DayBalNL2Rn(RepSpec,3259);
+  end else begin
+    StartReportJob(USetStr(3259));
+    EndHeader;
+    StartFormat(15);
+    OutString(0,0,USetStr(30026),false);
+    EndFormat;
+    EndJob;
+  end;
+  RETURN;
+END;

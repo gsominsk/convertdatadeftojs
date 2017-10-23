@@ -1,0 +1,1372 @@
+remote updating function Boolean RecListAction_rlMailRequireAcceptance(var record MailVc);
+remote function Boolean TestMailToEMailQue(record MailVc);
+remote updating procedure SetReadFlagHAL(LongInt,Integer);
+external function Boolean InterNetAddrTest(string);
+external procedure LongDateToStr2(Date,record ClientFormatBlock,Integer,var string);
+external procedure ActVcRecordDefClient(var record ActVc);
+external function Boolean HasIllegalChar(string);
+external function Boolean FindEmbeddedEmail(string,var LongInt,var LongInt,var LongInt);
+remote procedure FindCurMailboxName(var string);
+remote procedure ResolveMailboxNumber(var row MailVc);
+external procedure SearchMailRClassReportDefaults(Integer);
+remote updating function Boolean ForwardMailDsmStoreMail(record MailVc,var record MailVc);
+remote function Boolean FindUserInMailbox(string,var string,var LongInt);
+external procedure StripNonChars(var string,string);
+remote updating function Boolean RecordAction_raEMailQue(var record MailVc,Boolean);
+external updating procedure RecordActionMail_Print(var record MailVc,string);
+remote updating function Boolean RecListAction_rlMailUnread(var record MailVc);
+remote updating procedure RecordAction_MailDAct2(var record MailVc,var record ActVc,var Integer);
+/* HTMLMAIL NEW
+remote updating function Boolean HtmlMailReplyWithQuote(var record MailVc,var record MailVc);
+function Boolean IsHtmlMail(var record MailVc);
+updating procedure DuplicateHtmlMailBody(var record MailVc,var record MailVc);
+procedure MailReplyWithQuote(var record MailVc,var record MailVc,Integer);
+*/
+external function Integer ShouldCreateHTMLMail(Integer);
+
+/* HTMLMAIL NEW
+procedure DuplicateHtmlMailBody(var record MailVc oldMailr,var record MailVc newMailr)
+BEGIN
+  RETURN;
+END;
+*/
+
+/* HTMLMAIL NEW
+function Boolean IsHtmlMail(var record MailVc Mailr)
+BEGIN
+  Boolean res = false;
+  
+LIsHtmlMail:;
+  IsHtmlMail = res;
+  RETURN;
+END;
+*/
+
+/* HTMLMAIL NEW
+global
+function Boolean HtmlMailReplyWithQuote(var record MailVc oldMailr,var record MailVc newMailr)
+BEGIN
+  Boolean res = false;
+  
+  res = IsHtmlMail(oldMailr);
+  if (res==false) then goto LHtmlMailReplyWithQuote;
+  
+  DuplicateHtmlMailBody(oldMailr,newMailr);
+
+LHtmlMailReplyWithQuote:;
+  HtmlMailReplyWithQuote = res;
+  RETURN;
+END;
+*/
+
+function string 255 TimeToString(time t)
+begin
+  string 255 res;
+  
+  if (t.hour<10) then begin res = res & "0"; end;
+  res = res & t.hour & ":";
+  if (t.minute<10) then begin res = res & "0"; end;
+  res = res & t.minute;
+
+  TimeToString = res;
+  return;
+end;
+
+procedure MailReplyWithQuote(var record MailVc oldMailr,var record MailVc newMailr,Integer rowcount)
+BEGIN
+  Integer rwcnt;
+  Integer i;
+  row MailVc marw1;
+  string 255 tstr;
+  LongInt pos,size;
+  
+  rwcnt = rowcount;
+  
+  LineTextPut(newMailr,LineTextCnt(newMailr),"");
+  LineTextPut(newMailr,LineTextCnt(newMailr),"");
+  LineTextPut(newMailr,LineTextCnt(newMailr),"");
+
+  LineTextPut(newMailr,LineTextCnt(newMailr),">" & USetStr(11705) & ": " & oldMailr.Header);
+  rwcnt = MatRowCnt(oldMailr);
+  for (i=0;i<rwcnt;i=i+1) begin  
+    MatRowGet(oldMailr,i,marw1);
+    tstr = ">";
+    switch (marw1.RowTyp) begin
+      case kMailRowTypeFrom: tstr = tstr & USetStr(8130) & ": ";
+      case kMailRowTypeTo: tstr = tstr & USetStr(8131) & ": ";
+      case kMailRowTypeCC: tstr = tstr & USetStr(8133) & ": ";
+    end;
+    tstr = tstr & marw1.AddrCode;
+    LineTextPut(newMailr,LineTextCnt(newMailr),tstr);
+  end;  
+  tstr = ">" & USetStr(8143) & ": ";
+  tstr = tstr & oldMailr.TransDate;
+  LineTextPut(newMailr,LineTextCnt(newMailr),tstr);
+  
+  LineTextPut(newMailr,LineTextCnt(newMailr),">");
+
+  AddToText(">",newMailr);
+  size = SizeTextCnt(oldMailr);
+  pos = 0;
+  while (pos<size) begin
+    tstr = StringFromText(oldMailr,pos,1);
+    pos = pos + len(tstr);
+    AddToText(tstr,newMailr);
+    if (tstr==chr(13)) then begin
+      AddToText(">",newMailr);
+    end;
+  end;
+
+//Line text get is sick
+//  rwcnt = LineTextCnt(oldMailr);
+//  for (i=0;i<rwcnt;i=i+1) begin  
+//    tstr = ">" & LineTextGet(oldMailr,i);
+////    tstr = tstr & "<";
+//    LineTextPut(newMailr,LineTextCnt(newMailr),tstr);
+//  end;  
+
+  return;
+end;
+
+global
+procedure MailReplyWithQuotesm()
+begin
+  Integer wn,nwn;
+  record MailVc oldMailr;
+  record MailVc newMailr;
+  row MailVc marw1;
+  row MailVc marw2;
+  string 255 tstr;
+  Integer i,rwcnt,j;
+  LongInt pos;
+  string 60 curmailbox;
+  record ConfVc Confr;
+  string 255 fromaddress,extfromaddress;
+  Boolean extaddf;
+  vector Boolean vfrom;
+  record MailReadVc MRr;
+  
+  curmailbox = CurMailboxName;
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,oldMailr);
+  Confr.SerNr = GetWindowSubset(wn);
+  ReadFirstMain(Confr,1,true);
+  if (Confr.ReplyFromConference!=0) then begin
+    if (nonblank(Confr.ExtEmailAddrs)) then begin
+      pos = 0;
+      GetNextSubstring(Confr.ExtEmailAddrs,pos,";,",extfromaddress)
+    end;
+    fromaddress = Confr.AddrName;  
+    rwcnt = MatRowCnt(oldMailr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(oldMailr,i,marw1);
+      if (marw1.RowTyp==kMailRowTypeFrom) then begin
+        if (InterNetAddrTest(marw1.AddrCode)==false) then begin
+          fromaddress = "";
+          i = rwcnt;
+        end;
+      end;
+    end;
+  end;
+
+  RecordNew(newMailr);
+
+  
+  newMailr.SerNr = -1;
+  newMailr.TransDate = CurrentDate;
+  newMailr.TransTime = CurrentTime;
+
+
+  if (Confr.ReplyFromConference!=0) then begin
+    if (MatRowCnt(newMailr)<=0 or nonblank(fromaddress) or nonblank(extfromaddress)) then begin
+      ClearRow(newMailr,marw1,1);
+      marw1.RowTyp = kMailRowTypeFrom;
+      if (blank(fromaddress)) then begin
+        FindCurMailboxName(tstr);
+        marw1.AddrCode = tstr;
+      end else begin
+        marw1.AddrCode = fromaddress;
+      end;
+      ResolveMailboxNumber(marw1);
+      if (nonblank(extfromaddress)) then begin
+        if (InterNetAddrTest(marw1.AddrCode)==false) then begin
+          MatRowInsert(newMailr,1,marw1);
+          ClearRow(newMailr,marw1,1);
+          marw1.RowTyp = kMailRowTypeFrom;
+          marw1.AddrCode = extfromaddress;
+          ResolveMailboxNumber(marw1);
+          MatRowPut(newMailr,0,marw1);
+          extaddf = true;
+        end else begin
+          marw1.AddrCode = extfromaddress;
+          MatRowPut(newMailr,0,marw1);
+        end;
+      end else begin
+        MatRowPut(newMailr,0,marw1);
+      end;
+    end;
+  end;
+
+  rwcnt = MatRowCnt(oldMailr);
+  if (rwcnt<2) then begin
+    MessageBox(1358,"");
+    goto LMailReplyWithQuotesm;
+  end;
+  if (Left(oldMailr.Header,4)=="Re: ") then begin
+    newMailr.Header = oldMailr.Header;
+  end else begin
+    newMailr.Header = "Re: " & oldMailr.Header;
+  end;
+ /*
+ already done above, why 2 times ? 
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.Mailbox==Confr.SerNr and (Confr.Class==kConfClassMailbox or Confr.ReplyFromConference)) then begin
+      marw1.RowTyp = kMailRowTypeFrom;
+      marw1.AddrStatus = 0;
+      if (nonblank(fromaddress)) then begin
+        marw1.AddrCode = fromaddress;
+        ResolveMailboxNumber(marw1);
+      end;
+      if (nonblank(extfromaddress)) then begin
+        marw1.AddrCode = extfromaddress;
+      end;
+      MatRowInsert(newMailr,0,marw1);
+      i = rwcnt;
+    end;
+  end;
+  */
+  if (extaddf) then begin
+    j = MatRowCnt(newMailr);
+  end else begin
+    j = 1;
+  end;
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.RowTyp==kMailRowTypeFrom) then begin
+      vfrom[marw1.AddrCode] = true;
+    end;
+    if (/*vfrom[marw1.AddrCode]==false) and*/ (marw1.Mailbox!=Confr.SerNr and (Confr.ReplyFromConference==0 or (marw1.Mailbox!=Confr.SerNr and marw1.AddrCode!=fromaddress and marw1.AddrCode!=extfromaddress)))) then begin
+      if (marw1.RowTyp==kMailRowTypeFrom) then begin
+        marw1.RowTyp = kMailRowTypeTo;
+      end;
+      marw1.AddrStatus = 0;
+      MatRowPut(newMailr,j,marw1);
+    end else begin
+      j = j - 1;
+    end;
+    j = j + 1;    
+  end;
+  
+  newMailr.SendFlag = 0;
+  newMailr.LockedFlag = 0;
+  newMailr.HtmlFlag = ShouldCreateHTMLMail(oldMailr.HtmlFlag);
+  
+  if (oldMailr.HtmlFlag==0) then begin
+    MailReplyWithQuote(oldMailr,newMailr,rwcnt);
+  end;
+
+  if (oldMailr.HtmlFlag!=0) then begin
+    for (i=0;i<rwcnt;i=i+1) begin  
+      MatRowGet(oldMailr,i,marw1);
+      switch (marw1.RowTyp) begin
+        case kMailRowTypeFrom: tstr = marw1.AddrCode;
+      end;
+    end;
+  end;
+  
+  nwn = OpenWindow("MailDClass",1,0,"","",newMailr);
+  SetRLink(nwn,false);
+  
+  if (oldMailr.HtmlFlag!=0) then begin
+    CopyWindowHtmlFromWindow(wn,nwn);
+    AddStringToHtml(nwn,"<blockquote style=\"border-left:blue 2px solid;padding-left:8px;margin-left:8px\"><div>",false);
+    AddStringToHtml(nwn,"</div></blockquote>",true);
+    MRr.mailSerNr = oldMailr.SerNr;
+    MRr.accode = kMailStatusCreated;        
+    if (ReadFirstKey("accode",MRr,2,true)) then begin
+      AddStringToHtml(nwn,"<br><br><div>" & USetStr(25460) & " " & MRr.fDate & ", " & USetStr(25461) & " " & MRr.fTime & ", " & tstr & " " & USetStr(25462) & ":</div>",false);
+    end else begin
+      AddStringToHtml(nwn,"<br><br><div>" & USetStr(25460) & " " & oldMailr.TransDate & ", " & USetStr(25461) & " " & oldMailr.TransTime & ", " & tstr & " " & USetStr(25462) & ":</div>",false);
+    end;
+
+    AddStringToHtml(nwn,"<br>",true);
+    if (GuiType==kGuiAndroid or GuiType==kGuiiPhone) then begin
+      ToolAction(nwn,ToolEditHtml,0,false);
+    end;
+  end;
+
+  WindowFieldGoto(nwn,newMailr,-1,"Math",true);
+
+LMailReplyWithQuotesm:;  
+  RETURN;
+END;
+
+global
+procedure MailReplyToSendersm()
+BEGIN
+  Integer wn,nwn;
+  record MailVc oldMailr;
+  record MailVc newMailr;
+  row MailVc marw1;
+  row MailVc marw2;
+  string 255 tstr;
+  Integer i,rwcnt,j;
+  LongInt pos;
+  string 60 curmailbox;
+  record ConfVc Confr;
+  string 255 fromaddress,extfromaddress;
+  Boolean extaddf;
+  
+  curmailbox = CurMailboxName;
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,oldMailr);
+  Confr.SerNr = GetWindowSubset(wn);
+  ReadFirstMain(Confr,1,true);
+  if (Confr.ReplyFromConference!=0) then begin
+    if (nonblank(Confr.ExtEmailAddrs)) then begin
+      pos = 0;
+      GetNextSubstring(Confr.ExtEmailAddrs,pos,";,",extfromaddress)
+    end;
+    fromaddress = Confr.AddrName;  
+    rwcnt = MatRowCnt(oldMailr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(oldMailr,i,marw1);
+      if (marw1.RowTyp==kMailRowTypeFrom) then begin
+        if (InterNetAddrTest(marw1.AddrCode)==false) then begin
+          fromaddress = "";
+          i = rwcnt;
+        end;
+      end;
+    end;
+  end;
+  RecordNew(newMailr);
+  newMailr.SerNr = -1;
+  newMailr.TransDate = CurrentDate;
+  newMailr.TransTime = CurrentTime;
+
+  if (Confr.ReplyFromConference!=0) then begin
+    if (MatRowCnt(newMailr)<=0 or nonblank(fromaddress) or nonblank(extfromaddress)) then begin
+      ClearRow(newMailr,marw1,1);
+      marw1.RowTyp = kMailRowTypeFrom;
+      if (blank(fromaddress)) then begin
+        FindCurMailboxName(tstr);
+        marw1.AddrCode = tstr;
+      end else begin
+        marw1.AddrCode = fromaddress;
+      end;
+      ResolveMailboxNumber(marw1);
+      if (nonblank(extfromaddress)) then begin
+        if (InterNetAddrTest(marw1.AddrCode)==false) then begin
+          MatRowInsert(newMailr,1,marw1);
+          ClearRow(newMailr,marw1,1);
+          marw1.RowTyp = kMailRowTypeFrom;
+          marw1.AddrCode = extfromaddress;
+          ResolveMailboxNumber(marw1);
+          MatRowPut(newMailr,0,marw1);
+          extaddf = true;
+        end else begin
+          marw1.AddrCode = extfromaddress;
+          MatRowPut(newMailr,0,marw1);
+        end;
+      end else begin
+        MatRowPut(newMailr,0,marw1);
+      end;
+    end;
+  end;
+
+/*  
+  if (MatRowCnt(newMailr)<=0 or nonblank(fromaddress) or nonblank(extfromaddress)) then begin
+    ClearRow(newMailr,marw1,1);
+    marw1.RowTyp = kMailRowTypeFrom;
+    if (nonblank(fromaddress)) then begin
+      marw1.AddrCode = fromaddress;
+    end else begin
+      FindCurMailboxName(tstr);
+      marw1.AddrCode = tstr;
+    end;
+    ResolveMailboxNumber(marw1);
+    if (nonblank(extfromaddress)) then begin
+      marw1.AddrCode = extfromaddress;
+    end;
+    MatRowPut(newMailr,0,marw1);
+  end;
+*/
+  
+  rwcnt = MatRowCnt(oldMailr);
+  if (rwcnt<2) then begin
+    MessageBox(1358,"");
+    goto LMailReplyToSendsm;
+  end;
+  if (Left(oldMailr.Header,4)=="Re: ") then begin
+    newMailr.Header = oldMailr.Header;  
+  end else begin
+    newMailr.Header = "Re: " & oldMailr.Header;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.AddrCode==curmailbox) and (marw1.RowTyp==kMailRowTypeFrom) then begin
+      goto LMailReplyToSendsm;
+    end;
+  end;
+/*  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.Mailbox==Confr.SerNr) then begin
+      marw1.RowTyp = kMailRowTypeFrom;
+      marw1.AddrStatus = 0;
+      if (nonblank(fromaddress)) then begin
+        marw1.AddrCode = fromaddress;
+        ResolveMailboxNumber(marw1);
+      end;
+      if (nonblank(extfromaddress)) then begin
+        marw1.AddrCode = extfromaddress;
+      end;
+      MatRowInsert(newMailr,0,marw1);
+      i = rwcnt;
+    end;    
+  end;
+*/  
+  if (extaddf) then begin
+    j = MatRowCnt(newMailr);
+  end else begin
+    j = 1;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.RowTyp==kMailRowTypeFrom) then begin
+      if (marw1.Mailbox!=Confr.SerNr and (Confr.ReplyFromConference==0 or (marw1.Mailbox!=Confr.SerNr and marw1.AddrCode!=fromaddress and marw1.AddrCode!=extfromaddress))) then begin
+        marw1.RowTyp = kMailRowTypeTo;
+        marw1.AddrStatus = 0;
+        MatRowPut(newMailr,j,marw1);
+      end else begin
+        j = j - 1;
+      end;
+    end else begin
+      j = j - 1;
+    end;
+    j = j + 1;    
+  end;
+  
+  newMailr.SendFlag = 0;
+  newMailr.LockedFlag = 0;
+/*
+  rwcnt = LineTextCnt(oldMailr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    tstr = ">>" & LineTextGet(oldMailr,i);
+//    tstr = tstr & "<";
+    LineTextPut(newMailr,i,tstr);
+  end;  
+*/
+  nwn = OpenWindow("MailDClass",1,0,"","",newMailr);
+  WindowFieldGoto(nwn,newMailr,-1,"Math",true);
+  SetRLink(nwn,false);
+LMailReplyToSendsm:;  
+  RETURN;
+END;
+
+global
+updating procedure MarknotReadMailLsm()
+BEGIN
+  Integer wn,i;
+  record MailVc Mailr;
+
+  wn = CurWindow;
+  i = 1;
+  while (GetRecordFromBrowse(Mailr,wn,i)) begin  
+    if (RecListAction_rlMailUnread(Mailr)) then begin end;
+    i = i + 1;
+  end;
+  UpdateBrowses("MailVc");
+  RETURN;
+END;
+
+global
+updating procedure MarknotReadMailDsm()
+BEGIN
+  Integer wn,i;
+  record MailVc Mailr;
+
+  wn = CurWindow;
+  if (WindowState(wn)!=1) then begin//Rs_insert
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,Mailr);
+    if (RecListAction_rlMailUnread(Mailr)) then begin end;
+    UpdateBrowses("MailVc");
+  end;
+  RETURN;
+END;
+
+global
+procedure MailHistoryMailLsm()
+BEGIN
+  Integer wn;
+  record MailVc Mailr;
+  record RcVc RepSpec;
+
+  wn = CurWindow;
+  if (ReadMarkedRecord(wn,Mailr)) begin  
+    RepSpec.long1 = Mailr.SerNr;
+    RepSpec.Media = mtScreen;
+    RepSpec.repname = "MailReadRn";
+    RunReport(RepSpec,0);
+  end;
+  RETURN;
+END;
+
+global
+updating function Boolean MailDClassPrint(Integer wn,Boolean previewf)
+begin
+  Boolean res;
+  Integer normalmode;
+  record MailVc Mailr;
+  
+  normalmode = 0;//Rs_normal
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  if ((WindowState(wn)==normalmode) and (previewf==false)) then begin
+    RecordActionMail_Print(Mailr,previewf);
+  end else begin
+    if (PrintDocument(Mailr,"MailForm",previewf)) then begin end;
+  end;  
+  MailDClassPrint = res;
+  return;
+end;
+
+global
+updating function Boolean HtmlMailDClassPrint(Integer wn,Boolean previewf)
+begin
+  HtmlMailDClassPrint = MailDClassPrint(wn,previewf);
+  return;
+end;
+
+global
+updating procedure MailMakeActsm()
+BEGIN
+  record MailVc Mailr;
+  record ActVc Actr;
+  Integer wn,nwn,actcomp,oldcomp;
+
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,Mailr);
+    RecordNew(Actr);
+    ActVcRecordDefClient(Actr);
+    RecordAction_MailDAct2(Mailr,Actr,actcomp);
+    oldcomp = CurrentCompany;
+    if (actcomp!=oldcomp) then begin
+      SetCompany(actcomp,false);
+    end;
+    nwn = OpenWindow("ActDClass",1,0,"","",Actr);
+    SetRLink(wn,true);  
+    UpdateBrowses("MailVc");
+    SetRLink(nwn,true);  
+    ResetCompany(oldcomp);
+  end;
+  RETURN;
+END;
+
+global
+updating procedure MailVcCreateActivity()
+begin
+  MailMakeActsm;
+  return;
+end;
+
+global
+updating procedure PrintMailL(Integer wn,Boolean previewf)
+BEGIN
+  record MailVc Mailr;
+  Integer i;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(Mailr,wn,i)) begin
+    RecordActionMail_Print(Mailr,previewf);
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  RETURN;
+END;
+
+global
+procedure MailHistoryMailDsm()
+BEGIN
+  Integer wn;
+  record MailVc Mailr;
+  record RcVc RepSpec;
+
+  wn = CurWindow;
+  if (WindowState(wn)!=1) then begin//Rs_insert
+    GetWindowRecord(wn,Mailr);
+    RepSpec.long1 = Mailr.SerNr;
+    RepSpec.Media = mtScreen;
+    RepSpec.repname = "MailReadRn";
+    RunReport(RepSpec,0);
+  end else begin
+    MessageBox(38543,"");
+  end;
+  RETURN;
+END;
+
+global
+updating procedure EMailQueFromMailDsm()
+BEGIN
+  record MailVc Mailr;
+  record MailSettingsBlock MSb;
+  Integer wn;
+  Boolean testf;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,Mailr);
+  if (WindowState(wn)==Rs_normal) then begin
+    BlockLoad(MSb);
+    if (MSb.LockSentEmail==0) then begin
+      testf = RecordAction_raEMailQue(Mailr,false);
+    end else begin
+      testf = TestMailToEMailQue(Mailr);
+    end;
+    if (testf) then begin
+      Mailr.SendFlag = 1;
+      PutWindowRecord(wn,Mailr);
+      WindowDoOK(wn,0);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure MailReplyDsm()
+begin
+  Integer wn,nwn;
+  record MailVc oldMailr;
+  record MailVc newMailr;
+  row MailVc marw1;
+  row MailVc marw2;
+  string 255 tstr;
+  Integer i,rwcnt,j;
+  string 60 curmailbox;
+  record ConfVc Confr;
+  string 255 fromaddress,extfromaddress;
+  LongInt pos;
+  Boolean extaddf;
+  
+  curmailbox = CurMailboxName;
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,oldMailr);
+  Confr.SerNr = GetWindowSubset(wn);
+  ReadFirstMain(Confr,1,true);
+  if (Confr.ReplyFromConference!=0) then begin
+    if (nonblank(Confr.ExtEmailAddrs)) then begin
+      pos = 0;
+      GetNextSubstring(Confr.ExtEmailAddrs,pos,";,",extfromaddress)
+    end;
+    fromaddress = Confr.AddrName;
+    rwcnt = MatRowCnt(oldMailr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(oldMailr,i,marw1);
+      if (marw1.RowTyp==kMailRowTypeFrom) then begin
+        if (InterNetAddrTest(marw1.AddrCode)==false) then begin
+          fromaddress = "";
+          i = rwcnt;
+        end;
+      end;
+    end;
+  end;
+
+  rwcnt = MatRowCnt(oldMailr);
+  if (rwcnt<2) then begin
+    MessageBox(1358,"");
+    goto LMailReplyDsm;
+  end;
+  RecordNew(newMailr);
+  newMailr.SerNr = -1;
+  newMailr.TransDate = CurrentDate;
+  newMailr.TransTime = CurrentTime;
+
+  if (Confr.ReplyFromConference!=0) then begin
+    if (MatRowCnt(newMailr)<=0 or nonblank(fromaddress) or nonblank(extfromaddress)) then begin
+      ClearRow(newMailr,marw1,1);
+      marw1.RowTyp = kMailRowTypeFrom;
+      if (blank(fromaddress)) then begin
+        FindCurMailboxName(tstr);
+        marw1.AddrCode = tstr;
+      end else begin
+        marw1.AddrCode = fromaddress;
+      end;
+      ResolveMailboxNumber(marw1);
+      if (nonblank(extfromaddress)) then begin
+        if (InterNetAddrTest(marw1.AddrCode)==false) then begin
+          MatRowInsert(newMailr,1,marw1);
+          ClearRow(newMailr,marw1,1);
+          marw1.RowTyp = kMailRowTypeFrom;
+          marw1.AddrCode = extfromaddress;
+          ResolveMailboxNumber(marw1);
+          MatRowPut(newMailr,0,marw1);
+          extaddf = true;
+        end else begin
+          marw1.AddrCode = extfromaddress;
+          MatRowPut(newMailr,0,marw1);
+        end;
+      end else begin
+        MatRowPut(newMailr,0,marw1);
+      end;
+    end;
+  end;
+
+/*  
+  if (MatRowCnt(newMailr)<=0) then begin
+    ClearRow(newMailr,marw1,1);
+    marw1.RowTyp = kMailRowTypeFrom;
+    if (nonblank(fromaddress)) then begin
+      marw1.AddrCode = fromaddress;
+    end else begin
+      FindCurMailboxName(tstr);
+      marw1.AddrCode = tstr;
+    end;
+    ResolveMailboxNumber(marw1);
+    MatRowPut(newMailr,0,marw1);
+  end;
+*/  
+  if (Left(oldMailr.Header,4)=="Re: ") then begin
+    newMailr.Header = oldMailr.Header;  
+  end else begin
+    newMailr.Header = "Re: " & oldMailr.Header;
+  end;
+/*  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.Mailbox==Confr.SerNr) then begin
+      marw1.RowTyp = kMailRowTypeFrom;
+      marw1.AddrStatus = 0;
+      if (nonblank(fromaddress)) then begin
+        marw1.AddrCode = fromaddress;
+        ResolveMailboxNumber(marw1);
+      end;
+      MatRowInsert(newMailr,0,marw1);
+      i = rwcnt;
+    end;    
+  end;
+*/  
+  if (extaddf) then begin
+    j = MatRowCnt(newMailr);
+  end else begin
+    j = 1;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldMailr,i,marw1);
+    if (marw1.Mailbox!=Confr.SerNr and (Confr.ReplyFromConference==0 or marw1.Mailbox!=Confr.SerNr)) then begin
+      marw1.RowTyp = kMailRowTypeTo;
+      marw1.AddrStatus = 0;
+      MatRowPut(newMailr,j,marw1);
+    end else begin
+      j = j - 1;
+    end;
+    j = j + 1;    
+  end;  
+  newMailr.SendFlag = 0;
+  newMailr.LockedFlag = 0;
+  nwn = OpenWindow("MailDClass",1,0,"","",newMailr);
+  WindowFieldGoto(nwn,newMailr,-1,"Math",true);
+  SetRLink(nwn,false);
+LMailReplyDsm:;  
+  RETURN;
+END;
+
+global
+function string 255 DefExpCodepage()
+BEGIN
+/*on client only*/
+  record LocalMachineBlock LocalMachineRec;
+  
+  BlockLoad(LocalMachineRec);
+  DefExpCodepage = LocalMachineRec.DefExpCodepage;
+  RETURN;
+END;
+
+global
+procedure SaveAsFileMailDsm()
+BEGIN
+  Integer wn;
+  record MailVc Mailr;
+  string 255 fName,tstr, nextchar;
+  Boolean res;
+  LongInt i,sz,bs;  
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  StripNonChars(fName,Mailr.Header);
+  fName = SaveFileDialog(fName,"","TXT");
+  if (blank(fName)) then begin goto LSaveAsFileMailDsm; end;
+  if (res==false) then begin
+//    Delete_File(fName);
+  end;
+//if (SetExportCodePage(DefExpCodepage)==false) then begin end; 
+//doesn't work with SetExportCodePage
+/*    
+    bs = BytesInString(tstr);
+    if (bs>0) then begin
+      i = i + (bs - 1);
+    end;
+*/    
+  
+  CreateFile(fName);
+  ExportPadString(Mailr.Header,BytesInString(Mailr.Header)," ",false);
+  ExportPadString(chr(13) & chr(10),2," ",false);  
+  sz = SizeTextCnt(Mailr);
+  for (i=0;i<=sz;i=i+1) begin
+    tstr = StringFromText(Mailr,i,1);
+    nextchar = StringFromText(Mailr,i+1,1);
+    
+    ExportPadString(tstr,BytesInString(tstr)," ",false);    
+    
+    if ((WindowsMode!=0 or CompileType==ctSeries80 or CompileType==ctSeries60 or CompileType==ctNokiaE90) and LEFT(tstr,1) == chr(13) and LEFT(nextchar,1) != chr(10)) then begin 
+      ExportPadString(chr(10),1," ",false);  
+    end;
+  end;
+  CloseFile;
+LSaveAsFileMailDsm:;  
+  RETURN; 
+END;
+
+global
+procedure MailSearchLsm()
+BEGIN
+  Integer wn,nwn;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  nwn = OpenWindow("SearchMailRClass",0,0,"","",RepSpec);
+  DeselectWindow(nwn,false);
+  ReportDefaults(RepSpec,"SearchMailRClass");
+  SearchMailRClassReportDefaults(nwn); // Why? Line above should do this...
+  GetWindowRecord(nwn,RepSpec);  
+  RepSpec.long1 = GetWindowSubset(wn);
+  RepSpec.Media = mtScreen;
+  RepSpec.repname = "SearchMailRn";
+  RepSpec.critname = "SearchMailRClass";
+  PutWindowRecord(nwn,RepSpec);  
+  WindowFieldGoto(nwn,RepSpec,-1,"f2",true);
+  RETURN;
+END;
+
+global
+procedure LocalMailSearchLsm()
+BEGIN
+  Integer wn,nwn;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  nwn = OpenWindow("SearchMailRClass",0,0,"","",RepSpec);
+  SearchMailRClassReportDefaults(nwn); // Why? ReportDefaults should do this...
+  DeselectWindow(nwn,false);
+  ReportDefaults(RepSpec,"SearchMailRClass");
+  RepSpec.long1 = GetWindowSubset(wn);
+  RepSpec.Media = mtScreen;
+  RepSpec.repname = "SearchLocalMailRn";
+  RepSpec.critname = "SearchMailRClass";
+  PutWindowRecord(nwn,RepSpec);  
+  SelectWindow(nwn);
+  RETURN;
+END;
+
+global
+procedure OpenPresentation(LongInt mailboxnr)
+BEGIN
+  record ConfPresVc cpp;
+  record ConfVc cfp;
+  Integer wn;
+
+  cpp.SerNr = mailboxnr;
+  if (ReadFirstMain(cpp,1,true)) then begin
+    wn = OpenWindow("ConfPresDClass",1,0,"","",cpp);
+  end else begin
+    RecordNew(cpp);
+    cpp.SerNr = mailboxnr;
+    wn = OpenWindow("ConfPresDClass",1,0,"","",cpp);
+  end;
+  if (wn!=0) then begin
+    cfp.SerNr = mailboxnr;
+    if (ReadFirstMain(cfp,1,true)) then begin
+      SetWindownamearg(wn,cfp.AddrName);
+      SetWindowTitle(wn);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure PresentationMailDsm()
+BEGIN
+  Integer wn,nwn;
+  string 60 confcode;
+  LongInt mailboxnr;
+
+  wn = CurWindow;
+  WindowDeactivatefield(wn);
+  if (FindUserInMailbox(Windlastefstr(wn),confcode,mailboxnr)) then begin
+    OpenPresentation(mailboxnr);
+  end;  
+  RETURN;
+END;
+
+global
+procedure OpenSignature(LongInt mailboxnr)
+BEGIN
+  record ConfSignVc csp;
+  record ConfVc cfp;
+  Integer wn;
+
+  csp.SerNr = mailboxnr;
+  if (ReadFirstMain(csp,1,true)) then begin
+    wn = OpenWindow("ConfSignDClass",1,0,"","",csp);
+  end else begin
+    RecordNew(csp);
+    csp.SerNr = mailboxnr;
+    wn = OpenWindow("ConfSignDClass",1,0,"","",csp);
+  end;
+  if (wn!=0) then begin
+    cfp.SerNr = mailboxnr;
+    if (ReadFirstMain(cfp,1,true)) then begin
+      SetWindownamearg(wn,cfp.AddrName);
+      SetWindowTitle(wn);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure OpenAutoReply(LongInt mailboxnr)
+BEGIN
+  record ConfAutoReplyVc csp;
+  record ConfVc cfp;
+  Integer wn;
+
+  csp.SerNr = mailboxnr;
+  if (ReadFirstMain(csp,1,true)) then begin
+    if (csp.HtmlFlag!=0) then begin
+      wn = OpenWindow("HtmlConfAutoReplyDClass",1,0,"","",csp);
+    end else begin
+      wn = OpenWindow("ConfAutoReplyDClass",1,0,"","",csp);
+    end;
+  end else begin
+    RecordNew(csp);
+    csp.SerNr = mailboxnr;
+    wn = OpenWindow("ConfAutoReplyDClass",1,0,"","",csp);
+  end;
+  if (wn!=0) then begin
+    cfp.SerNr = mailboxnr;
+    if (ReadFirstMain(cfp,1,true)) then begin
+      SetWindownamearg(wn,cfp.AddrName);
+      SetWindowTitle(wn);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure OpenExtChat(string mailboxname)
+BEGIN
+  record ExtChatUsersVc csp;
+  Integer wn;
+
+
+  csp.UserMailboxName = mailboxname;
+  if (ReadFirstMain(csp,1,true)) then begin
+    wn = OpenWindow("ExtChatUsersDClass",1,0,"","",csp);
+  end else begin
+    RecordNew(csp);
+    csp.UserMailboxName = mailboxname;
+    wn = OpenWindow("ExtChatUsersDClass",1,0,"","",csp);
+  end;
+  RETURN;
+END;
+
+global
+procedure RTMsm()
+begin
+  Integer wn;
+  record RcVc rr;
+  
+  wn = OpenWindow("RTMWClass",1,CurWindow,"","",rr);
+  return;
+end;
+
+global
+function Boolean RTMWClassOnOKWindow(Integer wn)
+begin
+  Boolean res;
+  Integer mwn;
+  record RcVc rr;
+  record MailVc Mailr;
+  
+  res = true;
+  mwn = MotherWindow(wn);
+  
+  RTMWClassOnOKWindow = res;
+  
+  GetWindowRecord(wn,rr);
+  GetWindowRecord(mwn,Mailr);
+  rr.flags[0] = SetFromString(80,rr.f1);
+  rr.flags[2] = SetFromString(80,rr.f2);
+  RetranslateTextField(Mailr,rr.flags[0],rr.flags[1],rr.flags[2],rr.flags[3]);
+  PutWindowRecord(mwn,Mailr);
+  return;
+end;
+
+global
+procedure TWebMailDsm()
+begin
+  Integer wn;
+  record MailVc Mailr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,Mailr);
+  return;
+end;
+/*
+global
+updating procedure EMailQueFromMailDsm()
+begin
+  record MailVc Mailr;
+  record MailVc oldMailr;
+  Integer wn;
+  Integer res;
+
+  wn = CurWindow;
+//  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  RecordCopy(oldMailr,Mailr);
+  Mailr.SendFlag = 1;
+  res = RecordUpdate(oldMailr,Mailr,true);
+//  res = RecordStore(Mailr,true);
+//  PutWindowRecord(wn,Mailr);
+  return;
+end;
+*/
+
+global
+updating procedure ForwardMailDsm()
+begin
+  Integer wn,nwn;
+  record MailVc oldMailr;
+  record MailVc newMailr;
+  row MailVc marw1;
+  row MailVc marw2;
+  string 255 tstr,to,from,cc,subject;
+  Integer i,rwcnt,j;
+  string 60 curmailbox;
+  LongInt size,pos;
+  
+  curmailbox = CurMailboxName;
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,oldMailr);
+  rwcnt = MatRowCnt(oldMailr);
+  if (rwcnt<2) then begin
+    MessageBox(1358,"");
+    goto LForwardMailDsm;
+  end;
+
+  RecordNew(newMailr);
+  newMailr.Header = USetStr(22009) & oldMailr.Header;
+  while (MatRowCnt(newMailr)>0) begin
+    MatRowDelete(newMailr,0);
+  end;
+  newMailr.SerNr = -1;
+  newMailr.TransDate = CurrentDate;
+  newMailr.TransTime = CurrentTime;
+  newMailr.HtmlFlag = ShouldCreateHTMLMail(oldMailr.HtmlFlag);
+  
+  ClearRow(newMailr,marw1,1);
+  marw1.RowTyp = kMailRowTypeFrom;
+  FindCurMailboxName(tstr);
+  marw1.AddrCode = tstr;
+  ResolveMailboxNumber(marw1);
+  MatRowPut(newMailr,0,marw1);
+
+  rwcnt = MatRowCnt(oldMailr);
+  if (newMailr.HtmlFlag==0) then begin
+    LineTextPut(newMailr,LineTextCnt(newMailr),"");
+    LineTextPut(newMailr,LineTextCnt(newMailr),"");
+    LineTextPut(newMailr,LineTextCnt(newMailr),"");
+    LineTextPut(newMailr,LineTextCnt(newMailr),">" & USetStr(11705) & ": " & oldMailr.Header);
+    for (i=0;i<rwcnt;i=i+1) begin  
+      MatRowGet(oldMailr,i,marw1);
+      tstr = ">";
+      switch (marw1.RowTyp) begin
+        case kMailRowTypeFrom: tstr = tstr & USetStr(8130) & ": ";
+        case kMailRowTypeTo: tstr = tstr & USetStr(8131) & ": ";
+        case kMailRowTypeCC: tstr = tstr & USetStr(8133) & ": ";
+      end;
+      tstr = tstr & marw1.AddrCode;
+      LineTextPut(newMailr,LineTextCnt(newMailr),tstr);
+    end;  
+    tstr = ">" & USetStr(8143) & ": ";
+    tstr = tstr & oldMailr.TransDate;
+    LineTextPut(newMailr,LineTextCnt(newMailr),tstr);
+
+    AddToText(">",newMailr);
+    size = SizeTextCnt(oldMailr);
+    pos = 0;
+    while (pos<size) begin
+      tstr = StringFromText(oldMailr,pos,1);
+      pos = pos + len(tstr);
+      AddToText(tstr,newMailr);
+      if (tstr==chr(13)) then begin
+        AddToText(">",newMailr);
+      end;
+    end;
+/*
+    LineTextPut(newMailr,LineTextCnt(newMailr),">");
+    rwcnt = LineTextCnt(oldMailr);
+    for (i=0;i<rwcnt;i=i+1) begin  
+      tstr = ">" & LineTextGet(oldMailr,i);
+      LineTextPut(newMailr,LineTextCnt(newMailr),tstr);
+    end;  
+*/  
+  end else begin
+    for (i=0;i<rwcnt;i=i+1) begin  
+      MatRowGet(oldMailr,i,marw1);
+      tstr = marw1.AddrCode;
+      switch (marw1.RowTyp) begin
+        case kMailRowTypeFrom: 
+          if (nonblank(from)) then begin tstr = ", " & tstr; end;
+          from = from & tstr;
+        case kMailRowTypeTo: 
+          if (nonblank(to)) then begin tstr = ", " & tstr; end;
+          to = to & tstr;
+        case kMailRowTypeCC: 
+          if (nonblank(cc)) then begin tstr = ", " & tstr; end;
+          cc = cc & tstr;
+      end;
+    end;  
+  end;
+  
+  newMailr.SendFlag = 0;
+  newMailr.LockedFlag = 0;
+  if (ForwardMailDsmStoreMail(oldMailr,newMailr)) then begin
+    nwn = OpenWindow("MailDClass",1,0,"","",newMailr);
+    SetRLink(nwn,false);
+    if (newMailr.HtmlFlag!=0) then begin
+      DeselectWindow(nwn,false);
+      CopyWindowHtmlFromWindow(wn,nwn);
+      
+      AddStringToHtml(nwn,"<div><b>" & USetStr(11705) & ": <span style=\"color:darkblue\">" & oldMailr.Header & "</b></span></div><br>",false);
+      if (nonblank(cc)) then begin
+        AddStringToHtml(nwn,"<div><b>" & USetStr(8133) & ":</b> <span style=\"color:darkblue\">" & cc & "</span></div>",false);
+      end;
+      if (nonblank(to)) then begin
+        AddStringToHtml(nwn,"<div><b>" & USetStr(8131) & ":</b> <span style=\"color:darkblue\">" & to & "</span></div>",false);
+      end;
+      AddStringToHtml(nwn,"<div><b>" & USetStr(8143) & ":</b> <span style=\"color:darkblue\">" & oldMailr.TransDate & "</span></div>",false);
+      if (nonblank(from)) then begin
+        AddStringToHtml(nwn,"<div><b>" & USetStr(8130) & ":</b> <span style=\"color:darkblue\">" & from & "</span></div>",false);
+      end;
+      
+      AddStringToHtml(nwn,"<blockquote style=\"border-left:blue 2px solid;padding-left:8px;margin-left:8px\"><div>",false);
+      AddStringToHtml(nwn,"</div></blockquote>",true);
+      AddStringToHtml(nwn,"<br><br><div>" & USetStr(25463) & "</div>",false);
+      AddStringToHtml(nwn,"<br>",true);
+      SelectWindow(nwn);
+      WindowFieldGoto(nwn,newMailr,MatRowCnt(newMailr),"AddrCode",true);
+    end;
+  end;
+LForwardMailDsm:;  
+  return;
+end;
+
+global
+updating procedure CreateContactFromMailsm()
+begin
+  record MailVc Mailr;
+  row MailVc Mailrw;
+  Integer i,rwcnt,j,wn,nwn;
+  record CUVc CUr;
+  string 255 name;
+  string 255 email;
+  LongInt stpos,atpos,adlen;
+  Boolean foundf;
+  //curmailbox = CurMailboxName;
+  wn = CurWindow;
+  
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  rwcnt = MatRowCnt(Mailr);
+  
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if (Mailrw.RowTyp==kMailRowTypeFrom) then begin
+      RecordNew(CUr);
+      foundf = FindEmbeddedEmail(Mailrw.AddrCode,stpos,atpos,adlen);
+      if (foundf) then begin
+        email = trim(mid(Mailrw.AddrCode,stpos + 1,adlen - 2));
+        name = trim(left(Mailrw.AddrCode,stpos));
+      end else begin
+        if ((atpos>0) and (HasIllegalChar(Mailrw.AddrCode)==false)) then begin
+          email = trim(Mailrw.AddrCode);
+          name = "";
+        end;
+      end;
+      
+      CUr.eMail = email;
+      CUr.Name = name;
+      
+      nwn = OpenWindow("CUDClass",1,0,"","",CUr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure AddTimeMailDsm()
+begin
+  record MailVc Mailr;
+  Integer wn;
+  string 255 tstr,t2,tstr2,gmtstr;
+  record ClientFormatBlock CFb;
+  record LocalMachineBlock LMb;
+
+  BlockLoad(LMb);
+  BlockLoad(CFb);
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  WindowFieldGoto(wn,Mailr,-1,"Header",true);
+  WindowDoOK(wn,0);
+  GetWindowRecord(wn,Mailr);
+  
+  FindCurMailboxName(tstr);
+  LongDateToStr2(CurrentDate,CFb,-1,t2);
+  if (nonblank(LMb.GMTOffset)) then begin 
+    gmtstr = " " & USetStr(36280);
+    if (LMb.GMTOffset!=0) then begin
+      if (LMb.GMTOffset>0) then begin 
+        gmtstr = gmtstr & "+" & ValToString(LMb.GMTOffset,M4UVal,"",".",0);
+      end;
+      if (LMb.GMTOffset<0) then begin 
+        gmtstr = gmtstr & ValToString(LMb.GMTOffset,M4UVal,"",".",0);
+      end;
+    end;
+  end;  
+  tstr = "// " & tstr & " [ " & t2 & " - " & TimeToString(CurrentTime) & gmtstr & " ]";
+  tstr2 = "-----------------------------------------------------------";
+//  AddToText(tstr,Mailr);
+  if (Mailr.HtmlFlag==0) then begin
+    LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+    LineTextPut(Mailr,LineTextCnt(Mailr),tstr2);
+  end else begin
+    AddStringToHtml(wn,"<div>" & tstr & "</div>",true);
+    AddStringToHtml(wn,"<div>" & tstr2 & "</div>",true);
+  end;
+  PutWindowRecord(wn,Mailr);
+  WindowDoOK(wn,0);
+  WindowFieldGoto(wn,Mailr,-1,"Math",true);
+  return;
+end;
+
+global
+updating procedure RequireAcceptanceMailDsm()
+begin
+  Integer wn;
+  record MailVc Mailr;
+  
+  wn = CurWindow;
+  if (UserCanAction("RequireAcceptanceMail",true)) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,Mailr);
+    Mailr.RequireAcceptance = 1;
+    PutWindowRecord(wn,Mailr);
+    WindowDoOK(wn,0);
+    ReRunWindowDef(wn);
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"RequireAcceptanceMail"));
+  end;
+  return;
+end;
+
+global
+updating procedure WithdrawAcceptanceMailDsm()
+begin
+  Integer wn;
+  record MailVc Mailr;
+  
+  wn = CurWindow;
+  if (UserCanAction("RequireAcceptanceMail",true)) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,Mailr);
+    Mailr.RequireAcceptance = 0;
+    PutWindowRecord(wn,Mailr);
+    WindowDoOK(wn,0);
+    ReRunWindowDef(wn);
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"RequireAcceptanceMail"));
+  end;
+  return;
+end;
+
+global
+updating procedure RequireAcceptanceMailLsm()
+begin
+  Integer wn,i;
+  record MailVc Mailr;
+  
+  wn = CurWindow;
+  if (UserCanAction("RequireAcceptanceMail",true)) then begin
+    i = 1;
+    while (GetRecordFromBrowse(Mailr,wn,i)) begin  
+      RecListAction_rlMailRequireAcceptance(Mailr);
+      i = i + 1;
+    end;
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"RequireAcceptanceMail"));
+  end;
+  return;
+end;
+
+global
+updating procedure MailDClassLater()
+begin
+  Integer wn;
+  record MailVc Mailr;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  SetReadFlagHAL(Mailr.SerNr,kMailStatusPostponed);
+  CloseWindow(wn);
+  return;
+end;
+
+global
+updating procedure MailDClassAccept()
+begin
+  Integer wn;
+  record MailVc Mailr;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  SetReadFlagHAL(Mailr.SerNr,kMailStatusAccepted);
+  ReRunWindowDef(wn);
+  return;
+end;
+
+global
+updating procedure MailDClassReject()
+begin
+  Integer wn;
+  record MailVc Mailr;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Mailr);
+  SetReadFlagHAL(Mailr.SerNr,kMailStatusRejected);
+  ReRunWindowDef(wn);
+  return;
+end;

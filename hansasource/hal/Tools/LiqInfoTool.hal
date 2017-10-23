@@ -1,0 +1,353 @@
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+
+updating procedure UpdateLiqInfo(LongInt transnr,Integer type,val invval,string invcurncy,val baseval,LongInt paynr,LongInt payrow)
+begin
+  record LIqInfoVc newLIr;
+  record LIqInfoVc LIr;
+  record LIqInfoVc oldLIr;
+  Boolean found,signf;
+  val remval,remvalbase;
+  record IVVc IVr;
+  record VIVc VIr;
+  
+  remval = invval;
+  remvalbase = baseval;  
+  if (remval>0) then begin
+    found = true;
+    LIr.IntYc = type;
+    LIr.TransNr = transnr;
+    found = true;
+    while (LoopKey("ActIntYc",LIr,2,found)) begin
+      if (LIr.IntYc!=type) then begin found = false; end;
+      if (LIr.TransNr!=transnr) then begin found = false; end;   
+      if (remval<=0) then begin found = false; end;   
+      if (found) then begin
+        if (LIr.Closed==0) then begin
+          RecordCopy(oldLIr,LIr);
+          LIr.Closed = 1;
+          LIr.PayNr = paynr;
+          LIr.PayRow = payrow;
+          if (LIr.Sum>remval) then begin
+            RecordCopy(newLIr,LIr);
+            newLIr.Sum = LIr.Sum - remval;
+            if (blank(baseval)) then begin
+              newLIr.BaseSum = MulWithRateToBase1(invcurncy,newLIr.NewPayDate,newLIr.Sum,DefaultCurRoundOff);
+            end else begin      
+              newLIr.BaseSum = LIr.BaseSum - remvalbase;
+            end;
+            newLIr.TransDate = CurrentDate;
+            newLIr.LiqInfoNr = LIr.SerNr;
+            newLIr.PayNr = paynr;
+            newLIr.PayRow = payrow;
+            newLIr.Closed = 0;
+            newLIr.SerNr = NextSerNr("LiqInfoVc",newLIr.TransDate,-1,false,"");
+            switch (type) begin
+              case IVYc:
+                IVr.SerNr = transnr;
+                if (ReadFirstMain(IVr,1,true)) then begin end;
+                newLIr.CUCode = IVr.CustCode;
+                newLIr.CUName = IVr.Addr0;
+                newLIr.Comment = IVr.InvComment;
+              case VIYc:
+                VIr.SerNr = transnr;
+                if (ReadFirstMain(VIr,1,true)) then begin end;
+                newLIr.CUCode = VIr.VECode;
+                newLIr.CUName = VIr.VEName;
+                newLIr.Comment = VIr.RefStr;
+            end;
+            if (RecordStore(newLIr,false)) then begin
+            end;
+          end;
+          if (RecordUpdate(oldLIr,LIr,true)==0) then begin end;
+          StepBack(LIr);
+          remval = remval - LIr.Sum;
+          remvalbase = remvalbase - LIr.BaseSum;
+        end else begin
+          if (RecordUpdate(oldLIr,LIr,true)==0) then begin end;
+          StepBack(LIr);
+          remval = remval - LIr.Sum;
+          remvalbase = remvalbase - LIr.BaseSum;
+        end;
+      end;
+    end;
+  end else begin
+    if (remval!=0) then begin
+      LIr.IntYc = type;
+      LIr.TransNr = transnr;
+      LIr.Closed = 1;
+      found = ReadFirstKey("IntYc",LIr,3,true);
+
+      if (found) then begin
+        RecordNew(newLIr);
+        newLIr.TransDate = CurrentDate;
+        newLIr.NewPayDate = CurrentDate;
+        newLIr.IntYc = type;
+        newLIr.TransNr = transnr;
+        newLIr.PayNr = paynr;
+        newLIr.PayRow = payrow;
+        newLIr.Closed = 0;
+        newLIr.Sum = -remval;
+        if (blank(baseval)) then begin
+          newLIr.BaseSum = MulWithRateToBase1(invcurncy,newLIr.NewPayDate,newLIr.Sum,DefaultCurRoundOff);
+        end else begin      
+          newLIr.BaseSum = LIr.BaseSum - remvalbase;
+        end;
+        switch (type) begin
+          case IVYc:
+            IVr.SerNr = transnr;
+            if (ReadFirstMain(IVr,1,true)) then begin end;
+            newLIr.CUCode = IVr.CustCode;
+            newLIr.CUName = IVr.Addr0;
+            newLIr.Comment = IVr.InvComment;
+          case VIYc:
+            VIr.SerNr = transnr;
+            if (ReadFirstMain(VIr,1,true)) then begin end;
+            newLIr.CUCode = VIr.VECode;
+            newLIr.CUName = VIr.VEName;
+            newLIr.Comment = VIr.RefStr;
+        end;
+        newLIr.SerNr = NextSerNr("LiqInfoVc",newLIr.TransDate,-1,false,"");
+        if (RecordStore(newLIr,false)) then begin
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure DeleteLiqInfos(LongInt liqinfonr)
+begin
+  record LIqInfoVc LIr;
+  Boolean found;
+
+ found = true;
+  LIr.LiqInfoNr = liqinfonr;
+  found = true;
+  while (LoopKey("LiqInfoNr",LIr,2,found)) begin
+    if (LIr.LiqInfoNr!=liqinfonr) then begin found = false; end;
+    if (found) then begin
+      RecordDelete(LIr);
+      StepBack(LIr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UnOKLiqInfoFromPay(LongInt paynr,LongInt payrow)
+begin
+  record LIqInfoVc newLIr;
+  record LIqInfoVc LIr;
+  record LIqInfoVc oldLIr;
+  Boolean found;
+  
+  found = true;
+  LIr.PayNr = paynr;
+  LIr.PayRow = payrow;
+  found = true;
+  while (LoopKey("PayNr",LIr,2,found)) begin
+    if (LIr.PayNr!=paynr) then begin found = false; end;
+    if (LIr.PayRow!=payrow) then begin found = false; end;   
+    if (found) then begin
+      if (LIr.Closed!=0) then begin
+        RecordCopy(oldLIr,LIr);
+        LIr.Closed = 0;        
+        if (RecordUpdate(oldLIr,LIr,true)==0) then begin end;
+        StepBack(LIr);
+        DeleteLiqInfos(LIr.SerNr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure DeleteLiqInfoFromOrg(LongInt transnr,Integer type)
+begin
+  record LIqInfoVc newLIr;
+  record LIqInfoVc LIr;
+  record LIqInfoVc oldLIr;
+  Boolean found;
+  
+  found = true;
+  LIr.IntYc = type;
+  LIr.TransNr = transnr;
+  found = true;
+  while (LoopKey("IntYc",LIr,2,found)) begin
+    if (LIr.IntYc!=type) then begin found = false; end;
+    if (LIr.TransNr!=transnr) then begin found = false; end;   
+    if (found) then begin
+      RecordDelete(LIr);
+      StepBack(LIr);
+      DeleteLiqInfos(LIr.SerNr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateLiqInfoFromIP(LongInt transnr,val invval,string invcurncy,val baseval,LongInt paynr,LongInt payrow,Boolean unokf)
+begin  
+  if (unokf) then begin
+    UnOKLiqInfoFromPay(paynr,payrow);
+  end else begin
+    UpdateLiqInfo(transnr,IVYc,invval,invcurncy,baseval,paynr,payrow);
+  end;
+  return;
+end;
+
+function Date PreviousLiqInfoDate(LongInt transnr,Integer IntYc)
+begin
+  Date res;
+  record LIqInfoVc LIr;
+  Boolean found;
+
+  found = true;
+  LIr.IntYc = IntYc;
+  LIr.TransNr = transnr;
+  while (LoopKey("IntYc",LIr,2,found)) begin
+    if (LIr.IntYc!=IntYc) then begin found = false; end;   
+    if (LIr.TransNr!=transnr) then begin found = false; end;
+    if (found) then begin
+      if (LIr.LiqInfoNr>0) then begin
+        res = PreviousLiqInfoDate(LIr.LiqInfoNr,LIr.IntYc);
+      end;
+      res = LIr.TransDate;
+    end;
+  end;
+  PreviousLiqInfoDate = res;
+  return;
+end;
+
+updating procedure UnOKLiqInfoFromCreditNote(LongInt transnr,Integer IntYc)
+begin
+  record LIqInfoVc LIr;
+  Boolean found;
+  Date td;
+  
+  found = true;
+  LIr.IntYc = IntYc;
+  LIr.TransNr = transnr;
+  while (LoopKey("IntYc",LIr,2,found)) begin
+    if (LIr.IntYc!=IntYc) then begin found = false; end;   
+    if (LIr.TransNr!=transnr) then begin found = false; end;
+    if (found) then begin
+      if (LIr.LiqInfoNr>0) then begin
+        td = PreviousLiqInfoDate(LIr.LiqInfoNr,LIr.IntYc);
+      end;
+      if (blankdate(td)) then begin
+        td = LIr.TransDate;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateLiqInfoFromCreditNote(LongInt transnr,val invval,string invcurncy,val baseval,LongInt paynr,LongInt payrow,Boolean unokf)
+begin  
+/*
+  if (unokf) then begin
+    UnOKLiqInfoFromCreditNote(transnr,IVYc);
+  end else begin
+    UpdateLiqInfo(transnr,IVYc,invval,invcurncy,baseval,paynr,payrow);
+  end;
+*/  
+  UpdateLiqInfo(transnr,IVYc,invval,invcurncy,baseval,paynr,payrow);
+  return;
+end;
+
+global
+updating procedure StoreLiqInfoFromCLIn(record CLInVc CLInp,row CLInVc CLInrw,Integer rownr)
+begin
+  record IVVc IVr;
+  val invval;
+  
+  IVr.SerNr = CLInrw.TransNr;
+  if (ReadFirstMain(IVr,1,true)) then begin
+    CurValToOtherCur(CLInp.TransDate,CLInp.CurncyCode,CLInrw.Sum,IVr.CurncyCode,invval,DefaultCurRoundOff);  
+    UpdateLiqInfo(CLInrw.TransNr,IVYc,invval,IVr.CurncyCode,blankval,CLInp.SerNr,rownr);
+  end;
+  return;
+end;
+
+global
+updating procedure StoreLiqInfoFromOP(record OPVc OPp)
+begin
+  row OPVc OPrw;
+  row OPVc OP2rw;
+  Integer i,rwcnt,j;
+  val pinvval;
+
+  rwcnt = MatRowCnt(OPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPp,i,OPrw);  
+    switch (OPrw.stp) begin
+      case 1:
+        pinvval = OPrw.PInvVal;
+        if (OPrw.ovst==0) then begin
+          for (j=i+1;j<rwcnt;j=j+1) begin
+            MatRowGet(OPp,j,OP2rw);  
+            if (OP2rw.VISerNr==OPrw.VISerNr) then begin
+              switch (OP2rw.stp) begin
+                case 5: pinvval = pinvval + OP2rw.PInvVal;
+                otherwise j = rwcnt;
+              end;
+            end;
+          end;
+          UpdateLiqInfo(OPrw.VISerNr,VIYc,pinvval,OPrw.PInvCurncy,blankval,OPp.SerNr,i);
+        end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure StoreLiqInfoFromCLOut(record CLOutVc CLOutp,row CLOutVc CLOutrw,Integer rownr)
+begin
+  record VIVc VIr;
+  val invval;
+  
+  VIr.SerNr = CLOutrw.TransNr;
+  if (ReadFirstMain(VIr,1,true)) then begin
+    CurValToOtherCur(CLOutp.TransDate,CLOutp.CurncyCode,CLOutrw.Sum,VIr.CurncyCode,invval,DefaultCurRoundOff);  
+    UpdateLiqInfo(CLOutrw.TransNr,VIYc,invval,CLOutp.CurncyCode,blankval,CLOutp.SerNr,rownr);
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateLiqInfoFromVI(LongInt transnr,val invval,string invcurncy,LongInt paynr)
+begin
+  row OPVc OPrw;
+  Integer i,rwcnt;
+
+  UpdateLiqInfo(transnr,VIYc,invval,invcurncy,blankval,paynr,-1);
+  return;
+end;
+
+global
+updating procedure StoreLiqInfoFromTR(record TRVc TRp,row TRVc TRrw,Integer rownr)
+begin
+  val invval;
+  
+  switch (TRrw.Typ) begin
+    case 1:
+      invval = TRrw.CurCredVal - TRrw.CurDebVal;
+      if (invval==0) then begin
+        invval = TRrw.CredVal - TRrw.DebVal;
+      end;
+      UpdateLiqInfo(TRrw.SerNr,IVYc,invval,TRrw.Curncy,TRrw.CredVal - TRrw.DebVal,TRp.Number,rownr)
+    case 2:
+      invval = TRrw.CurDebVal - TRrw.CurCredVal;
+      if (invval==0) then begin
+        invval = TRrw.DebVal - TRrw.CredVal;
+      end;
+      UpdateLiqInfo(TRrw.SerNr,VIYc,invval,TRrw.Curncy,TRrw.DebVal - TRrw.CredVal,TRp.Number,rownr)
+  end;
+  return;
+end;
+

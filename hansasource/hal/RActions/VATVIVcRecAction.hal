@@ -1,0 +1,509 @@
+external updating procedure InvalidateTR(Integer,LongInt);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure SwapM4Val(var val,var val);
+external function Boolean SerNrTestVATVIVc(LongInt,Date,var Boolean);
+external procedure VATVISumup(var record VATVIVc);
+external updating procedure StoreUnOKHistory(string,LongInt,Date,Time,string);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external function Integer IsUnOKAllowed_VATVIVc(record VATVIVc);
+external function Integer MakeTransFromVATVI(record TRVc,record VATVIVc,Boolean);
+external updating function Integer UpdateTRVATVI(record VIVc,var record VATVIVc,Integer);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external function Boolean Date2Test(string,Date,string,Integer);
+
+global
+function LongInt VATVIVcRecordSave(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+    
+  if (VATVIr.SerNr<=0) then begin
+    VATVIr.SerNr = NextSerNr("VATVIVc",VATVIr.TransDate,-1,false,VATVIr.LangCode);
+  end;  
+  VATVISumup(VATVIr);
+  VATVIVcRecordSave = res;
+  RETURN;
+END;
+
+updating procedure TRVATVI(record VATVIVc VATVIr)
+BEGIN
+  record VIVc VIr;
+  record APAccBlock APb; 
+  record VATIVTBlock VATIVb; 
+  
+  VIr.SerNr = VATVIr.VINr;
+  if (ReadFirstMain(VIr,1,true)) then begin
+    BlockLoad(VATIVb);
+    if (APb.PostVIVATonVATCorr==0) then begin
+      if (VATVIr.TransDate>=VIr.TransDate) or (VATIVb.TRforVATCorrwithDateinPast!=0) then begin
+        if (UpdateTRVATVI(VIr,VATVIr,1)==0) then begin end;
+      end;
+    end else begin
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt VATVIVcRecordSaveAfter(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record VIVc VIr;
+  record OPVc OPr;
+  
+  if (VATVIr.OKFlag!=0) then begin
+    TRVATVI(VATVIr);
+  end;
+
+  VIr.SerNr = VATVIr.VINr;  
+  if (ReadFirstMain(VIr,1,true)) then begin
+    CreateRecordLink(VATVIr,CurrentCompany,VIr,CurrentCompany);  
+    CreateRecordLink(VIr,CurrentCompany,VATVIr,CurrentCompany);  
+  end;
+  OPr.SerNr = VATVIr.OPNr;
+  if (ReadFirstMain(OPr,1,true)) then begin
+    CreateRecordLink(VATVIr,CurrentCompany,OPr,CurrentCompany);  
+    CreateRecordLink(OPr,CurrentCompany,VATVIr,CurrentCompany);  
+  end;
+  VATVIVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+updating procedure TRVATVIUpdateMark(record VATVIVc VATVIr)
+BEGIN
+  record TRVc TRr;
+  record TRVc oldTRr;
+  row TRVc TRrw;
+  
+  TRr.IntYc = VATVIYc;
+  TRr.Number = VATVIr.SerNr;
+  if (ReadFirstMain(TRr,0,true)) then begin
+    RecordCopy(oldTRr,TRr);
+    ClearRow(TRr,TRrw,2);
+    TRrw.UpdDate = CurrentDate;
+    TRrw.Sign = CurrentUser;
+    TRrw.OldTransDate = TRr.TransDate;
+    MatRowPut(TRr,MatRowCnt(TRr),TRrw);
+    TRr.TransDate = VATVIr.TransDate;
+    if (RecordUpdate(oldTRr,TRr,true)) then begin 
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt VATVIVcRecordUpdateAfter(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((VATVIr.OKFlag!=0) and (VATVI2r.OKFlag==0)) then begin
+    TRVATVI(VATVIr);
+  end;
+  if ((VATVIr.OKFlag!=0) and (VATVI2r.OKFlag!=0)) then begin//update date
+    if (VATVI2r.TransDate!=VATVIr.TransDate) then begin
+      TRVATVIUpdateMark(VATVIr);
+    end;
+  end;
+  if ((VATVIr.OKFlag==0) and (VATVI2r.OKFlag==1)) then begin//unok
+    DeleteTransaction(VATVIr.SerNr,VATVIYc);
+    StoreUnOKHistory("VATVIVc",VATVIr.SerNr,CurrentDate,CurrentTime,CurrentUser);
+  end;        
+  if ((VATVI2r.Invalid==0) and (VATVIr.Invalid!=0)) then begin
+    if (VATVI2r.OKFlag!=0) then begin
+      InvalidateTR(VATVIYc,VATVIr.SerNr);
+    end;      
+  end;
+  VATVIVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt VATVIVcRecordDefaults(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;//VIView
+  record AccBlock ARAccb;
+  Date bd;
+  Time bt;
+
+  BlockLoad(ARAccb);
+  VATVIr.SerNr = -1;
+  VATVIr.TransDate = CurrentDate;
+  VATVIr.VATVIDate = CurrentDate;
+  if (SingleUserMode) then begin
+    VATVIr.SerNr = NextSerNr("VATVIVc",VATVIr.TransDate,-1,false,VATVIr.LangCode);
+  end;
+  VATVIr.VINr = -1;
+  VATVIr.CredInv = -1;
+  VATVIr.PayVal = blankval;
+  VATVIr.RebVal = blankval;
+  VATVIr.RebVal2 = blankval;
+  VATVIr.VATVal = blankval;
+  VATVIr.CalcVATVal = blankval;
+  VATVIr.HoldSum = blankval;
+  VATVIr.FrRate = blankval;
+  VATVIr.ToRateB1 = blankval;
+  VATVIr.ToRateB2 = blankval;
+  VATVIr.BaseRate1 = blankval;
+  VATVIr.BaseRate2 = blankval;
+  VATVIr.NoTAXonVAT = ARAccb.NoTAXonVAT;
+  VATVIr.Invalid = 0;
+  VATVIr.InvalidDate = bd;
+  VATVIr.InvalidTime = bt;
+  VATVIVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt VATVIVcRecordDuplicate(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Integer i,rwcnt;
+  Date bd;
+  Time bt;
+    
+  VATVIr.SerNr = -1;
+  VATVIr.TransDate = CurrentDate;
+  VATVIr.VATVIDate = CurrentDate;
+  if (SingleUserMode) then begin
+    VATVIr.SerNr = NextSerNr("VATVIVc",VATVIr.TransDate,-1,false,VATVIr.LangCode);
+  end;
+  VATVIr.OKFlag = 0;
+  VATVIr.VINr = -1;
+  VATVIr.CredInv = -1;
+  VATVIr.Invalid = 0;
+  VATVIr.InvalidDate = bd;
+  VATVIr.InvalidTime = bt;
+  rwcnt = MatRowCnt(VATVIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowDelete(VATVIr,i);
+    rwcnt = MatRowCnt(VATVIr);
+    i = i -1;
+  end;  
+  VATVIVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+function Boolean AllowOKingOKedVATVI(record VATVIVc VATVIp,record VATVIVc VATVI2p)
+BEGIN
+  Boolean res,umf;
+  Integer rwcnt,oldrwcnt;
+  row VATVIVc VATVIrw;
+  
+  oldrwcnt = MatRowCnt(VATVI2p);
+  rwcnt = MatRowCnt(VATVIp);
+  if (oldrwcnt<rwcnt) then begin
+    MatRowGet(VATVIp,oldrwcnt,VATVIrw);
+    if (VATVIrw.stp==2) then begin umf = true; end;
+  end;
+  if (umf) then begin
+    res = true;
+  end;
+  AllowOKingOKedVATVI = res;
+  RETURN;
+END;
+
+function Boolean TestVATVITypeExists(string vatvitype)
+begin
+  Boolean res;
+  record VATVITypeBlock VATVITb;
+  row VATVITypeBlock VATVITbrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(VATVITb);
+  rwcnt = MatRowCnt(VATVITb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATVITb,i,VATVITbrw);
+    if (vatvitype==VATVITbrw.Code) then begin
+      res = true;
+      goto LTestVATVITypeExists;
+    end;
+  end;
+LTestVATVITypeExists:;  
+  TestVATVITypeExists = res;
+  return; 
+end;
+
+global
+updating function LongInt VATVIVcRecordCheck(var record VATVIVc VATVIp,record VATVIVc VATVI2p,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record VIVc VIr;
+  record VATVIVc locVATVIr;
+  LongInt oldnr;
+  Boolean transf,unokf;
+  Integer insertmode,updatemode;
+  record TRVc gTRp;
+  Integer err;
+  Boolean gentrans;
+  string 255 tstr;
+  record VATIVTBlock VATIVb; 
+  
+  res = 0;
+  BlockLoad(VATIVb);
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  if (VATVIp.Invalid==0) then begin
+    oldnr = VATVIp.SerNr;
+    if (VATVIp.OKFlag==0) then begin
+      if (stat==updatemode) then begin
+        if (VATVI2p.OKFlag==1) then begin unokf = true; end;
+      end;
+    end;  
+  end;  
+  if (unokf) then begin
+    err = IsUnOKAllowed_VATVIVc(VATVIp);
+    if (err!=0) then begin
+      RecordCheckError(err,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LVATVIVcRecordCheck;
+  end;  
+  if (VATVIp.Invalid==0) then begin
+  if ((VATVI2p.OKFlag==1) and (stat==updatemode)) then begin
+    if (AllowOKingOKedVATVI(VATVIp,VATVI2p)) then begin
+      goto LVATVIVcRecordCheck;
+    end;
+    res = -1;
+    goto LVATVIVcRecordCheck;
+  end;  
+  end;  
+  transf = false;
+  if (VATVIp.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (VATVI2p.OKFlag==0) then begin transf = true; end;
+    end;  
+  end;
+  if (VATVIp.SerNr<=0) then begin
+    VATVIp.SerNr = NextSerNr("VATVIVc",VATVIp.TransDate,-1,false,VATVIp.LangCode);
+  end;
+  if ((stat==insertmode) or (VATVIp.SerNr!=VATVI2p.SerNr)) then begin
+    locVATVIr.SerNr = VATVIp.SerNr;
+    if (ReadFirstMain(locVATVIr,1,true)) then begin
+      RecordCheckError(1115,"",-1,"SerNr");      
+      res = -1;
+      goto L99VATVIVcRecordCheck;
+    end;
+  end;
+  if (SerNrTestVATVIVc(VATVIp.SerNr,VATVIp.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto L99VATVIVcRecordCheck;
+  end;
+  if (Date2Test("VATVIVc",VATVIp.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto L99VATVIVcRecordCheck;
+  end;
+  if (blankdate(VATVIp.TransDate)) then begin
+    RecordCheckError(1126,"",-1,"TransDate");      
+    res = -1;
+    goto L99VATVIVcRecordCheck;
+  end;
+  if (VATVIp.VINr<=0) then begin
+    if (VATVIp.OPNr<=0) then begin
+      RecordCheckError(1131,"",-1,"VINr");      
+      res = -1;
+      goto L99VATVIVcRecordCheck;
+    end;
+  end;
+  if (VATVIp.OPNr<=0) then begin
+    if (VATVIp.VINr<=0) then begin
+      RecordCheckError(1058,"",-1,"IVNr");      
+      res = -1;
+      goto L99VATVIVcRecordCheck;
+    end;
+  end;
+  if (VATVIp.VINr>0) then begin
+    VIr.SerNr = VATVIp.VINr;
+    if (ReadFirstMain(VIr,1,true)==false) then begin
+      RecordCheckError(1131,"",-1,"VINr");      
+      res = -1;
+      goto L99VATVIVcRecordCheck;
+    end;    
+    if (VATVIp.TransDate>=VIr.TransDate) then begin
+      if (UpdateTRVATVI(VIr,VATVIp,2)!=0) then begin
+        RecordCheckError(0,"",-1,"VINr");      
+        res = -1;
+        goto L99VATVIVcRecordCheck;
+      end;
+    end;
+  end;
+  if (nonblank(VATVIp.VATVIType)) then begin
+    if (TestVATVITypeExists(VATVIp.VATVIType)==false) then begin
+      RecordCheckError(24091," " & VATVIp.VATVIType,-1,"VATVIType");      
+      res = -1;
+      goto L99VATVIVcRecordCheck;
+    end;
+  end;
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+    err = 0;
+    if (VATVIp.TransDate>=VIr.TransDate) or (VATIVb.TRforVATCorrwithDateinPast!=0) then begin
+      err = MakeTransFromVATVI(gTRp,VATVIp,false);
+    end;
+    if (err!=0) then begin
+      RecordCheckError(err,"",-1,"SerNr");
+      res = -1;
+      goto L99VATVIVcRecordCheck;
+    end else begin    
+      if ((gTRp.Number>0) and (gTRp.IntYc==VATVIYc)) then begin
+        tstr = CheckTrans(gTRp,2,true);
+        if (nonblank(tstr)) then begin
+          RecordCheckError(1085,tstr,-1,"SerNr");      
+          res = -1;
+          goto L99VATVIVcRecordCheck;
+        end;
+        SaveTrans(gTRp);
+      end;
+    end;
+  end;    
+L99VATVIVcRecordCheck:;
+  if (res!=0) then begin
+    VATVIp.SerNr = oldnr;
+  end;    
+LVATVIVcRecordCheck:;  
+  VATVIVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt VATVIVcRecordRemoveTest(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLb;
+
+  res = 1;
+  BlockLoad(DBLb);
+  if (VATVIr.TransDate<=DBLb.DeleteBeforeDate) then begin
+    res = 1;
+    goto LVATVIVcRecordRemoveTest;
+  end;
+  if (VATVIr.OKFlag!=0) then begin
+    if (long3>0) then begin MessageBox(1560,""); end;
+    res = 0;
+  end;    
+LVATVIVcRecordRemoveTest:;
+  VATVIVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+procedure VATVIVcConvertB1ToB2(record VATVIVc VATVIr,var val to1,var val to2,var val br1,var val br2)
+BEGIN
+  val t;
+  row VATVIVc VATVIrw;
+  Integer i,rwcnt;
+
+  SwapM4Val(br1,br2);
+  SwapM4Val(to1,to2);
+  rwcnt = MatRowCnt(VATVIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATVIr,i,VATVIrw);
+    if (VATVIrw.stp==6) then begin
+      B1ToB2Val(VATVIrw.Sum,br1,br2,t);
+      VATVIrw.Sum = t;
+      MatRowPut(VATVIr,i,VATVIrw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function LongInt VATVIVcRecordImport(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val t,fr,to1,to2,br1,br2;
+  string 5 curncy;
+  Boolean gToDualBase,gBase1ToBase2;
+  record ConvMasterBlock cvm;
+      
+  BlockLoad(cvm);
+  if (blank(VATVIr.VATFrRate)) then begin VATVIr.VATFrRate = VATVIr.FrRate; end;
+  if (blank(VATVIr.VATToRateB1)) then begin VATVIr.VATToRateB1 = VATVIr.ToRateB1; end;
+  if (blank(VATVIr.VATToRateB2)) then begin VATVIr.VATToRateB2 = VATVIr.ToRateB2; end;
+  if (blank(VATVIr.VATBaseRate1)) then begin VATVIr.VATBaseRate1 = VATVIr.BaseRate1; end;
+  if (blank(VATVIr.VATBaseRate2)) then begin VATVIr.VATBaseRate2 = VATVIr.BaseRate2; end;
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (gToDualBase) then begin
+    curncy = VATVIr.CurncyCode;
+    fr = VATVIr.FrRate;
+    to1 = VATVIr.ToRateB1;
+    to2 = VATVIr.ToRateB2;
+    br1 = VATVIr.BaseRate1;
+    br2 = VATVIr.BaseRate2;
+    t = VATVIr.PayVal;
+    ConvertToDualBase(curncy,VATVIr.TransDate,fr,to1,to2,br1,br2,t,true);
+    VATVIr.CurncyCode = curncy;
+    VATVIr.FrRate = fr;
+    VATVIr.ToRateB1 = to1;
+    VATVIr.ToRateB2 = to2;
+    VATVIr.BaseRate1 = br1;
+    VATVIr.BaseRate2 = br2;
+    VATVIr.PayVal = t;                      
+  end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    curncy = VATVIr.CurncyCode;
+    to1 = VATVIr.ToRateB1;
+    to2 = VATVIr.ToRateB2;
+    br1 = VATVIr.BaseRate1;
+    br2 = VATVIr.BaseRate2;
+    VATVIVcConvertB1ToB2(VATVIr,to1,to2,br1,br2);
+    VATVIr.ToRateB1 = to1;
+    VATVIr.ToRateB2 = to2;
+    VATVIr.BaseRate1 = br1;
+    VATVIr.BaseRate2 = br2;
+  end;
+  if (VATVIr.NoTAXonVAT==-1) then begin
+    VATVIr.NoTAXonVAT = 0;
+  end;
+  VATVIVcRecordImport = res;
+  RETURN;
+END;
+
+global
+function Boolean UserCanInvalidateVI()
+begin
+  Boolean res,HasInvInvalid,HasVIInvalid;
+  
+  res = true;
+  
+  HasInvInvalid = UserCanAction("InvInvalid",true)==UserCanAction("InvInvalid",false);
+  HasVIInvalid = UserCanAction("VIInvalid",true)==UserCanAction("VIInvalid",false);
+  
+  if (HasInvInvalid) then begin
+    res = UserCanAction("InvInvalid",true);
+  end;
+  
+  if (HasVIInvalid) then begin
+    res = UserCanAction("VIInvalid",true);
+  end;
+  
+  UserCanInvalidateVI = res;
+end;
+
+global
+function LongInt VATVIVcRecordInvalidateTest(var record VATVIVc VATVIr,record VATVIVc VATVI2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record DBLockBlock DBLb;
+
+  res = 0;
+  BlockLoad(DBLb);
+  if (VATVIr.Invalid==0) then begin
+    if (VATVIr.TransDate>DBLb.PLLock) then begin
+      if (UserCanInvalidateVI) then begin      
+        VATVIr.Invalid = 1;
+        VATVIr.InvalidDate = CurrentDate;
+        VATVIr.InvalidTime = CurrentTime;
+        res = 1;
+      end;
+    end;
+    if (res==0) then begin
+      MessageBox(34500,"");
+    end;
+  end;
+LVATVIVcRecordInvalidateTest:;
+  VATVIVcRecordInvalidateTest = res;  
+  return;
+end;

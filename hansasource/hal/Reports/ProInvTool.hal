@@ -1,0 +1,1217 @@
+external procedure RowCalculateTaxMatrix_IVVc(var record IVVc,Integer,row IVVc);
+external function string 255 FillupTaxMatrix(Integer,string,string,string,string,string,var record TaxMatrixVc);
+external function string 20 GetTax2Acc(string);
+external procedure GetTaxesDiscounts(string,Date,string,string,var val,var val);
+external procedure RegionPerceptionTax(string,string,string,string,var string,var val);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure IVDchsum(var record IVVc,Integer);
+external function roundmode SetRoundModeD(Integer);
+external Procedure GetUserName(String ,var String);
+external function string 255 FindINObjects(string,string);
+external procedure AddObj(String, var string);
+external procedure SetORFlags(record ORVc);
+external procedure GetUserObject(string,var string);
+external procedure AdjustTBPrice(var val,var val);
+external procedure AddXSRow(var record XSVc,string,string,val,val,val,val,val,string,val,val,val,Integer);
+external procedure GetEmplName(string,var string);
+external procedure FindInvoiceMethod(LongInt,string,string,string,var val,Date,Integer,var record TBBUVc,
+                                    var Integer,var val,val,var val,val,var val,val,var val,val,var val,var string,Boolean);
+external procedure FindBudgetRow(string,string,string,Integer,var Date,var Integer);
+external function Boolean GetItemNameStr(Integer,var string,string,string,string);
+external procedure GetItemSalesAcc(string,Integer,var string);
+external procedure GetItemVATCode(string,Integer,var string,Boolean);
+external function Integer CountObjects(string);
+
+function Boolean CheckIfProjectStageSIgned(string prcode,string prstage)
+begin
+  Boolean res;
+  record PRScheduleVc PRSchr;
+  row PRScheduleVc PRSchrw;
+  Integer i,rwcnt;
+  
+  PRSchr.PRCode = prcode; 
+  if (ReadFirstMain(PRSchr,1,true)) then begin
+    rwcnt = MatRowCnt(PRSchr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(PRSchr,i,PRSchrw);
+      if (PRSchrw.stp==1) then begin
+        if (PRSchrw.PRStage==prstage) then begin
+          if (nonblank(PRSchrw.PRStageSign)) then begin
+            res = true;
+            goto LCheckIfProjectStageSIgned;
+          end;
+        end;
+      end;
+    end;
+  end;
+LCheckIfProjectStageSIgned:;  
+  CheckIfProjectStageSIgned = res;
+  return;
+end;
+
+procedure AddActivityDesc(Integer AddActInfo,record TBIVVc TBIVr,var record IVVc IVp,var Integer line)
+begin
+  record ActVc Actr;
+  record UserVc User;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+
+  if (AddActInfo==0) then begin
+    goto LAddActivityDesc;
+  end;
+  Actr.SerNr = TBIVr.SerNr;
+  if (ReadFirstMain(Actr,1,true)) then begin
+ /* 
+ done in other place already
+    if (AddActInfo==2) then begin
+      line = line + 1;
+      ClearRow(IVp,IVrw,kInvoiceRowTypeNormal);
+      IVrw.Spec = Actr.Comment;
+      MatRowPut(IVp,line,IVrw);
+    end;
+*/    
+    line = line + 1;
+    ClearRow(IVp,IVrw,kInvoiceRowTypeNormal);
+    if (CountObjects(Actr.MainPersons)==1) then begin
+      User.Code = Actr.MainPersons;
+      if (ReadFirstMain(User,1,true)) then begin
+        IVrw.Spec = User.Name & ",  ";
+      end;
+    end;
+    IVrw.Spec = IVrw.Spec & Actr.TransDate;
+    IVrw.Spec = IVrw.Spec & ",  ";
+    IVrw.Spec = IVrw.Spec & Left(Actr.StartTime,5) & " - ";
+    IVrw.Spec = IVrw.Spec & Left(Actr.EndTime,5);
+    MatRowPut(IVp,line,IVrw);
+  end;  
+LAddActivityDesc:;  
+  return;
+end;
+
+
+global
+procedure AddProjValue(Boolean amounts,Boolean cost,var val value,val sump,val costp,val qtyp)
+begin
+  val sumtoadd;
+  
+  if (amounts) then begin
+    if (cost) then begin
+      sumtoadd = costp * qtyp;
+    end else begin
+      sumtoadd = sump;
+    end;
+    value = value + sumtoadd;
+  end else begin
+    value = value + qtyp;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateOrderFromProj(record TBIVVc TBIVp,Boolean negf)
+begin
+  record ORVc ORr;
+  record ORVc oldORr;
+  row ORVc ORrw;
+  record SHVc SHr;
+  row SHVc SHrw;
+  Integer rwcnt;
+  
+  if (TBIVp.oVc!=kTBIVoSHVc) then begin
+    goto LUpdateOrderFromProj;
+  end;
+  SHr.SerNr = TBIVp.SerNr;
+  if (ReadFirstMain(SHr,1,true)) then begin
+    ORr.SerNr = SHr.OrderNr;
+    if (ReadFirstMain(ORr,1,true)) then begin
+      RecordCopy(oldORr,ORr);
+      rwcnt = MatRowCnt(SHr);
+      if (rwcnt>TBIVp.Row) then begin
+        MatRowGet(SHr,TBIVp.Row,SHrw);
+        rwcnt = MatRowCnt(ORr);
+        if (rwcnt>SHrw.OrdRow) then begin
+          MatRowGet(ORr,SHrw.OrdRow,ORrw);   
+          if (ORrw.ArtCode==TBIVp.ArtCode) then begin
+            if (negf) then begin
+              ORrw.Invd = ORrw.Invd - TBIVp.Qty;
+            end else begin
+              ORrw.Invd = ORrw.Invd + TBIVp.Qty;
+            end;
+            if (ORrw.Invd<=0) then begin ORrw.Invd = blankval; end;
+            MatRowPut(ORr,SHrw.OrdRow,ORrw);
+            SetORFlags(ORr);
+            if (RecordUpdate(oldORr,ORr,false)==0) then begin
+            end;
+          end;
+        end;
+      end;
+    end;      
+  end;  
+LUpdateOrderFromProj:;
+  return;
+end;
+
+global
+procedure GetPRItemLangName(string code,string langcode,string comment,var string name)
+BEGIN
+  record INVc INr;
+  
+  name = "";
+  INr.Code = code;
+  if (ReadFirstMain(INr,1,true)) then begin
+    if (GetItemNameStr(1,name,langcode,INr.Name,INr.Code)) then begin end;
+    if (nonblank(comment)) then begin name = name & ", "; end;
+  end;
+  if (nonblank(comment)) then begin name = name & comment; end;
+  RETURN;
+END;
+
+procedure NewIVExtraRow(string item,string grp,Integer type,Integer fin,string vat,string salesacc,string prj,string emcode,
+                        Array string aProject,Array string aItem,Array string aGroup,Array string aEMCode,
+                        Array string aVATCode,Array string aSalesAcc,Array Integer aItemType,Array Integer aFinished,var Integer acnt)
+BEGIN
+  aItem[acnt] = item;
+  aGroup[acnt] = grp;
+  aEMCode[acnt] = emcode;
+  aVATCode[acnt] = vat;
+  aSalesAcc[acnt] = salesacc;
+  aItemType[acnt] = type;
+  aFinished[acnt] = fin;
+  aProject[acnt] = prj;
+  acnt = acnt + 1;  
+  RETURN;
+END;
+
+procedure AddLineToDateArray(var Array Date aEvDat,var Array Integer aRowNo,var Integer alinecnt,Date evdat,Integer rowno)
+begin
+  if (nonblankdate(evdat)) then begin
+    aEvDat[alinecnt] = evdat;
+    aRowNo[alinecnt] = rowno;
+    alinecnt = alinecnt + 1;
+  end;
+  return;
+end;
+ 
+function Integer FindItemPersonInInvoice(record IVVc IVp,Integer type,string prj,Integer sep,string item,string emcode,string desc,Integer aivrows,
+                        Array string aProject,Array string aItem,Array string aGroup,Array string aEMCode,
+                        Array string aVATCode,Array string aSalesAcc,Array Integer aItemType,Array Integer aFinished,var Integer acnt,
+                        var Array Date aEvDat,var Array Integer aRowNo,var Integer alinecnt,Date evdat)
+BEGIN
+  record INVc INr;
+  Integer res;
+  Integer i,ivrwcnt;
+  row IVVc IVrw;
+  string 255 vatc;
+  string 10 salesacc;
+  string 255 tstr;
+  Boolean infound;
+  string 255 tax2code,taxtemplatecode;
+  val tax2prc,tax1reb,tax2reb;
+  record TaxMatrixVc TMr;
+  
+  GetItemVATCode(item,IVp.ExportFlag,vatc,true);
+  GetItemSalesAcc(item,IVp.ExportFlag,salesacc);
+  if (nonblank(IVp.CustVATCode)) then begin
+    vatc = IVp.CustVATCode;
+  end;
+  INr.Code = item;
+  infound = ReadFirstMain(INr,1,true);
+  res = -1;
+  if (sep!=0) then begin goto L80FindItemPersonInInvoice; end;
+  for (i=0;i<acnt;i=i+1) begin
+    if ((aItem[i]==item) and (aEMCode[i]==emcode) and (vatc==aVATCode[i]) and (salesacc==aSalesAcc[i]) and (prj==aProject[i])) then begin
+      if (aFinished[i]==0) then begin
+        res = i;
+        goto L80FindItemPersonInInvoice;
+      end;
+    end;
+  end;
+L80FindItemPersonInInvoice:;
+  if (res==-1) then begin
+    NewIVExtraRow(item,"",-1,sep,vatc,salesacc,prj,emcode,aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt);
+    tstr = "";
+    GetUserObject(emcode,tstr);
+    if (SetInSet(tstr,IVp.Objects)) then begin
+      tstr = "";
+    end;
+    if (nonblank(tstr)) then begin
+      tstr = tstr & ",";
+    end;
+    if (infound) then begin
+      tstr = tstr & FindINObjects(INr.Objects,INr.Group);
+    end;
+    ivrwcnt = MatRowCnt(IVp);
+    res = ivrwcnt;
+    ClearRow(IVp,IVrw,1);
+    IVrw.ArtCode = item;
+    IVrw.Spec = INr.Name;
+    IVrw.VATCode = vatc;
+    IVrw.TaxTemplateCode = FillupTaxMatrix(0,IVp.BranchID,IVp.CustCode,IVp.CustCat,IVp.DelAddrCode,taxtemplatecode,TMr);
+    PackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+    IVrw.SalesAcc = salesacc;
+    IVrw.Spec = desc;
+    IVrw.Objects = tstr;
+    IVrw.Perceptions = INr.Perceptions;
+    RegionPerceptionTax(IVp.CustCode,IVp.Region,INr.EUCodex,INr.Group,tax2code,tax2prc);
+    GetTaxesDiscounts(IVp.CustCode,IVp.InvDate,IVrw.VATCode,tax2code,tax1reb,tax2reb);
+    if (IVp.NoTax2==0) then begin
+      IVrw.TAX2Code = tax2code;
+      IVrw.TAX2Prc = tax2prc;
+      IVrw.TAX2Reb = tax2reb;
+      IVrw.TAX2Acc = GetTax2Acc(IVrw.TAX2Code);
+    end;
+    if (IVp.NoTax1==0) then begin
+      IVrw.TAX1Reb = tax1reb;
+    end;
+    MatRowPut(IVp,res,IVrw);
+    AddLineToDateArray(aEvDat,aRowNo,alinecnt,evdat,res);
+  end else begin
+    res = res + aivrows;
+  end;
+  FindItemPersonInInvoice = res;
+  RETURN;
+END;
+
+function Integer FindItemInInvoice(record IVVc IVp,Integer type,string prj,Integer sep,string item,
+                          string desc,string desc1,string desc2,Integer aivrows,string empcode,string objstr,
+                          Array string aProject,Array string aItem,Array string aGroup,Array string aEMCode,
+                          Array string aVATCode,Array string aSalesAcc,Array Integer aItemType,Array Integer aFinished,var Integer acnt,
+                          var Array Date aEvDat,var Array Integer aRowNo,var Integer alinecnt,Date evdat)
+BEGIN
+  record INVc INr;
+  Integer res;
+  Integer i,rownr;
+  row IVVc IVrw;
+  string 255 vatc;
+  string 10 salesacc;
+  string 255 tstr,artname,inobjects,taxtemplatecode;
+  Boolean infound;
+  string 255 tax2code;
+  val tax2prc,tax1reb,tax2reb;
+  record TaxMatrixVc TMr;
+  
+  GetItemVATCode(item,IVp.ExportFlag,vatc,true);
+  GetItemSalesAcc(item,IVp.ExportFlag,salesacc);
+  if (nonblank(IVp.CustVATCode)) then begin
+    vatc = IVp.CustVATCode;
+  end;
+  INr.Code = item;
+  infound = ReadFirstMain(INr,1,true);
+  res = -1;
+  if (sep!=0) then begin goto L80FindItemInInvoice; end;
+  for (i=0;i<acnt;i=i+1) begin
+    if ((aItem[i]==item) and (vatc==aVATCode[i]) and (salesacc==aSalesAcc[i]) and (prj==aProject[i])) then begin
+      if (aFinished[i]==0) then begin
+        res = i;
+        goto L80FindItemInInvoice;
+      end;
+    end;
+  end;
+L80FindItemInInvoice:;
+  if (res==-1) then begin
+    tstr = "";
+    NewIVExtraRow(item,"",-1,sep,vatc,salesacc,prj,"",aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt);
+    if (nonblank(empcode)) then begin
+      GetUserObject(empcode,tstr);
+      if (SetInSet(tstr,IVp.Objects)) then begin
+        tstr = "";
+      end;
+    end;
+    artname = INr.Name;
+    if (infound) then begin
+      inobjects = FindINObjects(INr.Objects,INr.Group);
+      if (nonblank(inobjects)) then begin
+        if (nonblank(tstr)) then begin tstr = tstr & ","; end;
+        tstr = tstr & inobjects;
+      end;
+      if (GetItemNameStr(1,artname,IVp.LangCode,INr.Name,INr.Code)) then begin end;
+    end;    
+    res = MatRowCnt(IVp);
+    ClearRow(IVp,IVrw,1);
+// Why was this commented out? They SHOULD be on the Invoice. Without this everything is crap.....
+    IVrw.ArtCode = item;
+    if (nonblank(desc)) then begin
+      IVrw.Spec = desc;
+    end else begin
+      IVrw.Spec = artname;
+    end;
+    IVrw.VATCode = vatc;
+    IVrw.TaxTemplateCode = FillupTaxMatrix(0,IVp.BranchID,IVp.CustCode,IVp.CustCat,IVp.DelAddrCode,taxtemplatecode,TMr);
+    PackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+    IVrw.SalesAcc = salesacc;
+    IVrw.Perceptions = INr.Perceptions;
+    if ((nonblank(tstr)) and (nonblank(objstr))) then begin
+      if (SetInSet(tstr,IVp.Objects)!=false) then begin
+        AddObj(objstr,tstr);
+      end;
+    end;
+    IVrw.Objects = tstr;
+    RegionPerceptionTax(IVp.CustCode,IVp.Region,INr.EUCodex,INr.Group,tax2code,tax2prc);
+    GetTaxesDiscounts(IVp.CustCode,IVp.InvDate,IVrw.VATCode,tax2code,tax1reb,tax2reb);
+    if (IVp.NoTax2==0) then begin
+      IVrw.TAX2Code = tax2code;
+      IVrw.TAX2Prc = tax2prc;
+      IVrw.TAX2Reb = tax2reb;
+      IVrw.TAX2Acc = GetTax2Acc(IVrw.TAX2Code);
+    end;
+    if (IVp.NoTax1==0) then begin
+      IVrw.TAX1Reb = tax1reb;
+    end;
+    MatRowPut(IVp,res,IVrw);
+    AddLineToDateArray(aEvDat,aRowNo,alinecnt,evdat,res);
+    rownr = res;
+    if (nonblank(desc1)) then begin
+      rownr = rownr + 1;
+      ClearRow(IVp,IVrw,1);
+      IVrw.Spec = desc1;
+      MatRowPut(IVp,rownr,IVrw);
+      AddLineToDateArray(aEvDat,aRowNo,alinecnt,evdat,rownr);
+    end;
+    if (nonblank(desc2)) then begin
+      rownr = rownr + 1;
+      ClearRow(IVp,IVrw,1);
+      IVrw.Spec = desc2;
+      MatRowPut(IVp,rownr,IVrw);
+      AddLineToDateArray(aEvDat,aRowNo,alinecnt,evdat,rownr);
+    end;
+  end else begin
+    res = res + aivrows;//+1 doesnt it mean new row, anyway there is crappy row with it
+  end;
+  FindItemInInvoice = res;
+  RETURN;
+END;
+
+function Integer FindItemGroupInInvoice(record IVVc IVp,Integer type,string prj,Integer sep,string item,Integer aivrows,
+                                        Array string aProject,Array string aItem,Array string aGroup,Array string aEMCode,
+                                        Array string aVATCode,Array string aSalesAcc,Array Integer aItemType,Array Integer aFinished,var Integer acnt,
+                                        var Array Date aEvDat,var Array Integer aRowNo,var Integer alinecnt,Date evdat)
+BEGIN
+  record INVc INr;
+  record ITVc ITr;
+  Integer res;
+  Integer i,ivrwcnt;
+  row IVVc IVrw;
+  string 255 vatc,salesacc,taxtemplatecode;
+  record TaxMatrixVc TMr;
+
+  GetItemVATCode(item,IVp.ExportFlag,vatc,true);
+  GetItemSalesAcc(item,IVp.ExportFlag,salesacc);
+  if (nonblank(IVp.CustVATCode)) then begin
+    vatc = IVp.CustVATCode;
+  end;
+  INr.Code = item;
+  if (ReadFirstMain(INr,1,true)) then begin end;
+  ITr.Code = INr.Group;
+  if (ReadFirstMain(ITr,1,true)) then begin end;
+  res = -1;
+  if (sep!=0) then begin goto L80FindItemGroupInInvoice; end;
+  for (i=0;i<acnt;i=i+1) begin
+    if ((aGroup[i]==INr.Group) and (vatc==aVATCode[i]) and (salesacc==aSalesAcc[i]) and (prj==aProject[i])) then begin
+      if (aFinished[i]==0) then begin
+        res = i;
+        goto L80FindItemGroupInInvoice;
+      end;
+    end;
+  end;
+L80FindItemGroupInInvoice:;
+  if (res==-1) then begin
+    NewIVExtraRow("",INr.Group,-1,sep,vatc,salesacc,prj,"",aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt);
+    ivrwcnt = MatRowCnt(IVp);
+    res = ivrwcnt;
+    ClearRow(IVp,IVrw,1);
+    IVrw.Spec = ITr.Comment;
+    IVrw.SalesAcc = salesacc;
+    IVrw.VATCode = vatc;
+    IVrw.TaxTemplateCode = FillupTaxMatrix(0,IVp.BranchID,IVp.CustCode,IVp.CustCat,IVp.DelAddrCode,taxtemplatecode,TMr);
+    PackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+    IVrw.Perceptions = INr.Perceptions;
+    MatRowPut(IVp,res,IVrw);
+    AddLineToDateArray(aEvDat,aRowNo,alinecnt,evdat,res);
+  end else begin
+    res = res + aivrows;//+1
+  end;
+  FindItemGroupInInvoice = res;
+  RETURN;
+END;
+
+
+function Integer FindItemTypeInInvoice(record IVVc IVp,Integer type,string prj,Integer sep,string item,Integer aivrows,val rowsump,
+                                       Array string aProject,Array string aItem,Array string aGroup,Array string aEMCode,
+                                       Array string aVATCode,Array string aSalesAcc,Array Integer aItemType,Array Integer aFinished,var Integer acnt,
+                                       var Array Date aEvDat,var Array Integer aRowNo,var Integer alinecnt,Date evdat)
+BEGIN
+  record ProjectBlock PRRec;
+  record INVc INr;
+  row IVVc IVrw;
+  Integer res;
+  Integer i;
+  Integer ivrwcnt;
+  string 255 salesacc,taxtemplatecode;
+  string 255 vatc;
+  record TaxMatrixVc TMr;
+
+  res = -1;
+  GetItemVATCode(item,IVp.ExportFlag,vatc,true);
+  GetItemSalesAcc(item,IVp.ExportFlag,salesacc);  
+  if (nonblank(IVp.CustVATCode)) then begin
+    vatc = IVp.CustVATCode;
+  end;
+  INr.Code = item;
+  if (ReadFirstMain(INr,1,true)) then begin end;
+  if (sep!=0) then begin goto L80FindItemTypeInInvoice; end;
+  for (i=0;i<acnt;i=i+1) begin
+    if ((aItemType[i]==type)  and (vatc==aVATCode[i]) and (salesacc==aSalesAcc[i]) and (prj==aProject[i])) then begin
+      if (aFinished[i]==0) then begin
+        res = i;
+        goto L80FindItemTypeInInvoice;
+      end;
+    end;
+  end;
+L80FindItemTypeInInvoice:;
+  if (blank(item)) then begin
+    if (nonblank(rowsump)) then begin goto LFindItemTypeInInvoice; end;
+  end;
+  if (res==-1) then begin
+    NewIVExtraRow("","",type,sep,vatc,salesacc,prj,"",aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt);
+    ivrwcnt = MatRowCnt(IVp);
+    res = ivrwcnt;
+    ClearRow(IVp,IVrw,1);
+    IVrw.SalesAcc = salesacc;
+    IVrw.VATCode = vatc;
+    IVrw.TaxTemplateCode = FillupTaxMatrix(0,IVp.BranchID,IVp.CustCode,IVp.CustCat,IVp.DelAddrCode,taxtemplatecode,TMr);
+    PackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+    BlockLoad(PRRec);
+    switch (type) begin
+      case 0:   IVrw.Spec = PRRec.DescPurch;
+      case 1:   IVrw.Spec = PRRec.DescStock;
+      case 3:   IVrw.Spec = PRRec.DescTime;
+      otherwise IVrw.Spec = PRRec.DescMaterial;
+    end;
+    IVrw.Perceptions = INr.Perceptions;
+    MatRowPut(IVp,res,IVrw);
+    AddLineToDateArray(aEvDat,aRowNo,alinecnt,evdat,res);
+  end else begin
+    res = res + aivrows;// + 1
+  end;
+LFindItemTypeInInvoice:;
+  FindItemTypeInInvoice = res;
+  RETURN;
+END;
+
+procedure AddIVTextRow(record IVVc IVp,string text)
+BEGIN
+  string 255 tstr;
+  Integer rwcnt;
+  row IVVc IVrw;
+  
+  if (blank(text)) then begin
+    tstr = " ";
+  end else begin
+    tstr = text;
+  end;
+  rwcnt = MatRowCnt(IVp);
+  ClearRow(IVp,IVrw,1);
+  IVrw.Spec = tstr;
+  MatRowPut(IVp,rwcnt,IVrw);
+  RETURN;
+END;
+
+function Integer AddProjectHeader(record RcVc RepSpec,record PRVc PRp,Boolean realinv,var record IVVc IVp,Boolean tbbuf,Integer InvoiceasFixedBudget)
+begin
+  Boolean space;
+  string 255 tstr;
+  Integer rownr,firstrow;
+  record ProjectBlock PRRec;
+
+  BlockLoad(PRRec);
+  rownr = MatRowCnt(IVp);
+  firstrow = rownr;
+  if (realinv) then begin
+    space = false;    
+    if (firstrow!=0) then begin
+      if (tbbuf==false) or (InvoiceasFixedBudget==0) then begin
+        AddIVTextRow(IVp,"");
+        AddIVTextRow(IVp,"");
+        rownr = rownr + 2;
+      end;
+    end;
+    space = false;
+    if (PRp.PRCodeOnInv!=0) then begin
+      tstr = PRRec.DescInv;
+      if (nonblank(tstr)) then begin
+        tstr = tstr & " ";
+      end;
+      tstr = tstr & PRp.Code;
+      AddIVTextRow(IVp,tstr);
+      rownr = rownr + 1;
+      space = true;
+    end;
+    if (nonblank(RepSpec.f3)) then begin
+      AddIVTextRow(IVp,RepSpec.f3);
+      rownr = rownr + 1;
+      space = true;
+    end;
+    if ((PRp.PRNameOnInv!=0) and (nonblank(PRp.Name))) then begin
+      if (space) then begin
+        AddIVTextRow(IVp,"");
+        rownr = rownr + 1;
+      end;
+      AddIVTextRow(IVp,PRp.Name);
+      rownr = rownr + 1;
+      space = true;
+    end;
+    if ((PRp.PRContOnInv!=0) and (nonblank(PRp.Contact))) then begin
+      if (space) then begin
+        AddIVTextRow(IVp,"");
+        rownr = rownr + 1;
+      end;
+      AddIVTextRow(IVp,PRp.Contact);
+      rownr = rownr + 1;
+      space = true;
+    end;
+    if ((PRp.PRLeaderOnInv!=0) and (nonblank(PRp.Leader))) then begin
+      GetUserName(PRp.Leader,tstr);
+      if (nonblank(tstr)) then begin
+        if (space) then begin
+          AddIVTextRow(IVp,"");
+          rownr = rownr + 1;
+        end;
+        AddIVTextRow(IVp,tstr);
+        rownr = rownr + 1;
+        space = true;
+      end;
+    end;
+    if (PRp.PRTextOnInv!=0) then begin
+      if (space) then begin
+        AddIVTextRow(IVp,"");
+        rownr = rownr + 1;
+      end;
+      if (nonblank(PRp.Desc0)) then begin
+        AddIVTextRow(IVp,PRp.Desc0);
+        rownr = rownr + 1;
+        space = true;
+      end;
+      if (nonblank(PRp.Desc1)) then begin
+        AddIVTextRow(IVp,PRp.Desc1);
+        rownr = rownr + 1;
+        space = true;
+      end;
+      if (nonblank(PRp.Desc2)) then begin
+        AddIVTextRow(IVp,PRp.Desc2);
+        rownr = rownr + 1;
+        space = true;
+      end;
+    end;
+    if (space) then begin
+      AddIVTextRow(IVp,"");
+      rownr = rownr + 1;
+    end;
+  end;  
+  AddProjectHeader = rownr;
+  return;
+end;  
+
+global
+updating procedure ProInvTBIVVc(record RcVc RepSpec,record PRVc PRp,var record IVVc IVp,record TBBUVc TBBUr,record XSVc XSp,
+                       Integer ItemType,Integer Invoice,Boolean detailf,Boolean realinv,Boolean asBudgeted,record GeneralOptionBlock GenOptr,
+                       Integer AvgQtyOnInv,Integer AvgPriOnInv,Integer oVc,
+                       var Integer ivrows,var Integer line,
+                       var val sump,var val theprivsum,
+                       Array string aProject,Array string aItem,Array string aGroup,Array string aEMCode,
+                       Array string aVATCode,Array string aSalesAcc,Array Integer aItemType,Array Integer aFinished,var Integer acnt,
+                       var Array Date aEvDat,var Array Integer aRowNo,var Integer alinecnt,Integer checkthattransexist,Integer InvoiceasFixedBudget,var Boolean projectheaderf,
+                       var vector val vwipcost,var Array string awipacc,var Array string awipbalacc,var Integer awipacccnt,
+                       var Array record TBIVVc aupdTBIVr,var Integer aupdacnt)
+begin
+  record TBIVVc TBIVr;
+  record TBIVVc oldTBIVr;
+  row TBBUVc TBBUrw;
+  row TBBUVc nextTBBUrw;
+  record INVc INr;
+  Boolean found,testf,fixed,addtbrowf;
+  Date dt;
+  Integer fulldetail,invmethod;
+  val invqty,invapric;
+  val invprice,t,s,invdiscount,invcostprice;
+  string 255 tstr,tstr2,tbburowcomment;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  Boolean addsubrowf;
+  Integer budtype;
+  Date bldat;
+  record BaseCurBlock BCb;
+  string 255 tax2code;
+  val tax2prc,tax1reb,tax2reb;
+  record TaxMatrixVc TMr;
+  record GeneralOptionBlock GOb;
+
+  BlockLoad(BCb);
+  BlockLoad(GOb);
+  TBIVr.PRCode = PRp.Code;
+  TBIVr.Invoice = -1;
+  TBIVr.oVc = kTBIVoTSVc;
+  found = true;     
+  while (LoopKey("InvKey",TBIVr,3,found)) begin
+    RecordCopy(oldTBIVr,TBIVr);
+    testf = true;
+    if (TBIVr.PRCode!=PRp.Code) then begin found = false; end;
+    if (TBIVr.Invoice!=-1) then begin found = false;  end;
+//*      if (TBIVr.oVc!=oVc) then begin found = false; end;
+    if (found==false) then begin testf = false; end;
+    if (nonblankdate(RepSpec.d1)) then begin
+      if (TBIVr.TransDate>RepSpec.d1) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (nonblankdate(TBIVr.InvAfter)) then begin
+          if (RepSpec.d1<TBIVr.InvAfter) then begin testf = false; end;
+        end;
+      end;
+    end;
+    switch (ItemType) begin
+      case 0:
+        FindBudgetRow(TBIVr.PRCode,TBIVr.ArtCode,"",ItemType,dt,budtype);
+      case 3:
+        FindBudgetRow(TBIVr.PRCode,TBIVr.ArtCode,TBIVr.EMCode,ItemType,dt,budtype);
+    end;
+    if (nonblankdate(dt)) then begin
+      if (nonblankdate(RepSpec.d1)) then begin
+        if (dt>RepSpec.d1) then begin testf = false; end;
+      end else begin
+        if (dt>CurrentDate) then begin testf = false; end;
+      end;
+    end;
+    if (TBIVr.ItemType!=ItemType) then begin testf = false; end;
+    if (oVc!=-1) then begin
+      if (TBIVr.oVc!=oVc) then begin testf = false; end;
+    end;
+    if (RepSpec.flags[21]!=0) then begin//stages
+      if (blank(TBIVr.PRStage)) then begin
+        testf = false;
+      end else begin
+        if (CheckIfProjectStageSIgned(PRp.Code,TBIVr.PRStage)==false) then begin
+          testf = false;
+        end;
+      end;
+    end;
+
+//    if (budtype==1) then begin testf = false; end; //should nt be like that ? 
+    if (testf) then begin
+      if (Invoice==3) then begin
+        fulldetail = 1;
+      end else begin
+        fulldetail = TBIVr.InvSeparately;
+      end;
+      if (detailf) then begin fulldetail = 1; end;
+      if (nonblank(TBIVr.CurncyCode)) and (TBIVr.CurncyCode!=BCb.BaseCur1) and (TBIVr.SumInCur!=0) then begin
+        FindInvoiceMethod(IVp.SerNr,TBIVr.PRCode,TBIVr.ArtCode,TBIVr.EMCode,TBIVr.SumInCur,RepSpec.d1,ItemType,TBBUr,invmethod,invprice,TBIVr.PriceInCur,invapric,TBIVr.InvQty,invqty,TBIVr.Discount,invdiscount,TBIVr.CostPrice,invcostprice,tbburowcomment,false);
+      end else begin
+        FindInvoiceMethod(IVp.SerNr,TBIVr.PRCode,TBIVr.ArtCode,TBIVr.EMCode,TBIVr.Sum,RepSpec.d1,ItemType,TBBUr,invmethod,invprice,TBIVr.Price,invapric,TBIVr.InvQty,invqty,TBIVr.Discount,invdiscount,TBIVr.CostPrice,invcostprice,tbburowcomment,false);
+      end;
+      // invmethod==0 running
+      // invmethod==1 fixed price 
+      if (projectheaderf) then begin
+        ivrows = AddProjectHeader(RepSpec,PRp,realinv,IVp,false,0);
+        projectheaderf = false;
+      end;
+      if (nonblank(invprice)) then begin
+        switch (Invoice) begin
+          case 0: // item type 
+            line = FindItemTypeInInvoice(IVp,ItemType,TBIVr.PRCode,fulldetail,TBIVr.ArtCode,ivrows,blankval,
+                                         aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,TBIVr.TransDate);
+          case 1: // item group 
+            line = FindItemGroupInInvoice(IVp,ItemType,TBIVr.PRCode,fulldetail,TBIVr.ArtCode,ivrows,
+                                          aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,TBIVr.TransDate);
+          case 2: // per item 
+            INr.Code = TBIVr.ArtCode;
+            if (ReadFirstMain(INr,1,true)) then begin
+              if (GetItemNameStr(1,tstr,PRp.LangCode,INr.Name,INr.Code)) then begin end;
+            end else begin
+              tstr = "";
+            end;
+            if (invmethod==1) then begin
+              if (nonblank(tbburowcomment)) then begin
+                tstr = tbburowcomment;
+              end;
+            end;
+            line = FindItemInInvoice(IVp,ItemType,TBIVr.PRCode,fulldetail,TBIVr.ArtCode,tstr,"","",ivrows,"",TBIVr.Objects,
+                                     aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,TBIVr.TransDate);
+          case 3: // per transaction 
+            line = FindItemInInvoice(IVp,ItemType,TBIVr.PRCode,fulldetail,TBIVr.ArtCode,TBIVr.Comment,TBIVr.Comment1,TBIVr.Comment2,ivrows,TBIVr.EMCode,TBIVr.Objects,
+                                     aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,TBIVr.TransDate);
+          case 4: // per item/person 
+            INr.Code = TBIVr.ArtCode;
+            if (ReadFirstMain(INr,1,true)) then begin
+              if (GetItemNameStr(1,tstr,PRp.LangCode,INr.Name,INr.Code)) then begin end;
+            end else begin
+              tstr = "";
+            end;
+//            if (fulldetail==0) then begin
+              GetEmplName(TBIVr.EMCode,tstr2);
+              if (nonblank(tstr2)) then begin
+                if (nonblank(tstr)) then begin
+                  tstr = tstr & ", ";
+                end;
+                tstr = tstr & tstr2;
+              end;              
+//            end;
+            line = FindItemPersonInInvoice(IVp,ItemType,TBIVr.PRCode,fulldetail,TBIVr.ArtCode,TBIVr.EMCode,tstr,ivrows,
+                                           aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,TBIVr.TransDate);
+            if (ItemType==3) then begin
+              if (fulldetail!=0) then begin
+                MatRowGet(IVp,line,IVrw);
+                IVrw.Quant = IVrw.Quant + invqty;
+                MatRowPut(IVp,line,IVrw);
+              end;                                                      
+            end;
+        end;
+        MatRowGet(IVp,line,IVrw);
+        IVrw.UnitCode = INr.Unittext;
+        IVrw.Sum = IVrw.Sum + invprice;
+        if (ItemType==kItemTypeStocked) then begin
+          if (TBIVr.oVc==kTBIVoSHVc) then begin
+            IVrw.SHNr = TBIVr.SerNr;
+            IVrw.SHRow = TBIVr.Row;
+            IVrw.FIFORowVal = TBIVr.CostPrice;
+            IVrw.FIFO = TBIVr.CostPrice;
+            if (blank(IVrw.Quant)==false) then begin
+              IVrw.FIFO = IVrw.FIFO/IVrw.Quant;
+            end;
+          end;
+        end;
+        if (RepSpec.flags[8]!=0) then begin//KN
+         if (nonblank(TBIVr.CurncyCode)) and (TBIVr.CurncyCode!=BCb.BaseCur1) then begin
+            IVrw.BasePrice = IVrw.BasePrice + TBIVr.CostPrice;
+            IVrw.rowGP = TBIVr.GPInCur; 
+          end else begin
+            IVrw.BasePrice = IVrw.BasePrice + TBIVr.CostPrice;
+            IVrw.rowGP = TBIVr.GP; 
+          end;
+          IVp.TotGP = IVp.TotGP + IVrw.rowGP;           
+        end else begin
+          if (invmethod==1) then begin
+            IVrw.BasePrice = IVrw.BasePrice + invcostprice;
+            IVrw.vRebate = invdiscount;
+            IVrw.rowGP = IVrw.Sum - (invqty * IVrw.BasePrice); // Should probably use CalcRowGP instead.
+          end else begin
+            if ((ItemType==0) or (ItemType==5)) then begin
+              INr.Code = IVrw.ArtCode;
+              if (ReadFirstMain(INr,1,true)) then begin
+                IVrw.BasePrice = INr.InPrice;
+                IVrw.rowGP = IVrw.Sum - (invqty * IVrw.BasePrice); // Should probably use CalcRowGP instead.
+                //IVrw.Quant is blank here
+              end;
+            end;
+          end;
+        end;
+        sump = sump + invprice;                
+        t = blankval;
+        switch (Invoice) begin
+          case 2: // per item 
+          case 3: // per transaction 
+          case 4: // per item/person          
+          otherwise
+            switch (ItemType) begin
+              case 0:
+                AddXSRow(XSp,"TBIVVc",TBIVr.CurncyCode,TBIVr.FrRate,TBIVr.ToRateB1,TBIVr.ToRateB2,TBIVr.BaseRate1,TBIVr.BaseRate2,TBIVr.ArtCode,invqty,TBIVr.GP,TBIVr.Sum,-1);//invprice ?
+              case 5:
+                AddXSRow(XSp,"TBIVVc",TBIVr.CurncyCode,TBIVr.FrRate,TBIVr.ToRateB1,TBIVr.ToRateB2,TBIVr.BaseRate1,TBIVr.BaseRate2,TBIVr.ArtCode,invqty,TBIVr.GP,TBIVr.Sum,-1);//invprice ?
+              otherwise
+                AddXSRow(XSp,"TBIVVc",TBIVr.CurncyCode,TBIVr.FrRate,TBIVr.ToRateB1,TBIVr.ToRateB2,TBIVr.BaseRate1,TBIVr.BaseRate2,TBIVr.ArtCode,invqty,TBIVr.GP,invprice,-1);
+            end;
+        end;
+        if (fulldetail!=0) then begin
+          if ((TBIVr.oVc==0) or (TBIVr.oVc==kTBIVoExpVc)) then begin
+            tstr = IVrw.Spec;
+            if (Invoice!=4) then begin
+              GetEmplName(TBIVr.EMCode,tstr2);
+//this is done above
+            end else begin
+              tstr2 = "";
+            end;
+            if ((len(tstr2)+len(IVrw.Spec))<100) then begin
+              if (nonblank(tstr2)) then begin
+                if (nonblank(tstr)) then begin//## overflowcheck please 
+                  tstr = tstr & ", ";
+                end;
+                tstr = tstr & tstr2;
+              end;
+              IVrw.Spec = tstr;
+            end;
+          end else begin
+            GetPRItemLangName(TBIVr.ArtCode,PRp.LangCode,TBIVr.Comment,tstr);
+            if (TBIVr.oVc==kTBIVoActVc) then begin
+              if (RepSpec.flags[9]!=2) then begin
+                IVrw.Spec = tstr;
+              end else begin
+                IVrw.Spec = TBIVr.Comment;
+              end;
+            end else begin
+              IVrw.Spec = tstr;
+            end;
+          end;
+          IVrw.ArtCode = TBIVr.ArtCode;
+          RegionPerceptionTax(IVp.CustCode,IVp.Region,INr.EUCodex,INr.Group,tax2code,tax2prc);
+          GetTaxesDiscounts(IVp.CustCode,IVp.InvDate,IVrw.VATCode,tax2code,tax1reb,tax2reb);
+          if (IVp.NoTax2==0) then begin
+            IVrw.TAX2Code = tax2code;
+            IVrw.TAX2Prc = tax2prc;
+            IVrw.TAX2Reb = tax2reb;
+            IVrw.TAX2Acc = GetTax2Acc(IVrw.TAX2Code);
+          end;
+          if (IVp.NoTax1==0) then begin
+            IVrw.TAX1Reb = tax1reb;
+          end;
+          IVrw.vRebate = invdiscount;
+          if (AvgQtyOnInv!=0) then begin IVrw.Quant = invqty; end;
+          if (AvgPriOnInv!=0) then begin IVrw.Price = invapric; end;
+        end else begin
+          if (AvgQtyOnInv!=0) then begin 
+            IVrw.Quant = IVrw.Quant + invqty; 
+          end else begin
+            if (HasLocalization("POL")) then begin
+              IVrw.Quant = 1;
+              IVrw.Price = IVrw.Sum;
+            end;
+          end;
+          if (AvgPriOnInv!=0) then begin 
+            t = IVrw.Price;
+            AdjustTBPrice(t,invapric);
+            IVrw.Price = t;
+          end;
+        end;
+        theprivsum = theprivsum + invprice;//for group invoicing 
+        if (nonblank(IVrw.Price)) then begin
+          t = IVrw.Price;
+          s = IVrw.Sum/IVrw.Quant;
+          switch (GOb.UseDiscount) begin
+            case 0:
+LCalcDiscount:;
+              s = t - s;
+              s = s*100;
+              s = s/t;
+            case 1:
+              s = s/t;
+              s = s*100;
+            case 2:
+              s = s - t;
+              s = s*100;
+              s = s/t;
+            otherwise
+              goto LCalcDiscount;
+          end;
+          IVrw.vRebate = Round(s,SetRoundModeD(1));        
+        end;
+        if (ItemType==0) then begin
+          if (IVrw.Price==0) then begin
+            IVrw.Price = IVrw.Sum/IVrw.Quant;  //why ? 
+            IVrw.vRebate = blankval;
+          end;
+        end;
+        if (nonblank(TBIVr.CurncyCode)) and (TBIVr.CurncyCode!=BCb.BaseCur1) then begin
+          IVrw.BasePrice = TBIVr.CostPrice;
+        end else begin
+          IVrw.BasePrice = TBIVr.CostPrice;
+        end;
+        MatRowPut(IVp,line,IVrw);
+        RowCalculateTaxMatrix_IVVc(IVp,line,IVrw);      
+        MatRowPut(IVp,line,IVrw);
+        IVDchsum(IVp,line);
+        if (TBIVr.oVc==kTBIVoActVc) then begin
+          AddActivityDesc(RepSpec.flags[9],TBIVr,IVp,line);
+        end;
+      end;
+      vwipcost[TBIVr.WIPAcc] = vwipcost[TBIVr.WIPAcc] + TBIVr.CostPrice;
+      for (i=0;i<awipacccnt;i=i+1) begin
+        if (TBIVr.WIPAcc==awipacc[i]) then begin
+          goto LWIPAccAdded;
+        end;
+      end;
+      awipacc[awipacccnt] = TBIVr.WIPAcc;
+      awipbalacc[awipacccnt] = TBIVr.WIPBalAcc;
+      awipacccnt = awipacccnt + 1;
+LWIPAccAdded:;      
+      if (realinv) then begin
+        if (found) then begin
+          aupdTBIVr[aupdacnt] = TBIVr;
+          aupdacnt = aupdacnt + 1;
+        end;
+      end;
+/*
+      if (realinv) then begin
+//updating before invoice gets stored ?       
+        TBIVr.Invoice = IVp.SerNr;
+        TBIVr.InvDate = IVp.TransDate;
+        UpdateOrderFromProj(TBIVr,false);
+        if (found) then begin
+          if (RecordUpdate(oldTBIVr,TBIVr,found)==0) then begin
+          end;
+        end else begin
+          if (RecordStore(TBIVr,false)) then begin
+          end;
+        end;
+        StepBack(TBIVr);
+      end;
+*/      
+    end;
+  end;
+  fulldetail = 0;
+  if (Invoice==3) then begin fulldetail = 1; end;
+  if (detailf) then begin fulldetail = 1; end;
+  if (asBudgeted) then begin fulldetail = 1; end;
+  // add all fixed priced purchases from budget 
+  
+  rwcnt = MatRowCnt(TBBUr);
+  if (checkthattransexist!=0) then begin
+    TBIVr.PRCode = PRp.Code;
+    if (ReadFirstMain(TBIVr,1,true)==false) then begin
+      rwcnt = 0; // Will skip the Budget until a Project Transaction exists for this project
+    end;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TBBUr,i,TBBUrw);
+    switch (TBBUrw.stp) begin
+      case 9:
+        if (TBBUrw.Invoiced==-1) and (addsubrowf) then begin
+          if (MatRowCnt(IVp)>1) then begin
+            MatRowGet(IVp,MatRowCnt(IVp)-1,IVrw);  
+            if (IVrw.stp==9) then begin
+              goto LSKIPTBROW;
+            end;    
+          end;
+          if (projectheaderf) then begin
+            ivrows = AddProjectHeader(RepSpec,PRp,realinv,IVp,true,InvoiceasFixedBudget);
+            projectheaderf = false;
+          end;
+
+          ClearRow(IVp,IVrw,9);
+          IVrw.Spec = TBBUrw.Spec;
+          IVrw.Sum = TBBUrw.Sum;
+          MatRowPut(IVp,MatRowCnt(IVp),IVrw);      
+          TBBUrw.Invoiced = IVp.SerNr;
+          TBBUrw.InvDate = IVp.InvDate;
+          MatRowPut(TBBUr,i,TBBUrw);
+LSKIPTBROW:;          
+        end;
+      case 1:
+        if ((blank(TBBUrw.ArtCode)) and (TBBUrw.Invoiced<=0)) then begin
+          if (TBBUr.BudTime==1) or (TBBUr.BudStocked==1) or (TBBUr.BudMaterial==1) or (TBBUr.BudOther==1) then begin
+            if ((blankdate(RepSpec.d1)) or ((GetYear(TBBUrw.InvAfter)!=-1) and (RepSpec.d1>TBBUrw.InvAfter))) then begin
+              addtbrowf = true;
+              if (i<(rwcnt-1)) and (InvoiceasFixedBudget==0) then begin
+                MatRowGet(TBBUr,i+1,nextTBBUrw);
+                if (nonblank(nextTBBUrw.ArtCode)) then begin
+                  if (nextTBBUrw.ItemType!=ItemType) then begin
+                    addtbrowf = false;
+                  end;
+                end;
+              end;
+              if (addtbrowf) then begin
+                ClearRow(IVp,IVrw,1);
+                IVrw.Spec = TBBUrw.Comment;
+                MatRowPut(IVp,MatRowCnt(IVp),IVrw);
+                TBBUrw.Invoiced = IVp.SerNr;
+                TBBUrw.InvDate = IVp.InvDate;
+                MatRowPut(TBBUr,i,TBBUrw);
+              end;
+            end;
+          end;
+        end;
+        testf = true;
+        if (TBBUrw.Invoiced>0) then begin testf = false; end;
+        if (TBBUrw.BudType==3) then begin testf = false; end;
+        if (testf) and (InvoiceasFixedBudget==0) then begin
+          testf = false;
+          if ((TBBUrw.ItemType==ItemType) or ((ItemType==1) and (TBBUrw.ItemType==2))) then begin
+            testf = true;
+          end;
+        end;
+        if (testf) then begin
+/*
+        if (TBBUrw.Invoiced<=0) then begin
+          if (TBBUrw.BudType!=3) then begin
+            if ((TBBUrw.ItemType==ItemType) or ((ItemType==1) and (TBBUrw.ItemType==2))) then begin
+*/
+              fixed = false;
+              switch (ItemType) begin
+                case 0:
+                  if (TBBUr.BudOther==1) then begin
+                    fixed = true;
+                    if (TBBUrw.BudType==1) then begin fixed = false; end;
+                  end;
+                case 2://structured
+                  if (TBBUr.BudStocked==1) then begin
+                    fixed = true;
+                    if (TBBUrw.BudType==1) then begin fixed = false; end;
+                  end;
+                case 1:
+                  if (TBBUr.BudStocked==1) then begin
+                    fixed = true;
+                    if (TBBUrw.BudType==1) then begin fixed = false; end;
+                  end;
+                case 3:
+                  if (TBBUr.BudTime==1) then begin
+                    fixed = true;
+                    if (TBBUrw.BudType==1) then begin fixed = false; end;
+                  end;
+                case 5:
+                  if (TBBUr.BudMaterial==1) then begin
+                    fixed = true;
+                    if (TBBUrw.BudType==1) then begin fixed = false; end;
+                  end;
+              end;       
+              if (TBBUrw.BudType==2) then begin fixed = true; end;
+              if (fixed) then begin
+                testf = true;
+                if (nonblankdate(RepSpec.d1)) then begin
+                  if (nonblankdate(TBBUrw.InvAfter)) then begin
+                    if (RepSpec.d1<=TBBUrw.InvAfter) then begin testf = false; end;
+                  end;
+                end;
+                if ((blank(TBBUrw.Sum)) or (blank(TBBUrw.ArtCode))) then begin
+                  testf = false;
+                end;
+                
+                if (RepSpec.flags[21]!=0) then begin//stages
+                  if (blank(TBBUrw.PRStage)) then begin
+                    testf = false;
+                  end;
+                  if (blank(TBBUrw.PRStageSign)) then begin
+                    testf = false;
+                  end;
+                end;
+                if (testf) then begin
+                  if (projectheaderf) then begin
+                    ivrows = AddProjectHeader(RepSpec,PRp,realinv,IVp,true,InvoiceasFixedBudget);
+                    projectheaderf = false;
+                  end;
+                  switch (Invoice) begin
+                    case 0: // item type 
+                      line = FindItemTypeInInvoice(IVp,ItemType,TBBUr.PRCode,fulldetail,TBBUrw.ArtCode,ivrows,TBBUrw.Sum,
+                                                   aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,bldat);
+                    case 1: // item group 
+                      line = FindItemGroupInInvoice(IVp,ItemType,TBBUr.PRCode,fulldetail,TBBUrw.ArtCode,ivrows,
+                                                    aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,bldat);
+                    case 2: // per item 
+                      INr.Code = TBBUrw.ArtCode;
+                      if (ReadFirstMain(INr,1,true)) then begin
+                        if (GetItemNameStr(1,tstr,PRp.LangCode,INr.Name,INr.Code)) then begin end;
+                      end else begin
+                        tstr = "";
+                      end;
+                      if (nonblank(TBBUrw.Comment)) then begin
+                        tstr = TBBUrw.Comment;
+                      end;
+                      line = FindItemInInvoice(IVp,ItemType,TBBUr.PRCode,fulldetail,TBBUrw.ArtCode,tstr,"","",ivrows,"",TBBUrw.Objects,
+                                               aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,bldat);
+                    case 3: // per transaction 
+                      line = FindItemInInvoice(IVp,ItemType,TBBUr.PRCode,fulldetail,TBBUrw.ArtCode,"","","",ivrows,TBBUrw.EMCode,TBBUrw.Objects,
+                                               aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,bldat);
+                    case 4: // per item/person 
+                      INr.Code = TBBUrw.ArtCode;
+                      if (ReadFirstMain(INr,1,true)) then begin
+                        if (GetItemNameStr(1,tstr,PRp.LangCode,INr.Name,INr.Code)) then begin end;
+                      end else begin
+                        tstr = "";
+                      end;
+                      GetEmplName(TBBUrw.EMCode,tstr2);
+                      if (nonblank(tstr2)) then begin
+                        if (nonblank(tstr)) then begin
+                          tstr = tstr & ", ";
+                        end;
+                        tstr = tstr & tstr2;
+                      end;
+                      line = FindItemPersonInInvoice(IVp,ItemType,TBBUr.PRCode,fulldetail,TBBUrw.ArtCode,TBBUrw.EMCode,tstr,ivrows,
+                                                     aProject,aItem,aGroup,aEMCode,aVATCode,aSalesAcc,aItemType,aFinished,acnt,aEvDat,aRowNo,alinecnt,bldat);
+                  end;
+                  MatRowGet(IVp,line,IVrw);
+                  IVrw.Sum = IVrw.Sum + TBBUrw.Sum;
+                  IVrw.BasePrice = IVrw.BasePrice + TBBUrw.Cost;
+                  s = MulRateToBase1(IVp.CurncyCode,IVrw.Sum,IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,DefaultCurRoundOff);
+                  UnpackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+                  FindSalesExVat(TMr,IVrw.VATCode,s,IVp.InclVAT,IVp.NoTAXonVAT,s);      
+                  IVrw.rowGP = s - TBBUrw.Qty*IVrw.BasePrice;
+//                  IVrw.rowGP = TBBUrw.GP; 
+                  IVp.TotGP = IVp.TotGP + IVrw.rowGP;           
+/*
+                  if (RepSpec.flags[8]!=0) then begin//KN, i think if invocice based on budgte we have cost there already
+                    IVrw.BasePrice = IVrw.BasePrice + TBBUrw.Cost;
+                    IVrw.rowGP = TBBUrw.GP; 
+                    IVp.TotGP = IVp.TotGP + IVrw.rowGP;           
+                  end;
+*/              
+                  sump = sump + TBBUrw.Sum;  
+                  t = blankval;
+                  switch (Invoice) begin
+                    case 2: // per item 
+                    case 3: // per transaction 
+                    case 4: // per item/person          
+                    otherwise
+                      AddXSRow(XSp,"TBBUVc",TBIVr.CurncyCode,TBIVr.FrRate,TBIVr.ToRateB1,TBIVr.ToRateB2,TBIVr.BaseRate1,TBIVr.BaseRate2,TBBUrw.ArtCode,TBBUrw.Qty,t,TBBUrw.Sum,i);
+                  end;
+                  if (fulldetail!=0) then begin
+                    IVrw.ArtCode = TBBUrw.ArtCode;
+                    INr.Code = TBBUrw.ArtCode;
+                    if (ReadFirstMain(INr,1,true)) then begin end;
+                    RegionPerceptionTax(IVp.CustCode,IVp.Region,INr.EUCodex,INr.Group,tax2code,tax2prc);
+                    GetTaxesDiscounts(IVp.CustCode,IVp.InvDate,IVrw.VATCode,tax2code,tax1reb,tax2reb);
+                    if (IVp.NoTax2==0) then begin
+                      IVrw.TAX2Code = tax2code;
+                      IVrw.TAX2Prc = tax2prc;
+                      IVrw.TAX2Reb = tax2reb;
+                      IVrw.TAX2Acc = GetTax2Acc(IVrw.TAX2Code);
+                    end;
+                    if (IVp.NoTax1==0) then begin
+                      IVrw.TAX1Reb = tax1reb;
+                    end;
+                    IVrw.UnitCode = INr.Unittext;
+                    if (AvgQtyOnInv!=0) then begin IVrw.Quant = TBBUrw.Qty; end;
+                    if (AvgPriOnInv!=0) then begin IVrw.Price = TBBUrw.Price; end;
+                    IVrw.vRebate = TBBUrw.Discount;
+                    tstr = IVrw.Spec;
+                    GetEmplName(TBBUrw.EMCode,tstr2);
+                    if (((len(tstr2)+len(IVrw.Spec))<100) and (nonblank(tstr2))) then begin
+                      if (nonblank(tstr)) then begin//## overflowcheck please 
+                        tstr = tstr & ", ";
+                      end;
+                      tstr = tstr & tstr2;
+                      IVrw.Spec = tstr;
+                    end;
+                  end else begin
+                    if (AvgQtyOnInv!=0) then begin IVrw.Quant = IVrw.Quant + TBBUrw.Qty; end;
+                    if (AvgPriOnInv!=0) then begin
+                      t = IVrw.Price;
+                      AdjustTBPrice(t,TBBUrw.Price);
+                      IVrw.Price = t;
+                    end;
+                    t = IVrw.Quant*IVrw.Price;
+                    if (t!=IVrw.Sum) then begin
+                      switch (GenOptr.UseDiscount) begin
+                        case 0:
+                          t = IVrw.Sum/t;
+                          t = t*100;
+                          IVrw.vRebate = 100 - t;
+                        case 1:                      
+                          t = IVrw.Sum/t;
+                          IVrw.vRebate = t*100;
+                      end;
+                    end;
+                  end;
+                  theprivsum = theprivsum + invprice;//for group invoicing   
+                  if (sump > theprivsum) then begin
+                    theprivsum = sump;
+                  end;
+                  addsubrowf = true;
+                  MatRowPut(IVp,line,IVrw);
+                  TBBUrw.Invoiced = IVp.SerNr;
+                  TBBUrw.InvDate = IVp.InvDate;
+                  MatRowPut(TBBUr,i,TBBUrw);
+                end;
+              end;
+        end;
+    end;
+  end;  
+L99:; 
+  RETURN;
+END;

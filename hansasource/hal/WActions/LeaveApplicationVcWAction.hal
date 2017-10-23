@@ -1,0 +1,325 @@
+remote procedure LADClassOnOpenWindowRemote(var record LeaveApplicationVc,var Integer);
+remote updating function LongInt CancelApprovalRequest(string,string,var Integer);
+remote updating function Integer RequestApproval_LAVc(record LeaveApplicationVc,var record RcVc,var Integer);
+remote function Integer LAApprovalStatus(record LeaveApplicationVc,var record AcceptanceRulesVc);
+remote function Integer LATestApprovalStatus(record LeaveApplicationVc);
+external function Integer CountObjects(string);
+remote function Integer EditingAcceptanceRejectedAllowed(Integer,string,string,Integer,string);
+remote function Integer CancelApprovalRequestAllowed(Integer,string,string,Integer,string);
+remote function Integer SendForAcceptance_LeaveApplicationVc(var record LeaveApplicationVc,var record RcVc);
+remote procedure CalculateLeaveAplicationDays(var record LeaveApplicationVc);
+remote function Integer ActFromLA(var record LeaveApplicationVc);
+external function Boolean UserCanChangePendingRecord(Integer);
+
+function Boolean LAApprovalStarted(record LeaveApplicationVc LAr)
+begin
+  Boolean res;
+  record AcceptanceRulesVc Acptr;
+
+  res = false;
+  if (LAApprovalStatus(LAr,Acptr)>=kAcceptanceStatePending) then begin
+    res = true;
+  end;
+  LAApprovalStarted = res;
+  return;
+end;
+
+function Boolean LeaveApplicationDClassEmployeeEFAfter(Integer wn,Boolean changedf)
+begin
+  record LeaveApplicationVc LAr;
+  record CUVc CUr;
+  Boolean res;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,LAr);
+    CUr.Code = LAr.Employee;
+    ReadFIrstMain(CUr,1,true);
+    LAr.Name = CUr.Name;
+    CalculateLeaveAplicationDays(LAr);
+    PutWindowRecord(wn,LAr);
+  end;
+  LeaveApplicationDClassEmployeeEFAfter = res;
+  return;
+end;
+
+function Boolean LeaveApplicationDClassStartDateEFAfter(Integer wn,Boolean changedf)
+begin
+  record LeaveApplicationVc LAr;
+  Boolean res;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,LAr);
+    CalculateLeaveAplicationDays(LAr);
+    PutWindowRecord(wn,LAr);
+  end;
+  LeaveApplicationDClassStartDateEFAfter = res;
+  return;
+end;
+
+function Boolean LeaveApplicationDClassEndDateEFAfter(Integer wn,Boolean changedf)
+begin
+  record LeaveApplicationVc LAr;
+  Boolean res;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,LAr);
+    CalculateLeaveAplicationDays(LAr);
+    PutWindowRecord(wn,LAr);
+  end;
+  LeaveApplicationDClassEndDateEFAfter = res;
+  return;
+end;
+
+function Boolean LeaveApplicationDClassLeaveActTypeEFAfter(Integer wn,Boolean changedf)
+begin
+  record LeaveApplicationVc LAr;
+  Boolean res;
+  record ActTypeVc ATr;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,LAr);
+    ATr.Code = LAr.LeaveActType;
+    ReadFIrstMain(ATr,1,true);
+    LAr.Comment = ATr.Comment;
+    CalculateLeaveAplicationDays(LAr);
+    PutWindowRecord(wn,LAr);
+  end;
+  LeaveApplicationDClassLeaveActTypeEFAfter = res;
+  return;
+end;
+
+global
+function Boolean LeaveApplicationDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+begin
+  Boolean res;
+
+  switch (fieldname) begin
+    case "Employee": res = LeaveApplicationDClassEmployeeEFAfter(wn,changed!=0);
+    case "StartDate": res = LeaveApplicationDClassStartDateEFAfter(wn,changed!=0);
+    case "EndDate": res = LeaveApplicationDClassEndDateEFAfter(wn,changed!=0);
+    case "LeaveActType": res = LeaveApplicationDClassLeaveActTypeEFAfter(wn,changed!=0);
+  end;
+  LeaveApplicationDClassAfterEditField = res;
+  return;
+end;
+
+global
+function Boolean LeaveApplicationDClassOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  record LeaveApplicationVc LAr;
+  Integer err;
+ 
+  res = true;
+  GetWindowRecord(wn,LAr);
+  err = LATestApprovalStatus(LAr);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    res = false;
+    goto LLeaveApplicationDClassOKFlagButtonAction;
+  end;
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,LAr);
+    if (LAr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,LAr);
+    if (LAr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+LLeaveApplicationDClassOKFlagButtonAction:;
+  LeaveApplicationDClassOKFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean LeaveApplicationDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record LeaveApplicationVc LAr;
+  record LeaveApplicationVc LA2r;
+  Integer nwn;
+  
+  res = true;
+  nwn = FindWindow("SelectApproverWClass");
+  if (nwn>0) then begin
+    if (MotherWindow(nwn)==wn) then begin
+      res = false;
+      goto LLeaveApplicationDClassActiveEditField;
+    end;
+  end;
+  GetWindowRecord(wn,LAr);    
+  if (LAApprovalStarted(LAr) and UserCanChangePendingRecord(rownr)==false) then begin
+    res = false;
+    goto LLeaveApplicationDClassActiveEditField;
+  end;
+  if (wnst==Rs_update) then begin
+    GetWindowRecord(wn,LAr);    
+    GetPrevWindowRecord(wn,LA2r);    
+    if ((LA2r.OKFlag!=0) and (LAr.OKFlag!=0)) then begin 
+      res = false; 
+    end;
+    switch (fieldname) begin
+      case "SerNr": res = false;
+    end;
+  end;
+LLeaveApplicationDClassActiveEditField:;    
+  LeaveApplicationDClassActiveEditField = res;
+  return;
+end;
+
+global
+procedure ActFromLADsm()
+begin
+  Integer wn,err;
+  record LeaveApplicationVc LAr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,LAr);
+  err = LATestApprovalStatus(LAr);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    goto LActFromLADsm;
+  end;
+  err = ActFromLA(LAr);
+  if (err!=0) then begin
+    MessageBox(err,"")
+  end else begin
+    MessageBox(11686,"")
+  end;
+LActFromLADsm:;  
+  return;
+end;
+
+global
+updating procedure LASendforAcceptanceLADsmExecute(Integer wn,string acceptanceby,string acceptancefyi)
+begin
+  Integer err,nwn;
+  record LeaveApplicationVc LAr;
+  Integer ApproverSelection,ApprovalStatusFlag;
+  record RcVc RepSpec;
+
+  GetWindowRecord(wn,LAr);
+  if (WindowState(wn)!=Rs_normal) then begin
+    if (WindowDoOK(wn,0)==false) then begin
+      goto LLASendforAcceptanceLADsm;
+    end;
+    GetWindowRecord(wn,LAr);
+  end;
+  LAr.AcceptanceBy = acceptanceby;
+  LAr.AcceptanceFYI = acceptancefyi;
+  err = RequestApproval_LAVc(LAr,RepSpec,ApprovalStatusFlag);
+  ApproverSelection = RepSpec.ArtMode;
+  if ((ApproverSelection==kAcceptanceApproverSelectionManual) and (blank(LAr.AcceptanceBy))) then begin
+    switch (err) begin  
+      case 0:
+        if (CountObjects(RepSpec.f12)==1) then begin
+          RepSpec.f1 = RepSpec.f12;
+        end;
+        if (CountObjects(RepSpec.f11)==1) then begin
+          RepSpec.f2 = RepSpec.f11;
+        end;
+        nwn = OpenWindow("SelectApproverWClass",0,wn,"","",RepSpec);
+      otherwise
+        MessageBox(err,"");
+    end;
+  end else begin
+    switch (err) begin  
+      case 0:
+        PutWindowRecord(wn,LAr);
+        if (WindowDoOK(wn,0)) then begin
+        end;
+        PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+        CheckmarkBox(37501,"");
+      otherwise
+        MessageBox(err,"");
+    end;
+  end;
+LLASendforAcceptanceLADsm:;  
+  return;
+end;
+
+global
+updating procedure LASendforAcceptanceLADsm()
+begin
+  LASendforAcceptanceLADsmExecute(CurWindow,"","");
+  return;
+end;
+
+global
+updating procedure LeaveApplicationSendforAcceptanceLeaveApplicationDsm()
+begin
+  LASendforAcceptanceLADsmExecute(CurWindow,"","");
+  return;
+end;
+
+global
+updating procedure LACancelApprovalRequest(Integer wn)
+begin
+  record LeaveApplicationVc LAr;
+  Integer ApprovalStatusFlag;
+  LongInt err;
+
+  GetWindowRecord(wn,LAr);
+  err = CancelApprovalRequest("LeaveApplicationVc",LAr.SerNr,ApprovalStatusFlag);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    if (err!=37503) then begin
+      goto LLACancelApprovalRequest;
+    end;
+  end;
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+LLACancelApprovalRequest:;
+  return;
+end;
+
+global
+procedure LAStatusDsm()
+begin
+  record RcVc RepSpec;
+  record LeaveApplicationVc LAr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,LAr);
+  RepSpec.f1 = LAr.SerNr;
+  RepSpec.repname = "LAStatusRn";
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+function Boolean LeaveApplicationDClassOnOpenWindow(Integer wn)
+begin
+  record LeaveApplicationVc LAr;
+  Integer AcceptanceStatusFlag;
+  
+  GetWindowRecord(wn,LAr);
+  LADClassOnOpenWindowRemote(LAr,AcceptanceStatusFlag);
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,AcceptanceStatusFlag));  
+  LeaveApplicationDClassOnOpenWindow = false;
+  return;
+end;
+
+global
+procedure LeaveApplicationDClassOnWindowRecordChange(Integer wn)
+begin
+  record LeaveApplicationVc LAr;
+  Integer AcceptanceStatusFlag;
+
+  GetWindowRecord(wn,LAr);
+  LADClassOnOpenWindowRemote(LAr,AcceptanceStatusFlag);
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,AcceptanceStatusFlag));  
+  return;
+end;

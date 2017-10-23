@@ -1,0 +1,226 @@
+
+procedure GetDateStringGW(var string res)
+BEGIN
+  string 255 tstr,t2;
+  record SysFormatBlock DateNumr;
+  
+  BlockLoad(DateNumr);
+  if DateNumr.dateOrder == 0 then begin
+    tstr = res;
+    res = "";
+    res = MID(tstr,7,2);
+    t2  = MID(tstr,9,2);
+    res = res & t2;
+    t2  = MID(tstr,5,2);
+    res = res & t2;  
+  end;
+  if DateNumr.dateOrder == 1 then begin
+    tstr = res;
+    res = "";
+    res = MID(tstr,9,2);
+    t2  = MID(tstr,7,2);
+    res = res & t2;
+    t2  = MID(tstr,5,2);
+    res = res & t2;  
+  end;
+  if DateNumr.dateOrder == 2 then begin
+    tstr = res;
+    res = "";
+    res = MID(tstr,5,2);
+    t2  = MID(tstr,7,2);
+    res = res & t2;
+    t2  = MID(tstr,9,2);
+    res = res & t2;  
+  end;
+  RETURN;
+END;
+
+function Boolean CheckforBaseCurrency(string currency)
+BEGIN
+  record BaseCurBlock BaseCurBlr;
+  boolean res;
+  
+  BlockLoad(BaseCurBlr);
+  res = true;
+  if blank(BaseCurBlr.BaseCur1) and currency == "EEK" then begin
+    res = false;
+  end;
+  CheckforBaseCurrency = res;
+
+RETURN;
+END;
+
+function Boolean GetForeignCurncyRate(string curcode,var val from,var val to1,var val to2,Date dp)
+BEGIN
+  record ERVc ERr;
+  Boolean res;
+
+  res = false;
+  ERr.CurncyCode = curcode;
+  ERr.Date = dp;
+  if (ReadLastMain(ERr,2,false)) then begin
+    if (ERr.CurncyCode==curcode) then begin
+      from = ERr.FrRate;
+      to1 = ERr.ToRate1;
+      to2 = ERr.ToRate2;
+      res = true;
+    end;
+  end;
+  GetForeignCurncyRate = res;
+  RETURN;
+END;
+
+
+global
+updating procedure TeleHipmIn()
+BEGIN
+  record IPVc IPr;
+  row IPVc IPrw;
+  record ARVc ARr;
+  record CUVc CUr;
+  record IVVc IVr;
+  record PMBlock PMBlr;
+  row PMBlock PMBlrw;
+  boolean testf,found,justchecking;
+  string 255 tstr,qqq,lastdate;
+  boolean tesf,prepaymentflag;
+  integer i,a,rwcnt,j,b;
+  val blankv,from,from1,to1,to2,to3,to4,openinvoiceval,invoiceval,payedval,prepaymentval;
+  
+  BlockLoad(PMBlr);
+  testf = true;
+  while (testf) begin
+    tstr = ImportField();
+    testf = NextImportLine(false);
+    if (len(tstr)==0) then begin
+      testf = false;
+    end;
+    if Left(tstr,5)=="VV  1" and MID(tstr,195,1)=="C" then begin
+      i = 1;
+      for (i=0;i<20;i=i+1) begin
+        if MID(tstr,228-i,1) == " " then begin
+          a = i+1;
+        end;
+      end;
+      i=0;
+      found = true;
+      while found==true begin
+        if MID(tstr,209+(11-a)+i,1) == "0"  then begin
+          i=i+1;
+        end else begin
+          found = false;
+        end;
+      end;
+      justchecking = true;
+      ARr.InvoiceNr = MID(tstr,209,11-a);
+      if ReadFirstMain(ARr,1,true)==false then begin
+        justchecking = false;
+      end;
+      CUr.Code = MID(tstr,209+(11-a)+i,8-i);
+      if ReadFirstMain(CUr,1,true)==false then begin
+        justchecking = false;
+      end;
+      IVr.SerNr = ARr.InvoiceNr;
+      if ReadFirstMain(IVr,1,true)==false then begin
+        justchecking = false;
+      end;
+      if justchecking then begin
+        qqq = tstr;
+        GetDateStringGW(qqq);
+//        IPr.SerNr = RecordNew(IPr);
+        RecordNew(IPr);
+        IPr.TransDate = StringToDate(qqq);
+        rwcnt = MatRowCnt(PMBlr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(PMBlr,i,PMBlrw);
+          if StringToVal(PMBlrw.BankNr,M4Val) == StringToVal(MID(tstr,25,14),M4Val) then begin
+            IPr.PayMode = PMBlrw.Code;
+          end;
+        end;
+        IPrw.stp = 1;
+        IPrw.InvoiceNr = MID(tstr,209,11-a);
+        IPrw.CustCode = MID(tstr,209+(11-a)+i,8-i);
+        IPr.Comment = MID(tstr,209+(11-a)+i,8-i) & "," & MID(tstr,120,75);
+        IPrw.PayDate = StringToDate(qqq);
+        IPrw.InvOutstand = ARr.RVal;
+        tesf = GetForeignCurncyRate(IVr.CurncyCode,from,to1,to2,StringToDate(qqq));
+        openinvoiceval = ARr.RVal*to1;
+        tesf = GetForeignCurncyRate(MID(tstr,39,3),from,to1,to2,StringToDate(qqq));
+        payedval = (StringToVal(MID(tstr,197,12),M4Val)/100)*to1;
+        if openinvoiceval < payedval then begin
+          invoiceval = openinvoiceval/to1;
+          prepaymentflag = true;
+        end else begin
+          invoiceval = (StringToVal(MID(tstr,197,12),M4Val)/100);
+        end;
+        if CheckforBaseCurrency(MID(tstr,39,3))==false then begin
+          IPrw.InvCurncy = "";
+          IPrw.BankCurncy = "";
+          IPrw.RecCurncy = "";
+          IPr.PayCurCode = "";
+        end else begin
+          IPr.PayCurCode = MID(tstr,39,3);
+          IPrw.BankCurncy = MID(tstr,39,3);
+          IPrw.RecCurncy = MID(tstr,39,3);
+        end;
+        if CheckforBaseCurrency(IVr.CurncyCode)==false then begin
+          IPrw.InvCurncy = "";
+        end else begin
+          IPrw.InvCurncy = IVr.CurncyCode;
+        end;
+        IPrw.BankVal = invoiceval;
+        if IVr.CurncyCode == IPrw.RecCurncy then begin
+          IPrw.InvVal = invoiceval;
+        end else begin
+          if IPrw.InvCurncy == "" then begin
+            tesf = GetForeignCurncyRate(MID(tstr,39,3),from,to1,to2,StringToDate(qqq));
+            IPrw.InvVal = invoiceval*to1;
+          end;
+          if IPrw.InvCurncy <> "" and IPrw.BankCurncy <> "" then begin
+            tesf = GetForeignCurncyRate(MID(tstr,39,3),from,to1,to2,StringToDate(qqq));
+            tesf = GetForeignCurncyRate(IVr.CurncyCode,from,to3,to4,StringToDate(qqq));
+            IPrw.InvVal = invoiceval*to1/to3;
+          end;
+          if IPrw.BankCurncy == "" then begin
+            tesf = GetForeignCurncyRate(IVr.CurncyCode,from,to3,to4,StringToDate(qqq));
+            IPrw.InvVal = invoiceval/to3;
+          end;
+        end;
+        IPrw.RecVal = invoiceval;
+        IPrw.ChequeNr = "";
+        IPrw.CUPNr = "";
+        IPrw.CredManNr = IVr.CredManNr;
+        IPrw.CustName = MID(tstr,120,75);
+        IPrw.VATVal = blankv;
+        IPrw.RoundOff = blankv;
+        IPrw.BankFeeVal = blankv;
+        prepaymentval = (StringToVal(MID(tstr,197,12),M4Val)/100)-invoiceval;
+        MatRowPut(IPr,0,IPrw);
+        if prepaymentflag then begin
+          IPrw.InvoiceNr = "";
+          IPrw.CustCode = MID(tstr,209+(11-a)+i,8-i);
+          IPrw.PayDate = StringToDate(qqq);
+          IPrw.BankVal = prepaymentval;
+          IPrw.InvVal = prepaymentval;
+          IPrw.InvCurncy = IPrw.BankCurncy;
+          IPrw.InvOutstand = blankv;
+          IPrw.RecVal = prepaymentval;
+          IPrw.ChequeNr = "";
+          IPrw.CUPNr = "";
+          IPrw.CredManNr = -1;
+          IPrw.CustName = MID(tstr,120,75);
+          IPrw.VATVal = blankv;
+          IPrw.RoundOff = blankv;
+          IPrw.BankFeeVal = blankv;
+          MatRowPut(IPr,1,IPrw);
+        end;
+        IPr.CurPayVal = StringToVal(MID(tstr,197,12),M4Val)/100;
+        IPr.SerNr = NextSerNr("IPVc",IPr.TransDate,-1,false,"");
+        tesf = RecordStore(IPr,false);
+      end;
+    end;
+  end;
+
+  
+  RETURN
+END;

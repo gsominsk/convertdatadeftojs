@@ -1,0 +1,951 @@
+external procedure GetFullCurncyRate(var string,Date,var val,var val,var val,var val,var val);
+external procedure RoyaltyMaintSumup(var record RoyaltyMaintVc);
+external procedure RoyaltyRepSumup(var record RoyaltyRepVc);
+external function roundmode DefaultRoundMode();
+external function Boolean IVDchrsum(var record IVVc,Integer);
+external procedure IVSumup(var record IVVc,Boolean);
+external function Boolean PasteCustInInv(var record IVVc);
+external function Boolean IVVc_PasteArtCode(var record IVVc,Integer,var string,var string,Boolean,var Integer);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure RoundRowSum(string,string,string,var val);
+external procedure AddCalcPrice(record INVc,record CPMVc,string,val,string,Integer,var val);
+external function string 255 FindINObjects(string,string);
+external function Boolean GetItemNameStr(Integer,var string,string,string,string);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+external procedure IVVc_PasteCurncyCode(var record IVVc,string,Integer,Boolean,Boolean);
+
+procedure GetRoyaltyCurrencies(var string repcurr,var string invcurr,integer compnr)
+begin
+  record RoyaltyCustBlock RoyaltyCustb;
+  Integer oldcomp;
+  Boolean chcompf;
+  
+  oldcomp = CurrentCompany;
+  if (compnr!=oldcomp) then begin
+    chcompf = SetCompany(compnr,false);
+  end;
+  
+  BlockLoad(RoyaltyCustb);
+  
+  repcurr = RoyaltyCustb.RepCurrency;
+  invcurr = RoyaltyCustb.InvCurrency;
+  
+  if (chcompf) then begin
+    ResetCompany(oldcomp);
+  end;
+  
+  return;
+end;
+
+procedure GetRoyaltyItemAndPercentage(string artcode,var string royitem,var val perc,integer compnr)
+begin
+  record INVc INr;
+  record ITVc ITr;
+  record RoyaltyPrcBlock RPb;
+  row RoyaltyPrcBlock RPbw;
+  Integer i,rwcnt;
+  Integer oldcomp;
+  Boolean chcompf;
+  
+  oldcomp = CurrentCompany;
+  if (compnr!=oldcomp) then begin
+    chcompf = SetCompany(compnr,false);
+  end;
+
+  perc = blankval;
+  royitem = "";
+  
+  BlockLoad(RPb);
+  INr.Code = artcode;
+  if (ReadFirstMain(INr,1,true)) then begin end;
+  rwcnt = MatRowCnt(RPb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RPb,i,RPbw);
+    if (RPbw.ArtCode==artcode) then begin
+      perc = RPbw.RoyaltyPrc;
+      royitem = RPbw.RoyaltyItem;
+    end else begin
+      if (RPbw.ITCode==INr.Group) then begin // If item and group is in the matrix, item is top info
+        perc = RPbw.RoyaltyPrc;
+        royitem = RPbw.RoyaltyItem;
+      end;
+    end;
+  end;
+  if (chcompf) then begin
+    ResetCompany(oldcomp);
+  end;
+  return;
+end;
+
+global
+function val GetRoyaltyPercentage(string artcode,integer compnr)
+begin
+  string 255 royitem;
+  val perc;
+  
+  GetRoyaltyItemAndPercentage(artcode,royitem,perc,compnr);
+  GetRoyaltyPercentage = perc;
+  return;
+end;
+
+function string 255 GetRoyaltyItem(string artcode,integer compnr)
+begin
+  string 255 royitem;
+  val perc;
+
+  GetRoyaltyItemAndPercentage(artcode,royitem,perc,compnr);
+  GetRoyaltyItem = royitem;
+  return;
+end;
+
+global
+function Boolean RoyaltyRepDchrsum(var record RoyaltyRepVc RoyaltyRepr,Integer rownr,Integer UseDiscount,boolean forcef)
+begin
+  Boolean chsum;
+  row RoyaltyRepVc RoyaltyReprw;
+  val s,s2;
+  record RoyaltyPrcBlock RPb;
+
+  chsum = false;
+  MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+  if (nonblank(RoyaltyReprw.ArtCode)) then begin
+    CalcSum(RoyaltyReprw.Quant,RoyaltyReprw.Price,0,RoyaltyReprw.vRebate,s,UseDiscount);
+    RoundRowSum("","","",s);
+    CalcSum(RoyaltyReprw.Quant,RoyaltyReprw.Price,0,RoyaltyReprw.ApprovedvRebate,s2,UseDiscount);
+    RoundRowSum("","","",s2);
+
+    RoyaltyReprw.Sum = s;
+    RoyaltyReprw.ActualSum = s2;
+    if (RoyaltyReprw.RoyaltyPercentage==0 or forcef) then begin
+      BlockLoad(RPb);
+      RoyaltyReprw.RoyaltyPercentage = GetRoyaltyPercentage(RoyaltyReprw.ArtCode,CurrentCompany);
+    end;
+    if (RoyaltyRepr.MaintType!=kRoyaltySaleRental) then begin
+      RoyaltyReprw.Royalty = (RoyaltyReprw.RoyaltyPercentage/100)*RoyaltyReprw.ActualSum;
+    end else begin
+      RoyaltyReprw.Royalty = 0;
+    end;
+    MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+    chsum = true;
+  end;
+  RoyaltyRepDchrsum = chsum;
+  return;
+end;
+
+global
+procedure RoyaltyRepGetCalcItemPrice(record INVc INr,record RoyaltyRepVc RoyaltyRepr,Integer rownr,var val pricep)
+begin
+  row RoyaltyRepVc RoyaltyReprw;
+  record CPMVc CPr;
+  Integer i,rwcnt;
+  val price;
+  
+  rwcnt = MatRowCnt(RoyaltyRepr);
+  MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+  RoyaltyReprw.Price = blankval;
+  MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+  CPr.Code = INr.CalcPrice;
+  if (ReadFirstMain(CPr,1,true)) then begin
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RoyaltyRepr,i,RoyaltyReprw);
+      if (i!=rownr) then begin
+        AddCalcPrice(INr,CPr,RoyaltyReprw.ArtCode,RoyaltyReprw.Sum,"",0,price);
+      end;  
+    end;
+    price = Round(price,DefaultRoundMode);
+    MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+    RoyaltyReprw.Price = price;
+    MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+  end;
+  if (pricep!=-1) then begin pricep = price; end;
+  return;
+end;
+
+global
+procedure RoyaltyRepMultiLineText(record RoyaltyRepVc RoyaltyRepr,record INVc INr,string langcode,Integer arow)
+begin
+  row RoyaltyRepVc RoyaltyReprw;
+  string 255 tstr;
+  Integer tcnt;
+ 
+  tcnt = 2;
+  while (GetItemNameStr(tcnt,tstr,langcode,INr.Name,INr.Code)) begin      
+    ClearRow(RoyaltyRepr,RoyaltyReprw,1);
+    RoyaltyReprw.Spec = tstr;
+    MatRowInsert(RoyaltyRepr,arow+tcnt-1,RoyaltyReprw);
+    tcnt = tcnt + 1;
+  end;
+  return;
+end;
+
+global
+function Boolean RoyaltyRepVc_PasteArtCode(var record RoyaltyRepVc RoyaltyRepr,Integer rownr,var string inwarning)
+begin
+  Boolean chsum,res;
+  Boolean chrsum;
+  record INVc INr;
+  record CUVc CUr;
+  row RoyaltyRepVc RoyaltyReprw;
+  val t,s,price,vreb,baseprice,temp,tax2prc,tax2reb;
+  string 255 curitemname,salesacc,vatcode,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Boolean pritemf;
+  val UnitFactQuant,UnitFactPrice,Quant;
+  string 10 markup;
+  record GeneralOptionBlock GenOptRec;
+  Boolean dummyf;
+  Time blankt;
+  val fr,to1,to2,br1,br2;
+
+  BlockLoad(GenOptRec);
+  chsum = false;
+  chrsum = false;
+  pritemf = true;
+  MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+  RoyaltyReprw.Price = BlankVal;
+  RoyaltyReprw.vRebate = BlankVal;
+  RoyaltyReprw.Sum = BlankVal;
+ 
+  GetFullCurncyRate(RoyaltyRepr.Currency,CurrentDate,fr,to1,to2,br1,br2);
+  CUr.Code = RoyaltyRepr.CustCode;
+  if ReadFirstMain(CUr,1,true) then begin
+  end;
+  if (GetItemPriceDiscount3(RoyaltyReprw.ArtCode,RoyaltyReprw.Quant,INr,RoyaltyRepr.Currency,
+                            fr,to1,to2,br1,br2,"",CUr.CustCat,CUr.PLCode,CUr.RebCode,price,curitemname,vreb,vatcode,baseprice,salesacc,
+                            0,calcprice,RoyaltyRepr.TransDate,blankt,RoyaltyRepr.CustCode,false,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    if (vreb==0) then begin
+      vreb = blankval;
+    end;
+    RoyaltyReprw.Price = price;
+    RoyaltyReprw.Spec = curitemname;
+    RoyaltyReprw.vRebate = vreb;
+    RoyaltyReprw.ArtCode = INr.Code;
+    RoyaltyReprw.Objects = FindINObjects(INr.Objects,INr.Group);
+    if (calcprice) then begin
+      MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+      temp = -1;
+      RoyaltyRepGetCalcItemPrice(INr,RoyaltyRepr,rownr,temp);
+      MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+    end;
+    MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+    chrsum = true;
+    RoyaltyRepMultiLineText(RoyaltyRepr,INr,"",rownr);
+    if (nonblank(INr.WarnText1)) then begin
+      inwarning = INr.WarnText1;
+    end;
+    if (RoyaltyRepDchrsum(RoyaltyRepr,rownr,GenOptRec.UseDiscount,false)) then begin
+//      RoyaltyRepDchsum(RoyaltyRepr,rownr);
+    end;    
+    RoyaltyRepSumup(RoyaltyRepr);
+    res = true;
+  end;
+  RoyaltyRepVc_PasteArtCode = res;
+  return;
+end;
+
+global
+function Boolean RoyaltyRepVc_PasteQuant(var record RoyaltyRepVc RoyaltyRepr,Integer rownr)
+begin
+  Boolean chsum,res;
+  Boolean chrsum;
+  record INVc INr;
+  record CUVc CUr;
+  row RoyaltyRepVc RoyaltyReprw;
+  val t,s,price,vreb,baseprice,temp,tax2prc,tax2reb;
+  string 255 curitemname,salesacc,vatcode,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Boolean pritemf;
+  val UnitFactQuant,UnitFactPrice,Quant;
+  string 10 markup;
+  record GeneralOptionBlock GenOptRec;
+  Boolean dummyf;
+  Time blankt;
+  val fr,to1,to2,br1,br2;
+
+  BlockLoad(GenOptRec);
+  chsum = false;
+  chrsum = false;
+  pritemf = true;
+  MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+  
+  GetFullCurncyRate(RoyaltyRepr.Currency,CurrentDate,fr,to1,to2,br1,br2);
+  CUr.Code = RoyaltyRepr.CustCode;
+  if ReadFirstMain(CUr,1,true) then begin
+  end;
+  if (GetItemPriceDiscount3(RoyaltyReprw.ArtCode,RoyaltyReprw.Quant,INr,RoyaltyRepr.Currency,
+                            fr,to1,to2,br1,br2,"",CUr.CustCat,CUr.PLCode,CUr.RebCode,price,curitemname,vreb,vatcode,baseprice,salesacc,
+                            0,calcprice,RoyaltyRepr.TransDate,blankt,RoyaltyRepr.CustCode,false,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    if (vreb==0) then begin
+      vreb = blankval;
+    end;
+    RoyaltyReprw.Price = price;
+    RoyaltyReprw.vRebate = vreb;
+    if (calcprice) then begin
+      MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+      temp = -1;
+      RoyaltyRepGetCalcItemPrice(INr,RoyaltyRepr,rownr,temp);
+      MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+    end;
+    MatRowPut(RoyaltyRepr,rownr,RoyaltyReprw);
+    chrsum = true;
+    if (RoyaltyRepDchrsum(RoyaltyRepr,rownr,GenOptRec.UseDiscount,false)) then begin
+//      RoyaltyRepDchsum(RoyaltyRepr,rownr);
+    end;    
+    RoyaltyRepSumup(RoyaltyRepr);
+    res = true;
+  end;
+  RoyaltyRepVc_PasteQuant = res;
+  return;
+end;
+
+global
+function Boolean RoyaltyRepVc_PasteRoyaltyPerc(var record RoyaltyRepVc RoyaltyRepr,Integer rownr)
+begin
+  Boolean res;
+  row RoyaltyRepVc RoyaltyReprw;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  MatRowGet(RoyaltyRepr,rownr,RoyaltyReprw);
+  if (RoyaltyRepDchrsum(RoyaltyRepr,rownr,GenOptRec.UseDiscount,false)) then begin
+//    RoyaltyRepDchsum(RoyaltyRepr,rownr);
+  end;    
+  RoyaltyRepSumup(RoyaltyRepr);
+  res = true;
+  RoyaltyRepVc_PasteRoyaltyPerc = res;
+  return;
+end;
+
+function Boolean SetupNewRoyaltyInvoice(var record IVVc IVr,string custcode,date invdate,date periodstart,date periodend,Integer origcomp)
+begin
+  Boolean res;
+  row IVVc IVrw;
+  string 255 reportcur,invoicecur;
+  
+  RecordNew(IVr);
+  
+  if (IVr.SerNr==-1) then begin
+    IVr.SerNr = NextSerNr("IVVc",IVr.TransDate,-1,false,"");
+  end;
+  
+  IVr.CustCode = custcode;
+  IVr.InvDate = CurrentDate;
+  IVr.InclVAT = 0;
+  IVr.RoyaltyIVFlag = 1;
+  if (nonblankdate(invdate)) then begin
+    IVr.InvDate = invdate;
+  end;
+  res = PasteCustInInv(IVr);
+  if (res and nonblankdate(periodstart)) then begin
+    ClearRow(IVr,IVrw,1);
+    IVrw.Spec = USetStr(1169) & periodstart & " - " & periodend;
+    MatRowPut(IVr,0,IVrw);
+    ClearRow(IVr,IVrw,1);
+    IVrw.Spec = "------------------------------------";
+    MatRowPut(IVr,1,IVrw);
+  end;
+  
+  GetRoyaltyCurrencies(reportcur,invoicecur,origcomp);
+  IVr.CurncyCode = invoicecur;
+  IVVc_PasteCurncyCode(IVr,invoicecur,-1,false,true);
+  
+  SetupNewRoyaltyInvoice = res;
+  return;
+end;
+
+global
+procedure PasteRoyaltyRepInIV(var record IVVc IVr,record RoyaltyRepVc RoyaltyRepr,string custcode,string artcode,date invdate,date periodstart,date periodend,integer origcomp)
+begin
+  row IVVc IVrw;
+  row RoyaltyRepVc RoyaltyReprw;
+  Integer i,rwcnt,rownr;
+  string 200 tstr;
+  vector boolean vidx;
+  vector val vsum;
+  array string 255 aitems;
+  integer acnt;
+  string 255 key,royitem;
+  Boolean res,chsum;
+  date blankd;
+  val ivval;
+  record RoyaltyCustBlock RoyaltyCustb;
+  string 255 reportcur,invoicecur;
+  Integer sernrf;
+  
+  if (blank(IVr.CustCode)) then begin
+    res = SetupNewRoyaltyInvoice(IVr,custcode,invdate,periodstart,periodend,origcomp);
+  end else begin
+    res = true;
+  end;
+  
+  if (res) then begin
+    rwcnt = MatRowCnt(RoyaltyRepr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RoyaltyRepr,i,RoyaltyReprw);
+      if (nonblank(RoyaltyReprw.ArtCode) or RoyaltyReprw.Royalty!=0) then begin
+        key = RoyaltyReprw.ArtCode;
+        if (vidx[key]==false) then begin
+          vidx[key] = true;
+          aitems[acnt] = RoyaltyReprw.ArtCode;
+          acnt = acnt + 1;
+        end;
+        vsum[key] = vsum[key] + RoyaltyReprw.Royalty;
+      end;
+    end;
+
+    for (i=0;i<acnt;i=i+1) begin
+      royitem = GetRoyaltyItem(aitems[i],origcomp);
+      if (blank(royitem)) then begin
+        royitem = artcode;
+      end;
+
+      rwcnt = MatRowCnt(IVr);
+      for (rownr=0;rownr<rwcnt;rownr=rownr+1) begin
+        MatRowGet(IVr,rownr,IVrw);
+        if (IVrw.ArtCode==royitem) then begin
+          goto Lfound;
+        end;
+      end;
+      rownr = rwcnt;
+      ClearRow(IVr,IVrw,1);
+      IVrw.ArtCode = royitem;
+      IVrw.Quant = 1;
+      MatRowPut(IVr,rownr,IVrw);
+      if (IVVc_PasteArtCode(IVr,rownr,tstr,tstr,false,sernrf)) then begin end;
+      MatRowGet(IVr,rownr,IVrw);
+      //IVrw.Spec = USetStr(23650) & ": " & acust[i] & ", " & USetStr(23651) & ": " & acontract[i];
+Lfound:;
+      GetRoyaltyCurrencies(reportcur,invoicecur,origcomp);
+      CurValToOtherCur(IVr.InvDate,reportcur,vsum[aitems[i]],invoicecur,ivval,DefaultRoundMode); // DefaultRoundMode??
+      IVrw.Price = IVrw.Price + ivval;
+      IVrw.Sum = IVrw.Price;
+      MatRowPut(IVr,rownr,IVrw);
+      chsum = IVDchrsum(IVr,rownr);
+    end;
+  end;
+  IVSumup(IVr,true);
+  return;
+end;
+
+global
+procedure PasteRoyaltyMaintInIV(var record IVVc IVr,record RoyaltyMaintVc RoyaltyMaintr,string custcode,string artcode,date invdate,date periodstart,date periodend,Integer origcomp)
+begin
+  row IVVc IVrw;
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  Integer i,rwcnt,rownr;
+  string 200 tstr;
+  vector boolean vidx;
+  vector val vsum;
+  array string 255 aitems;
+  integer acnt;
+  string 255 key,royitem;
+  Boolean res,chsum;
+  date blankd;
+  string 255 reportcur,invoicecur;
+  val ivval;
+  Integer sernrf;
+  
+ // if (blank(IVr.CustCode)) then begin
+  if (IVr.SerNr==-1) then begin 
+    res = SetupNewRoyaltyInvoice(IVr,custcode,invdate,periodstart,periodend,origcomp);
+  end else begin
+    res = true;
+  end;
+
+  if (res) then begin
+    rwcnt = MatRowCnt(RoyaltyMaintr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RoyaltyMaintr,i,RoyaltyMaintrw);
+      if (nonblank(RoyaltyMaintrw.ArtCode) or RoyaltyMaintrw.Royalty!=0) then begin
+        key = RoyaltyMaintrw.ArtCode;
+        if (vidx[key]==false) then begin
+          vidx[key] = true;
+          aitems[acnt] = RoyaltyMaintrw.ArtCode;
+          acnt = acnt + 1;
+        end;
+        vsum[key] = vsum[key] + RoyaltyMaintrw.Royalty;
+      end;
+    end;
+
+    for (i=0;i<acnt;i=i+1) begin
+      royitem = GetRoyaltyItem(aitems[i],origcomp);
+      if (blank(royitem)) then begin
+        royitem = artcode;
+      end;
+
+      rwcnt = MatRowCnt(IVr);
+      for (rownr=0;rownr<rwcnt;rownr=rownr+1) begin
+        MatRowGet(IVr,rownr,IVrw);
+        if (IVrw.ArtCode==royitem) then begin
+          goto Lfound;
+        end;
+      end;
+      rownr = rwcnt;
+      ClearRow(IVr,IVrw,1);
+      IVrw.ArtCode = royitem;
+      IVrw.Quant = 1;
+      MatRowPut(IVr,rownr,IVrw);
+      if (IVVc_PasteArtCode(IVr,rownr,tstr,tstr,false,sernrf)) then begin end;
+      MatRowGet(IVr,rownr,IVrw);
+      //IVrw.Spec = USetStr(23650) & ": " & acust[i] & ", " & USetStr(23651) & ": " & acontract[i];
+Lfound:;
+      GetRoyaltyCurrencies(reportcur,invoicecur,origcomp);
+      CurValToOtherCur(IVr.InvDate,reportcur,vsum[aitems[i]],invoicecur,ivval,DefaultRoundMode); // DefaultRoundMode??
+      //LogText(0,"aitems[i] " & aitems[i] & "vsum[aitems[i]]--" & vsum[aitems[i]] & "/" & royitem & "/" & ivval);
+      IVrw.Price = IVrw.Price + ivval;
+      IVrw.Sum = IVrw.Price;
+      MatRowPut(IVr,rownr,IVrw);
+      chsum = IVDchrsum(IVr,rownr);
+    end;
+  end;
+  IVSumup(IVr,true);
+  return;
+end;
+
+global
+function Boolean InvoiceExists(LongInt InvoiceNr,string compcode)
+begin
+  record IVVc IVr;
+  Boolean res;
+  
+  res = false;
+  
+  if (InvoiceNr!=-1) then begin
+    if (blank(compcode) or SetCompanyCode(compcode,false)) then begin
+      IVr.SerNr = InvoiceNr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        res = true;
+      end;
+    end else begin
+      res = true;
+    end;
+  end;
+  
+  InvoiceExists = res;
+  
+  return;
+end;
+
+global
+updating function Integer RecordAction_raRoyaltyRepToIV(var record IVVc IVr,LongInt ordnr,record RoyaltyPrcBlock RPb)
+begin
+  Integer res;
+  Integer oldcomp;
+  Boolean foundf;
+  date blankd;
+  record RoyaltyCustBlock RCb;
+  record RoyaltyRepVc RoyaltyRepr;
+  record RoyaltyRepVc oldRoyaltyRepr;
+  record RoyaltyMaintVc RoyaltyMaintr;
+  
+  res = -1;
+  BlockLoad(RCb);
+  RoyaltyRepr.SerNr = ordnr;
+  if (ReadFirstMain(RoyaltyRepr,1,true)) then begin
+    oldcomp = CurrentCompany;  
+    if (InvoiceExists(RoyaltyRepr.InvoiceNr,RCb.CompCode)) then begin
+      goto LRecordAction_raRoyaltyRepToIV;
+    end;
+    if (blank(RCb.CompCode) or SetCompanyCode(RCb.CompCode,false)) then begin
+      RecordNew(IVr);
+      IVr.SerNr = -1;
+      PasteRoyaltyRepInIV(IVr,RoyaltyRepr,RCb.CustCode,RCb.ArtCode,blankd,blankd,blankd,oldcomp);
+
+      foundf = true;
+      RoyaltyMaintr.RoyaltySaleNr = RoyaltyRepr.SerNr;
+      while (LoopKey("RoyaltySaleNr",RoyaltyMaintr,1,foundf)) begin
+        if (RoyaltyMaintr.RoyaltySaleNr!=RoyaltyRepr.SerNr) then begin
+          foundf = false;
+        end;
+        if (foundf) then begin
+          if (RoyaltyMaintr.OKFlag!=0 and RoyaltyMaintr.Approved!=0 and RoyaltyMaintr.Invalid==0) then begin
+            PasteRoyaltyMaintInIV(IVr,RoyaltyMaintr,RCb.CustCode,RCb.ArtCode,blankd,blankd,blankd,oldcomp);
+          end;
+        end;
+      end;
+
+      if ((MatRowCnt(IVr)>0) and (IVr.SerNr!=-1) and (IVr.Sum4>0)) then begin
+        if (RecordInsert(IVr,false)) then begin
+        end;
+        res = 1;
+      end;
+    end;
+  end;
+LRecordAction_raRoyaltyRepToIV:;
+  ResetCompany(oldcomp);
+  if (res==1) then begin
+    RecordCopy(oldRoyaltyRepr,RoyaltyRepr);
+    RoyaltyRepr.InvoiceNr = IVr.SerNr;
+    if (RecordUpdate(oldRoyaltyRepr,RoyaltyRepr,false)==0) then begin
+    end;
+  end;
+  RecordAction_raRoyaltyRepToIV = res;
+  return;
+end;
+
+global
+function Boolean RoyaltyMaintDchrsum(var record RoyaltyMaintVc RoyaltyMaintr,Integer rownr,Integer UseDiscount,boolean forcef)
+begin
+  Boolean chsum;
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  val s,s2;
+  record RoyaltyPrcBlock RPb;
+
+  chsum = false;
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  if (nonblank(RoyaltyMaintrw.ArtCode)) then begin
+    CalcSum(RoyaltyMaintrw.Quant,RoyaltyMaintrw.Price,0,RoyaltyMaintrw.vRebate,s,UseDiscount);
+    RoundRowSum("","","",s);
+    CalcSum(RoyaltyMaintrw.Quant,RoyaltyMaintrw.Price,0,RoyaltyMaintrw.ApprovedvRebate,s2,UseDiscount);
+    RoundRowSum("","","",s2);
+
+    RoyaltyMaintrw.Sum = s;
+    RoyaltyMaintrw.ActualSum = s2;
+    if (RoyaltyMaintrw.RoyaltyPercentage==0 or forcef) then begin
+      BlockLoad(RPb);
+      RoyaltyMaintrw.RoyaltyPercentage = GetRoyaltyPercentage(RoyaltyMaintrw.ArtCode,CurrentCompany);
+    end;
+    RoyaltyMaintrw.Royalty = (RoyaltyMaintrw.RoyaltyPercentage/100)*RoyaltyMaintrw.ActualSum;
+    MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    chsum = true;
+  end;
+
+  RoyaltyMaintDchrsum = chsum;
+  return;
+end;
+
+global
+procedure RoyaltyMaintGetCalcItemPrice(record INVc INr,record RoyaltyMaintVc RoyaltyMaintr,Integer rownr,var val pricep)
+begin
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  record CPMVc CPr;
+  Integer i,rwcnt;
+  val price;
+  
+  rwcnt = MatRowCnt(RoyaltyMaintr);
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  RoyaltyMaintrw.Price = blankval;
+  MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  CPr.Code = INr.CalcPrice;
+  if (ReadFirstMain(CPr,1,true)) then begin
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RoyaltyMaintr,i,RoyaltyMaintrw);
+      if (i!=rownr) then begin
+        AddCalcPrice(INr,CPr,RoyaltyMaintrw.ArtCode,RoyaltyMaintrw.Sum,"",0,price);
+      end;  
+    end;
+    price = Round(price,DefaultRoundMode);
+    MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    RoyaltyMaintrw.Price = price;
+    MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  end;
+  if (pricep!=-1) then begin pricep = price; end;
+  return;
+end;
+
+global
+procedure RoyaltyMaintMultiLineText(record RoyaltyMaintVc RoyaltyMaintr,record INVc INr,string langcode,Integer arow)
+begin
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  string 255 tstr;
+  Integer tcnt;
+ 
+  tcnt = 2;
+  while (GetItemNameStr(tcnt,tstr,langcode,INr.Name,INr.Code)) begin      
+    ClearRow(RoyaltyMaintr,RoyaltyMaintrw,1);
+    RoyaltyMaintrw.Spec = tstr;
+    MatRowInsert(RoyaltyMaintr,arow+tcnt-1,RoyaltyMaintrw);
+    tcnt = tcnt + 1;
+  end;
+  return;
+end;
+
+global
+function Boolean RoyaltyMaintVc_PasteCOCUServiceNr(var record RoyaltyMaintVc RoyaltyMaintr,Integer rownr)
+begin
+  record COCUServiceVc COCUServicer;
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  Boolean res;
+  
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  COCUServicer.SerNr = RoyaltyMaintrw.COCUServiceNr;
+  if (ReadFirstMain(COCUServicer,1,true)) then begin
+    RoyaltyMaintrw.CustCode = COCUServicer.CustCode;
+    MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    res = true;
+  end;
+  RoyaltyMaintVc_PasteCOCUServiceNr = res;
+  return;
+end;
+
+global
+function Boolean RoyaltyMaintVc_PasteArtCode(var record RoyaltyMaintVc RoyaltyMaintr,Integer rownr,var string inwarning)
+begin
+  Boolean chsum,res;
+  Boolean chrsum;
+  record INVc INr;
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  val t,s,price,vreb,baseprice,temp,tax2prc,tax2reb;
+  string 255 curitemname,salesacc,vatcode,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Boolean pritemf;
+  val UnitFactQuant,UnitFactPrice,Quant;
+  string 10 markup;
+  record GeneralOptionBlock GenOptRec;
+  Boolean dummyf;
+  Time blankt;
+
+  BlockLoad(GenOptRec);
+  chsum = false;
+  chrsum = false;
+  pritemf = true;
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  RoyaltyMaintrw.Price = BlankVal;
+  RoyaltyMaintrw.vRebate = BlankVal;
+  RoyaltyMaintrw.Sum = BlankVal;
+  if (GetItemPriceDiscount3(RoyaltyMaintrw.ArtCode,RoyaltyMaintrw.Quant,INr,RoyaltyMaintr.Currency,
+                            0,0,0,0,0,"","","","",price,curitemname,vreb,vatcode,baseprice,salesacc,
+                            0,calcprice,RoyaltyMaintr.TransDate,blankt,RoyaltyMaintrw.CustCode,false,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    if (vreb==0) then begin
+      vreb = blankval;
+    end;
+    RoyaltyMaintrw.Price = price;
+    RoyaltyMaintrw.Spec = curitemname;
+    RoyaltyMaintrw.vRebate = vreb;
+    RoyaltyMaintrw.ArtCode = INr.Code;
+    RoyaltyMaintrw.Objects = FindINObjects(INr.Objects,INr.Group);
+    if (calcprice) then begin
+      MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+      temp = -1;
+      RoyaltyMaintGetCalcItemPrice(INr,RoyaltyMaintr,rownr,temp);
+      MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    end;
+    MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    chrsum = true;
+    RoyaltyMaintMultiLineText(RoyaltyMaintr,INr,"",rownr);
+    if (nonblank(INr.WarnText1)) then begin
+      inwarning = INr.WarnText1;
+    end;
+    if (RoyaltyMaintDchrsum(RoyaltyMaintr,rownr,GenOptRec.UseDiscount,false)) then begin
+//      RoyaltyMaintDchsum(RoyaltyMaintr,rownr);
+    end;    
+    RoyaltyMaintSumup(RoyaltyMaintr);
+    MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    res = true;
+  end;
+  RoyaltyMaintVc_PasteArtCode = res;
+  return;
+end;
+
+global
+function Boolean RoyaltyMaintVc_PasteQuant(var record RoyaltyMaintVc RoyaltyMaintr,Integer rownr)
+begin
+  Boolean chsum,res;
+  Boolean chrsum;
+  record INVc INr;
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  val t,s,price,vreb,baseprice,temp,tax2prc,tax2reb;
+  string 255 curitemname,salesacc,vatcode,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Boolean pritemf;
+  val UnitFactQuant,UnitFactPrice,Quant;
+  string 10 markup;
+  record GeneralOptionBlock GenOptRec;
+  Boolean dummyf;
+  Time blankt;
+
+  BlockLoad(GenOptRec);
+  chsum = false;
+  chrsum = false;
+  pritemf = true;
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  if (GetItemPriceDiscount3(RoyaltyMaintrw.ArtCode,RoyaltyMaintrw.Quant,INr,RoyaltyMaintr.Currency,
+                            0,0,0,0,0,"","","","",price,curitemname,vreb,vatcode,baseprice,salesacc,
+                            0,calcprice,RoyaltyMaintr.TransDate,blankt,RoyaltyMaintrw.CustCode,false,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    if (vreb==0) then begin
+      vreb = blankval;
+    end;
+    RoyaltyMaintrw.Price = price;
+    RoyaltyMaintrw.vRebate = vreb;
+    if (calcprice) then begin
+      MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+      temp = -1;
+      RoyaltyMaintGetCalcItemPrice(INr,RoyaltyMaintr,rownr,temp);
+      MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    end;
+    MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    chrsum = true;
+    if (RoyaltyMaintDchrsum(RoyaltyMaintr,rownr,GenOptRec.UseDiscount,false)) then begin
+//      RoyaltyMaintDchsum(RoyaltyMaintr,rownr);
+    end;    
+    RoyaltyMaintSumup(RoyaltyMaintr);
+    MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+    res = true;
+  end;
+  RoyaltyMaintVc_PasteQuant = res;
+  return;
+end;
+
+global
+procedure PasteOneCUServiceHistIntoRoyaltyMaint(record COCUServiceVc COCUServicer,record CUServiceHistVc CUServiceHistr,record RoyaltyMaintVc RoyaltyMaintr,Longint origqty,record GeneralOptionBlock GenOptRec)
+begin
+  row RoyaltyMaintVc RoyaltyMaintrw;
+  integer rownr;
+  string 255 inwarning;
+  
+  rownr = MatRowCnt(RoyaltyMaintr);
+
+  ClearRow(RoyaltyMaintr,RoyaltyMaintrw,1);
+  RoyaltyMaintrw.CUServiceHistNr = CUServiceHistr.SerNr;
+  RoyaltyMaintrw.COCUServiceNr = COCUServicer.SerNr;
+  MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  if (RoyaltyMaintVc_PasteCOCUServiceNr(RoyaltyMaintr,rownr)) then begin end;
+
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  RoyaltyMaintrw.CustCode = COCUServicer.CustCode;
+  RoyaltyMaintrw.ArtCode = CUServiceHistr.ArtCode;
+  MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  if (RoyaltyMaintVc_PasteArtCode(RoyaltyMaintr,rownr,inwarning)) then begin end;
+
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  RoyaltyMaintrw.Quant = CUServiceHistr.Qty;
+  MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  if (RoyaltyMaintVc_PasteQuant(RoyaltyMaintr,rownr)) then begin end;
+
+  MatRowGet(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  RoyaltyMaintrw.Price = CUServiceHistr.Price;
+  RoyaltyMaintrw.vRebate = CUServiceHistr.vRebate;
+  
+  if (CUServiceHistr.vRebate==100) then begin
+    RoyaltyMaintrw.ApprovedvRebate = CUServiceHistr.vRebate;
+  end else begin
+    // should check for existing royalty exception, note problem is exception
+    // is given on only some users etc.
+    RoyaltyMaintrw.ApprovedvRebate = 0;
+  end;
+  
+  MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  
+  if (RoyaltyMaintrw.Quant!=origqty) then begin
+    if (origqty>1) then begin
+      RoyaltyMaintrw.Spec = RoyaltyMaintrw.Spec & " (" & origqty & ")";
+    end;
+  end;
+  MatRowPut(RoyaltyMaintr,rownr,RoyaltyMaintrw);
+  
+  if (RoyaltyMaintDchrsum(RoyaltyMaintr,rownr,GenOptRec.UseDiscount,false)) then begin
+    //RoyaltyMaintDchsum(RoyaltyMaintr,rownr);
+  end;
+  RoyaltyMaintSumup(RoyaltyMaintr);
+  return;
+end;
+
+global
+updating function LongInt CreateRoyaltyMaintForCUServiceHist(record COCUServiceVc COCUServicer,longint RoyaltySaleNr,array longint newhistarray,integer alen)
+begin
+  record RoyaltyMaintVc RoyaltyMaintr;
+  record CUServiceHistVc CUServiceHistr;
+  Integer i;
+  Integer j,rwcnt;
+  LongInt res;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+
+  RecordNew(RoyaltyMaintr);
+  RoyaltyMaintr.RoyaltySaleNr = RoyaltySaleNr;
+  RoyaltyMaintr.TransDate = CurrentDate; //RoyaltyRepr.TransDate;
+  RoyaltyMaintr.OKFlag = 1;
+
+  for (i=0;i<alen;i=i+1) begin //TODO: if more than 199 iterations, need to create more than one RoyaltyMaintVc record
+    CUServiceHistr.SerNr = newhistarray[i];
+    if (ReadFirstMain(CUServiceHistr,1,true)) then begin
+      if (blankdate(RoyaltyMaintr.StartDate) or RoyaltyMaintr.StartDate<CUServiceHistr.TransDate) then begin
+        RoyaltyMaintr.StartDate = CUServiceHistr.TransDate;
+      end;
+      if (blankdate(RoyaltyMaintr.StartDate) or RoyaltyMaintr.EndDate<CUServiceHistr.UntilDate) then begin
+        RoyaltyMaintr.EndDate = CUServiceHistr.UntilDate;
+      end;
+      RoyaltyMaintr.Currency = COCUServicer.CurncyCode;
+      PasteOneCUServiceHistIntoRoyaltyMaint(COCUServicer,CUServiceHistr,RoyaltyMaintr,-1,GenOptRec);
+    end;
+  end;
+  if (MatRowCnt(RoyaltyMaintr)>0) then begin
+    RoyaltyMaintr.SerNr = NextSerNr("RoyaltyMaintVc",RoyaltyMaintr.TransDate,-1,false,"");
+    RoyaltyMaintSumup(RoyaltyMaintr);
+    if (RecordStore(RoyaltyMaintr,true)) then begin
+      res = RoyaltyMaintr.SerNr;
+      for (i=0;i<alen;i=i+1) begin
+        CUServiceHistr.SerNr = newhistarray[i];
+        if (ReadFirstMain(CUServiceHistr,1,true)) then begin
+          CUServiceHistr.FileName = "RoyaltyMaintVc";
+          CUServiceHistr.RecordNr = RoyaltyMaintr.SerNr;
+          if (RecordStore(CUServiceHistr,true)) then begin end;
+        end;
+      end;
+    end;
+  end;
+
+  CreateRoyaltyMaintForCUServiceHist = res;
+  return;
+end;
+
+global
+function boolean RoyaltyRecordExistsForCN(record IVVc IVr)
+begin
+  record RoyaltyRepVc RoyaltyRepr;
+  record RoyaltyMaintVc RoyaltyMaintr;
+  Boolean res;
+  
+  RoyaltyRepr.CreditNoteNr = IVr.SerNr;
+  res = ReadFirstKey("CreditNoteNr",RoyaltyRepr,1,true);
+
+  if (res==false) then begin
+    RoyaltyMaintr.CreditNoteNr = IVr.SerNr;
+    res = ReadFirstKey("CreditNoteNr",RoyaltyMaintr,1,true);
+  end;
+
+  RoyaltyRecordExistsForCN = res;
+  return;
+end;
+
+global
+updating procedure RoyaltyIVRemoved(record IVVc IVr)
+begin
+  record RoyaltyRepVc RoyaltyRepr;
+  record RoyaltyMaintVc RoyaltyMaintr;
+  Boolean foundf;
+  
+  if (IVr.RoyaltyIVFlag!=0) then begin
+    foundf = true;
+    RoyaltyRepr.InvoiceNr = IVr.SerNr;
+    while (LoopKey("InvoiceNr",RoyaltyRepr,1,foundf)) begin
+      if (RoyaltyRepr.InvoiceNr!=IVr.SerNr) then begin
+        foundf = false;
+      end;
+      if (foundf) then begin
+        RoyaltyRepr.InvoiceNr = -1;
+        if (RecordStore(RoyaltyRepr,true)) then begin end;
+        ResetLoop(RoyaltyRepr);
+        RoyaltyRepr.InvoiceNr = IVr.SerNr;
+      end; 
+    end;
+    foundf = true;
+    RoyaltyMaintr.InvoiceNr = IVr.SerNr;
+    while (LoopKey("InvoiceNr",RoyaltyMaintr,1,foundf)) begin
+      if (RoyaltyMaintr.InvoiceNr!=IVr.SerNr) then begin
+        foundf = false;
+      end;
+      if (foundf) then begin
+        RoyaltyMaintr.InvoiceNr = -1;
+        if (RecordStore(RoyaltyMaintr,true)) then begin end;
+        ResetLoop(RoyaltyMaintr);
+        RoyaltyMaintr.InvoiceNr = IVr.SerNr;
+      end; 
+    end;
+  end;
+  return;
+end;

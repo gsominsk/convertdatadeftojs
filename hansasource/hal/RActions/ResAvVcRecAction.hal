@@ -1,0 +1,664 @@
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Integer CountObjects(string);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure ResAvNumberOfDays(var record ResAvVc);
+external function string 20 FindJobCustomerCode(record JobVc);
+external updating procedure UpdateResAvPrices(record ResAvVc,record ResAvVc,Boolean);
+external updating procedure DeleteResAvPrices(record ResAvVc);
+external procedure RemoveOldResUsageObjects(string,var string);
+external function LongInt DateDiff(Date,Date);
+external procedure JobSumup(var record JobVc);
+external procedure GetSalesGroup(string,var string);
+external updating function Boolean JobToShopBask(var record JobVc,record ResTypeVc,record HotelBlock,Record RcVc);
+external updating procedure StoreInShopBask(Integer,LongInt,String,String,Val,Val,Val,String,String,LongInt,String,Boolean,string,string,longint,string,val,val,val,val,val);
+external procedure AddObj(String, var string);
+external procedure GetJobSalesGroup(string,var string,var string);
+external procedure ResTypeAvail(string,string,string,Date,LongInt,Time,Time,var LongInt,var LongInt,var LongInt,var LongInt);
+
+procedure AddAllJobObjects(var record JobVc Jobr)
+begin
+  string 20 tstr,objs,SalesObj;
+  record BookOrgBlock BOr;
+  row BookOrgBlock BOrw;
+  record ResTypeVc ResTyper;
+  record ResUsageVc ResUsager;
+  record CUVc CUr;
+  Integer rwcnt,i;
+
+  objs = Jobr.Objects;
+  BlockLoad(BOr);
+  rwcnt = MatRowCnt(BOr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(BOr,i,BOrw);
+    if (BOrw.Code==Jobr.BookOrigin) then begin
+      AddObj(BOrw.Objects,objs);
+    end;
+  end;
+  GetJobSalesGroup(Jobr.SalesMan,tstr,SalesObj);
+  AddObj(SalesObj,objs);
+  ResTyper.Code = Jobr.Type;
+  if (ReadFirstMain(ResTyper,1,true)) then begin 
+    AddObj(ResTyper.Objects,objs);
+  end;
+  ResUsager.Code = Jobr.ResUsage;
+  if (ReadFirstMain(ResUsager,1,true)) then begin
+    AddObj(ResUsager.Objects,objs);
+  end;
+  CUr.Code = Jobr.Source;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    AddObj(CUr.Objects,objs);
+  end;
+  CUr.Code = FindJobCustomerCode(Jobr);
+  if (ReadFirstMain(CUr,1,true)) then begin
+    AddObj(CUr.Objects,objs);
+  end;
+  Jobr.Objects = objs;
+  return;
+end;
+
+global
+updating function LongInt CreateJobFromResAv(record ResAvVc ResAvr,Boolean aflag,LongInt MatherJobNr,var record JobVc newGroupJobr)
+begin
+  record ResVc Resr; 
+  record JobVc groupJobr;
+  record JobVc Jobr;
+  row JobVc Jobrw;
+  row ResAvVc ResAvrw;
+  LongInt i,rwcnt,j,Quantity,p;
+  Boolean res;
+  LongInt Mother,newnr;
+  record HotelBlock Hotelb;
+  record CashierDefBlock CDb;
+  record SRBlock SRRec;
+  record ResTypeVc ResTyper;
+  string 255 tstr;
+  Date blankd;
+  record RcVc RepSpec;
+  Boolean Agentflag;
+  record CUVc CUr;
+  Integer pos;
+  Date groupstartdate,groupenddate;
+
+  RecordClear(newGroupJobr);
+  BlockLoad(SRRec);  
+  BlockLoad(Hotelb);
+  BlockLoad(CDb);
+  CUr.Code = ResAvr.CUCode;
+  if ReadFirstMain(CUr,1,true) then begin
+    if (Hotelb.CustCat1==CUr.CustCat) then begin
+      Agentflag = true;
+    end else begin
+      Agentflag = aflag;
+    end;
+  end;
+  if (MatherJobNr<=0) then begin
+    RecordNew(groupJobr);
+    groupJobr.ReservationType = kReservationTypeGroup;
+    groupJobr.TransDate = ResAvr.TransDate;
+    groupJobr.EndDate = ResAvr.EndDate;
+    groupJobr.NrOfDays = DateDiff(groupJobr.EndDate,groupJobr.TransDate);
+    groupstartdate = groupJobr.TransDate;
+    groupenddate = groupJobr.EndDate;
+    groupJobr.Source = ResAvr.SourceCode;
+    groupJobr.SourceName = ResAvr.SourceName;
+    groupJobr.CUCode = ResAvr.CUCode;
+    groupJobr.CUName = ResAvr.CUName;
+    groupJobr.CustContact = ResAvr.CustContact;
+    groupJobr.RegDate = CurrentDate;
+    groupJobr.BookOrigin = ResAvr.BookOrigin;
+    groupJobr.RefStr = ResAvr.RefStr;
+    groupJobr.Comment = ResAvr.Comment;
+    groupJobr.VisitPurpose = ResAvr.VisitPurpose;
+    groupJobr.ResLoc = ResAvr.ResLoc;
+    groupJobr.CurncyCode = ResAvr.CurncyCode;
+    groupJobr.FrRate = ResAvr.FrRate;
+    groupJobr.ToRateB1 = ResAvr.ToRateB1;
+    groupJobr.ToRateB2 = ResAvr.ToRateB2;
+    groupJobr.BaseRate1 = ResAvr.BaseRate1;
+    groupJobr.BaseRate2 = ResAvr.BaseRate2;
+    if (RecordInsert(groupJobr,true)) then begin
+      Mother = groupJobr.SerNr;
+      RecordCopy(newGroupJobr,groupJobr);
+    end;
+  end else begin
+    Mother = ResAvr.MatherJobNr;
+  end;
+  
+  
+  rwcnt = MatRowCnt(ResAvr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ResAvr,i,ResAvrw);
+    if (nonblank(ResAvrw.ArtCode)) then begin 
+      if (Hotelb.SaveInShopBask==1) then begin
+        StoreInShopBask(1,Mother,ResAvrw.ArtCode,"",ResAvrw.QtyWanted,BlankVal,BlankVal,ResAvr.SourceCode,"",-1,"",false,"","",-1,
+                        groupJobr.CurncyCode,groupJobr.FrRate,groupJobr.ToRateB1,groupJobr.ToRateB2,groupJobr.BaseRate1,groupJobr.BaseRate2);
+      end;
+      goto LIFOREnd;
+    end;
+    if (blank(ResAvrw.ResType)) then begin 
+      goto LIFOREnd;
+    end;
+    Quantity = ResAvrw.QtyWanted;
+    for (j=0;j<Quantity;j=j+1) begin
+      RecordNew(Jobr);
+      Jobr.ReservationType = kReservationTypeNormal;
+      if (blankdate(ResAvrw.TransDate)) then begin
+        Jobr.TransDate = ResAvr.TransDate;
+      end else begin
+        Jobr.TransDate = ResAvrw.TransDate;
+      end;  
+      if (groupstartdate>Jobr.TransDate) then begin
+        groupstartdate = Jobr.TransDate;
+      end;
+      if (blankdate(ResAvrw.EndDate)) then begin
+        Jobr.EndDate = ResAvr.EndDate;
+      end else begin
+        Jobr.EndDate = ResAvrw.EndDate;
+      end;  
+      if (groupenddate>Jobr.EndDate) then begin
+        groupenddate = Jobr.EndDate;
+      end;
+      if (blanktime(ResAvrw.StartTime)) then begin
+        Jobr.StartTime = ResAvr.StartTime;
+      end else begin
+        Jobr.StartTime = ResAvrw.StartTime;
+      end;  
+      if (blanktime(ResAvrw.EndTime)) then begin
+        Jobr.EndTime = ResAvr.EndTime;
+      end else begin
+        Jobr.EndTime = ResAvrw.EndTime;
+      end;
+      if (blanktime(Jobr.StartTime)) then begin
+        Jobr.StartTime = Hotelb.CheckIn;
+      end;
+      if (blanktime(Jobr.EndTime)) then begin
+        Jobr.EndTime = Hotelb.CheckOut;
+      end;
+      if (blanktime(ResAvrw.VisitPurpose)) then begin
+        Jobr.VisitPurpose = ResAvr.VisitPurpose;
+      end else begin
+        Jobr.VisitPurpose = ResAvrw.VisitPurpose;
+      end;
+      if (blank(ResAvrw.ResLoc)) then begin
+        Jobr.ResLoc = ResAvr.ResLoc;
+      end else begin
+        Jobr.ResLoc = ResAvrw.ResLoc;
+      end;
+      Jobr.ResStatus = Hotelb.DefSt;
+      Jobr.Mother      = Mother;
+      Jobr.Children    = ResAvrw.Children;
+      if (Agentflag) then begin
+        Jobr.Source      = ResAvr.SourceCode;
+        Jobr.SourceName  = ResAvr.SourceName;
+        if (nonblank(CDb.DefCustCode)) then begin
+          Jobr.CUCode = CDb.DefCustCode;
+        end;
+      end else begin
+        Jobr.CUCode  = ResAvr.SourceCode;
+        Jobr.CUName  = ResAvr.SourceName;
+      end; 
+      Jobr.CUName = ResAvr.Comment;
+      if (nonblank(ResAvr.CUCode)) then begin
+        Jobr.CUCode = ResAvr.CUCode;
+        Jobr.CUName = ResAvr.CUName;
+      end;
+      if (blank(Jobr.CUCode)) then begin
+        Jobr.CUCode = Jobr.Source;
+        Jobr.CUName = Jobr.SourceName;
+      end;
+      Jobr.BookOrigin = ResAvrw.BookOrigin;
+      if (blank(Jobr.BookOrigin)) then begin
+        Jobr.BookOrigin = ResAvr.BookOrigin;
+      end;
+      Jobr.RefStr = ResAvrw.RefStr;
+      if (blank(Jobr.RefStr)) then begin
+        Jobr.RefStr = ResAvr.RefStr;
+      end;
+      Jobr.Comment    = ResAvr.Comment;
+      Jobr.GroupWillNotPay = ResAvr.GroupWillNotPay; 
+      Jobr.SalesMan    = CurrentUser;
+      GetSalesGroup(Jobr.SalesMan,tstr);
+      Jobr.SalesGroup = tstr;   
+      Jobr.PriceList = ResAvr.AgentPriceList;
+      Jobr.CustContact    = ResAvr.CustContact; 
+      Jobr.xQtyConv = ResAvrw.xQtyConv;
+      Jobr.Persons = ResAvrw.NoOfGuests;
+      Jobr.Type        = ResAvrw.ResType;
+      Jobr.ResUsage    = ResAvrw.Usage; 
+      Jobr.ResCode     = ResAvrw.ResCode;
+      if (Jobr.ResUsage!=Hotelb.DefResUsage) then begin
+        tstr = Jobr.Objects;
+        RemoveOldResUsageObjects(Hotelb.DefResUsage,tstr);
+        Jobr.Objects = tstr;
+      end;
+      if (nonblank(ResAvr.SourceCode)) then begin
+        Jobr.PLPrice = ResAvrw.AgentPrice;
+        Jobr.Sum4 = ResAvrw.AgentSum;
+        Jobr.AgreedPrice = ResAvrw.AgentPrice;
+      end else begin
+        Jobr.PLPrice = ResAvrw.PubPrice;
+        Jobr.Sum4 = ResAvrw.PubSum;
+        Jobr.AgreedPrice = ResAvrw.PubPrice;
+      end;
+      ResTyper.Code = ResAvrw.ResType;
+      Jobr.RegDate = CurrentDate;
+      if (Hotelb.ConfDays>0) then begin
+//        Jobr.ConfDate = AddDay(Jobr.TransDate,-Hotelb.ConfDays); // could be x days before checkin
+        Jobr.ConfDate = AddDay(Jobr.RegDate,Hotelb.ConfDays); // Now it is two days after prel booking
+      end;
+      if (Jobr.ConfDate<CurrentDate) then begin
+        Jobr.ConfDate = blankd;
+      end;
+      AddAllJobObjects(Jobr);
+      if (ReadFirstMain(ResTyper,1,true)) then begin
+        newnr = ResTyper.LastDaughterJobNr;
+        Jobr.MaxPersons = ResTyper.MaxPersons;
+      end;
+      if (Jobr.MaxPersons<1) then begin
+        Jobr.MaxPersons = 1;
+      end;
+      if (newnr==-1) then begin
+        newnr = SRRec.LastDaughterJobNr;
+      end;  
+      Jobr.CurncyCode = ResAvr.CurncyCode;
+      Jobr.FrRate = ResAvr.FrRate;
+      Jobr.ToRateB1 = ResAvr.ToRateB1;
+      Jobr.ToRateB2 = ResAvr.ToRateB2;
+      Jobr.BaseRate1 = ResAvr.BaseRate1;
+      Jobr.BaseRate2 = ResAvr.BaseRate2;
+      Jobr.SerNr = NextSerNr("JobVc",Jobr.TransDate,newnr,false,"");
+      if (Jobr.SerNr>0) then begin
+        if (nonblank(ResAvrw.Classification)) then begin
+          pos = 0;
+          ExtractObj(ResAvrw.Classification,pos,tstr);
+          while (nonblank(tstr)) begin
+            ClearRow(Jobr,Jobrw,1);
+            Jobrw.CClass = tstr;
+            MatRowPut(Jobr,MatRowCnt(Jobr),Jobrw);
+            ExtractObj(ResAvrw.Classification,pos,tstr);
+          end;
+        end;
+      
+/*
+        for (p=0;p<ResAvrw.Persons;p=p+1) begin
+          ClearRow(Jobr,Jobrw,1);
+          Jobrw.CUName = ResAvr.Comment;
+          MatRowPut(Jobr,p,Jobrw);
+        end;  
+*/
+        JobSumup(Jobr);
+        res = RecordInsert(Jobr,true);
+        CreateRecordLink(Jobr,CurrentCompany,ResAvr,CurrentCompany);  
+        CreateRecordLink(ResAvr,CurrentCompany,Jobr,CurrentCompany);  
+        if (ResTyper.ChargeMethod==2) then begin
+          RepSpec.sStartDate = Jobr.TransDate;
+          RepSpec.sEndDate = Jobr.EndDate;
+          RepSpec.sStartTime = Jobr.StartTime;
+          RepSpec.sEndTime = Jobr.EndTime;
+          if (JobToShopBask(Jobr,ResTyper,Hotelb,RepSpec)) then begin end;
+        end;
+      end;  
+    end;
+LIFOREnd:;    
+  end;
+  CreateJobFromResAv = Mother;
+  return;
+end;
+
+global
+updating procedure DeleteReservationAccount(LongInt sernr)
+begin
+  record ShopBaskVc ShopBaskr;
+  Boolean found;
+
+  ShopBaskr.OwnerSerNr = sernr;
+  ShopBaskr.Owner = kShopBaskOwnerReservation;
+  found = true;
+  ResetLoop(ShopBaskr);
+  while (LoopKey("OwnerSerNrDate",ShopBaskr,2,found)) begin
+    if (ShopBaskr.OwnerSerNr!=sernr) then begin found = false; end;
+    if (ShopBaskr.Owner!=kShopBaskOwnerReservation) then  begin found = false; end;
+    if (found) then begin
+      RecordDelete(ShopBaskr);
+      StepBack(ShopBaskr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure DeleteJobFromResAv(var record ResAvVc ResAvr)
+begin
+  record JobVc Jobr;
+  record JobVc Job2r;
+  Boolean foundf;
+  
+  Jobr.SerNr = ResAvr.MatherJobNr;
+  if (ReadFirstMain(Jobr,1,true)) then begin
+LDeleteJobFromResAv:;
+    foundf = true;
+    ResetLoop(Job2r);
+    Job2r.Mother = Jobr.SerNr;
+    while (LoopKey("MotherKey",Job2r,1,true)) begin
+      if (Job2r.Mother==Jobr.SerNr) then begin
+        DeleteReservationAccount(Job2r.SerNr);
+        RecordDelete(Job2r);
+        goto LDeleteJobFromResAv;
+      end;
+    end;
+    DeleteReservationAccount(Jobr.SerNr);
+    RecordDelete(Jobr);
+  end;
+  ResAvr.MatherJobNr = -1;
+  return;
+end;
+
+global
+updating function LongInt ResAvVcRecordSave(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record JobVc newGroupJobr;
+    
+  if (ResAvr.SerNr<=0) then begin
+    ResAvr.SerNr = NextSerNr("ResAvVc",ResAvr.TransDate,-1,false,"");
+  end;  
+  if (ResAvr.SerNr!=-1) then begin
+    if (ResAvr.Closed==0) then begin
+      if ((ResAvr.OKFlag!=0) or (ResAvr.PrelFlag!=0)) then begin
+        ResAvr.MatherJobNr = CreateJobFromResAv(ResAvr,true,-1,newGroupJobr);
+      end;
+    end;  
+  end;  
+LResAvVcRecordSave:;  
+  ResAvVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating function LongInt ResAvVcRecordUpdate(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record JobVc newGroupJobr;
+  
+  if (ResAvr.SerNr<=0) then begin
+    ResAvr.SerNr = NextSerNr("ResAvVc",ResAvr.TransDate,-1,false,"");
+  end;  
+  if (ResAvr.SerNr!=-1) then begin
+    if (ResAvr.Closed==0) then begin
+      if (ResAvr.OKFlag!=0) then begin
+        if ((ResAv2r.OKFlag==0) and (ResAv2r.PrelFlag==0)) then begin    
+          ResAvr.MatherJobNr = CreateJobFromResAv(ResAvr,true,-1,newGroupJobr);
+        end;
+      end else begin
+        if (ResAvr.PrelFlag!=0) then begin
+          if (ResAv2r.PrelFlag!=0) then begin
+            DeleteJobFromResAv(ResAvr);
+          end;
+          ResAvr.MatherJobNr = CreateJobFromResAv(ResAvr,true,-1,newGroupJobr);
+        end else begin
+          if (ResAv2r.PrelFlag!=0) then begin
+            DeleteJobFromResAv(ResAvr);
+          end;
+        end;
+      end;
+    end;  
+  end;  
+LResAvVcRecordUpdate:;  
+  ResAvVcRecordUpdate = res;
+  return;
+end;
+
+global
+function LongInt ResAvVcRecordCheck(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row ResAvVc ResAvrw;
+  record ResAvVc locResAvr;
+  Integer insertmode,updatemode;
+  Integer i,rwcnt;
+  record HotelBlock Hotelb;
+  record ResTypeVc ResTyper;
+  Boolean checkoverbook;
+  val occup,tottypv,prc;
+  LongInt maxdays;
+  Time endofday,startofday;
+  LongInt rooms,booked,totpers;
+  LongInt readrecs,usedrecs;
+  record CUVc CUr;
+  
+  BlockLoad(Hotelb);  
+  res = 0;
+  readrecs = 0;
+  usedrecs = 0;
+  insertmode = 1;  
+  updatemode = 2;
+  checkoverbook = false;
+  if (stat==updatemode) then begin
+    if (ResAvr.SerNr<=0) and (ResAv2r.OKFlag==0) then begin
+      ResAvr.SerNr = ResAv2r.SerNr;
+    end;
+  end;    
+  if (stat==insertmode) then begin
+    if (ResAvr.OKFlag!=0) then begin
+      checkoverbook = true;
+    end;
+  end;
+  if (stat==updatemode) then begin
+    if ((ResAvr.OKFlag!=0) and (ResAv2r.OKFlag==0)) then begin
+      checkoverbook = true;
+    end;
+    if (ResAvr.PrelFlag!=0) then begin
+      checkoverbook = true;
+    end;
+  end;
+  if (ResAvr.SerNr<=0) then begin
+    ResAvr.SerNr = NextSerNr("ResAvVc",ResAvr.TransDate,-1,false,"");
+  end;
+  if ((stat==insertmode) or (ResAvr.SerNr!=ResAv2r.SerNr)) then begin
+    locResAvr.SerNr = ResAvr.SerNr;
+    if (ReadFirstMain(locResAvr,1,true)) then begin
+      RecordCheckError(1115,ResAvr.SerNr,-1,"SerNr");      
+      res = -1;
+      goto LResAvVcRecordCheck;
+    end;
+  end;
+  if (ResAvr.SerNr<=0) then begin
+    RecordCheckError(1557,ResAvr.SerNr,-1,"SerNr");      
+    res = -1;
+    goto LResAvVcRecordCheck;
+  end;  
+  if (nonblank(ResAvr.CUCode)) then begin
+    CUr.Code = ResAvr.CUCode;
+    if (ReadFirstMain(CUr,1,true)==false) then begin
+      RecordCheckError(1290," " & ResAvr.CUCode,-1,"CUCode");      
+      res = -1;
+      goto LResAvVcRecordCheck;
+    end;
+  end;
+  if (Hotelb.ForceBookOrigin!=0) then begin
+    if (blank(ResAvr.BookOrigin)) then begin
+      RecordCheckError(1058," " & ResAvr.BookOrigin,-1,"BookOrigin");      
+      res = -1;
+      goto LResAvVcRecordCheck;
+    end;
+  end;
+  rwcnt = MatRowCnt(ResAvr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ResAvr,i,ResAvrw);
+/*
+    if (blank(ResAvrw.PubPriceList)) then begin
+      RecordCheckError(1058,"",i,"PubPriceList");      
+      res = -1;
+      goto LResAvVcRecordCheck;
+    end;
+*/
+    if (Hotelb.RequestPrice!=0) then begin
+      if (ResAvrw.AgentPrice==0) and (ResAvrw.PubPrice==0) then begin
+        RecordCheckError(1058,ResAvrw.AgentPrice,i,"AgentPrice");      
+        res = -1;
+        goto LResAvVcRecordCheck;
+      end;
+    end;
+
+    if ((nonblank(ResAvrw.ArtCode)) and (nonblank(ResAvrw.ResType))) then begin
+      RecordCheckError(1945,ResAvrw.ArtCode,i,"ArtCode");      
+      res = -1;
+      goto LResAvVcRecordCheck;
+    end;
+    switch (Hotelb.RequestGuestClass) begin
+      case 1:
+        totpers = ResAvrw.Persons;
+        if (ResAvrw.Children>0) then begin
+          totpers = totpers + ResAvrw.Children;
+        end;
+        if (CountObjects(ResAvrw.Classification)<totpers) then begin
+          RecordCheckError(1058,"",i,"Classification");      
+          res = -1;
+          goto LResAvVcRecordCheck;
+        end;
+      case 2:
+        totpers = 0;
+        if (ResAvrw.Children>0) then begin
+          totpers = ResAvrw.Children;
+        end;
+        if (CountObjects(ResAvrw.Classification)<totpers) then begin
+          RecordCheckError(1058,"",i,"Classification");      
+          res = -1;
+          goto LResAvVcRecordCheck;
+        end;
+    end;
+    if (checkoverbook) then begin
+      maxdays = DateDiff(ResAvr.EndDate,ResAvr.TransDate);
+      endofday = Hotelb.CheckOut;
+//      if (nonblanktime(Hotelb.EndOfDay)) then begin
+//        endofday = Hotelb.EndOfDay;
+//      end;
+      startofday = Hotelb.CheckIn;
+//      if (nonblanktime(Hotelb.StartNewDay)) then begin
+//        startofday = Hotelb.StartNewDay;
+//      end;
+      ResTypeAvail(ResAvrw.ResType,"","",ResAvr.TransDate,maxdays,startofday,endofday,rooms,booked,readrecs,usedrecs);
+      ResAvrw.QtyAvailable = rooms-booked;
+      tottypv = rooms;
+      MatRowPut(ResAvr,i,ResAvrw);
+      if (ResAvrw.QtyAvailable<ResAvrw.QtyWanted) then begin
+        if (Hotelb.OverBook!=0) then begin
+          ResTyper.Code = ResAvrw.ResType;
+          if (ReadFirstMain(ResTyper,1,true)) then begin
+            occup = tottypv-(ResAvrw.QtyAvailable-ResAvrw.QtyWanted);
+            prc = (100 * occup)/tottypv;
+            if (prc>(ResTyper.OverbookPrc+100)) then begin
+              RecordCheckError(2146,"",i,"QtyAvailable");      
+              res = -1;
+              goto LResAvVcRecordCheck;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+LResAvVcRecordCheck:;
+  ResAvVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+updating function LongInt ResAvVcRecordImport(var record ResAvVc ResAvr,record ResAvVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  ResAvNumberOfDays(ResAvr);
+  ResAvVcRecordImport = res;
+  return;
+end;
+
+global
+function LongInt ResAvVcRecordDefaults(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record HotelBlock Hotelb;
+  Time bltim;
+  
+  BlockLoad(Hotelb);
+  ResAvr.IncludePackage = Hotelb.IncludePackage;
+  ResAvr.TransDate = CurrentDate;
+  ResAvr.StartTime = Hotelb.CheckIn;
+  ResAvr.EndTime = Hotelb.CheckOut;
+  ResAvr.NrOfDays = -1;
+  ResAvr.OKFlag = 0;
+  ResAvr.Closed = 0;
+  ResAvr.PrelFlag = 0;
+  ResAvr.SerNr = -1;
+  GetFullCurncyRate(ResAvr.CurncyCode,ResAvr.TransDate,ResAvr.FrRate,ResAvr.ToRateB1,ResAvr.ToRateB2,ResAvr.BaseRate1,ResAvr.BaseRate2);
+  ResAvVcRecordDefaults = res;  
+  return;
+end;
+
+global
+function LongInt ResAvVcRecordDuplicate(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  ResAvr.OKFlag = 0;
+  ResAvr.Closed = 0;
+  ResAvr.PrelFlag = 0;
+  ResAvr.SerNr = -1;
+  ResAvr.MatherJobNr = -1;
+  ResAvVcRecordDuplicate = res;  
+  return;
+end;
+
+global
+function LongInt ResAvVcRecordRemoveTest(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (ResAvr.TransDate<=DBLockRec.DeleteBeforeDate) then begin
+    res = 1;
+    goto LResAvVcRecordRemoveTest;
+  end;
+  if (ResAvr.OKFlag!=0) then begin
+    if (long3>0) then begin
+      MessageBox(1544,"");
+    end;
+    res = 0;
+  end;    
+LResAvVcRecordRemoveTest:;
+  ResAvVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+
+global
+updating function LongInt ResAvVcRecordSaveAfter(record ResAvVc ResAvr,record ResAvVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateResAvPrices(ResAvr,r2,false);
+  ResAvVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+updating function LongInt ResAvVcRecordUpdateAfter(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateResAvPrices(ResAvr,ResAv2r,true);
+  ResAvVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+updating function LongInt ResAvVcRecordRemove(var record ResAvVc ResAvr,record ResAvVc ResAv2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  DeleteResAvPrices(ResAvr);
+  ResAvVcRecordRemove = res;  
+  return;
+end;
+

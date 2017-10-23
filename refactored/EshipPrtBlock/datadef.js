@@ -1,0 +1,18 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fLiveServerAddress: { public: true, type: 'TEXT' },
+     fLiveServerPort: { public: true, type: 'INTEGER' },
+     fLiveServerUrl: { public: true, type: 'TEXT' },
+     fLiveServerSOAPAction: { public: true, type: 'TEXT' },
+     fTestServerAddress: { public: true, type: 'TEXT' },
+     fTestServerPort: { public: true, type: 'INTEGER' },
+     fTestServerUrl: { public: true, type: 'TEXT' },
+     fTestServerSOAPAction: { public: true, type: 'TEXT' },
+     fStatus: { public: true, type: 'INTEGER' },
+     fEnableDebug: { public: true, type: 'INTEGER' },
+     fPublicCertificate: { public: true, type: 'TEXT' },
+     fTestServerSSLPublicCertificate: { public: true, type: 'TEXT' },
+     fTestServerSSLPivateKey: { public: true, type: 'TEXT' },
+     fLiveServerSSLPublicCertificate: { public: true, type: 'TEXT' },
+     fLiveServerSSLPivateKey: { public: true, type: 'TEXT' },
+     fGMTOffset: { public: true, type: 'INTEGER' } } }

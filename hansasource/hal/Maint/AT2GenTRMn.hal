@@ -1,0 +1,519 @@
+external function Integer TRVc_AddRoundOffRow(var record TRVc,val,val,string,Boolean,Boolean,Boolean,val,var val);
+external function Boolean CheckTTRPerRow(string,string,string,Boolean,var string,Integer);
+external procedure OneInventoryNrDepreciation(record AT2UnitVc,Integer,Integer,Date,Date,Integer,Integer,Integer,Integer,Integer,
+                                              Integer,Integer,
+                                              var val,var val,var val,var val,var val,var val,var val,var val,var val,var val,
+                                              var val,var val,var val);
+external function Boolean AT2GetStartVal(Integer,string,Date,Date,val,var val,var val);
+external procedure CheckFlush(var Integer,Integer);
+external updating procedure UpdateATTransRecArray(record TRVc,array string,array val,integer,integer);
+external function Integer GetIntYc(Date);
+external function Integer GetDprModelDeprMethod(string);
+external procedure DeprSegment(Date,Date,Integer,record DprModVc,Date,Date,Date,val,var val,var val,var val,var val,var Integer,val);
+external function Boolean GetLastOfficialDprStartVal(Integer,string,val,var val,var val);
+external function Boolean GetLastDprStartVal(Integer,string,val,var val,var val);
+external function Boolean CheckifAT2UnitSold(string,Date);
+external function Boolean CheckAssetDepMatch(string,string,record RcVc,var Date);
+external function Boolean CheckAssetCatMatch(string,string,string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external procedure GetCategoryNLAccounts(Integer,string,var string,var string,var string,var string,var string,var string,var string,var string,var string,var string,
+                                         var string,var string,var string,var string);
+external procedure TRSumup(var record TRVc,var val);
+
+procedure PrintInventoryNrDescr(record AT2UnitVc ATUnitr,Integer ArtMode,Integer flags7)
+BEGIN      
+  if (ArtMode==1) then begin
+    StartFormat(15);
+     OutString(0,"DblAT2UnitVc",ATUnitr.InventoryNr,false);          
+     OutString(100,0,ATUnitr.Description,false);
+     if (flags7!=0) then begin
+       OutVal(480,0,ATUnitr.FiscalVal,M4Val,true);       
+     end else begin
+       OutVal(480,0,ATUnitr.PurchVal,M4Val,true);       
+     end;
+    EndFormat;
+  end else begin
+  end;
+  RETURN;      
+END;
+
+global
+procedure PrintTRRecord(record TRVc TRr,Integer type)
+BEGIN
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  string 255 dblstr;
+ 
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i= i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    StartFormat(15);
+    OutLongInt(0,0,TRr.Number,false);
+    OutDate(100,0,TRr.TransDate,false);
+    OutString(200,0,TRr.RefStr,false);
+    switch (type) begin
+      case 1: dblstr = "DblAT2UnitVc";
+    end;
+    OutString(280,dblstr,TRr.Comment,false);
+    OutString(1,0,TRr.Sign,true);
+    EndFormat;
+    rwcnt = MatRowCnt(TRr);
+    for (i = 0 ; i<rwcnt ;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+      StartFormat(15);
+      OutString(20,0,TRrw.AccNumber,false);
+      OutString(80,0,TRrw.Objects,false);
+      OutString(170,0,TRrw.Comment,false);
+      OutVal(380,0,TRrw.DebVal,M4Val,true);
+      OutVal(460,0,TRrw.CredVal,M4Val,true);
+      OutString(480,0,TRrw.VATCode,true);
+      EndFormat;
+    end;
+    Black_Divider(300,480);
+    StartFormat(15);
+    OutVal(380,0,TRr.DSum,M4Val,true);
+    OutVal(460,0,TRr.CSum,M4NegVal,true);
+    EndFormat;    
+  end;
+  Gray_Divider(0,1);
+  RETURN;
+END;
+
+updating procedure StoreTRRecord(record RcVc RepSpec,var record TRVc TRr,var string commentstr,record DBLockBlock DBLockRec,var Integer flushcnt)
+BEGIN
+  val t;
+  Date td;
+  string 255 tstr;
+  
+  if (TRr.TransDate<=DBLockRec.TRLock) then begin 
+    RecordNew(TRr);
+	  TRr.Number = -1;
+	  TRr.IntYc = 0;
+    commentstr = "";
+    goto LStoreTRRecord; 
+  end;
+  
+  TRr.Comment = USetStr(9649);
+  TRr.Comment = TRr.Comment & ": " & RepSpec.sStartDate;
+  TRr.Comment = TRr.Comment & ":" & RepSpec.sEndDate;
+  if (RepSpec.flags[6]!=0) then begin
+    TRr.Comment = TRr.Comment & " ";
+    TRr.Comment = TRr.Comment & commentstr;
+  end;
+  
+  TRr.TransDate = RepSpec.d1;
+  if (blankdate(TRr.TransDate)) then begin
+    TRr.TransDate = CurrentDate;
+  end;
+  if (TRr.Number<=0) then begin
+    TRr.Number = NextSerNr("TRVc",TRr.TransDate,RepSpec.long1,false,"");  
+  end;
+  if (TRr.Number>0) then begin
+    TRSumup(TRr,t);
+    TRr.IntYc = GetIntYc(TRr.TransDate);                
+    if (RecordInsert(TRr,false)) then begin end;
+    CheckFlush(flushcnt,10);
+    RecordNew(TRr);
+	  TRr.Number = -1;
+	  TRr.IntYc = 0;
+    commentstr = "";
+  end;
+LStoreTRRecord:;  
+  RETURN;
+END;
+
+updating procedure AddTRDprRowRows(record RcVc RepSpec,record AT2UnitVc ATUnitr,val invdprv,val invrevdprv,Integer mode,var record TRVc TRr,var string commentstr,var Integer flushcnt)
+BEGIN
+  record AccBlock AccRec;
+  record AT2Vc ATCatr;
+  record BaseERVc BERr;
+  string 10 costacc,depracc,assetacc,revdepr1acc,capcorr1acc;
+  string 60 accname,objstr,blanks,asset1objstr,depr1objstr,cost1objstr,asset2objstr,depr2objstr,cost2objstr,commonobjstr,AT2Class,revdepr1objects,capcorr1objects;
+  Date td;
+  val TotSum,t;
+  val base1,base2;
+  record DBLockBlock DBLockRec;
+  Boolean accf;
+  string 20 taccnumber;
+  val linvdprv;
+  string 255 tstr;
+
+  BlockLoad(DBLockRec);
+  if (invdprv!=0) then begin 
+    TRr.TransDate = RepSpec.d1;
+    if (blankdate(TRr.TransDate)) then begin
+      TRr.TransDate = CurrentDate;
+    end;
+    base1 = 100;
+    base2 = 100;
+    BERr.Date = TRr.TransDate;
+    if (ReadLastMain(BERr,1,false)) then begin
+      base1 = BERr.Rate1;
+      base2 = BERr.Rate2;
+    end;  
+    ATCatr.Code = ATUnitr.AT2Code;
+    if (ReadFirstMain(ATCatr,1,true)) then begin    end;
+    AT2Class = ATUnitr.AT2Class;
+    if (blank(AT2Class)) then begin
+      AT2Class = ATCatr.AT2Class;
+    end;    
+    if (nonblank(AT2Class)) then begin
+      if (RepSpec.flags[6]!=0) then begin
+        RecordNew(TRr);
+			  TRr.Number = -1;
+			  TRr.IntYc = 0;
+      end;
+      AT2Class = ATUnitr.AT2Class;
+      if (blank(AT2Class)) then begin
+        AT2Class = ATCatr.AT2Class;
+      end;
+      GetCategoryNLAccounts(RepSpec.flags[1],AT2Class,assetacc,costacc,depracc,commonobjstr,asset1objstr,depr1objstr,cost1objstr,asset2objstr,depr2objstr,cost2objstr,revdepr1acc,revdepr1objects,capcorr1acc,capcorr1objects);
+      if (blank(costacc) or blank(depracc)) then begin
+        goto LAddTRDprRowRows;
+      end;
+      linvdprv = invdprv;
+      if (nonblank(revdepr1acc)) then begin
+        linvdprv = linvdprv - invrevdprv;
+      end;
+      objstr = commonobjstr;
+      if ((nonblank(objstr)) and (nonblank(ATUnitr.Objects))) then begin
+        objstr = objstr & ",";
+      end;
+      objstr = objstr & ATUnitr.Objects;      
+      if (RepSpec.flags[1]==0) then begin
+        if ((nonblank(objstr)) and (nonblank(cost1objstr))) then begin
+          objstr = objstr & ",";
+        end;
+        objstr = objstr & cost1objstr;      
+      end else begin
+        if ((nonblank(objstr)) and (nonblank(cost2objstr))) then begin
+          objstr = objstr & ",";
+        end;
+        objstr = objstr & cost2objstr;      
+      end;
+      if (GetAccName(costacc,accname,60)) then begin
+        accf = CheckTTRPerRow("TRVc",costacc,objstr,true,taccnumber,2);
+        AddEuroTrRow(TRr,costacc,objstr,blanks,accname,linvdprv,base1,base2,accf,true,TotSum,false,taccnumber,"AT2UnitVc",ATUnitr.InventoryNr);
+      end;    
+
+      objstr = commonobjstr;
+      if ((nonblank(objstr)) and (nonblank(ATUnitr.Objects))) then begin
+        objstr = objstr & ",";
+      end;
+      objstr = objstr & ATUnitr.Objects;      
+      if (RepSpec.flags[1]==0) then begin
+        if ((nonblank(objstr)) and (nonblank(depr1objstr))) then begin
+          objstr = objstr & ",";
+        end;
+        objstr = objstr & depr1objstr;      
+      end else begin
+        if ((nonblank(objstr)) and (nonblank(depr2objstr))) then begin
+          objstr = objstr & ",";
+        end;
+        objstr = objstr & depr2objstr;      
+      end;
+      if (GetAccName(depracc,accname,60)) then begin
+        accf = CheckTTRPerRow("TRVc",depracc,objstr,false,taccnumber,2);
+        AddEuroTrRow(TRr,depracc,objstr,blanks,accname,linvdprv,base1,base2,accf,false,TotSum,false,taccnumber,"AT2UnitVc",ATUnitr.InventoryNr);
+      end;  
+      if (invrevdprv!=0) then begin
+        if (GetAccName(revdepr1acc,accname,60)) then begin
+          objstr = commonobjstr;
+          if ((nonblank(objstr)) and (nonblank(ATUnitr.Objects))) then begin
+            objstr = objstr & ",";
+          end;
+          objstr = objstr & ATUnitr.Objects;      
+          if (RepSpec.flags[1]==0) then begin
+            if ((nonblank(objstr)) and (nonblank(revdepr1objects))) then begin
+              objstr = objstr & ",";
+            end;
+            objstr = objstr & revdepr1objects;      
+          end else begin
+            if ((nonblank(objstr)) and (nonblank(revdepr1objects))) then begin
+              objstr = objstr & ",";
+            end;
+            objstr = objstr & revdepr1objects;      
+          end;
+          accf = CheckTTRPerRow("TRVc",revdepr1acc,objstr,false,taccnumber,2);
+          AddEuroTrRow(TRr,revdepr1acc,objstr,blanks,accname,invrevdprv,base1,base2,accf,false,TotSum,false,taccnumber,"AT2UnitVc",ATUnitr.InventoryNr);
+        end;
+        if (GetAccName(capcorr1acc,accname,60)) then begin
+          objstr = commonobjstr;
+          if ((nonblank(objstr)) and (nonblank(ATUnitr.Objects))) then begin
+            objstr = objstr & ",";
+          end;
+          objstr = objstr & ATUnitr.Objects;      
+          if (RepSpec.flags[1]==0) then begin
+            if ((nonblank(objstr)) and (nonblank(capcorr1objects))) then begin
+              objstr = objstr & ",";
+            end;
+            objstr = objstr & capcorr1objects;      
+          end else begin
+            if ((nonblank(objstr)) and (nonblank(capcorr1objects))) then begin
+              objstr = objstr & ",";
+            end;
+            objstr = objstr & capcorr1objects;      
+          end;
+          accf = CheckTTRPerRow("TRVc",capcorr1acc,objstr,false,taccnumber,2);
+          AddEuroTrRow(TRr,capcorr1acc,objstr,blanks,accname,invrevdprv,base1,base2,accf,true,TotSum,false,taccnumber,"AT2UnitVc",ATUnitr.InventoryNr);
+        end;
+      end;
+      if (TotSum!=0) then begin
+        if (TRVc_AddRoundOffRow(TRr,base1,base2,"",true,false,false,TotSum,TotSum)==0) then begin end;
+      end;
+      if (RepSpec.flags[6]!=0) then begin      
+        TRr.Comment = ATUnitr.InventoryNr;
+		    TRr.TransDate = RepSpec.d1;
+		    if (blankdate(TRr.TransDate)) then begin
+		      TRr.TransDate = CurrentDate;
+		    end;
+        if (TRr.Number<=0) then begin
+          TRr.Number = NextSerNr("TRVc",TRr.TransDate,RepSpec.long1,false,"");  
+        end;        
+        if (mode==0) then begin
+          if (MatRowCnt(TRr)>0) then begin
+            if (TRr.Number>0) then begin
+              TRSumup(TRr,t);  
+              TRr.IntYc = GetIntYc(TRr.TransDate);                
+              TRr.Comment = USetStr(9649);
+              TRr.Comment = TRr.Comment & ": " & RepSpec.sStartDate;
+              TRr.Comment = TRr.Comment & ":" & RepSpec.sEndDate;
+              if (RepSpec.flags[6]!=0) then begin
+                TRr.Comment = TRr.Comment & " ";
+                TRr.Comment = TRr.Comment & ATUnitr.InventoryNr;
+              end;
+              if (RecordInsert(TRr,false)) then begin end;
+              CheckFlush(flushcnt,10);
+            end;  
+          end;  
+        end;  
+        if (mode==2) then begin      
+          if (MatRowCnt(TRr)>0) then begin 
+            TRSumup(TRr,t);             
+            PrintTRRecord(TRr,1);
+          end;  
+        end;  
+      end else begin
+        if (mode==0) then begin
+          if (MatRowCnt(TRr)>=296) then begin
+            commentstr = commentstr & ATUnitr.InventoryNr;
+            StoreTRRecord(RepSpec,TRr,commentstr,DBLockRec,flushcnt);
+          end;
+        end;
+      end;
+    end;  
+  end;
+LAddTRDprRowRows:;
+  RETURN;
+END;
+
+global
+updating procedure TRAT2DeprCalculation(record RcVc RepSpec,Integer mode)
+BEGIN
+  array string 20 ATUnits;
+  array val ATvals;
+  integer size;
+  record AT2UnitVc ATUnitr;
+  Boolean TrHs,found,wroff,testf;
+  string 30 frinv,toinv;
+  string 20 frcat,tocat;
+  Date sd,pd,ed;
+  Date dprstartdate;
+  val startval,dprbef,dprv,mindprval,resval,nextstartval,nextresval,thestartval;
+  val invdprbef,invdprv,purchval;
+  val portstartval,InitDeprVal,t,wrofsum,wrofqty,assetqty,dprbefwrof,totwrofsum,fwdassetqty,wrofdpr,wrofdeprsum;
+  string 20 dmcode,nextdmcode;  
+  Integer alreadydonef;
+  Date movddate;
+  record TRVc TRr;
+  string 30 keystr;
+  string 255 commentstr;
+  Integer DprMethod,flushcnt;
+  Boolean stopdprf;
+  Date wrofd;
+  val invrevdprv,invrevdprbef;
+  val totinitdprval,totpurchval,totstartval,totdprbef,totdprv,totresval;
+  val totrevdprv,revbef;
+  string 255 tstr;
+  
+  frinv = FirstInRange(RepSpec.f2,20);    
+  toinv = LastInRange(RepSpec.f2,20);    
+  frcat = FirstInRange(RepSpec.f1,20);    
+  tocat = LastInRange(RepSpec.f1,20);    
+  TrHs = true;
+
+  RecordNew(TRr);
+  TRr.Number = -1;
+  TRr.IntYc = 0;
+  keystr = "InventoryNr";
+  if (mode!=1) then begin 
+    keystr = "AT2Code";
+    ATUnitr.AT2Code = frcat;
+  end;
+  ATUnitr.InventoryNr = frinv;
+  while (LoopKey(keystr,ATUnitr,1,TrHs)) begin
+    testf = true;
+    if (nonblank(RepSpec.f2)) then begin      
+      if (keystr=="InventoryNr") then begin
+        if (ATUnitr.InventoryNr>toinv) then begin TrHs = false; end;
+      end else begin
+        if (ATUnitr.InventoryNr>toinv) then begin testf = false; end;
+        if (ATUnitr.InventoryNr<frinv) then begin testf = false; end;
+      end;  
+    end;  
+    if (nonblank(RepSpec.f1)) then begin      
+      if (keystr=="AT2Code") then begin
+        if (ATUnitr.AT2Code<frcat) then begin TrHs = false; end;
+        if (ATUnitr.AT2Code>tocat) then begin TrHs = false; end;
+      end else begin
+        if (ATUnitr.AT2Code<frcat) then begin testf = false; end;
+        if (ATUnitr.AT2Code>tocat) then begin testf = false; end;
+      end;  
+    end;  
+    if (testf) then begin
+      if (CheckAssetCatMatch(ATUnitr.AT2Code,ATUnitr.AT2Class,RepSpec.f3)==false) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      if (nonblank(RepSpec.AccStr)) then begin      
+        if (CheckAssetDepMatch(ATUnitr.InventoryNr,ATUnitr.DepCode,RepSpec,movddate)==false) then begin testf = false; end;
+      end;  
+    end;
+    if (nonblank(RepSpec.ObjStr)) then begin      
+      if (SetInSet(RepSpec.ObjStr,ATUnitr.Objects)==false) then begin testf = false; end;
+    end;  
+    if (RepSpec.flags[4]!=0) then begin
+      if (ATUnitr.Activef!=0) then begin
+        testf = false;
+      end;
+    end;
+    if (RepSpec.flags[5]!=0) then begin
+      if (testf) then begin
+        if (CheckifAT2UnitSold(ATUnitr.InventoryNr,RepSpec.sEndDate)) then begin
+          testf = false;
+        end;
+      end;
+    end;
+//    if (ATUnitr.PurchaseDate>RepSpec.sEndDate) then begin testf = false; end;
+//    if (ATUnitr.PurchaseDate<RepSpec.sStartDate) then begin testf = false; end;          
+    found = TrHs and testf;
+    if (found) then begin      
+      if (blank(commentstr)) then begin
+        commentstr = ATUnitr.InventoryNr;
+      end;
+      if (mode==1) then begin    
+        PrintInventoryNrDescr(ATUnitr,RepSpec.ArtMode,RepSpec.flags[7]);
+      end;  
+      wrofsum = blankval;
+      wrofdeprsum = blankval;
+      purchval = blankval;
+      startval = blankval;
+      invdprv = blankval;
+      invdprbef = blankval;
+      invrevdprv = blankval;
+      invrevdprbef = blankval;
+      OneInventoryNrDepreciation(ATUnitr,0,0,RepSpec.sStartDate,RepSpec.sEndDate,
+                                 RepSpec.flags[1],RepSpec.flags[7],RepSpec.flags[3],RepSpec.Comparison,RepSpec.flags[5],
+                                 0,0,
+                                 wrofqty,wrofsum,wrofdeprsum,purchval,startval,invdprv,invdprbef,invrevdprv,invrevdprbef,revbef,fwdassetqty,assetqty,thestartval);
+
+      if (assetqty<0) then begin
+        invdprv = 0;
+      end;
+          
+      if (RepSpec.flags[1]==0) then begin
+        InitDeprVal = ATUnitr.InitDeprVal1*ATUnitr.Quantity;
+      end;  
+      if (RepSpec.flags[1]==1) then begin
+        InitDeprVal = ATUnitr.InitDeprVal2*ATUnitr.Quantity;
+      end; 
+       if (purchval<startval) then begin
+        t = startval*ATUnitr.Quantity;
+      end else begin
+        t = purchval*ATUnitr.Quantity;
+      end;
+      if (mode==1) then begin                      
+        totinitdprval = totinitdprval + InitDeprVal*ATUnitr.Quantity;
+        totpurchval = totpurchval + purchval*ATUnitr.Quantity;
+        totdprbef = totdprbef + invdprbef*ATUnitr.Quantity;
+        if (DprMethod==1) then begin
+          totstartval = totstartval + thestartval*ATUnitr.Quantity;
+        end else begin
+          totstartval = totstartval + thestartval + InitDeprVal*ATUnitr.Quantity;
+        end;
+        totdprv = totdprv + invdprv*ATUnitr.Quantity;  
+        totresval = totresval +  ATUnitr.ResVal*ATUnitr.Quantity;             
+
+        totrevdprv = totrevdprv + invrevdprv*ATUnitr.Quantity;
+
+        switch (DprMethod) begin
+          case 0:
+            totstartval = totstartval + thestartval*ATUnitr.Quantity;
+          case 1:
+            totstartval = totstartval + thestartval*ATUnitr.Quantity;
+          otherwise
+            startval = startval + InitDeprVal*ATUnitr.Quantity;
+            totstartval = totstartval + thestartval*ATUnitr.Quantity;
+        end;
+        t = invdprv;
+        totwrofsum = totwrofsum + wrofsum;
+        wrofsum = blankval;
+      end;
+      if (mode!=1) then begin       
+        AddTRDprRowRows(RepSpec,ATUnitr,invdprv,invrevdprv,mode,TRr,commentstr,flushcnt);
+        atunits[size] = ATUnitr.InventoryNr;
+        atvals[size] = invdprv;
+        size = size + 1;
+        if (mode==0) then begin
+          MaintTrace(ATUnitr.InventoryNr);
+        end;  
+      end;
+LSKIPASSET:;      
+    end;     
+  end;//LoopMain(ATUnitr)
+  if (mode!=1) then begin//for maintanance 
+    if (RepSpec.flags[6]==0) then begin
+      TRr.Comment = RepSpec.f2;
+      TRr.TransDate = RepSpec.d1;
+      if (blankdate(TRr.TransDate)) then begin
+        TRr.TransDate = CurrentDate;
+      end;
+      if (TRr.Number<=0) then begin
+        TRr.Number = NextSerNr("TRVc",TRr.TransDate,RepSpec.long1,false,"");  
+      end;
+      if (mode==0) then begin
+        if (MatRowCnt(TRr)>0) then begin
+          if (TRr.Number>0) then begin
+            commentstr = commentstr & ATUnitr.InventoryNr;
+            TRSumup(TRr,t);             
+            TRr.IntYc = GetIntYc(TRr.TransDate);                
+            TRr.Comment = USetStr(9649);
+            TRr.Comment = TRr.Comment & ": " & RepSpec.sStartDate;
+            TRr.Comment = TRr.Comment & ":" & RepSpec.sEndDate;
+            if (RecordInsert(TRr,false)) then begin end;
+            if (size>0) then begin
+              UpdateATTransRecArray(TRr,atunits,atvals,size,0);
+            end;
+          end;  
+        end;  
+      end;  
+      if (mode==2) then begin      
+        if (MatRowCnt(TRr)>0) then begin 
+          TRSumup(TRr,t);
+          PrintTRRecord(TRr,1);
+        end;  
+      end;          
+    end;
+  end;  
+  
+  RETURN;
+END;  
+
+global
+updating procedure AT2GenTRMn(var record RcVc RepSpec)
+BEGIN   
+  RepSpec.ArtMode = 1;
+  TRAT2DeprCalculation(RepSpec,0);
+  RETURN;
+END;
+

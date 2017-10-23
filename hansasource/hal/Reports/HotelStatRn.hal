@@ -1,0 +1,371 @@
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val NumberOfStayDays(Date,Date,Time,Time,Integer);
+external function Boolean IsCancelState(String);
+external procedure HT2Per(Date, Date , var string);
+external function boolean IsTDBefore(date,time,date,time);
+external function LongInt DaysInYear(Integer);
+external function LongInt CurrentDaysInYear(Date);
+
+function integer GetRoomCapacity(string incltypes,string excltypes,var boolean isanyroomclosed) 
+begin
+  record ResVc Resr;
+  integer i;
+  i = 0;
+  isanyroomclosed = false;
+  while (Loopmain(Resr,1,true)) begin
+    if ((incltypes<>Resr.Type) or blank(incltypes)) then begin
+      if ((excltypes==Resr.Type) or blank(excltypes)) then begin
+        if (Resr.Terminated==1) then begin
+          isanyroomclosed = true;
+        end;
+        i = i + 1;
+      end;
+    end;
+  end;
+  GetRoomCapacity = i;
+  return;
+end;
+
+function LongInt DaysSince2000(date gdate)
+begin
+  LongInt res,m;
+  Integer i;
+  
+  res = 0;
+  m = GetYear(gdate);
+  for (i=2000;i<m;i=i+1) begin
+    res = res + DaysInYear(i);
+  end;
+  res = res + CurrentDaysInYear(gdate);
+  DaysSince2000 = res;
+  return;
+end;
+
+function integer day2number(date gdate,integer start)
+begin
+  integer res;
+  
+  res = DaysSince2000(gdate);
+  res = res - start; 
+  day2number = res;
+  return;
+end;
+
+global
+procedure DoHotelStatRn2(Integer ArtMode,date sd,date ed,string incltypes,string excltypes,boolean dogreydivs)
+begin
+  Date vDate;
+  boolean foundf,testf;
+  String 255 tstr,tmp;
+  Time endofday,startofday;
+  record HotelBlock Hotelb;
+  Integer rcap,rw;
+  Array integer PeopleInHouse;
+  Array integer RoomsTaken;
+  Array val avgprice;
+  integer DaysStay,i,j,maxstay,startpoint,ds;
+  Val Occ,CumGuests,CumRoomsTaken,avgroomprice,CumOcc,Cumavgprice,IncpRoom;
+  Record JobVc Jobr;
+  Record ResTypeVc RoomType;
+  Integer lenclass;
+  Date blankd,tsd,ted;
+  Boolean isanyroomclosed;
+  
+  vector integer vPeopleInHouse;
+  vector integer vRoomsTaken;
+  vector val vavgprice;
+  
+  BlockLoad(Hotelb);  
+  endofday = Hotelb.EndOfDay;
+  if (blanktime(endofday)) then begin
+    endofday = Hotelb.CheckOut;
+  end;
+  startofday = Hotelb.StartNewDay;
+  if (blanktime(startofday)) then begin
+    startofday = Hotelb.CheckIn;
+  end;
+  for (j=1;j<2000;j=j+1) begin
+    avgprice[j] = 0;
+    RoomsTaken[j] = 0;
+    PeopleInHouse[j] = 0;
+  end;
+  Cumavgprice = 0;
+  CumGuests = 0;
+  startpoint = DaysSince2000(sd) - 100;
+
+    
+  if (ArtMode==0) then begin
+    SetRepCol(2,120);
+    SetRepCol(3,240);
+    SetRepCol(4,400);
+    StartFormat(15);
+    OutString(2,0,USetStr(12031),true);
+    OutString(3,0,USetStr(12033),true);
+    EndFormat;
+    StartFormat(15);
+    OutString(2,0,USetStr(12037),true);
+    OutString(3,0,USetStr(12041),true);
+    OutString(4,0,USetStr(12048),true);
+    EndFormat;
+  end else begin
+    SetRepCol(2,120);
+    SetRepCol(3,180);
+    SetRepCol(4,240);
+    SetRepCol(5,300);
+    SetRepCol(6,360);
+    SetRepCol(7,420);
+    SetRepCol(8,480);
+    StartFormat(15);
+    OutString(2,0,USetStr(12031),true);
+    OutString(3,0,USetStr(12032),true);
+    OutString(4,0,USetStr(12033),true);
+    OutString(5,0,USetStr(12034),true);
+    OutString(6,0,USetStr(12035),true);
+    OutString(7,0,USetStr(12031),true);
+    OutString(8,0,USetStr(12032),true);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(12036),false);
+    OutString(2,0,USetStr(12037),true);
+    OutString(3,0,USetStr(12040),true);
+    OutString(4,0,USetStr(12041),true);
+    OutString(5,0,USetStr(12039),true);
+    OutString(6,0,USetStr(12031),true);
+    OutString(7,0,USetStr(12038),true);
+    OutString(8,0,USetStr(12038),true);
+    EndFormat;
+  end;
+  if (dogreydivs) then begin
+    Gray_Divider(0,1);
+  end else begin
+    Black_Divider(0,1);
+  end;
+
+  rcap = GetRoomCapacity(incltypes,excltypes,isanyroomclosed); // actually should be called for every day
+
+  lenclass = 4;
+  while (lenclass>=0) begin
+    ResetLoop(Jobr);
+    Jobr.LengthClass = lenclass;
+    Jobr.TransDate = sd;
+    switch (lenclass) begin
+      case 4: Jobr.TransDate = blankd;
+      case 3: Jobr.TransDate = AddDay(Jobr.TransDate,-366);
+      case 2: Jobr.TransDate = AddDay(Jobr.TransDate,-31);
+      case 1: Jobr.TransDate = AddDay(Jobr.TransDate,-7);
+      case 0: ;
+    end;
+    foundf = true;
+    while (LoopKey("LengthClass",Jobr,2,foundf)) begin
+      if (Jobr.LengthClass!=lenclass) then begin foundf = false; end;
+      if (Jobr.TransDate>ed) then begin foundf = false; end;
+      if (foundf) then begin      
+        testf = true;
+        if (testf) then begin      
+          if (IsCancelState(Jobr.ResStatus)) then begin
+            testf = false;
+          end;
+        end;
+        if (nonblank(incltypes)) then begin
+          if (SetInSet(Jobr.Type,incltypes)==false) then begin
+            testf = false;
+          end;
+        end;
+        if (nonblank(excltypes)) then begin
+          if (SetInSet(Jobr.Type,excltypes)) then begin
+            testf = false;
+          end;
+        end;
+        if (testf) then begin   
+          RoomType.Code = Jobr.Type;
+          if (ReadFirstMain(RoomType,1,true)==false) then begin
+            if (IsStandardProduct) then begin
+              RoomType.InvoiceBy = 1;
+            end else begin
+              RoomType.InvoiceBy = 0;
+            end;
+          end;
+          DaysStay = NumberOfStayDays(Jobr.TransDate,Jobr.EndDate,Jobr.StartTime,Jobr.EndTime,RoomType.InvoiceBy);
+
+          tsd = Jobr.TransDate;
+          if (Jobr.StartTime<startofday) then begin
+            tsd = AddDay(tsd,-1);
+          end;
+
+          ted = AddDay(tsd,DaysStay);
+          if (Jobr.EndTime<=endofday) then begin
+            ted = AddDay(ted,-1);
+          end;
+          if (tsd<sd) then begin tsd = sd; end;
+          if (ted>ed) then begin ted = ed; end;
+
+
+          if (tsd>ed) then begin testf = false; end;
+          if (ted<sd) then begin testf = false; end;
+
+          if (testf) then begin   
+            while (tsd<=ted) begin
+              vPeopleInHouse[tsd] = vPeopleInHouse[tsd] + MatRowCnt(Jobr);
+              vRoomsTaken[tsd] = vRoomsTaken[tsd] + 1;
+              vavgprice[tsd] = vavgprice[tsd] + (MulRateToBase1(Jobr.CurncyCode,Jobr.Sum4,Jobr.FrRate,Jobr.ToRateB1,Jobr.ToRateB2,Jobr.BaseRate1,Jobr.BaseRate2,DefaultCurRoundOff)/DaysStay);
+/*              
+StartFormat(15);           
+ OutString(0,"DblJobVc",Jobr.SerNr,false);
+ OutString(100,0,tsd,false);
+EndFormat;
+*/
+              tsd = AddDay(tsd,1);
+            end;
+          end;
+/*          
+          i = day2number(Jobr.TransDate,startpoint);
+          if (Jobr.StartTime<=startofday) then begin
+            i = i - 1;
+          end;
+          for (j=0;j<DaysStay;j=j+1) begin
+            PeopleInHouse[i] = PeopleInHouse[i] + MatRowCnt(Jobr);
+            RoomsTaken[i] = RoomsTaken[i] + 1;
+            avgprice[i] = avgprice[i] + (MulRateToBase1(Jobr.CurncyCode,Jobr.Sum4,Jobr.FrRate,Jobr.ToRateB1,Jobr.ToRateB2,Jobr.BaseRate1,Jobr.BaseRate2,DefaultCurRoundOff)/DaysStay);
+            i = i + 1;
+          end;        
+*/          
+        end;
+      end;
+    end;
+    lenclass = lenclass - 1;
+  end;  
+
+/*
+  maxstay = 90;
+  foundf = true; 
+  Jobr.TransDate = AddDay(sd,-maxstay);
+  while LoopKey("TransDate",Jobr,1,foundf) begin
+    if (Jobr.TransDate>ed) then begin
+      foundf = false;
+    end else begin
+      if (not IsCancelState(Jobr.ResStatus)) then begin
+        if ((incltypes<>Jobr.Type) or blank(incltypes)) then begin
+          if ((excltypes==Jobr.Type) or blank(excltypes)) then begin
+            RoomType.Code = Jobr.Type;
+            if (ReadFirstMain(RoomType,1,true)==false) then begin
+              RoomType.InvoiceBy = 0;
+            end;
+            DaysStay = NumberOfStayDays(Jobr.TransDate,Jobr.EndDate,Jobr.StartTime,Jobr.EndTime,RoomType.InvoiceBy);
+            i = day2number(Jobr.TransDate,startpoint);
+            if (Jobr.StartTime<=startofday) then begin
+              i = i - 1;
+            end;
+            for (j=0;j<DaysStay;j=j+1) begin
+              PeopleInHouse[i] = PeopleInHouse[i] + MatRowCnt(Jobr);
+              RoomsTaken[i] = RoomsTaken[i] + 1;
+              avgprice[i] = avgprice[i] + (MulRateToBase1(Jobr.CurncyCode,Jobr.Sum4,Jobr.FrRate,Jobr.ToRateB1,Jobr.ToRateB2,Jobr.BaseRate1,Jobr.BaseRate2,DefaultCurRoundOff)/DaysStay);
+              i = i + 1;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  i = day2number(sd,startpoint);
+  ds = 0;
+  vDate = sd;
+  while (vDate<=ed) begin
+    ds = ds + 1;
+    Occ = (100 * RoomsTaken[i]);  Occ = (Occ/rcap);
+    CumRoomsTaken = CumRoomsTaken + RoomsTaken[i];
+    avgroomprice = avgprice[i]; avgroomprice = (avgroomprice / RoomsTaken[i]);
+    Cumavgprice = Cumavgprice + avgprice[i];
+    CumOcc = 100 * CumRoomsTaken;  CumOcc = CumOcc/(rcap*ds);
+    CumGuests = CumGuests + PeopleInHouse[i];
+    IncpRoom = avgprice[i] / rcap;
+    StartFormat(15);
+    OutDate(0,0,vDate,false);
+    OutLongInt(2,0,RoomsTaken[i],true);
+    OutVal(3,0,Occ,M4Val,true);
+    OutLongInt(4,0,PeopleInHouse[i],true);
+    OutVal(5,0,avgroomprice,M4Val,true);
+    OutVal(6,0,IncpRoom,M4Val,true);
+    OutVal(7,0,CumRoomsTaken,M40Val,true);
+    OutVal(8,0,CumOcc,M4Val,true);
+    EndFormat;
+    vDate = AddDay(vDate,1);
+    i = i + 1;
+  end;  
+*/ 
+  tsd = sd;
+  while (tsd<=ed) begin
+
+    ds = ds + 1;
+    Occ = (100 * vRoomsTaken[tsd]);  Occ = (Occ/rcap);
+    CumRoomsTaken = CumRoomsTaken + vRoomsTaken[tsd];
+    avgroomprice = vavgprice[tsd]; avgroomprice = (avgroomprice / vRoomsTaken[tsd]);
+    Cumavgprice = Cumavgprice + vavgprice[tsd];
+    CumOcc = 100 * CumRoomsTaken;  CumOcc = CumOcc/(rcap*ds);
+    CumGuests = CumGuests + vPeopleInHouse[tsd];
+    IncpRoom = vavgprice[tsd] / rcap;
+    StartFormat(15);
+    OutDate(0,0,tsd,false);
+    if (ArtMode==0) then begin
+      OutLongInt(2,0,vRoomsTaken[tsd],true);
+      OutLongInt(3,0,vPeopleInHouse[tsd],true);
+      if (isanyroomclosed) then begin
+        OutString(4,0,USetStr(12049),true); 
+      end;
+    end else begin
+      OutLongInt(2,0,vRoomsTaken[tsd],true);
+      OutVal(3,0,Occ,M4Val,true);
+      OutLongInt(4,0,vPeopleInHouse[tsd],true);
+      OutVal(5,0,avgroomprice,M4Val,true);
+      OutVal(6,0,IncpRoom,M4Val,true);
+      OutVal(7,0,CumRoomsTaken,M40Val,true);
+      OutVal(8,0,CumOcc,M4Val,true);
+    end;
+    EndFormat;
+
+    tsd = AddDay(tsd,1);
+  end;
+ 
+  if (dogreydivs) then begin
+    Gray_Divider(0,1);
+  end else begin
+    Black_Divider(0,1);
+  end;
+  if (ArtMode==0) then begin
+    StartFormat(15);
+    OutString(2,0,CumRoomsTaken,true); 
+    OutString(3,0,CumGuests,true);
+    EndFormat;
+  end else begin
+    StartFormat(15);
+    tstr = CumGuests;
+    OutString(0,0,USetStr(12042) & tstr,false);
+    OutString(0,0,USetStr(12043) & CumRoomsTaken,false);
+    tstr = Cumavgprice / (rcap*ds);
+    OutString(0,0,USetStr(12044) & tstr,false);
+    tstr = CumOcc;
+    OutString(0,0,USetStr(12045) & tstr,false);
+    tstr = (CumGuests/ds);
+    OutString(0,0,USetStr(12046) & tstr,false); 
+    OutString(0,0,USetStr(12047) & rcap,false); 
+    EndFormat;
+  end;
+  return;
+end;
+
+global
+procedure DoHotelStatRn(date sd,date ed,string incltypes,string excltypes,boolean dogreydivs)
+begin
+  DoHotelStatRn2(1,sd,ed,incltypes,excltypes,dogreydivs);
+  return;
+end;
+
+global
+procedure HotelStatRn(Record RcVc RepSpec)
+begin
+  StartReportJob(USetStr(12030));
+  EndHeader;
+  DoHotelStatRn2(RepSpec.ArtMode,RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.f1,RepSpec.f2,false);
+  EndJob;
+  return;
+end;
+

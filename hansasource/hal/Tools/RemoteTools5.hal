@@ -1,0 +1,1351 @@
+external function val FindSerialNrQty2(string,string,string,Boolean);
+external function Boolean ExpandStructItem(string,string,val,var record SHVc);
+external procedure SelectUnitText(string,string,var string);
+external procedure GetProjMaterialsUsageAcc(record AccBlock,record INVc,Integer,var string,var string);
+external function Boolean OfficialSerNrDefined(string);
+external function string 255 GetSalesAcc(string,string,string,record AccBlock,record INVc,Integer,Boolean);
+external function Boolean EarlierReservationsExists(record ORVc);
+external function string 20 FindJobCustomerCode(record JobVc);
+external function Boolean GetCOSAcc(string,string,string,record AccBlock,record INVc,integer,Boolean,Integer,var string,var string);
+external procedure SHMakeStockMovements(var Array record StockMovVc,var Integer,record SHVc,row SHVc,record INVc,string,string,string,string,Integer,Integer);
+external function string 20 NextTransportSerNr(string,LongInt,string);
+external function Boolean PasteBatchSerItems_DemandPosition(var Array record StockMovVc,Integer,var record SHVc,var Integer);
+external updating function Boolean StoreShipmentStockMovements(var record SHVc,Array record StockMovVc,var Integer,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external function LongInt FindReservation(string,Date,Time);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure GetNextProjectNr(var string);
+external procedure SetORFlags(record ORVc);
+external updating function LongInt CreateCOInv(record RcVc,Boolean,var Boolean,var Integer);
+external function LongInt GetCurUserLastNr(string);
+external procedure SHSumUp(var record SHVc);
+external function Boolean PasteBatchSerItems2(var string,var Date,var Integer,var val,record ORVc,Integer,var record SHVc,Integer,string,Integer,var longint);
+external procedure FindBatchBestBeforeDate(string,string,var Date);
+external function Boolean GetCustAndBal(var record CUVc,var val,var val,Integer,Integer,Integer,Integer,Integer,Integer,var Boolean);
+//external procedure FindStockValue(string,string,var record ItemStatusVc);
+external procedure FindStockValueInclStockReserv(LongInt,string,string,string,var record ItemStatusVc,var val);
+external function Boolean GetItemStatus(string,string,string,Integer,var val,var val,var val,var val,var val,var val,var val);
+external procedure GetUserName(string,var string);
+external procedure NextM4Number(string,var string);
+
+global
+function Boolean SerialNumberOnPU()
+begin
+  boolean res;
+  record MainStockBlock MSb;
+  
+  BlockLoad(MSb);
+  res = (MSb.NoSerOnPU==0);
+  
+  SerialNumberOnPU = res;
+  return;
+end;
+
+global
+function Boolean PasteCustInShip(record SHVc SHp,string clcd)
+BEGIN
+  record CUVc CUr;
+  Boolean found;
+  
+  CUr.Code = clcd;
+  found = ReadFirstMain(CUr,1,true);
+  if (found) then begin
+    SHp.Addr0 = CUr.Name;
+    if (blank(CUr.DelAddr0) and blank(CUr.DelAddr1) and blank(CUr.DelAddr1)) then begin
+      SHp.Addr1 = CUr.InvAddr0;
+      SHp.Addr2 = CUr.InvAddr1;
+      SHp.Addr3 = CUr.InvAddr2;
+      SHp.DelAddr3 = CUr.InvAddr3;
+      SHp.DelAddr4 = CUr.InvAddr4;
+      SHp.DelCountry = CUr.CountryCode;
+    end else begin
+      SHp.Addr1 = CUr.DelAddr0;
+      SHp.Addr2 = CUr.DelAddr1;
+      SHp.Addr3 = CUr.DelAddr2;
+      SHp.DelAddr3 = CUr.DelAddr3;
+      SHp.DelAddr4 = CUr.DelAddr4;
+      SHp.DelCountry = CUr.DelCountry;
+      if (blank(SHp.DelCountry)) then begin
+        SHp.DelCountry = CUr.CountryCode;
+      end;
+    end;
+  end;
+  PasteCustInShip = found;
+  RETURN;
+END;
+
+global
+function Boolean PositionInDeliveryArea(string poscode,string DeliveryPosArea)
+BEGIN
+  Boolean res;
+  record PosVc Posr;
+  
+  Posr.Code = poscode;
+  if (ReadFirstMain(Posr,1,true)) then begin
+    if (nonblank(Posr.LocArea)) then begin
+      if (Posr.LocArea==DeliveryPosArea) then begin
+        res = true;
+      end;
+    end;
+  end;
+  PositionInDeliveryArea = res;
+  RETURN;
+END;
+
+global
+updating function Boolean SetNewPositionOnStockMov(LongInt StockMovNr,Boolean frf,string poscode)
+BEGIN
+  Boolean res;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  record StockMovVc oldStockMovr;
+  Integer i,rwcnt;
+  
+  StockMovr.SerNr = StockMovNr;
+  if (ReadFirstMain(StockMovr,1,true)) then begin
+    if (IsRecordLocked(StockMovr)) then begin goto LSetNewPositionOnStockMov; end;
+    if (StockMovr.OKFlag!=0) then begin goto LSetNewPositionOnStockMov; end;
+    RecordCopy(oldStockMovr,StockMovr);
+    rwcnt = MatRowCnt(StockMovr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(StockMovr,i,StockMovrw);
+      if (frf) then begin
+        StockMovrw.FrPosCode = poscode;
+      end else begin
+        StockMovrw.ToPosCode = poscode;
+      end;
+      MatRowPut(StockMovr,i,StockMovrw);
+    end;
+    if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin 
+      res = true;
+    end else begin
+    end;
+  end;
+LSetNewPositionOnStockMov:;  
+  SetNewPositionOnStockMov = res;
+  RETURN;
+END;
+
+updating 
+procedure SetNewQuantityOnSH(record StockMovVc StockMovr,Integer stmovrow,val newqty,val oldqty,var Integer shrownr)
+BEGIN
+  row StockMovVc StockMovrw;
+  record SHVc SHr;
+  record SHVc oldSHr;
+  row SHVc SHrw;
+  Integer i,rwcnt;
+
+  shrownr = -1;  
+  if (StockMovr.FileName=="SHVc") then begin
+    if (StockMovr.TransNr>0) then begin
+      MatRowGet(StockMovr,stmovrow,StockMovrw);
+      SHr.SerNr = StockMovr.TransNr;
+      if (ReadFirstMain(SHr,1,true)) then begin
+        if (SHr.OKFlag==0) then begin
+          RecordCopy(oldSHr,SHr);
+          rwcnt = MatRowCnt(SHr);
+          for (i=0;i<rwcnt;i=i+1) begin
+//            if (i==StockMovrw.SHRow) then begin //SHRow is very wrong
+              MatRowGet(SHr,i,SHrw);
+              if (SHrw.ArtCode==StockMovrw.ArtCode) and (SHrw.Ship==oldqty) then begin
+                if (newqty<SHrw.Ship) then begin
+//                  SHrw.Ordered = newqty;
+                end;
+                SHrw.Ship = newqty;
+                MatRowPut(SHr,i,SHrw);
+                shrownr = i;
+                i = rwcnt;
+              end;
+//            end;
+          end;
+          if (RecordUpdate(oldSHr,SHr,true)==0) then begin
+          end;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function Boolean SetNewQuantityOnStockMov(LongInt StockMovNr,string artcode,val newqty,var Integer shrownr)
+BEGIN
+  Boolean res;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  record StockMovVc oldStockMovr;
+  Integer i,rwcnt,stmovrow;
+  val oldqty;
+  
+  StockMovr.SerNr = StockMovNr;
+  if (ReadFirstMain(StockMovr,1,true)) then begin
+    if (IsRecordLocked(StockMovr)) then begin goto LSetNewQuantityOnStockMov; end;
+    if (StockMovr.OKFlag!=0) then begin goto LSetNewQuantityOnStockMov; end;
+    RecordCopy(oldStockMovr,StockMovr);
+    rwcnt = MatRowCnt(StockMovr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(StockMovr,i,StockMovrw);
+      if (StockMovrw.ArtCode==artcode) then begin
+        oldqty = StockMovrw.Quant;
+        StockMovrw.Quant = newqty;
+        MatRowPut(StockMovr,i,StockMovrw);
+        stmovrow = i;
+        i = rwcnt;
+      end;
+    end;
+    if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin 
+      res = true;
+      SetNewQuantityOnSH(StockMovr,stmovrow,newqty,oldqty,shrownr);
+    end else begin
+    end;
+  end;
+LSetNewQuantityOnStockMov:;  
+  SetNewQuantityOnStockMov = res;
+  RETURN;
+END;
+
+procedure FillPositionsOnSH(record SHVc SHp,var Integer rownr,Array record StockMovVc aStockMovr,Integer acnt,record INVc INp,string DeliveryPosCode)
+BEGIN
+  Integer ai;
+  Integer i,j,rwcnt;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  row SHVc SHrw;
+  row SHVc oldSHrw;
+  row SHVc newSHrw;
+  val rem,instock;
+  Integer shrow;
+  record INVc locINr;
+  
+  shrow = rownr;
+  MatRowGet(SHp,rownr,oldSHrw);
+  instock = oldSHrw.InStock;
+  for (ai=0;ai<acnt;ai=ai+1) begin
+    StockMovr = aStockMovr[ai];
+    rwcnt = MatRowCnt(StockMovr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(StockMovr,i,StockMovrw);
+      if (StockMovrw.SHRow==shrow) and (StockMovrw.ArtCode==oldSHrw.ArtCode) then begin
+        CopyRow(SHp,oldSHrw,newSHrw);
+        newSHrw.InStock = instock;
+        newSHrw.Ship = StockMovrw.Quant;
+        newSHrw.Ordered = StockMovrw.Quant;
+        newSHrw.PosCode = StockMovrw.ToPosCode;
+        newSHrw.SerialNr = StockMovrw.SerialNr;
+        if (nonblank(newSHrw.SerialNr)) then begin
+          FindBatchBestBeforeDate(newSHrw.ArtCode,newSHrw.SerialNr,newSHrw.BestBefore);
+        end;
+        if (rownr==shrow) then begin
+          MatRowPut(SHp,rownr,newSHrw);
+        end else begin
+          MatRowPut(SHp,rownr,newSHrw);
+        end;
+        rownr = rownr + 1;
+        instock = instock - newSHrw.Ship;
+        
+        StockMovrw.SHRow = rownr - 1;
+        MatRowPut(StockMovr,i,StockMovrw);
+        if (nonblank(INp.DefPalletItem)) then begin
+          if (INp.QtyonPallet>0) then begin
+            for (j=i+1;j<rwcnt;j=j+1) begin
+              MatRowGet(StockMovr,j,StockMovrw);
+              if (StockMovrw.ArtCode==INp.DefPalletItem) then begin
+                StockMovrw.SHRow = rownr - 1;
+                MatRowPut(StockMovr,j,StockMovrw);
+              end else begin
+                j = rwcnt;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+    aStockMovr[ai] = StockMovr;
+  end;
+  if (rownr>0) then begin
+    rownr = rownr - 1;
+  end;
+  return;
+end;
+
+procedure FillupShipRowsWithPositions(var Array record StockMovVc aStockMovr,var Integer acnt,var record SHVc SHp,record INVc INp,var Integer rownr,string MainStock,string DeliveryPosCode,string DeliveryArea,string warehouse,Integer HighestPosCodeFirst)
+begin
+  row SHVc SHrw;
+  row SHVc pSHrw;
+  record ItemStatusVc ISr;
+  record PISVc PISr;
+  record PISVc pPISr;
+  Boolean TrHs;
+  string 20 location;
+  val rem,atpos;
+  Integer rw;
+  record INVc locINr;
+  val shqty;
+  
+  rw = rownr;
+  MatRowGet(SHp,rownr,SHrw);
+  if (nonblank(DeliveryPosCode)) then begin
+    SHMakeStockMovements(aStockMovr,acnt,SHp,SHrw,INp,MainStock,DeliveryPosCode,DeliveryArea,warehouse,rownr,HighestPosCodeFirst);
+    FillPositionsOnSH(SHp,rownr,aStockMovr,acnt,INp,DeliveryPosCode);
+  end;
+  RETURN;
+END;
+
+function val ReduceFromReservationArray(string incode,string serialnr,string location,var array string aincode,var array string aloc,var array string aserialnr,var array val aqty,var Integer acnt)
+begin
+  val res;
+  Integer i;
+  
+  res = 0;
+  for (i=0;i<acnt;i=i+1) begin
+    if (aincode[i]==incode and aloc[i]==location and aserialnr[i]==serialnr) then begin
+      res = res + aqty[i];
+      i = acnt;
+    end;
+  end;
+  ReduceFromReservationArray = res;
+  return;
+end;
+
+global
+Function Boolean RefillShipRow(var Array record StockMovVc aStockMovr,var Integer asmcnt,var record SHVc SHp,record SHVc SH2p,record INVc INp,var Integer rownr,Integer rwcnt,Integer wa,var array string aincode,var array string aloc,var array string aserialnr,var array val aqty,var Integer acnt)
+BEGIN
+  Boolean res;
+  record MainStockBlock MSb;
+  record ORVc ORr;
+  record ItemStatusVc ISr;
+  row SHVc SHrw,SH2rw,SHoldrw;
+  string 255 tstr,location,oldlocation,location2;
+  Integer i,j;
+  val t,t2,osht;
+  Integer reserved;
+  Boolean testf,oshf;
+  val instock,stockreservq,motheritemship;
+  record CostAccBlock CAb;
+  record AccBlock ARAccb;
+  string 20 costacc;
+  record LocationVc Locr;
+  record SHVc oSHp;
+  record SHVc recSHr;
+  row SHVc recSHrw;
+  Integer reci,recrwcnt,motheritemrownr;
+  record INVc cINr;
+
+  res = true;
+  BlockLoad(MSb);
+  BlockLoad(CAb);
+  BlockLoad(ARAccb);
+  oSHp.SerNr = SHp.SerNr;
+  oshf = ReadFirstMain(oSHp,1,true);
+  ORr.SerNr = SHp.OrderNr;
+  if (ReadFirstMain(ORr,1,true)) then begin
+    reserved = ORr.Reserved;
+  end;
+  MatRowGet(SHp,rownr,SHrw);
+  INp.Code = SHrw.ArtCode;
+  if (ReadFirstItem(SHrw.ArtCode,INp,true,true)) then begin
+    location = SHp.Location;
+    if (nonblank(SHrw.Location)) then begin
+      location = SHrw.Location;
+    end;
+    switch (INp.ItemType) begin
+      case kItemTypeStocked:
+        osht = 0;
+        if (wa!=0) then begin
+          switch (MSb.UpdateAvailable) begin
+            case 1:
+              if (oshf) then begin
+                for (i=0;i<MatRowCnt(oSHp);i=i+1) begin
+                  MatRowGet(oSHp,i,SHoldrw);
+                  oldlocation = oSHp.Location;
+                  if (nonblank(SHoldrw.Location)) then begin
+                    oldlocation = SHoldrw.Location;
+                  end;
+                  if (oldlocation==location) or (blank(oldlocation)) then begin
+                    osht = osht + SHoldrw.Ship;
+                  end;
+                end;
+              end;
+          end;
+        end;
+        SHrw.Coefficient = INp.UnitCoefficient;
+        if ((INp.SerNrf==2) and (nonblank(SHrw.SerialNr))) and (SerialNumberOnPU) then begin
+          t = FindSerialNrQty2(SHrw.ArtCode,SHrw.SerialNr,location,false);
+          FindStockValueInclStockReserv(ORr.SerNr,SHrw.ArtCode,SHrw.SerialNr,location,ISr,stockreservq);
+        end else begin
+          if (GetItemStatus(SHrw.ArtCode,location,"",0,t,t2,t2,t2,t2,t2,t2)) then begin end;
+          FindStockValueInclStockReserv(ORr.SerNr,SHrw.ArtCode,"",location,ISr,stockreservq);
+        end;
+/*
+        motheritemrownr = 0;
+        motheritemship = blankval;
+        if (SHrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+          for (j=rownr-1;j>=0;j=j-1) begin
+            MatRowGet(SHp,j,SH2rw);
+            if (SHrw.MotherArtCode==SH2rw.ArtCode) then begin
+              cINr.Code = SH2rw.ArtCode;
+              if (ReadFirstMain(cINr,1,true)) then begin
+                motheritemrownr = j;
+                motheritemship = SH2rw.Ship;
+                ExpandStructItem(SH2rw.ArtCode,cINr.Recepy,SH2rw.Ship,recSHr);
+                recrwcnt = MatRowCnt(recSHr);
+                for (reci=0;reci<recrwcnt;reci=reci+1) begin
+                  MatRowGet(recSHr,reci,recSHrw);
+                  if (recSHrw.ArtCode==SHrw.ArtCode) then begin
+                    t = recSHrw.Ship;
+                    reci = recrwcnt;
+                  end;
+                end;
+              end;
+              j = -1;
+            end;
+          end;
+        end;
+*/        
+        instock = ISr.Instock;
+        if (INp.SerNrf!=2) then begin
+          t = t + osht;
+        end;
+/*
+        for (j=motheritemrownr;j<rownr;j=j+1) begin
+*/
+        for (j=0;j<rownr;j=j+1) begin
+          MatRowGet(SHp,j,SH2rw);
+          if (nonblank(SH2rw.Location)) then begin
+            location2 = SH2rw.Location;
+          end else begin
+            location2 = SHp.Location;
+          end;
+          if ((INp.SerNrf==2) and (nonblank(SHrw.SerialNr)) and (SerialNumberOnPU)) then begin
+            if (location==location2) and (SHrw.ArtCode==SH2rw.ArtCode) and (SHrw.SerialNr==SH2rw.SerialNr) then begin
+              instock = instock - SH2rw.Ship;
+              t = t - SH2rw.Ship;
+            end;
+          end else begin
+            if (location==location2) and (SHrw.ArtCode==SH2rw.ArtCode) then begin
+              instock = instock - SH2rw.Ship;
+              t = t - SH2rw.Ship;
+            end;
+          end;
+        end;
+        if (reserved==0) then begin
+          t = t - ISr.RsrvQty;
+        end else begin
+  //        t = t - SHrw.Ordered;//what ? if smthing is rsrved on curent order why to deduct it ? 
+        end;
+        if (stockreservq!=0) then begin
+          t = t - stockreservq;
+        end;
+        t = t - ReduceFromReservationArray(SHrw.ArtCode,SHrw.SerialNr,location,aincode,aloc,aserialnr,aqty,acnt);
+        SHrw.InStock = t;        
+        if (SHrw.InStock<SHrw.Ship) then begin
+          SHrw.Ship = SHrw.InStock;
+        end;
+        if (MSb.dontAllowOvership==2) then begin
+          SHrw.Ship = SHrw.Ordered;
+        end;
+        if (SHrw.Ship<0) then begin
+          SHrw.Ship = 0;
+        end;
+      case kItemTypeStructured:
+        if (nonblank(SHrw.Recepy)) then begin
+          tstr = "_";
+          if (SHrw.Recepy!=tstr) then begin
+            if (GetItemStatus(SHrw.ArtCode,location,SHrw.Recepy,0,t,t2,t2,t2,t2,t2,t2)) then begin end;
+          end;
+        end else begin
+          if (GetItemStatus(SHrw.ArtCode,location,INp.Recepy,0,t,t2,t2,t2,t2,t2,t2)) then begin end;
+        end;
+        for (j=0;j<rownr;j=j+1) begin
+          MatRowGet(SHp,j,SH2rw);
+          switch (SH2rw.stp) begin
+            case 1:
+              if (nonblank(SH2rw.Location)) then begin
+                location2 = SH2rw.Location;
+              end else begin
+                location2 = SHp.Location;
+              end;
+              if (INp.SerNrf==2) and (nonblank(SHrw.SerialNr)) then begin
+                if (location==location2) and (SHrw.ArtCode==SH2rw.ArtCode) and (SHrw.SerialNr==SH2rw.SerialNr) then begin
+                  instock = instock - SH2rw.Ship;
+                  t = t - SH2rw.Ship;
+                end;
+              end else begin
+                if (location==location2) and (SHrw.ArtCode==SH2rw.ArtCode) then begin
+                  instock = instock - SH2rw.Ship;
+                  t = t - SH2rw.Ship;
+                end;
+              end;
+          end;
+        end;
+        SHrw.InStock = t;        
+        if (SHrw.InStock<SHrw.Ship) then begin
+          SHrw.Ship = SHrw.InStock;
+        end;
+        if (MSb.dontAllowOvership==2) then begin
+          SHrw.Ship = SHrw.Ordered;
+        end;
+        if (SHrw.Ship<0) then begin
+          SHrw.Ship = 0;
+        end;
+      otherwise
+        SHrw.Ship = SHrw.Ordered;
+    end;
+    if (CAb.NoNLCostOnShip==2) then begin
+      costacc = ARAccb.COSAccrualAcc;
+    end else begin
+      if (nonblank(SHp.PRCode)) then begin
+        GetProjMaterialsUsageAcc(ARAccb,INp,CAb.ItemGroupAccounts,costacc,tstr);
+      end;
+      if (blank(costacc)) then begin
+        if (GetCOSAcc(SHrw.CostAcc,SHp.CustCode,location,ARAccb,INp,CAb.ItemGroupAccounts,true,0,costacc,tstr)==true) then begin
+        end;
+      end;
+    end;
+    SHrw.CostAcc = costacc;
+    SHrw.SalesAcc = GetSalesAcc(SHrw.SalesAcc,SHp.CustCode,location,ARAccb,INp,CAb.ItemGroupAccounts,false);
+    MatRowPut(SHp,rownr,SHrw);
+  end else begin
+    if (nonblank(SHrw.ArtCode)) then begin
+      res = false;
+    end;
+    INp.Weight = blankval;
+    INp.Volume = blankval;
+    INp.SerNrf = 0;
+    SHrw.Ordered = blankval;
+    SHrw.InStock = blankval;
+    SHrw.Ship = blankval;
+    MatRowPut(SHp,rownr,SHrw);
+  end;
+  if (res) then begin
+    testf = true;
+    location = SHp.Location;
+    if (blank(SHp.Location)) then begin
+      location = MSb.MainStock;
+    end;
+    Locr.Code = location;
+    ReadFirstMain(Locr,1,true);
+    if (Locr.RequirePos==0) then begin testf = false; end;
+    if (wa!=0) then begin testf = false; end;
+
+    if (INp.ItemType!=0) then begin
+      if (testf) then begin
+        FillupShipRowsWithPositions(aStockMovr,asmcnt,SHp,INp,rownr,MSb.MainStock,Locr.WHMDeliveryPosCode,Locr.WHMDeliveryArea,Locr.Code,Locr.WHMHighestPosCodeFirst);
+      end;
+    end;
+  end;
+  RefillShipRow = res;
+  RETURN;
+END;
+
+/* This is VERY confusing... This means that several Deliveries are created, but only one pops up on screen (if you use Special Menu) 
+If we don't have it we create delivery with 600 rows for example, should we do it?
+Lucy wanted me to fix it
+*/
+updating function Boolean SaveShipment(Array record StockMovVc aStockMovr,var Integer asmcnt,record SHVc SHp,record CUVc CUr,record ORVc ORr,record PlanDeliveryBlock PDb,var val totv,var val totw,var val totq,var Integer srw)
+BEGIN
+  Boolean res;
+  LongInt ornr,newnr;
+  record SRBlock SRRec;
+  Date dat;
+  Integer i;
+  
+  res = true;
+  ornr = SHp.OrderNr;  
+  if ((MatRowCnt(SHp)>0) and (SHp.SerNr!=-1)) then begin
+    SHSumUp(SHp);
+    if (RecordInsert(SHp,false)) then begin
+      res = StoreShipmentStockMovements(SHp,aStockMovr,asmcnt,false);
+      if (res==false) then begin goto LSaveShipment; end;
+      srw = 0;
+      RecordNew(SHp);
+      SHp.SerNr = -1;
+      SHp.OrderNr = ornr;
+      if (SHp.SerNr==-1) then begin
+        BlockLoad(SRRec);
+        newnr = GetCurUserLastNr("SHVc");
+        if (newnr!=-1) then begin
+          newnr = SRRec.LastShipNr;
+        end;
+        SHp.SerNr = NextSerNr("SHVc",SHp.ShipDate,newnr,false,"");
+        if (SHp.SerNr==-1) then begin
+          res = false;
+        end;
+      end;
+      CUr.Code = ORr.CustCode;
+      switch (CUr.DeliveryBasedOn) begin
+       case 1:
+         if (nonblank(ORr.PlanShip)) then begin
+           SHp.ShipDate = StringToDate(ORr.PlanShip);
+         end;
+      end;
+      if (CUr.OnHoldFlag!=0) then begin 
+        if (ISMAINTENANCE==false) then begin
+          res = 1300;
+        end;
+        goto LSaveShipment; 
+      end;
+      if (CUr.blockedFlag!=0) then begin
+        if (ISMAINTENANCE==false) then begin
+          res = 1265;
+        end;
+        goto LSaveShipment;
+      end;
+     if (PDb.PreventDelivery!=0) then begin
+       dat = StringToDate(ORr.PlanShip);
+       if (SHp.ShipDate<dat) then begin
+         goto LSaveShipment;
+        end;
+     end;
+     SHp.OrderNr = ORr.SerNr;
+     SHp.CustCode = ORr.CustCode;
+     if (PasteCustInShip(SHp,SHp.CustCode)) then begin end;
+     if (nonblank(ORr.Addr0)) then begin
+       SHp.Addr0 = ORr.Addr0;
+     end;
+     if ((nonblank(ORr.ShipAddr0)) or
+        (nonblank(ORr.ShipAddr1)) or
+        (nonblank(ORr.ShipAddr2)) or
+        (nonblank(ORr.ShipAddr3))) then begin
+        SHp.Addr0 = ORr.ShipAddr0;
+        SHp.Addr1 = ORr.ShipAddr1;
+        SHp.Addr2 = ORr.ShipAddr2;
+        SHp.Addr3 = ORr.ShipAddr3;
+        SHp.DelAddr3 = ORr.DelAddr3;
+        SHp.DelAddr4 = ORr.DelAddr4;
+        SHp.DelCountry = ORr.DelCountry;
+      end;
+      SHp.Packages = blankval;
+      SHp.ShipMode = ORr.ShipMode;
+      SHp.TransportNumber = NextTransportSerNr("SHVc",SHp.SerNr,SHp.ShipMode);
+      SHp.LangCode = ORr.LangCode;
+      SHp.PRCode = ORr.PRCode;
+      SHp.Location = ORr.Location;
+      SHp.Objects = ORr.Objects;
+      SHp.Sorting = ORr.Sorting;
+      SHp.DelAddrCode = ORr.DelAddrCode;
+      SHp.DelCountry = ORr.DelCountry;
+      SHp.Region = ORr.Region;
+    end;
+  end;
+  totv = 0;
+  totw = 0;
+  totq = 0;
+LSaveShipment:;  
+  SaveShipment = res;
+  RETURN;
+END;
+
+procedure SetBackOrderComment(var record SHVc SHr)
+begin
+  record SHVc SH2r;
+  boolean TrHs, testf;
+  record OrdSettBlock OSBr;
+  
+  BlockLoad(OSBr);
+  if (nonblank(OSBr.BackOrderComment)) then begin
+    SH2r.OrderNr = SHr.OrderNr;
+    TrHs = true;
+    while (LoopKey("OrderKey",SH2r,1,TrHs)) begin
+      if (TrHs) then begin
+        if (SH2r.OrderNr <> SHr.OrderNr) then begin
+          TrHs = false;
+        end;
+      end;
+      if (TrHs) then begin
+        testf = true;
+        if (SH2r.SerNr == SHr.SerNr) then begin
+          testf = false;
+        end;
+        if (SH2r.TotQty == 0) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          SHr.Comment = OSBr.BackOrderComment;
+          goto LFindOldShipment;
+        end;
+      end;
+    end;
+  end;
+  LFindOldShipment:;
+  return;
+end;
+
+procedure PrepaidOrdOrderExists(LongInt OrderNr,var val prepaid)
+begin
+  record ARPayHistVc ARPayHistr;
+  Boolean TrHs; 
+  val Tot;
+  
+  prepaid = 0;
+  TrHs = true;
+  ARPayHistr.OrderNr = OrderNr;
+  ARPayHistr.FileName = "IPVc";
+  while (LoopKey("OrderNr",ARPayHistr,2,TrHs)) begin
+    if (TrHs) then begin
+      if (ARPayHistr.OrderNr <> OrderNr or ARPayHistr.FileName <> "IPVc") then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      prepaid = prepaid + ARPayHistr.BookVal;
+    end;
+  end; 
+  return;
+end;
+
+function string 255 SalesContractType(LongInt ORCONr)
+begin
+  record ORCOVc ORCOr;
+  
+  if (ORCONr>0) then begin
+    ORCOr.SerNr = ORCONr;
+    ReadFirstMain(ORCOr,1,true);
+  end;
+  SalesContractType = ORCOr.Type;
+  return;
+end;
+
+global
+updating function LongInt PasteOrdInShip2(var Array record StockMovVc aStockMovr,var Integer asmcnt,record ORVc ORr,var record SHVc SHp,Boolean checklimitf,string planneddelivery,Integer skipzerorows,string onlyforitems,string location,array string aincode,var array string aloc,var array string aserialnr,array val aqty,Integer acnt)
+begin
+  record CreditLimitBlock CLb;
+  record PlanDeliveryBlock PDb;
+  record MainStockBlock MSb;
+  record INVc INr;
+  record CUVc CUr;
+  record SHVc NILSHr;
+  row ORVc ORrw;
+  row SHVc SHrw;
+  Integer i,rwcnt;
+  Integer srw,shrwcnt;
+  val remn,totq,totw,totv,t,prepaid;
+  val bal,limit;
+  val ordered,stock,t1;
+  string 60 cursernr;
+  Boolean dontdeletef,testf;
+  Date dat,planneddeliverydat;
+  LongInt res;
+  record LocationVc Locr;
+  string 50 frin,toin,tstr;
+  Date curbestbef,bd;
+  record ItemSettingBlock ISb;
+  record SupersessionINVc SINr;
+  Boolean limitdaysf;
+  record SerNrTrackBlock SNrb;
+  record OrdSettBlock OSb;
+  
+  frin = FirstInRange(onlyforitems,20);
+  toin = LastInRange(onlyforitems,20);
+  res = -1;  
+  BlockLoad(MSb);
+  BlockLoad(PDb);
+  BlockLoad(CLb);
+  BlockLoad(ISb);
+  BlockLoad(SNrb);
+  BlockLoad(OSb);
+  Locr.Code = ORr.Location;
+  ReadFirstMain(Locr,1,true);
+
+  if (Locr.RequirePos!=0) then begin 
+    if (IsMaintenance==false) then begin
+      res = 2299;
+      goto LPasteOrdInShip;
+    end;
+  end;
+  if (checklimitf) then begin
+    if (CLb.SHSave==1) and (ORr.Sum4>ORr.DownPaySent)then begin
+      CUr.Code = ORr.CustCode;
+      if (GetCustAndBal(CUr,limit,bal,CLb.Base,CLb.OwnCheques,CLb.ThirdCheques,CLb.IOUCheques,CLb.ThirdIOUCheques,CLb.ORSaveWarn,limitdaysf)) then begin
+      end;
+      if (CLb.ORSaveWarn!=0) then begin
+        PrepaidOrdOrderExists(ORr.SerNr,prepaid);
+        if (ORr.OSFlag!=1) then begin 
+          bal = bal + ORr.Sum4;
+        end;
+        bal = bal - prepaid;
+      end;
+      if (blank(limit)==false) then begin 
+        if (limitdaysf) then begin
+          res = 22260;
+          goto LPasteOrdInShip;
+        end;
+        if (bal>limit) then begin
+          if (limit==0.001 and CLb.Base==kCreditLimitBasedOnOpenInvSuspendOnOverdue) then begin
+            res = 39600;
+            goto LPasteOrdInShip;
+          end else begin
+            res = 1164;
+            goto LPasteOrdInShip;
+          end;
+        end;
+      end;
+    end;
+  end;
+  t1 = 1;
+  CUr.Code = ORr.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    switch (CUr.DeliveryBasedOn) begin
+     case 1:
+       if (nonblank(ORr.PlanShip)) then begin
+         SHp.ShipDate = StringToDate(ORr.PlanShip);
+       end;
+    end;
+    if (CUr.OnHoldFlag!=0) then begin 
+      if (IsMaintenance==false) then begin
+        res = 1300;
+      end;
+      goto LPasteOrdInShip; 
+    end;
+    if (CUr.blockedFlag!=0) then begin
+      if (IsMaintenance==false) then begin
+        res = 1265;
+      end;
+      goto LPasteOrdInShip;
+    end;
+  end;    
+  if (PDb.PreventDelivery!=0) then begin
+    dat = StringToDate(ORr.PlanShip);
+    if (SHp.ShipDate<dat) then begin
+      goto LPasteOrdInShip;
+    end;
+  end;
+  SHp.TREONr = ORr.TREONr;
+  SHp.SHClass = ORr.OrderClass;
+  SHp.OrderNr = ORr.SerNr;
+  SHp.CustCode = ORr.CustCode;
+  if (PasteCustInShip(SHp,SHp.CustCode)) then begin end;
+  if (nonblank(ORr.Addr0)) then begin
+    SHp.Addr0 = ORr.Addr0;
+  end;
+  SHp.DelCountry = ORr.InvCountry;
+  if (nonblank(ORr.DelCountry)) then begin
+    SHp.DelCountry = ORr.DelCountry;
+  end;
+  if ((nonblank(ORr.ShipAddr0)) or
+        (nonblank(ORr.ShipAddr1)) or
+        (nonblank(ORr.ShipAddr2)) or
+        (nonblank(ORr.ShipAddr3))) then begin
+      SHp.Addr0 = ORr.ShipAddr0;
+      SHp.Addr1 = ORr.ShipAddr1;
+      SHp.Addr2 = ORr.ShipAddr2;
+      SHp.Addr3 = ORr.ShipAddr3;
+      SHp.DelAddr3 = ORr.DelAddr3;
+      SHp.DelAddr4 = ORr.DelAddr4;
+  end;
+  SHp.Packages = blankval;
+  totq = blankval;
+  totv = blankval;
+  totw = blankval;
+  SHp.ShipMode = ORr.ShipMode;
+  SHp.TransportNumber = NextTransportSerNr("SHVc",SHp.SerNr,SHp.ShipMode);
+  SHp.LangCode = ORr.LangCode;
+  SHp.PRCode = ORr.PRCode;
+  SHp.Location = ORr.Location;
+  SHp.Objects = ORr.Objects;
+  SHp.Sorting = ORr.Sorting;
+  SHp.DelAddrCode = ORr.DelAddrCode;
+  SHp.Region = ORr.Region;
+  SHp.Comment = ORr.Comment;
+  SHp.ORCOType = SalesContractType(ORr.ORCONr);
+  rwcnt = MatRowCnt(ORr);
+  srw = 0;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ORr,i,ORrw);
+    remn = ORrw.Quant - ORrw.Shipd1;
+LPasteSupersessionIN:;
+    if (ORrw.stp==kInvoiceRowTypeHidden) then begin
+      goto L10PasteOrdInShip;
+    end;
+    if (ORrw.stp!=kInvoiceRowTypeNormal) and (ORrw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+      goto LSKIPROW;
+    end;
+    if (ORrw.OrderType==kOrderTypeDropShip) then begin
+      goto LSKIPROW;
+    end;
+    ordered = remn;
+    testf = true;
+    if (PDb.PreventDelivery!=0) then begin
+      if (nonblank(ORrw.PlanShipRow)) then begin
+        dat = StringToDate(ORrw.PlanShipRow);        
+        if (SHp.ShipDate<dat) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (nonblank(planneddelivery)) then begin
+      planneddeliverydat = StringToDate(planneddelivery);
+      if (nonblank(ORrw.PlanShipRow)) then begin
+        dat = StringToDate(ORrw.PlanShipRow);        
+      end else begin
+        if (nonblank(ORr.PlanShip)) then begin
+          dat = StringToDate(ORr.PlanShip);        
+        end;
+      end;
+      if (nonblankdate(dat)) then begin
+        if (dat>planneddeliverydat) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      if (nonblank(onlyforitems)) then begin
+        if (Left(ORrw.ArtCode,len(frin))<frin) then begin testf = false; end;
+        if (Left(ORrw.ArtCode,len(toin))>toin) then begin testf = false; end;
+      end;
+    end;
+    if (nonblank(location)) then begin
+      if (nonblank(ORrw.Location)) then begin
+        if (ORrw.Location!=location) then begin testf = false; end;
+      end;
+    end;
+    if (( ((remn>0) and (remn!=0)) or
+        ((remn>0) and (ORrw.Sum==0)) or      // otherwise overdelivered orders are really making strange SH
+        ((remn<0) and (ORrw.Quant==remn)) or // to allow delivering of negative plain items on order, which is only allowed if Negative Quantities on Invoices is turned on.
+        (OSb.SHIncludesAllORRows!=0) or
+        (blank(ORrw.ArtCode))) and (testf)) then begin
+      stock = blankval;
+      cursernr = "";
+      curbestbef = bd;
+L10PasteOrdInShip:;
+      ClearRow(SHp,SHrw,ORrw.stp);
+      SHrw.OrdRow = i;
+      SHrw.MotherArtCode = ORrw.MotherArtCode;
+      SHrw.RecipeQuant = ORrw.RecipeQuant;
+      SHrw.CustArtCode = ORrw.CustArtCode;
+      SHrw.ArtCode = ORrw.ArtCode;
+      SHrw.Spec = ORrw.Spec;
+      SHrw.Objects = ORrw.Objects;
+      SHrw.SerialNr = ORrw.SerialNr;
+      SHrw.UnitCode = ORrw.UnitCode;
+      SelectUnitText(SHp.LangCode,SHrw.UnitCode,tstr);
+      SHrw.UnitComment = tstr;
+      if (ORrw.stp!=kInvoiceRowTypeStructuredItemComponent) then begin
+        SHrw.Recepy = ORrw.Recepy;
+      end;
+      SHrw.VARList = ORrw.VARList;
+      SHrw.Location = ORrw.Location;
+      SHrw.Source = ORrw.Source;
+      SHrw.PosCode = ORrw.Position;
+      SHrw.DespatchRowTime = ORrw.DespatchRowTime;
+      SHrw.SalesAcc = ORrw.SalesAcc;
+      if (nonblankdate(ORrw.DespatchRowDate)) then begin
+        SHrw.DespatchRowDate = ORrw.DespatchRowDate;
+      end else begin
+        SHrw.DespatchRowDate = ORr.DespatchDate;
+      end;
+      FindBatchBestBeforeDate(SHrw.ArtCode,SHrw.SerialNr,dat);
+      SHrw.BestBefore = dat;
+      if ((ORrw.Quant==blankval) and (remn==0)) then begin
+        remn = blankval;
+      end;
+      SHrw.Ordered = ordered;
+      if (blank(SHrw.ArtCode)) then begin
+        if (SHrw.Ordered==0) then begin
+          SHrw.Ordered = blankval;
+        end;
+      end;
+      SHrw.InStock = blankval;
+      SHrw.FIFO = blankval;
+      SHrw.FIFORowVal = blankval;
+      if (nonblank(SHrw.Ordered)) then begin
+        SHrw.Ship = SHrw.Ordered;
+      end;
+      if (ORr.SHShipSetToZero!=0) then begin
+        SHrw.Ship = blankval;
+        totq = totq + SHrw.Ordered;
+      end else begin
+        totq = totq + SHrw.Ship;
+      end;
+      SHrw.BasePrice = ORrw.Price;
+      SHrw.BBCostPrice = ORrw.BasePrice;
+      SHrw.UnitXval = ORrw.UnitXval;
+      SHrw.UnitYval = ORrw.UnitYval;
+      SHrw.UnitZval = ORrw.UnitZval;
+      if (nonblank(SHrw.ArtCode)) then begin
+        res = 0;
+      end;    
+      MatRowPut(SHp,srw,SHrw);      
+      shrwcnt = MatRowCnt(SHp);
+      NILSHr.CustCode = "NIL";
+      if (nonblank(SHrw.ArtCode)) then begin
+        if (RefillShipRow(aStockMovr,asmcnt,SHp,NILSHr,INr,srw,shrwcnt,0,aincode,aloc,aserialnr,aqty,acnt)==false) then begin
+          MatRowDelete(SHp,srw);
+          goto LSKIPROW;
+        end;     
+      end;
+      MatRowGet(SHp,srw,SHrw);
+      dontdeletef = true;
+      if (IsMaintenance)  then begin
+        if (skipzerorows!=0) then begin
+//          if (nonblank(SHrw.ArtCode)) then begin
+            if (SHrw.Ship<=0) then begin dontdeletef = false; end;
+//          end;
+        end;
+      end;
+      if (dontdeletef) then begin
+        srw = srw + 1;
+        if (Locr.RequirePos==0) then begin
+          if (INr.SerNrf==1) and (SNrb.BulkSerialNos==0) then begin
+            if (SHrw.Ship>0) then begin
+              SHrw.Ship = t1;
+              SHrw.Ordered = t1;
+//              if (Locr.WHMDemandPosition!=0) then begin//why when demand position only ?
+//                SHrw.InStock = SHrw.InStock - stock;//done in refillship
+//              end;
+              if (SHrw.InStock<=0) then begin
+                SHrw.Ship = 0;
+              end;
+              MatRowPut(SHp,srw-1,SHrw);
+              remn = remn - t1;
+              if (srw>=200) then begin
+                if (SaveShipment(aStockMovr,asmcnt,SHp,CUr,ORr,PDb,totv,totw,totq,srw)==false) then begin
+                  goto LPasteOrdInShip;
+                end;
+              end;
+              if (remn>0) then begin
+                stock = stock + t1;
+                ordered = ordered - t1;
+                goto L10PasteOrdInShip;
+              end;
+            end;
+          end;
+          if ((INr.SerNrf==2) and (MSb.DelivSetBatch==1) and (Locr.RequirePos==0)) then begin
+            if (PasteBatchSerItems2(cursernr,curbestbef,srw,remn,ORr,i,SHp,srw-1,MSb.MainStock,MSb.SortBatchOnBestBefore,res)==false) then begin
+              goto L10PasteOrdInShip;
+            end;
+          end;      
+        end else begin
+          if ((INr.SerNrf==2) and (MSb.DelivSetBatch!=0) and (Locr.RequirePos==0)) then begin
+            srw = srw - 1;
+            if (PasteBatchSerItems_DemandPosition(aStockMovr,asmcnt,SHp,srw)==false) then begin
+              goto L10PasteOrdInShip;
+            end;
+          end;
+        end;
+      end else begin
+        if (skipzerorows!=0) then begin
+          if (nonblank(SHrw.ArtCode)) then begin
+            MatRowDelete(SHp,srw);
+          end;
+        end;
+      end;
+      if ((srw>=200) and (i!=(rwcnt-1))) then begin
+        if (SaveShipment(aStockMovr,asmcnt,SHp,CUr,ORr,PDb,totv,totw,totq,srw)==false) then begin
+          goto LPasteOrdInShip;
+        end;
+      end;
+      if (ISb.UseSupersessionIN!=0) then begin
+        SINr.NewArtCode = ORrw.ArtCode;
+        if (ReadFIrstKey("ActNewArtCode",SINr,1,true)) then begin
+          if (ORrw.Quant - SHrw.Ship>0) then begin          
+            ORrw.ArtCode = SINr.OldArtCode;//put aother item for a moment
+            remn = ORrw.Quant - SHrw.Ship;
+            goto LPasteSupersessionIN;
+          end;
+        end;
+      end;
+    end;
+LSKIPROW:;    
+  end;
+  if (totq<=0) then begin
+    while (MatRowCnt(SHp)>0) begin
+      MatRowDelete(SHp,0);
+    end;
+  end;
+  SetBackOrderComment(SHp);
+  SHSumUp(SHp);  
+LPasteOrdInShip:;
+  PasteOrdInShip2 = res;
+  return;
+end;
+
+global
+updating function integer PasteOrdInShip(var Array record StockMovVc aStockMovr,var Integer asmcnt,record ORVc ORr,var record SHVc SHp,Boolean checklimitf,string planneddelivery,Integer skipzerorows,string onlyforitems,string location,array string aincode,var array string aloc,var array string aserialnr,array val aqty,Integer acnt)
+begin  
+  PasteOrdInShip = PasteOrdInShip2(aStockMovr,asmcnt,ORr,SHp,checklimitf,planneddelivery,skipzerorows,onlyforitems,location,aincode,aloc,aserialnr,aqty,acnt);
+  return;
+end;
+
+global
+updating function LongInt RecordAction_raPasteOrdInShip2(var record SHVc SHp,LongInt ordnr,var string warning)
+begin
+  record SRBlock SRRec;
+  LongInt res;
+  LongInt newnr;
+  string 255 tstr;
+  Boolean testf;
+  Array record StockMovVc aStockMovr;
+  Integer asmcnt;
+  record ORVc ORr;
+  array string 40 aincode;
+  array string 40 aloc;
+  array string 40 aserialnr;
+  array val aqty;
+  Integer acnt;
+  
+  res = -1;
+  RecordNew(SHp);
+  SHp.SerNr = -1;
+  SHp.OrderNr = ordnr;
+  if (SHp.SerNr==-1) then begin
+    BlockLoad(SRRec);
+    newnr = GetCurUserLastNr("SHVc");
+    if (newnr!=-1) then begin
+      newnr = SRRec.LastShipNr;
+    end;
+    SHp.SerNr = NextSerNr("SHVc",SHp.ShipDate,newnr,false,"");
+    if (SHp.SerNr==-1) then begin
+      res = 1747;
+      goto LRecordAction_raPasteOrdInShip;
+    end;
+  end;
+  ORr.SerNr = SHp.OrderNr;
+  if (ReadFirstMain(ORr,1,true)) then begin end; //## what if not found?
+/*JJDS  
+  if (ORr.OrderType!=kOrderTypeNormal) then begin 
+    goto LRecordAction_raPasteOrdInShip;
+  end;
+*/  
+  if (ORr.OKFlag==0) then begin
+    if (OfficialSerNrDefined("ORVc")) then begin
+      res = 2069;
+      goto LRecordAction_raPasteOrdInShip;
+    end;
+  end;
+
+  res = PasteOrdInShip2(aStockMovr,asmcnt,ORr,SHp,true,"",0,"","",aincode,aloc,aserialnr,aqty,acnt);
+  if (EarlierReservationsExists(ORr)) then begin
+    warning = USetStr(20562);
+  end;
+  if ((MatRowCnt(SHp)>0) and (SHp.SerNr!=-1) and (res==0)) then begin
+    if (RecordInsert(SHp,false)==false) then begin
+      res = 1;
+    end else begin
+      CreateRecordLink(ORr,CurrentCompany,SHp,CurrentCompany);  
+      CreateRecordLink(SHp,CurrentCompany,ORr,CurrentCompany);  
+    end;
+  end;
+LRecordAction_raPasteOrdInShip:;
+  RecordAction_raPasteOrdInShip2 = res;
+  RETURN;
+END;
+
+global
+updating function integer RecordAction_raPasteOrdInShip(var record SHVc SHp,LongInt ordnr,var string warning)
+begin
+  RecordAction_raPasteOrdInShip = RecordAction_raPasteOrdInShip2(SHp,ordnr,warning);
+  return;
+end;
+
+global
+function Boolean CustOnRestAcc(record RestAccVc RestAccp,record JobVc Jobp)
+BEGIN
+  row JobVc Jobrw;
+  Integer i,rwcnt;
+  Boolean res;
+  
+  if ((RestAccp.CUCode==FindJobCustomerCode(Jobp)) or (RestAccp.CUCode==Jobp.Source)) then begin
+    res = true;
+  end;  
+  if (res==false) then begin
+   rwcnt = MatRowCnt(Jobp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Jobp,i,Jobrw);
+      if (RestAccp.CUCode==Jobrw.CUCode) then begin
+        res = true;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  CustOnRestAcc = res;
+  RETURN;
+END;
+
+procedure GetWaiterForTable(string Mesa,var string ret)
+begin
+  record NeighbourHoodVc nhr;
+  
+  ret = "";
+  nhr.Table = Mesa;
+  if (ReadFirstMain(nhr,1,true)) then begin
+    ret = nhr.Waiter;
+  end;
+  return;
+end;
+
+global
+procedure RestAccVc_PasteCustCode(var record RestAccVc RestAccr)
+begin
+  String 20 tstr;
+
+  GetWaiterForTable(RestAccr.CustCode,tstr);
+  RestAccr.Waiter2 = tstr;
+  return;
+end;
+
+
+global
+function Boolean RestAccIsReserved(record RestAccVc RestAccp,var record JobVc Jobp)
+BEGIN
+  record ReservationStatusVc rsr;
+  LongInt resnr;
+  Boolean res;
+  record HotelBlock Hotelb;
+
+/*
+not needed right? 
+we just need cuernt resefcation in checkin status
+  resnr = FindReservation(RestAccp.Resource,RestAccp.TransDate,RestAccp.TransTime);
+  if (resnr<=0) then begin
+    goto LRestAccIsReserved;
+  end;
+  Jobp.SerNr = resnr;
+  if (ReadFirstMain(Jobp,1,true)) then  begin
+*/  
+  BlockLoad(Hotelb);
+  Jobp.ResStatus = Hotelb.ChInSt;
+  Jobp.ResCode = RestAccp.Resource;
+  if (ReadLastKey("ResCodeStatus",Jobp,2,true)) then  begin
+    rsr.Code = Jobp.ResStatus;
+    if (ReadFirstMain(rsr,1,true)) then begin
+      if (rsr.StatType==3) then begin
+        res = true;
+      end else begin
+        Beep;
+      end;  
+    end else begin
+      Beep;
+    end;
+  end else begin
+    Beep;
+  end;
+LRestAccIsReserved:;  
+  RestAccIsReserved = res;
+  RETURN;
+END;
+
+global
+updating function Integer RecordAction_raPasteCOInInv(var record IVVc IVp,var record ORVc ORr,LongInt conr,var Boolean orderf)
+BEGIN
+  Integer res,err;
+  record RcVc RepSpec;
+
+  RecordNew(IVp);
+  RepSpec.f1 = "";
+  RepSpec.f2 = conr;
+  RepSpec.ArtMode = -1;
+  IVp.SerNr = CreateCOInv(RepSpec,false,orderf,err);
+  if (IVp.SerNr!=-1) then begin
+    if (orderf) then begin
+      ORr.SerNr = IVp.SerNr;
+      if (ReadFirstMain(ORr,1,true)) then begin
+        res = 1;
+      end;
+    end else begin
+      if (ReadFirstMain(IVp,1,true)) then begin
+        res = 1;
+      end;
+    end;
+  end;  
+  RecordAction_raPasteCOInInv = res;  
+  RETURN;
+END;
+
+function Boolean acSetORToInv(var record ORVc ORp)
+BEGIN
+  Boolean res;
+  row ORVc ORrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(ORp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ORp,i,ORrw);
+    if (ORrw.Invd!=ORrw.Shipd2) then begin
+      ORrw.Invd = ORrw.Shipd2;
+      MatRowPut(ORp,i,ORrw);
+      res = true;
+    end;
+  end;
+  SetORFlags(ORp);  
+  acSetORToInv = res;
+  RETURN;
+END;
+
+global
+updating function Boolean RecordAction_rlSetORToInv(var record ORVc ORp)
+BEGIN
+  Boolean res;
+  record ORVc oldORp;
+  
+  if (IsRecordLocked(ORp)==false) then begin
+    if (ReadFirstMain(ORp,0,true)) then begin end;  
+    RecordCopy(oldORp,ORp);
+    res = acSetORToInv(ORp);
+    if (res) then begin
+      if (RecordUpdate(oldORp,ORp,false)==0) then begin
+      end;
+    end;
+  end;  
+  RecordAction_rlSetORToInv = res;
+  RETURN;
+END;
+
+global
+updating function Integer RecordAction_raPasteQTInProj(var record PRVc PRr,var record QTVc QTp)
+BEGIN
+  Integer res;
+  record PRVc lastPRr;
+  string 255 tstr;
+  Integer i,rwcnt;
+  record QTVc QTr;
+  record QTVc oldQTr;
+  LongInt prnr;
+  record CUVc CUr;
+  
+  QTr.SerNr = QTp.SerNr;
+  if (ReadFirstMain(QTr,1,true)) then begin
+    PRr.Code = QTr.PRCode;
+    if (ReadFirstMain(PRr,1,true)==false) then begin
+      RecordNew(PRr);
+      PRr.Code = QTr.PRCode;
+      PRr.CurncyCode = QTr.CurncyCode;
+      PRr.CustCode = QTr.CustCode;
+      PRr.CustName = QTr.Addr0;
+      PRr.PrSalesMan = QTr.SalesMan;
+      PRr.SalesGroup = QTr.SalesGroup;
+      PRr.Leader = CurrentUser;
+      GetUserName(PRr.Leader,tstr);
+      PRr.LeaderName = tstr;
+      PRr.StartDate = CurrentDate;
+      PRr.EndDate = CurrentDate;
+      PRr.LangCode = QTr.LangCode;
+      PRr.Name = QTr.Comment;    
+      PRr.Contact = QTr.CustContact;
+      PRr.Objects = QTr.Objects;    
+      if (blank(PRr.Contact)) then begin
+        CUr.Code = PRr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin end;
+        PRr.Contact = CUr.Person;
+      end;
+      if (blank(PRr.Code)) then begin
+        GetNextProjectNr(tstr);
+        PRr.Code = tstr;    
+        prnr = NextSerNr("PRVc",PRr.StartDate,-1,false,"");
+        if (StringToLongInt(PRr.Code)<prnr) then begin
+          PRr.Code = prnr;
+        end;
+      end;
+      if (nonblank(PRr.Code)) then begin
+        if (RecordStore(PRr,false)) then begin
+          res = 1;
+          CreateRecordLink(PRr,CurrentCompany,QTp,CurrentCompany);  
+          CreateRecordLink(QTp,CurrentCompany,PRr,CurrentCompany);  
+        end;
+      end;
+    end;
+  end;
+  RecordAction_raPasteQTInProj = res;
+  RETURN;
+END;
+

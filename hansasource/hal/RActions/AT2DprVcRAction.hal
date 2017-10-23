@@ -1,0 +1,183 @@
+external procedure B1ToB2Val(val,val,val,var val);
+external updating procedure AT2DprOK(record AT2DprVc,record AT2DprVc,Boolean,Boolean,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure FindAT2WriteofData(string,var Date,var string);
+external function Boolean SerNrTestAT2DprVc(LongInt,Date,var Boolean);
+
+procedure AT2DprVcConvertB1ToB2(var record AT2DprVc ATDprp,string curp,val frp,var val to1p,var val to2p,var val br1p,var val br2p)
+BEGIN
+  val t;
+    
+  B1ToB2Val(ATDprp.StartVal,br1p,br2p,t);
+  ATDprp.StartVal = t;
+  B1ToB2Val(ATDprp.StartVal2,br1p,br2p,t);
+  ATDprp.StartVal2 = t;
+  B1ToB2Val(ATDprp.ResVal,br1p,br2p,t);
+  ATDprp.ResVal = t;
+  B1ToB2Val(ATDprp.NonFiscalCostVal,br1p,br2p,t);
+  ATDprp.NonFiscalCostVal = t;
+  RETURN;
+END;
+
+global
+function LongInt AT2DprVcRecordDefaults(var record AT2DprVc ATDprr,record AT2DprVc ATDpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  ATDprr.SerNr = -1;
+  ATDprr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    ATDprr.SerNr = NextSerNr("AT2DprVc",ATDprr.TransDate,-1,false,"");            
+  end;
+  ATDprr.StartVal = blankval;
+  ATDprr.StartVal2 = blankval;
+  AT2DprVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt AT2DprVcRecordDuplicate(var record AT2DprVc ATDprr,record AT2DprVc ATDpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  ATDprr.SerNr = -1;
+  ATDprr.SMSerNr = -1;
+  ATDprr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    ATDprr.SerNr = NextSerNr("AT2DprVc",ATDprr.TransDate,-1,false,"");            
+  end;
+  AT2DprVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function LongInt AT2DprVcRecordImport(var record AT2DprVc ATDprr,record AT2DprVc ATDpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  string 5 crncycode;
+  Boolean gBase1ToBase2;
+  record ConvMasterBlock cvm;
+      
+  BlockLoad(cvm);
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    GetFullCurncyRate(crncycode,ATDprr.TransDate,fr,to1,to2,br1,br2);
+    AT2DprVcConvertB1ToB2(ATDprr,crncycode,fr,to1,to2,br1,br2);
+  end;
+  AT2DprVcRecordImport = res;
+  RETURN;
+END;
+
+function Boolean InventoryNrExists(string inventorynr)
+BEGIN
+  record AT2UnitVc AT2Unitr;
+  
+  AT2Unitr.InventoryNr = inventorynr;
+  InventoryNrExists = ReadFirstMain(AT2Unitr,1,true);
+  RETURN;
+END;
+
+global
+function LongInt AT2DprVcRecordCheck(var record AT2DprVc ATDprr,record AT2DprVc ATDpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Boolean gentrans,found;
+  Date wrofd;
+  string 255 tstr;
+  record AT2DprVc locATDprr;
+  record InvBalVc InvBalr;  
+
+  res = 0;
+  if (stat==2) then begin
+    if (ATDprr.SerNr<=0)  then begin
+      ATDprr.SerNr = ATDpr2r.SerNr;
+    end;
+  end;
+  if (ATDprr.SerNr==-1) then begin
+    ATDprr.SerNr = NextSerNr("AT2DprVc",ATDprr.TransDate,-1,false,"");
+  end;
+  if (SerNrTestAT2DprVc(ATDprr.SerNr,ATDprr.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1; 
+    goto LAT2DprVcRecordCheck;
+  end;
+ if (blank(ATDprr.InventoryNr)) then begin
+    RecordCheckError(1058,"",-1,"InventoryNr");      
+    res = -1; 
+    goto LAT2DprVcRecordCheck;
+  end;  
+  if (blankdate(ATDprr.TransDate)) then begin
+    RecordCheckError(1058,"",-1,"TransDate");      
+    res = -1; 
+    goto LAT2DprVcRecordCheck;
+  end;
+  if (InventoryNrExists(ATDprr.InventoryNr)==false) then begin
+    RecordCheckError(1132,"",-1,"InventoryNr");      
+    res = -1; 
+    goto LAT2DprVcRecordCheck;
+  end;  
+  InvBalr.InventoryNr = ATDprr.InventoryNr;
+  if (ReadFirstMain(InvBalr,1,true)==false) or (InvBalr.CurQuant<=0) then begin
+    FindAT2WriteofData(ATDprr.InventoryNr,wrofd,tstr);
+    if ((ATDprr.TransDate>=wrofd) and nonblankdate(wrofd)) then begin
+      RecordCheckError(20023,"",-1,"TransDate");      
+      res = -1; 
+      goto LAT2DprVcRecordCheck;
+    end;
+  end;
+  found = true;
+  locATDprr.InventoryNr = ATDprr.InventoryNr;
+  locATDprr.TransDate = AddDay(ATDprr.TransDate,1);
+  if (LoopKey("DateInventoryNr",locATDprr,2,found)) then begin
+    if (locATDprr.SerNr!=ATDprr.SerNr) then begin
+      if (locATDprr.InventoryNr==ATDprr.InventoryNr) then begin
+        MessageBox(2087,"");
+        found = false;
+      end;
+    end;
+  end;
+LAT2DprVcRecordCheck:; 
+  AT2DprVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+updating function LongInt AT2DprVcRecordSaveAfter(var record AT2DprVc AT2Dprr,record AT2DprVc AT2Dpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  AT2DprOK(AT2Dprr,AT2Dpr2r,true,false,false);  
+  AT2DprVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt AT2DprVcRecordUpdateAfter(var record AT2DprVc AT2Dprr,record AT2DprVc AT2Dpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  AT2DprOK(AT2Dprr,AT2Dpr2r,true,true,false);  
+  AT2DprVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt AT2DprVcRecordImportAfter(var record AT2DprVc AT2Dprr,record AT2DprVc AT2Dpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  AT2DprOK(AT2Dprr,AT2Dpr2r,true,false,false);  
+  AT2DprVcRecordImportAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt AT2DprVcRecordRemove(var record AT2DprVc AT2Dprr,record AT2DprVc AT2Dpr2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  AT2DprOK(AT2Dpr2r,AT2Dprr,false,true,true);  
+  AT2DprVcRecordRemove = res;
+  RETURN;
+END;

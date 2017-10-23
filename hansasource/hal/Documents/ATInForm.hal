@@ -1,0 +1,194 @@
+external function Boolean FindFormcode(Integer,Integer);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external procedure CommonDocumentFields(record RcVc);
+external function Boolean GetLastDprStartVal(Integer,string,val,var val,var val);
+external procedure GetAC2Accounts(Integer,Integer,string,string,var string);
+external procedure GetDprModDescription(string,var string);
+external procedure GetDepreciationPrc(string,var val);
+external function Boolean GetInventoryNrWrofDate(string,var Date);
+external procedure GetInventoryNrWrofComment(string,var string);
+external procedure GetInventoryNrWrofNumber(string,var LongInt);
+external procedure OneAT2UnitDeprCalculation(Integer,Integer,Integer,Boolean,Date,Date,string,var val,var val,var val,var val,var string,val,val,Boolean);
+external procedure GetMonthText(string,Date,var string);
+
+
+
+procedure PrintAssetPutInUseInfo(record AT2UnitVc ATUnitr)
+begin
+  record AT2TransVc ATTransr;
+  boolean TrHs,testf;
+  TrHs = true;
+  
+  ATTransr.InventoryNr = ATUnitr.InventoryNr;
+  while (LoopMain(ATTransr,1,TrHs)) begin  
+    testf = true;
+    if (ATTransr.InventoryNr != ATUnitr.InventoryNr) then begin
+      TrHs = false;
+    end;
+    if (ATTransr.Type != 2) then begin
+      testf = false;
+    end; 
+    if (TrHs and testf) then begin
+      TrHs = false;
+      OUTFORMFIELD("F_TRANSNR",ATTransr.TransNr)
+      OUTFORMFIELD("F_TRANSDATE",ATTransr.TransDate);
+    end;
+  end;
+return;
+end;
+
+procedure CalcDeprVal(record AT2UnitVc AT2Unitr,var val res)
+BEGIN
+  record AT2AccBlock AT2AccRec;
+  Date sd,ed;
+  val tdprv,dprv;
+  val t;
+
+  res = blankval;
+  if (GetInventoryNrWrofDate(AT2Unitr.InventoryNr,ed)) then begin end;
+  if (blankdate(ed)) then begin
+    ed = CurrentDate;
+  end;
+  ed = AddDay(ed,-1);
+  ed = AddDay(ed,-GetDay(ed) + DaysInMonth(GetYear(ed),GetMonth(ed)));
+  if (AT2AccRec.Model==0) then begin
+    sd = AT2Unitr.StartingDate1;
+  end else begin  
+    sd = AT2Unitr.StartingDate2;
+  end;  
+  
+  OneAT2UnitDeprCalculation(AT2AccRec.Model,1,0,false,sd,ed,AT2Unitr.InventoryNr,dprv,tdprv,t,t,AT2Unitr.Model1,blankval,AT2Unitr.ResVal,false);
+  res = tdprv + dprv;
+//  res = blankval;
+ // StopAlert(tdprv);
+  RETURN;
+END;
+
+
+global
+procedure DoAT2InForm(record RcVc RepSpec,record AT2UnitVc AT2Unitr)
+BEGIN
+  record AT2Vc AT2r;
+  record CUVc CUr;
+  Integer i,rwcnt;
+  string 255 tstr;
+  val t,t2;
+  Date td;
+  LongInt tl;
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+    
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoAT2InForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,-1,FDrw.PrintGroupCode,
+                      "",intdocnr,"AT2UnitVc",formcode)) then
+      begin
+        goto LBREAK;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin  
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+        if (FIELDINFORM("F_REVALUATEDVALUE")) then begin
+          if (GetLastDprStartVal(0,AT2Unitr.InventoryNr,AT2Unitr.PurchVal,t,t2)) then begin 
+          end;
+          OUTFORMFIELD("F_REVALUATEDVALUE",t);
+        end;  
+        OUTFORMFIELD("F_FIXASSETCODE",AT2Unitr.InventoryNr);
+        OUTFORMFIELD("F_FIXASSETNAME",AT2Unitr.Description);
+        OUTFORMFIELD("F_PURCHVAL",AT2Unitr.PurchVal);
+        OUTFORMFIELD("F_ENDDATE",AT2Unitr.EndDate);
+        if (blank(AT2Unitr.Quantity)) then begin
+          OUTFORMFIELD("F_ANTAL",1.00);
+        end else begin
+          OUTFORMFIELD("F_ANTAL",AT2Unitr.Quantity);
+        end;
+        OUTFORMFIELD("F_DEPARTMENT",AT2Unitr.DepName);
+        OUTFORMFIELD("F_PURCHINVNO",AT2Unitr.VEInvoiceNr);
+        OUTFORMFIELD("F_STARTDATE",AT2Unitr.StartingDate1);
+        OUTFORMFIELD("F_STARTDATE2",AT2Unitr.StartingDate2);
+        OUTFORMFIELD("F_LEVERANTOR",AT2unitr.VECode);
+        OUTFORMFIELD("F_LEVNAMN",AT2Unitr.VEName);
+        OUTFORMFIELD("F_COMMENT",AT2unitr.Comment);
+        tstr = AT2unitr.AT2Class;
+        AT2r.Code = AT2Unitr.AT2Code;
+        if (readfirstmain(AT2r,1,true)) then begin
+          if (blank(tstr)) then begin tstr = AT2r.AT2Class; end;
+          OUTFORMFIELD("F_CLASS",tstr);
+          OUTFORMFIELD("F_GROUP",AT2r.Code);
+        end;
+        
+        
+        PrintAssetPutInUseInfo(AT2Unitr);
+        
+        if (FIELDINFORM("F_ASSETACC")) then begin
+          GetAC2Accounts(0,0,AT2Unitr.AT2Code,AT2Unitr.AT2Class,tstr);
+          OUTFORMFIELD("F_ASSETACC",tstr);
+        end;  
+        if (FIELDINFORM("F_DEPRCODE")) then begin
+          GetAC2Accounts(0,1,AT2Unitr.AT2Code,AT2Unitr.AT2Class,tstr);
+          OUTFORMFIELD("F_DEPRCODE",tstr);
+        end;  
+        if (FIELDINFORM("F_COSTACCOUNT")) then begin
+          GetAC2Accounts(0,2,AT2Unitr.AT2Code,AT2Unitr.AT2Class,tstr);
+          OUTFORMFIELD("F_COSTACCOUNT",tstr);
+        end;  
+        OUTFORMFIELD("F_OBJECT",AT2Unitr.Objects);
+        OUTFORMFIELD("F_PURCHASEDATE",AT2Unitr.PurchaseDate);
+        OUTFORMFIELD("F_PRODDATE",AT2Unitr.ProdDate);
+        if (FIELDINFORM("F_KOMMENTAR")) then begin
+          GetDprModDescription(AT2Unitr.Model1,tstr);
+          OUTFORMFIELD("F_KOMMENTAR",tstr);
+        end;  
+        if (FIELDINFORM("F_DEPRPRC")) then begin
+          GetDepreciationPrc(AT2Unitr.Model1,t);
+          OUTFORMFIELD("F_DEPRPRC",t);
+        end;          
+        if (FIELDINFORM("F_DEPRPRC2")) then begin
+          GetDepreciationPrc(AT2Unitr.Model2,t);
+          OUTFORMFIELD("F_DEPRPRC2",t);
+        end;          
+        //OUTFORMFIELD("F_PRODDATE",AT2Unitr.Model1);
+        OUTFORMFIELD("F_PRODACTIONDATEYEAR",GetYear(AT2Unitr.ProdDate));
+        GetMonthText(FDrw.LangCode,AT2Unitr.ProdDate,tstr);
+
+        OUTFORMFIELD("F_PRODACTIONDATEMONTH",tstr);
+        OUTFORMFIELD("F_WARRANTY",AT2Unitr.WarrantyNr);
+        OUTFORMFIELD("F_SERIALNR",AT2Unitr.SerialNr);
+        if (FIELDINFORM("F_DEPRVAL")) then begin
+          CalcDeprVal(AT2Unitr,t);
+          
+          OUTFORMFIELD("F_DEPRVAL",t);
+        end;          
+        CloseForm;        
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoAT2InForm:;  
+  RETURN;  
+END;     
+ 

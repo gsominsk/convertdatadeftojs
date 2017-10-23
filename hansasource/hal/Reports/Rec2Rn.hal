@@ -1,0 +1,329 @@
+external function Boolean SetInSet2(string,string);
+external procedure HTItemClass(string,var string);
+external procedure HTArtSel(string,string, var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function val GetStockQty(string,string,Date,Boolean); 
+
+procedure PrintRecepy(record RecVc Recr)
+BEGIN
+  Integer i,rwcnt;
+  row RecVc Recrw;
+  
+  StartFormat(15);
+  OutString(100,0,recr.Code,false);
+  EndFormat;
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    StartFormat(15);
+    OutString(0,0,Recrw.Item,false);
+    OutString(100,0,Recrw.Comment,false);
+    OutVal(280,0,Recrw.InQty,M4UVal,true);
+    OutVal(340,0,Recrw.OutQty,M4UVal,true);
+    OutVal(400,0,Recrw.ItemCost,M4Val,true);
+    OutVal(460,0,Recrw.ExtraCost,M4Val,true);
+    EndFormat;
+  end;
+  RETURN;
+END;
+
+procedure PrintRecepies(record INVc INp,record RecVc Recp,Boolean multilevelf)
+BEGIN
+  Integer i,rwcnt;
+  row RecVc Recrw;
+  record INVc IN2r;
+  record RecVc Rec2r;
+
+  if (multilevelf) then begin
+    rwcnt = MatRowCnt(Recp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recp,i,Recrw);
+      IN2r.Code = Recrw.Item;
+      if (ReadFirstMain(IN2r,1,true)) then begin
+        if (Recrw.Item!=INp.Code) then begin
+          if (Recrw.InQty>0) then begin
+            if (nonblank(IN2r.Recepy)) then begin
+              Rec2r.Code = IN2r.Recepy;
+              if (ReadFirstMain(Rec2r,1,true)) then begin
+                PrintRecepies(IN2r,Rec2r,true);
+              end;
+            end else begin
+              PrintRecepy(Rec2r);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    PrintRecepy(Recp);
+  end;
+  RETURN;
+END;
+
+function Boolean RecInArray(string reccode,array string arecs,LongInt acnt)
+begin
+  LongInt i;
+  Boolean res;
+  
+  res = false;
+  for (i=0;i<acnt;i=i+1) begin
+    if (arecs[i]==reccode) begin
+      res = true;
+      i = acnt;
+    end;
+  end;
+  RecInArray = res;
+  return;
+end;
+
+procedure PrintAllLevels(record RecVc Recr,Integer inpos,var array string arecs,var LongInt acnt,Boolean inccomp,val qtyfactor)
+begin
+  record RecVc Rec2r;
+  row RecVc Recrw;
+  record INVc INr;
+  Integer i,rwcnt;
+  val instock;
+  Integer incpos;
+  Integer thepos;
+  
+  thepos = inpos;
+  incpos = 4;
+  if (RecInArray(Recr.Code,arecs,acnt)) then begin
+    StartFormat(15);
+    OutString(0,0,"**** " & USetStr(5394) & " " & USetStr(5395) & " " & Recr.Code & " " & USetStr(5394) & " ****",false);
+    EndFormat;
+    goto LPrintAllLevels;
+  end;
+  arecs[acnt] = Recr.Code;
+  acnt = acnt + 1;
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    if (Recrw.OutQty!=0) then begin
+      instock = GetStockQty(Recrw.Item,"",CurrentDate,false);
+      StartFormat(15);
+      OutString(thepos,"DblINVc",Recrw.Item,false);
+      OutString(150,0,Left(Recrw.Comment,32),false);
+      OutVal(350,0,Recrw.OutQty*qtyfactor,M4UVal,true);
+      OutVal(420,0,instock,M4UVal,true);
+      OutVal(480,0,Recrw.ItemCost+Recrw.ExtraCost,M4UVal,true);
+      EndFormat;
+    end;
+  end;
+  thepos = thepos + incpos;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    if (Recrw.InQty!=0) then begin
+      if (ReadFirstItem(Recrw.Item,INr,true,true)) then begin
+        if (blank(INr.Recepy)) then begin
+          if (inccomp) then begin
+            instock = GetStockQty(Recrw.Item,"",CurrentDate,false);
+            StartFormat(15);
+            OutString(thepos,"DblINVc",Recrw.Item,false);
+            OutString(150,0,Left(Recrw.Comment,32),false);
+            OutVal(350,0,Recrw.InQty*qtyfactor,M4UVal,true);
+            OutVal(420,0,instock,M4UVal,true);
+            OutVal(480,0,Recrw.ItemCost+Recrw.ExtraCost,M4UVal,true);
+            EndFormat;
+          end;
+        end else begin
+          Rec2r.Code = INr.Recepy;
+          if (ReadFirstMain(Rec2r,1,true)) then begin
+            PrintAllLevels(Rec2r,thepos+incpos,arecs,acnt,inccomp,Recrw.InQty*qtyfactor);
+          end;
+        end;
+      end;
+    end;
+  end;
+  acnt = acnt - 1;
+LPrintAllLevels:;
+  RETURN;
+END;
+
+global
+procedure Rec2Rn(record RcVc RepSpec)
+BEGIN
+  record INVc INr;
+  record RecVc recr;
+  row RecVc Recrw;
+  Boolean TrHs;
+  val TotSum;
+  string 255 fromart2,toart2;
+  string 255 frit,toit;
+  Boolean testf,found;
+  Integer i,rwcnt;
+  string 60 ckey;
+  Boolean itemout;
+  array string 20 arecs;
+  LongInt acnt;
+  Integer rw;
+  string 255 tstr;
+  
+  testf = true;
+  fromart2 = FirstInRange(RepSpec.f2,20);
+  toart2 = LastInRange(RepSpec.f2,20);
+  frit = FirstInRange(RepSpec.f3,10);
+  toit = LastInRange(RepSpec.f3,10);
+  StartReportJob(USetStr(5380));
+  rw = 1;
+  if (nonblank(RepSpec.f2) or nonblank(RepSpec.f3)) then begin
+    HTArtSel(RepSpec.f3,RepSpec.f2,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f8)) then begin 
+    HTItemClass(RepSpec.f8,tstr);
+    Header(rw,tstr,1);  
+    rw = rw + 1;  
+  end;
+  EndHeader;
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(5386),false);
+    OutString(100,0,USetStr(5387),false);
+    OutString(250,0,USetStr(5108),true);
+    OutString(320,0,USetStr(5109),true);
+    OutString(350,0,USetStr(5389),false);
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(5386),false);
+    OutString(100,0,USetStr(5387),false);
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==2) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(5386),false);
+    OutString(200,0,USetStr(5104),false);
+    OutString(350,0,USetStr(5388),true);
+    OutString(420,0,USetStr(5122),true);
+    OutString(480,0,USetStr(5135),true);
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==3) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(5386),false);
+    OutString(200,0,USetStr(5104),false);
+    OutString(350,0,USetStr(5388),true);
+    OutString(420,0,USetStr(5122),true);
+    OutString(480,0,USetStr(5135),true);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  if (nonblank(RepSpec.f3)) then begin
+    ckey = "Group";
+    INr.Group = frit;
+  end else begin
+    ckey = "Code";
+    INr.Code = fromart2;
+  end;
+  found = true;
+  while (LoopKey(ckey,INr,1,found)) begin
+    if (found) then begin
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group>toit) then begin
+          found = false;
+        end;  
+      end else begin
+        if (nonblank(RepSpec.f2)) then begin
+          if (INr.Code>toart2) then begin
+            found = false;
+          end;
+        end;    
+      end;
+    end;
+    if (found) then begin      
+      recr.Code = INr.Recepy;
+      testf = ReadFirstMain(recr,1,true);
+      if (testf) then begin
+        if (nonblank(RepSpec.f8)) then begin 
+          if (SetInSet2(RepSpec.f8,INr.DispGroups)==false) then begin
+            testf = false;
+          end;
+        end; 
+      end;
+      if (testf) then begin
+        acnt = 0;
+        if (RepSpec.ArtMode==3) then begin
+          PrintAllLevels(recr,7,arecs,acnt,false,1);
+        end;
+        if (RepSpec.ArtMode==2) then begin
+          PrintAllLevels(recr,7,arecs,acnt,true,1);
+        end;
+        if (RepSpec.ArtMode==1) then begin
+          StartFormat(15);
+          OutString(0,"DblINVc",INr.Code,false);
+          OutString(100,0,recr.Code,false);
+          OutString(220,0,recr.Comment,false);
+          EndFormat;
+          StartFormat(15);
+          EndFormat;
+          StartFormat(15);
+          OutString(0,0,USetStr(5107),false);
+          OutString(300,0,USetStr(5108),true);
+          OutString(350,0,USetStr(5109),true);
+          OutString(420,0,USetStr(5111),true);
+          OutString(1,0,USetStr(5112),true);
+          EndFormat;
+          Gray_Divider(0,1);
+          rwcnt = MatRowCnt(recr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(recr,i,Recrw);
+            StartFormat(15);
+            OutString(0,"DblINVc",Recrw.Item,false);
+            OutString(90,0,Recrw.Comment,false);
+            OutVal(300,0,Recrw.InQty,M4UVal,true);
+            OutVal(350,0,Recrw.OutQty,M4UVal,true);
+            OutVal(420,0,Recrw.ItemCost,M4Val,true);
+            OutVal(1,0,Recrw.ExtraCost,M4Val,true);
+            EndFormat;
+          end;
+          Gray_Divider(0,1);
+        end;
+        if (RepSpec.ArtMode==0) then begin
+          rwcnt = MatRowCnt(recr);
+          if (rwcnt==1) then begin
+            MatRowGet(recr,0,Recrw);
+            StartFormat(15);
+            OutString(0,"DblINVc",INr.Code,false);
+            OutString(100,0,recr.Code,false);
+            OutVal(250,0,Recrw.InQty,M4UVal,true);
+            OutString(300,"DblINVc",Recrw.Item,false);
+            EndFormat;
+          end else begin
+            if (rwcnt==0) then begin
+              StartFormat(15);
+              OutString(0,"DblINVc",INr.Code,false);
+              OutString(100,0,recr.Code,false);
+              OutString(350,0,USetStr(5390),false);
+              EndFormat;
+            end else begin
+              MatRowGet(recr,0,Recrw);
+              StartFormat(15);
+              OutString(0,"DblINVc",INr.Code,false);
+              OutString(100,0,recr.Code,false);
+              OutVal(250,0,Recrw.InQty,M4UVal,true);
+              OutString(350,0,Recrw.Item,false);
+              EndFormat;
+              for (i=1;i<rwcnt;i=i+1) begin
+                MatRowGet(recr,i,Recrw);
+                StartFormat(15);
+                if (Recrw.InQty==0) then begin
+                  OutVal(320,0,Recrw.OutQty,M4UVal,true);
+                end else begin
+                  OutVal(250,0,Recrw.InQty,M4UVal,true);
+                end;  
+                OutString(350,"DblINVc",Recrw.Item,false);
+                EndFormat;
+              end;
+            end;
+          end;
+        end;
+        Gray_Divider(0,1);
+      end;
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;

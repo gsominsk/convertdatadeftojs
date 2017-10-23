@@ -1,0 +1,198 @@
+
+external procedure GetStateDesc(Integer,Var String);
+external procedure PrintObsPerGuest(String,String,date);
+
+global
+procedure GetExcurGroup( String ExType, var String tstr )
+begin
+ Record ExcurTypeVc ExcurType; 
+  tstr= "";
+  ExcurType.Code= ExType;
+  if ReadFirstMain(ExcurType,1,true) then begin
+    tstr= ExcurType.ExGroup;
+  end;
+ return;
+end;
+
+global
+procedure ListTransfers(LongInt EventNr)
+begin
+  Boolean Cont;
+  Record TransferVc Transfer;
+
+  Cont = true;
+  Transfer.NrEvent = EventNr;
+  while (LoopKey("NrEvent",Transfer,1,Cont)) begin
+
+    If (Transfer.NrEvent<>EventNr) then begin
+      Cont = false;
+    end else begin
+      OutString(6,"DblTransferVc",Transfer.SerNr,false);
+      OutString(7,0,Transfer.Route,false);
+      //OutVal(8,0,0,M4Val,true);
+      EndFormat;
+    end;
+  end;  
+  return;
+end;
+
+global
+procedure EventJourRn(record RcVc RepSpec)
+begin
+  row ExcursionVc Excurrw;
+  record JobVc Jobr;
+  record ExcursionVc Excur;
+  record CUVc Profiler;
+  Boolean skip,Cont;
+  Val TotPax,Pax;
+  String 60 tstr;
+  Integer i,rwcnt,gcnt;
+  array string 20 GuestList;
+  
+  StartReportJob(USetStr(11245));
+  EndHeader;
+  
+  TotPax = 0;
+  SetRepCol(2,45);   
+  SetRepCol(3,140);  
+  SetRepCol(4,200); 
+  SetRepCol(5,260); 
+  SetRepCol(6,420);  //LOBO41 SHIFT POS A BIT LONG NROS DIDNOT FIT IN
+  SetRepCol(7,405); 
+  SetRepCol(8,480);
+  SetRepCol(9,320); 
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(11246),false);
+  OutString(2,0,USetStr(11247),false);
+  OutString(3,0,USetStr(11255),false);
+  OutString(4,0,USetStr(11249),false);
+  OutString(5,0,USetStr(11256),false);
+  OutString(9,0,USetStr(11257),false);
+  if (RepSpec.flags[2]==0) then begin
+    OutString(6,0,USetStr(11251),true);
+  end else begin
+    OutString(6,0,USetStr(11252),false);
+    OutString(7,0,USetStr(11253),false);
+  end;  
+  EndFormat;
+  Gray_Divider(0,1);
+
+  gcnt = 0;
+  Cont = true;
+  Excur.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",Excur,1,Cont)) begin
+
+    Skip = false;
+    If (Excur.TransDate>RepSpec.sEndDate) then begin
+      Skip = true;
+      Cont = false;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      GetExcurGroup(Excur.ExcurType, tstr);
+      if (RepSpec.f1<>tstr) then begin 
+         Skip = true;
+      end;   
+    end;
+    if nonblank(RepSpec.f2) then begin
+      if (RepSpec.f2 <> Excur.ExcurType) then begin 
+        Skip = true;
+      end;   
+    end;
+    if (RepSpec.flags[5]==0) then begin
+      if (Excur.Status==4) then begin
+        Skip = true;
+      end;
+    end;
+    if nonblank(RepSpec.f3) then begin
+      if (RepSpec.f3 <> Excur.VECode) then begin 
+        Skip = true;
+      end;   
+    end;
+    if (RepSpec.flags[4]==0) then begin
+      if (RepSpec.flags[1]<>5) then begin
+        if (RepSpec.flags[1]<> Excur.Status) then begin 
+          Skip = true;
+        end;   
+      end;
+    end else begin
+      if (RepSpec.flags[1]==Excur.Status) then begin 
+        Skip = true;
+      end;
+    end;
+
+
+    if (not skip) then begin
+      Pax = MatRowCnt(Excur);
+      StartFormat(15);
+      OutString(0,"DblExcursionVc",Excur.SerNr,false);
+      tstr = DateToString(Excur.TransDate,"DD/MM");
+      tstr = tstr & "  " & left(Excur.StartTime,5) & " - " & left(Excur.EndTime,5);
+      OutString(2,0,tstr,false);
+      GetStateDesc(Excur.Status,tstr);
+      OutString(3,0,left(tstr,4),false);      
+      OutString(4,"DblExcurTypeVc",Excur.ExcurType,false);
+      GetExcurGroup(Excur.ExcurType, tstr);
+      OutString(5,0,tstr,false); 
+      OutString(9,"DblVEVc",Excur.VECode,false);
+      if (RepSpec.flags[2]==0) then begin
+        OutLongInt(6,0,Pax,true);
+        EndFormat;
+      end else begin
+        ListTransfers(Excur.SerNr);
+      end; 
+      if (RepSpec.flags[3]==1) then begin
+        for(i=0;i<Pax;i=i+1) begin
+          StartFormat(15);
+          MatRowGet(Excur,i,Excurrw);
+          if (Excurrw.JobNr<>-1) then begin
+            Jobr.SerNr = Excurrw.JobNr;
+            if readfirstmain(Jobr,1,true) then begin
+              if (Jobr.Mother<>-1) then begin
+                tstr = Jobr.Mother;
+                tstr = tstr & " -> " & Jobr.SerNr;
+              end else begin
+                tstr = Jobr.SerNr;
+              end;
+              OutString(2,0,tstr,false);
+              tstr = Jobr.ResUsage;
+            end;
+          end;
+          OutString(3,0,Excurrw.GuestName,false);
+          Profiler.Code = Excurrw.GuestCode;
+          if readfirstmain(Profiler,1,true) then begin
+            OutString(6,0,Profiler.Nationality,true);
+            gcnt = gcnt +1; GuestList[gcnt] = Profiler.Code;
+          end;
+          OutString(7,0,"Edad:" & Excurrw.Age,true);
+          OutString(8,0,tstr & "-" & Excurrw.SrcRes,true);
+          EndFormat;
+        end;
+        if (Pax<>0) then begin
+          Gray_Divider(0,1);
+          EndFormat;
+        end;
+      end;
+      TotPax = TotPax + Pax;
+    end;
+  end;
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(11254),false);
+  OutVal(8,0,TotPax,M4Val,true);
+  EndFormat;
+  
+  if (RepSpec.flags[10]==1) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(12165) & ": ",false);
+    EndFormat;
+    Black_Divider(0,1);
+    for(i=1;i<=gcnt;i=i+1) begin
+      PrintObsPerGuest(GuestList[i],RepSpec.f5,RepSpec.sStartDate);
+    end;
+  end; 
+
+  EndJob;
+  return;
+end;

@@ -1,0 +1,516 @@
+external procedure CalcPrice(val,val,val,var val,Integer);
+external procedure GetUserObject(string,var string);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure DblDigit(var string,Integer);
+
+procedure Dummy()
+begin
+  return;
+end;
+
+function 
+Integer DivisionRest(Integer i,Integer divby)
+begin
+  Integer t,res;
+  
+  t = i/divby;
+  res = i - t*divby;
+  DivisionRest = res;
+  return;
+end;
+
+function
+Integer CalcSweChecksum(string str)
+begin
+  Integer l;
+  string 255 tstr;
+  Integer res;
+  Integer t,x,i,mf;
+  
+  res = -1;
+  tstr = StripNonDigits(str);
+  l = len(tstr);
+  if (l!=9) then begin
+    goto LCalcSweChecksum;
+  end;  
+  x = 0;
+  for (i=0;i<l;i=i+1) begin
+    if (DivisionRest(i,2)==0) then begin// odd number 
+      mf = 2;
+    end else begin          // even number
+      mf = 1;
+    end;  
+    t = mf * (asc(Mid(tstr,i,1)) - asc(0));
+    if (t>=10) then begin
+      x = x + 1;
+      x = x + (t-10);
+    end else begin
+      x = x + t;
+    end;  
+  end;
+  res = 10 - DivisionRest(x,10);
+  if (res==10) then begin
+    res = 0;
+  end;  
+LCalcSweChecksum:;
+  CalcSweChecksum = res;
+  return;
+end;
+
+procedure FixFraktField(string fldarg,var string res)
+begin
+  string 255 tstr;
+  Integer i,j;
+  
+  j = 1;
+  for (i=0;i<len(res);i=i+1) begin
+    if (DivisionRest(i,3)==0) then begin
+      tstr = tstr & " ";
+    end;  
+    tstr = tstr & Mid(res,i,1);
+  end;
+  res = "";
+  if (nonblank(fldarg)) then begin res = fldarg; end;
+  res = res & tstr;
+  if (nonblank(fldarg)) then begin res = res & fldarg; end;
+  return;
+end;
+
+global
+procedure CalcFraktField(LongInt sernr,string fldarg,var string res)
+begin
+  Integer chksum;
+  
+  res = "983" & sernr;
+  chksum = CalcSweChecksum(res);
+  res = res & chksum;
+  FixFraktField(fldarg,res);
+  return;
+end;    
+
+global
+procedure LongDateTimeToStr(Date td,var string res)
+begin
+  string 255 tstr;
+  
+  res = CurrentDate;
+  res = res & "    ";
+  res = res & CurrentTime;
+  return;
+end;
+
+global
+procedure GetContractClassText(string cclass,var string res)
+begin
+  record ContractClassBlock ContractClassRec;
+  row ContractClassBlock ccrw;
+  Integer i,rwcnt;
+
+  res = "";
+  BlockLoad(ContractClassRec);
+  rwcnt = MatRowCnt(ContractClassRec);
+  for (i=0 ;i<rwcnt;i=i+1) begin
+    MatRowGet(ContractClassRec,i,ccrw);
+    if (ccrw.Code==cclass) then begin 
+      res = ccrw.Comment;
+      goto LGetContractClassText;
+    end;
+  end;
+LGetContractClassText:;
+  return;
+end;
+
+global
+procedure GetBullet(var string res)
+begin
+  res = "¥ ";
+  return;
+end;
+
+global
+procedure GetDefaultSupplierAddress(string artcode,string location,Integer rn,var string res)
+begin
+  record CUVc VEr;
+  record PIVc PIr;
+  Boolean resf;
+  
+  PIr.ItemCode = artcode;
+  PIr.Location = location;
+  PIr.DefaultChoice = 1;
+  resf = ReadFirstKey("DefaultChoice",PIr,3,true);
+  if (resf) then begin
+    VEr.Code = PIr.VECode;
+    if (ReadFirstMain(VEr,1,true)) then begin
+      switch (rn) begin
+        case 0: res = VEr.InvAddr0;
+        case 1: res = VEr.InvAddr1;
+        case 2: res = VEr.InvAddr2;
+      end;
+    end;  
+  end;
+  if (resf==false) then begin
+    if (nonblank(location)) then begin
+      GetDefaultSupplierAddress(artcode,"",rn,res);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure GetShipValue(record SHVc SHp,record ORVc ORp,var val netp,var val totp)
+begin
+  Integer i,rwcnt,orrowcnt;
+  row SHVc SHrw;
+  row ORVc ORrw;
+  val t,t1,p;
+  val s,ms,ms2;
+  record SMVc VATr;
+  Integer vatcnt;
+  roundmode rndtotal,roundvat;
+  roundmode roundlines;
+  record GeneralOptionBlock GOb;
+
+  BlockLoad(GOb);
+  RecordClear(VATr);
+  SetupVATBase(VATr,vatcnt);          
+  netp = blankval;
+  totp = blankval;
+  rwcnt = MatRowCnt(SHp);
+  orrowcnt = MatRowCnt(ORp);
+  GetCurncyRoundoff(ORp.CurncyCode,ORp.PayDeal,"ORVc",rndtotal,roundlines,roundvat);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SHp,i,SHrw);
+    if ((SHrw.OrdRow<orrowcnt) and (SHrw.OrdRow>=0)) then begin
+      MatRowGet(ORp,SHrw.OrdRow,ORrw);
+      p = ORrw.Price; 
+      CalcPrice(ORrw.BasePrice,ORrw.PriceFactor,ORrw.vRebate,p,GOb.UseDiscount);
+      ORrw.Price = p;  
+      CalcSum(SHrw.Ship,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,t,GOb.UseDiscount);
+      s = s + Round(t,roundlines);
+      AddVATBase(VATr,ORrw.VATCode,t,blankval,vatcnt,ORp.InclVAT,ORp.NoTAXonVAT);
+    end;
+  end;
+  CalcVATBaseVAT(VATr,ORp.InclVAT,ORp.NoTAXonVAT,vatcnt,ms,t1);
+  ms = Round(ms,roundvat);
+  if ((ORp.ExportFlag==1) or (ORp.ExportFlag==2)) then begin
+    if (ORp.InclVAT>0) then begin
+      ms2 = s - ms;
+    end else begin
+      ms2 = s;
+    end;  
+    ms = blankval;
+  end else begin
+    if (ORp.InclVAT>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + ms;
+    end;  
+  end;
+  ms2 = Round(ms2,rndtotal);
+  netp = s;
+  totp = ms2;
+  return;
+end;
+
+global
+procedure GetINInvCode(string item,var string res)
+begin
+  record INVc INr;
+
+  res = "";
+  INr.Code = item;
+  if (ReadFirstMain(INr,1,true)) then begin
+    res = INr.InvCode;
+  end;
+  return;
+end;
+
+global
+procedure GetStandardProblemText(string stprcode,Integer nr,var string res)
+begin
+  record StandProblemVc StPr;
+
+  res = "";
+  StPr.Code = stprcode;
+  if (ReadFirstMain(StPr,1,true)) then begin
+     switch (nr) begin
+       case 1:  res = StPr.Comment1;
+       case 2:  res = StPr.Comment2;
+       case 3:  res = StPr.Comment3;
+     end;
+  end;
+  return;
+end;
+
+global
+procedure GetActTypeComment(string acttype,var string res)
+begin
+  record ActTypeVc ATr;
+
+  res = "";
+  ATr.Code = acttype;
+  if (ReadFirstMain(ATr,1,true)) then begin
+    res = ATr.Comment;
+  end;  
+  return;
+end;
+
+global
+procedure GetCurncyComment(string curcode,var string res)
+begin
+  record CurncyCodeVc ccr;
+
+  res = "";
+  ccr.CurncyCode = curcode;
+  if (ReadFirstMain(ccr,1,true)) then begin
+    res = ccr.Comment;
+  end;  
+  return;
+end;
+
+global
+procedure GetCorspAccNumber(string corspcode,var string res)
+begin
+  record CLCorspVc Corr;
+
+  res = "";
+  Corr.Code = corspcode;
+  if (ReadFirstMain(Corr,1,true)) then begin
+    res = Corr.AccNumber;
+  end;
+  return;
+end;
+
+global
+procedure PrintNote(record NotepadVc Noter)
+begin
+  Integer i,rwcnt;
+  string 255 tstr;
+  
+  rwcnt = LineTextCnt(Noter);
+  for (i=0;i<rwcnt;i=i+1) begin
+    tstr = LineTextGet(Noter,i);
+    OUTFORMFIELD("F_NOTE",tstr);    
+  end;  
+  return;
+end;
+
+global
+procedure GetSuppBankAcc(string vecode,var string res)
+begin
+  record CUVc VEr;
+  string 255 tstr;
+
+  res = "";
+  VEr.Code = vecode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    res = VEr.BankAccount;
+  end;
+  return;
+end;
+
+global
+procedure GetSuppBankName(string vecode,var string res)
+begin
+  record CUVc VEr;
+  record BankVc BKr;
+  string 255 tstr;
+
+  res = "";
+  VEr.Code = vecode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    BKr.Code = VEr.AccOperator;
+    if (ReadFirstMain(BKr,1,true)) then begin
+      res = BKr.Name;
+    end;  
+  end;
+  return;
+end;
+
+global
+procedure GetSuppBankSWIFT(string vecode,var string res)
+begin
+  record CUVc VEr;
+  record BankVc BKr;
+  string 255 tstr;
+
+  res = "";
+  VEr.Code = vecode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    BKr.Code = VEr.AccOperator;
+    if (ReadFirstMain(BKr,1,true)) then begin
+      res = BKr.SWIFT;
+    end;  
+  end;
+  return;
+end;
+
+function Boolean GetShipDealStr(record ShipDealVc ShipDealr,Integer tnr,string langcod2,string deftext,var string resstr)
+begin
+  Boolean res;
+  Integer i,rwcnt;
+  row ShipDealVc ShipDealrw;
+  Integer hcnt;
+  String 5 langcode;
+  Boolean hitf;
+  
+  res = false;
+  hcnt = 0;
+  langcode = langcod2;
+  if (nonblank(langcode)) then begin
+    hitf = false;
+    rwcnt = MatRowCnt(ShipDealr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(ShipDealr,i,ShipDealrw);
+      if (langcode==ShipDealrw.LangCode) then begin
+        hitf = true;
+      end;
+    end;
+    if (hitf==false) then begin
+      langcode = "";
+    end;
+  end;
+  resstr = deftext;
+  if (blank(langcode)) then begin 
+    hcnt = hcnt + 1; 
+  end;
+  if ((hcnt==1) and (tnr==1)) then begin
+    res = true;
+  end else begin
+    rwcnt = MatRowCnt(ShipDealr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(ShipDealr,i,ShipDealrw);
+      if (langcode==ShipDealrw.LangCode) then begin
+        hcnt = hcnt + 1;
+        if (hcnt==tnr) then begin
+          resstr = ShipDealrw.Text;
+          res = true;
+          i = rwcnt;
+        end;
+      end;
+    end;
+  end;
+  GetShipDealStr = res;
+  return;
+end;
+
+global
+function Integer NumberofDocumentPages(string formcode,Integer rwcnt)
+begin
+  Integer res;
+  record DocVc Docr;
+  string 255 tstr;
+  Integer pm,t;
+  Integer DocPageMode,DocRowMax;
+  Integer DocRowMaxFirst,DocRowMaxMiddle,DocRowMaxLast;
+  
+  Docr.Code = formcode;
+  if (ReadFirstMain(Docr,1,true)) then begin
+    DocRowMax = 20;
+    if (Docr.nrOfMatrixLinesOnly>0) then begin
+      DocRowMax = Docr.nrOfMatrixLinesOnly;
+    end else begin
+      if (Docr.nrOfMatrixLinesOnly==-1) then begin
+        DocRowMax = 0;
+      end;
+    end;
+    DocRowMaxFirst = Docr.nrOfMatrixLinesOnly;
+    DocRowMaxMiddle = Docr.nrOfMatrixLinesOnly;
+    DocRowMaxLast = Docr.nrOfMatrixLinesOnly;
+
+    if (Docr.nrOfMatrixLinesFirst>0) then begin
+      DocRowMaxFirst = Docr.nrOfMatrixLinesFirst;
+    end else begin
+      if (Docr.nrOfMatrixLinesFirst==-1) then begin
+        DocRowMaxFirst = 0;
+      end;
+    end;
+    if (Docr.nrOfMatrixLinesLast>0) then begin
+      DocRowMaxLast = Docr.nrOfMatrixLinesLast;
+    end;
+    if (Docr.nrOfMatrixLinesMiddle>0) then begin
+      DocRowMaxMiddle = Docr.nrOfMatrixLinesMiddle;
+    end;
+    pm = 0;
+    t = rwcnt - DocRowMaxFirst - DocRowMaxLast;
+    if (t<=0) then begin  
+      if (DocRowMax>=rwcnt) then begin
+        pm = 1;
+        goto LNumberofDocumentPages;
+      end;
+      if (rwcnt<=(DocRowMaxFirst+DocRowMaxLast)) then begin
+        pm = 2;
+        goto LNumberofDocumentPages;
+      end;
+      pm = rwcnt / DocRowMax;
+      if (Mod(rwcnt,DocRowMax)!=0) then begin
+        pm = pm + 1;
+      end;
+    end else begin
+      while (t>0) begin
+        t = t - DocRowMaxMiddle;
+        if (DocRowMaxMiddle==0) then begin
+          goto Lwhile;
+        end;
+        pm = pm + 1;
+      end;
+Lwhile:;
+      pm = pm + 2;
+    end;
+LNumberofDocumentPages:;    
+    tstr = tstr & "/";
+    tstr = tstr & pm;
+    OUTFORMFIELD("F_SIDNR",tstr);
+  end;
+  NumberofDocumentPages = pm;
+  return;
+end;
+
+global
+procedure GetFieldArgument(record DocVc Docr,Integer fieldid,var string res)
+begin
+  row DocVc Docrw;
+  Integer rwcnt,i;
+  
+  res = "";
+  rwcnt = MatRowCnt(Docr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Docr,i,Docrw);
+    if (Docrw.fieldSetNr==fieldid) then begin
+      res = Docrw.unitText;
+      goto LGetFieldArgument;
+    end;
+  end;
+LGetFieldArgument:;  
+  return;
+end;
+
+global
+function Boolean FieldUsedInForm(record DocVc Docr,Integer fieldid,string fieldname)
+begin
+  Boolean res,testf;
+  row DocVc Docrw;
+  Integer rwcnt,i;
+
+  rwcnt = MatRowCnt(Docr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Docr,i,Docrw);
+    testf = false;
+    if (fieldid>0) then begin
+      if (Docrw.fieldSetNr==fieldid) then begin testf = true; end;
+    end else begin
+      if (Docrw.unitText==fieldname) then begin testf = true; end;
+    end;
+    if (testf) then begin
+      res = true;
+      goto LFieldUsedInForm;
+    end;
+  end;
+LFieldUsedInForm:;  
+  FieldUsedInForm = res;
+  return;
+end;

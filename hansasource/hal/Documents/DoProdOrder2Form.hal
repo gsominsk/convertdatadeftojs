@@ -1,0 +1,236 @@
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external procedure BC39(string,var string);
+external procedure ItemBC39(string,var string);
+external procedure ItemBCEAN(string,var string);
+external procedure ItemBCEAN13(string,var string);
+external procedure RussianPaymentNr(LongInt,var string);
+external procedure CommonDocumentFields(record RcVc);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure GetLangNr(string,var record LangNrVc);
+
+procedure PrintProd2Rows(record RcVc RepSpec,record ProdOrderVc Prodr,record LangNrVc LangNrr,record SysFormatBlock SysFormatRec,
+                        var val totinqty,var val totoutqty)
+BEGIN
+  record INVc INr;
+  row ProdOrderVc Prodrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+ 
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    INr.Code = Prodrw.Item;
+    if (ReadFirstMain(INr,1,true)) then begin end;
+    if (FIELDINFORM("F_LAGERPLATS")) then begin
+      OUTFORMFIELD("F_LAGERPLATS",INr.InvCode);    
+    end;
+    OUTFORMFIELD("F_ARTNR",Prodrw.Item);
+    OUTFORMFIELD("F_ARTNR2",Prodrw.Item);
+    OUTFORMFIELD("F_KOMMENTAR",Prodrw.Comment);
+    PrintValue("F_INQTY",Prodrw.InQty,M45Val,LangNrr,SysFormatRec,false);
+    totinqty = totinqty + Prodrw.InQty;
+    PrintValue("F_OUTQTY",Prodrw.OutQty,M45Val,LangNrr,SysFormatRec,false);
+    totoutqty = totoutqty + Prodrw.OutQty;
+    OUTFORMFIELD("F_ENHET",INr.Unittext);
+    OUTFORMFIELD("F_MATERIAL",Prodrw.Material);
+    EndFormRow;
+  end;
+  RETURN;
+END;
+
+procedure PrintOutProdOrderRow(record RcVc RepSpec,record ProdOrderVc Prodr,record LangNrVc LangNrr,record SysFormatBlock SysFormatRec)
+begin
+  record INVc INr;
+  row ProdOrderVc Prodrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+ 
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    if (Prodrw.OutQty!=0) then begin
+      INr.Code = Prodrw.Item;
+      if (ReadFirstMain(INr,1,true)) then begin
+        OUTFORMFIELD("F_OUTITEM",Prodrw.Item);
+        OUTFORMFIELD("F_OUTITEMNAME",Prodrw.Comment);
+//        OUTFORMFIELD("F_OUTITEMSERIALNO",Prodrw.SerialNr);
+        PrintValue("F_OUTITEMQTY",Prodrw.OutQty,M4Qty,LangNrr,SysFormatRec,false);
+        if (FIELDINFORM("F_ARTNRBC39")) then begin
+          ItemBC39(Prodrw.Item,tstr);
+          OUTFORMFIELD("F_ARTNRBC39",tstr);
+        end;
+        if (FIELDINFORM("F_ARTNRBCEAN")) then begin
+          ItemBCEAN(Prodrw.Item,tstr);
+          OUTFORMFIELD("F_ARTNRBCEAN",tstr);
+        end;
+        if (FIELDINFORM("F_ARTNRBCEAN13")) then begin
+          ItemBCEAN13(Prodrw.Item,tstr);
+          OUTFORMFIELD("F_ARTNRBCEAN13",tstr);
+        end;  
+//        PrintValue("F_OUTITEMPRICE",Prodrw.ItemCost,M4Val,LangNrr,SysFormatRec,false);
+        goto LPrintOutProdOrderRow;
+      end;
+    end;
+  end;
+LPrintOutProdOrderRow:;
+  return;
+end;
+
+// I guess we can remove this, the above routine is much better.
+procedure PrintProd2OutData(record ProdOrderVc Prodr,record LangNrVc LangNrr,record SysFormatBlock SysFormatRec)
+begin
+  record INVc INr;
+  row ProdOrderVc Prodrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  record MainStockBlock MSb;
+ 
+  BlockLoad(MSb);
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    if (Prodrw.OutQty>0) then begin
+      OUTFORMFIELD("F_ITEMCODE",Prodrw.Item);
+      OUTFORMFIELD("F_COMMENT",Prodrw.Comment);
+      PrintValue("F_ANTAL",Prodrw.OutQty,M45Val,LangNrr,SysFormatRec,false);
+		  if (MSb.UnitConvCalc==0) then begin
+        PrintValue("F_ANTAL2",Prodrw.OutQty*Prodrw.Coefficient,M45Val,LangNrr,SysFormatRec,false);
+		  end else begin
+        PrintValue("F_ANTAL2",Prodrw.OutQty/Prodrw.Coefficient,M45Val,LangNrr,SysFormatRec,false);
+		  end;
+      goto LPrintProd2OutDataOut;
+    end;
+  end;
+  
+LPrintProd2OutDataOut:;
+  return;
+end;
+
+global
+procedure DoProdOrder2Form(record RcVc RepSpec,record ProdOrderVc Prodr)
+BEGIN
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  record SysFormatBlock SysFormatRec;
+  record LangNrVc LangNrr;
+  Integer i,rwcnt;
+  record UserVc Userr;
+  record LocationVc Locr;
+  val totinqty,totoutqty;
+  string 255 tstr;
+  Boolean printf,langf;
+  Integer intdocnr;
+  string 30 formcode,langcode;
+  record ModuleBlock MBr;
+
+  BlockLoad(MBr);
+  BlockLoad(SysFormatRec);  
+  langcode = Prodr.LangCode;
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto L99;
+  end;
+  rwcnt = MatRowCnt(FDr);
+
+  rwcnt = MatRowCnt(FDr);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;
+
+  GetLangNr("",LangNrr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,Prodr.SerNr,FDrw.PrintGroupCode,
+                      langcode,intdocnr,"ProdOrderVc",formcode)) then
+      begin
+        goto LBREAKProd;
+      end;
+    end;
+LBREAKProd:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin
+        if (Prodr.StatusFlag==0) then begin
+          if (MBr.NoTestprintEnabler==0) then begin
+            FormWaterMark(1117,-1);
+            printf = false;
+          end;
+        end;
+        CommonDocumentFields(RepSpec);
+        NumberofDocumentPages(formcode,MatRowCnt(Prodr));
+        if (FIELDINFORM("F_RUSPAYNR")) then begin
+          RussianPaymentNr(Prodr.SerNr,tstr);
+          OUTFORMFIELD("F_RUSPAYNR",tstr);
+        end;  
+        OUTFORMFIELD("F_BARCODE",Prodr.SerNr);
+        OUTFORMFIELD("F_SERNR",Prodr.SerNr);
+        if (FIELDINFORM("F_SERNR_COD39")) then begin
+          tstr = "*" & Prodr.SerNr & "*"; 
+          OUTFORMFIELD("F_SERNR_COD39",tstr);
+        end;
+        OUTFORMFIELD("F_PRODDATE",Prodr.DueDate);
+        OUTFORMFIELD("F_BESKRIVNING",Prodr.Comment1);
+        OUTFORMFIELD("F_BESKRIVNING",Prodr.Comment2);
+        OUTFORMFIELD("F_BESKRIVNING",Prodr.Comment3);
+        OUTFORMFIELD("F_SPECIFIKATION",Prodr.Instr0);
+        OUTFORMFIELD("F_SPECIFIKATION",Prodr.Instr1);
+        OUTFORMFIELD("F_SPECIFIKATION",Prodr.Instr2);
+        OUTFORMFIELD("F_INSTRUCTIONS",Prodr.Instr0);
+        OUTFORMFIELD("F_INSTRUCTIONS",Prodr.Instr1);
+        OUTFORMFIELD("F_INSTRUCTIONS",Prodr.Instr2);
+        OUTFORMFIELD("F_DESCRIPTION",Prodr.Comment1);
+        OUTFORMFIELD("F_DESCRIPTION",Prodr.Comment2);
+        OUTFORMFIELD("F_DESCRIPTION",Prodr.Comment3);
+        OUTFORMFIELD("F_RECEPY",Prodr.Recipe);
+        OUTFORMFIELD("F_RECNAME",Prodr.RecName);
+        OUTFORMFIELD("F_LOCATION",Prodr.Location);
+        OUTFORMFIELD("F_FIXASSETCODE",Prodr.Machine);
+        if (FIELDINFORM("F_SERIENRBC39")) then begin
+          BC39(Prodr.SerNr,tstr);    
+          OUTFORMFIELD("F_SERIENRBC39",tstr);
+        end;  
+        PrintProd2OutData(Prodr,LangNrr,SysFormatRec);
+        Locr.Code = Prodr.Location;
+        if (ReadFirstMain(Locr,1,true)) then begin
+        end;
+        OUTFORMFIELD("F_LOCATIONNAME",Locr.Name);
+        OUTFORMFIELD("F_PERSON",Prodr.Person);
+        Userr.Code = Prodr.Person;
+        if (ReadFirstMain(Userr,1,true)) then begin
+        end;
+        OUTFORMFIELD("F_PERSNAME",Userr.Name);
+//        PrintValue("F_ACTUALQTY",Prodr.ActualQty,M4Qty,LangNrr,SysFormatRec,false);// wa ? 
+        PrintValue("F_TOTQTY",Prodr.Qty,M4Qty,LangNrr,SysFormatRec,false);
+        OUTFORMFIELD("F_ROUTING",Prodr.Routing);
+        OUTFORMFIELD("F_STARTTIME",Prodr.StartTime);
+        PrintProd2Rows(RepSpec,Prodr,LangNrr,SysFormatRec,totinqty,totoutqty);
+        PrintValue("F_TOTINQTY",Prodr.Qty*totinqty,M45Val,LangNrr,SysFormatRec,false);
+        PrintValue("F_TOTOUTQTY",Prodr.Qty*totoutqty,M45Val,LangNrr,SysFormatRec,false);
+        PrintOutProdOrderRow(RepSpec,Prodr,LangNrr,SysFormatRec);
+        CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+L99:;
+  RETURN;
+END;

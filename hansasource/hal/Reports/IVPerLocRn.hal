@@ -1,0 +1,501 @@
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure ClassTypef(string,string,var Boolean);
+external procedure HTCustClassType(string,var string);
+external procedure HTLocations(string, string, var string);
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external procedure HTSaleMan(string,var string);
+external procedure HTOKF(integer,integer,var string);
+external procedure HTInvTypes2(Integer,Integer,Integer,Integer,Integer,Integer,var string);
+external procedure HTInv(string, var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTCusts(string, string, var string);
+external procedure HTITs(string,string,var string);
+
+procedure IVPerLocHeader(record RcVc RepSpec)
+begin
+  Integer rw;
+  string 255 tstr;
+  
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;  
+  HTCusts(RepSpec.f2,RepSpec.f2,tstr);
+  Header(rw,tstr,0);
+  HTInv(RepSpec.f1,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;  
+  HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+  Header(rw,tstr,0);
+  HTInvTypes2(RepSpec.flags[3],RepSpec.flags[4],RepSpec.flags[5],0,RepSpec.flags[6],0,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.AccStr)) then begin
+    HTSaleMan(RepSpec.AccStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f4)) then begin
+    HTCustClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (nonblank(RepSpec.f5)) then begin
+    HTCustClassType(RepSpec.f5,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end; 
+  end;
+  if (nonblank(RepSpec.f3)) then begin
+    HTCustCat(RepSpec.f3,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.LastAcc)) then begin
+    HTLocations(RepSpec.LastAcc,RepSpec.LastAcc,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f6)) then begin
+    string 255 frit,toit;
+  
+    frit = FirstInRange(RepSpec.f6,10);
+    toit = LastInRange(RepSpec.f6,10);
+    HTITs(frit,toit,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  return;
+end;
+
+procedure AddToLocationArray(record IVVc IVr,string itemgroups,Array string alocation,Array val aval,var Integer acnt,Array val bval,Array LongInt InvCnt,Array LongInt CrInvCnt)                                                                            
+begin
+  Integer i;
+  val v,v2;
+  val sum3,sum4;
+  val vat,tax2;
+  Boolean Invf,testf;
+  Integer rwcnt;
+  row IVVc IVrw;
+  record INVc INr;
+  string 255 frit,toit;
+  
+//locationperrow  
+  testf = false;
+  if (nonblank(itemgroups)) then begin
+    frit = FirstInRange(itemgroups,10);
+    toit = LastInRange(itemgroups,10);
+    rwcnt = MatRowCnt(IVr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(IVr,i,IVrw);
+      if (ReadFirstItem(IVrw.ArtCode,INr,true,false)) then begin
+        if (INr.Group>=frit and INr.Group<=toit) then begin
+          MulVATIV(IVrw.VATCode,IVrw.Sum,vat,tax2,IVr.InclVAT,IVr.NoTAXonVAT);
+          sum4 = sum4 + IVrw.Sum;
+          sum3 = sum3 + vat;
+          testf = true;
+        end;
+      end;
+    end;
+  end else begin
+    sum4 = IVr.Sum4;
+    sum3 = IVr.Sum3;
+    testf = true;
+  end;
+  if (testf) then begin
+    v = MulRateToBase1(IVr.CurncyCode,sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+    v2 = MulRateToBase1(IVr.CurncyCode,sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff); 
+    switch (IVr.InvType) begin
+      case kInvoiceTypeCredit:
+        v = -v;
+        v2 = -v2;    
+        Invf = false;
+      case kInvoiceTypeCreditSpecialSales:
+        v = -v;
+      otherwise 
+        Invf = true;   
+    end;
+    for (i=0;i<acnt;i=i+1) begin
+      if (alocation[i]==IVr.Location) then begin
+        aval[i] = aval[i] + v;
+        bval[i] = bval[i] + v2;    
+        if (Invf) then begin
+          InvCnt[i] = InvCnt[i] + 1; 
+        end else begin
+          CrInvCnt[i] =  CrInvCnt[i] + 1;
+        end;       
+        goto LAddToLocationArray;
+      end;
+    end;
+    alocation[acnt] = IVr.Location;
+    aval[acnt] = v;
+    bval[acnt] = v2;  
+    if (Invf) then begin
+      InvCnt[acnt] = 1; 
+      CrInvCnt[acnt] = 0;
+    end else begin
+      CrInvCnt[acnt] = 1;
+      InvCnt[acnt] = 0;
+    end;  
+    acnt = acnt + 1;
+  end;
+LAddToLocationArray:;  
+  return;
+end;
+
+procedure IVCashVc_AddToLocationArray(record IVCashVc IVCr,string itemgroups,Array string alocation,Array val aval,var Integer acnt,Array val bval,Array LongInt InvCnt,Array LongInt CrInvCnt)                                                                   
+begin
+  Integer i;
+  val v,v2;
+  val sum3,sum4;
+  val vat,tax2;
+  Integer rwcnt;
+  row IVCashVc IVCrw;
+  record INVc INr;
+  string 255 frit,toit;
+  Boolean testf;
+                                                                                                                
+  if (nonblank(itemgroups)) then begin
+    frit = FirstInRange(itemgroups,10);
+    toit = LastInRange(itemgroups,10);
+    rwcnt = MatRowCnt(IVCr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(IVCr,i,IVCrw);
+      if (ReadFirstItem(IVCrw.ArtCode,INr,true,false)) then begin
+        if (INr.Group>=frit and INr.Group<=toit) then begin
+          MulVATIV(IVCrw.VATCode,IVCrw.Sum,vat,tax2,IVCr.InclVAT,IVCr.NoTAXonVAT);
+          sum4 = sum4 + IVCrw.Sum;
+          sum3 = sum3 + vat;
+          testf = true;
+        end;
+      end;
+    end;
+  end else begin
+    sum4 = IVCr.Sum4;
+    sum3 = IVCr.Sum3;
+    testf = true;
+  end;
+  if (testf) then begin
+    v = MulRateToBase1(IVCr.CurncyCode,sum4,IVCr.FrRate,IVCr.ToRateB1,IVCr.ToRateB2,IVCr.BaseRate1,IVCr.BaseRate2,DefaultCurRoundOff);
+    v2 = MulRateToBase1(IVCr.CurncyCode,sum3,IVCr.FrRate,IVCr.ToRateB1,IVCr.ToRateB2,IVCr.BaseRate1,IVCr.BaseRate2,DefaultCurRoundOff);
+    for (i=0;i<acnt;i=i+1) begin
+      if (alocation[i]==IVCr.Location) then begin
+        aval[i] = aval[i] + v;
+        bval[i] = bval[i] + v2;      
+        InvCnt[i] = InvCnt[i] + 1;                                                                                     
+        goto LIVCashVc_AddToLocationArray;
+      end;
+    end;
+    alocation[acnt] = IVCr.Location;
+    aval[acnt] = v;
+    bval[acnt] = v2;    
+    InvCnt[acnt] = 1;                                                                                                   
+    acnt = acnt + 1; 
+  end;  
+LIVCashVc_AddToLocationArray:;  
+  return;
+end;
+
+procedure PrintLocationArray(Array string alocation,Array val aval,Integer acnt,Array val bval,Array LongInt InvCnt,Array LongInt CrInvCnt)                                                                        
+begin
+  Integer i;
+  Record LocationVc Locationr;            
+
+  for (i=0;i<acnt;i=i+1) begin
+    if (aval[i]>0 or bval[i]>0 or InvCnt[i]>0 or CrInvCnt[i]>0) then begin
+      StartFormat(15);
+      OutString(15,0,alocation[i],false);
+      Locationr.Code = alocation[i];
+      if (ReadFirstMain(Locationr,1,true)) then begin 
+        OutString(50,0,Left(Locationr.Name,100),false);
+      end;         
+      OutLongInt(260,0,InvCnt[i],true);  
+      OutLongInt(310,0,CrInvCnt[i],true);  
+      OutVal(370,0,aval[i]-bval[i],M4Val,true);
+      OutVal(420,0,bval[i],M4Val,true);
+      OutVal(480,0,aval[i],M4Val,true);                               
+      EndFormat;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintLocationTotal(Array string alocation,Array val aval,Integer acnt,Array val bval,Array LongInt InvCnt,Array LongInt CrInvCnt)                                                      
+begin
+  Integer i;
+  val TotalVat,TotalExVat,TotalAmt;
+  LongInt TotInv, TotCrInv;
+  
+//  if (blank(location) and acnt>1) then begin
+  if (acnt<1) then begin
+    goto LPrintLocationData;
+  end;
+  
+  TotalVat = 0;  TotalExVat = 0; TotalAmt = 0; TotInv = 0; TotCrInv = 0;
+  for (i=0;i<acnt;i=i+1) begin
+    TotalVat = TotalVat + bval[i];
+    TotalAmt = TotalAmt + aval[i];
+    TotInv = TotInv + InvCnt[i];
+    TotCrInv = TotCrInv + CrInvCnt[i];
+  end;
+  Black_Divider(230,1);
+  StartFormat(15);
+  OutString(200,0,USetStr(19510),false);
+  OutLongInt(260,0,TotInv,true);
+  OutLongInt(310,0,TotCrInv,true);
+  OutVal(370,0,TotalAmt-TotalVat,M4Val,true);
+  OutVal(420,0,TotalVat,M4Val,true);
+  OutVal(480,0,TotalAmt,M4Val,true);
+  EndFormat;
+  
+LPrintLocationData:;
+  return;
+end;
+
+global
+procedure IVPerLocRn(record RcVc RepSpec)
+begin
+  string 255 mykey;
+  Integer mykeys;
+  Boolean TrHs,testf;
+  record IVVc IVr;
+  record IVCashVc IVCr;
+  record CUVc CUr;
+  record APVc APr;
+  LongInt afr,ato;
+  record MainStockBlock MSb;
+  string 255 frloc,toloc;
+  Array string 255 alocation;
+  Array val aval,bval;
+  Integer acnt;
+  Array LongInt CrInvCnt,InvCnt;
+  
+  BlockLoad(MSb);
+  afr = FirstInRange(RepSpec.f1,20);
+  ato = LastInRange(RepSpec.f1,20);
+  frloc = FirstInRange(RepSpec.LastAcc,20);
+  toloc = LastInRange(RepSpec.LastAcc,20);
+  
+  StartReportJob(USetStr(16610));
+   IVPerLocHeader(RepSpec);
+  EndHeader;
+
+  StartFormat(15);
+  OutString(15,0,USetStr(16611),false);  //Location
+  OutString(50,0,USetStr(18124),false);  //Name    
+  OutString(260,0,USetStr(17497),true);  //Num of Normal Invoices
+  OutString(310,0,USetStr(10673),true);  //Num of Credit Notes      
+  OutString(370,0,USetStr(18846),true);  //Excl VAT             
+  OutString(420,0,USetStr(18134),true);  //VAT             
+  OutString(480,0,USetStr(16612),true);  //Amount          
+  EndFormat;
+  Gray_Divider(0,1);
+  
+  mykey = "TransDate";
+  IVr.TransDate = RepSpec.sStartDate;
+  mykeys = 1;
+  TrHs = true;  
+  while (LoopKey(mykey,IVr,mykeys,TrHs)) begin
+    if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (IVr.SerNr<afr) then begin
+          testf = false;
+        end;
+        if (IVr.SerNr>ato) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.LastAcc)) then begin
+        if (IVr.Location<frloc) then begin testf = false; end;
+        if (IVr.Location>toloc) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (IVr.CustCode<RepSpec.f2) then begin testf = false; end;
+        if (IVr.CustCode>RepSpec.f2) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if (IVr.PayDeal!=RepSpec.TransStr) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (SetInSet(RepSpec.AccStr,IVr.SalesMan)==false) then begin testf = false; end;
+      end;
+      switch (IVr.OKFlag) begin
+        case 0:
+          if (RepSpec.flags[1]==0) then begin
+            testf = false;
+          end;
+        otherwise
+          if (RepSpec.flags[2]==0) then begin
+            testf = false;
+          end;
+      end;
+      switch (IVr.InvType) begin
+        case kInvoiceTypeNormal:
+          if (RepSpec.flags[3]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeNormalSpecialSales:
+          if (RepSpec.flags[3]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeInterest:
+          if (RepSpec.flags[3]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCashInvoiceReceiptPRT:
+          if (RepSpec.flags[4]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCash:
+          if (RepSpec.flags[4]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCredit:
+          if (RepSpec.flags[5]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypeCreditSpecialSales:
+          if (RepSpec.flags[5]==0) then begin
+            testf = false;
+          end;
+        case kInvoiceTypePrepayment:
+          testf = false;
+      end;
+
+      if (IVr.Invalid!=0) then begin testf = false; end;
+            
+      if (testf) then begin
+        if ((nonblank(RepSpec.f3)) or (nonblank(RepSpec.f4)) or (nonblank(RepSpec.f5))) then begin
+          CUr.Code = IVr.CustCode;
+          if (ReadFirstMain(CUr,1,true)) then begin
+            if (nonblank(RepSpec.f3)) then begin
+              if (CUr.CustCat!=RepSpec.f3) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f4)) then begin
+              if (SetInSet(RepSpec.f4,CUr.Classification)==false) then begin
+                testf = false;
+              end;
+            end;
+            if (nonblank(RepSpec.f5)) then begin
+              if (testf) then begin
+                testf = false;
+                ClassTypef(RepSpec.f5,CUr.Classification,testf);
+              end;
+            end;
+          end;        
+        end;
+      end;
+/*
+this is mad
+invoices in Open Purchase Invoices ? 
+      if (testf) then begin
+        APr.SerNr = IVr.SerNr; //that is sick isnt it ? 
+        testf = !ReadFirstMain(APr,1,true);
+      end;
+*/
+      if (testf) then begin
+        AddToLocationArray(IVr,RepSpec.f6,alocation,aval,acnt,bval,InvCnt,CrInvCnt);
+      end;
+    end;
+  end;
+  if (RepSpec.flags[6]!=0) then begin
+    mykey = "TransDate";
+    IVCr.TransDate = RepSpec.sStartDate;
+    mykeys = 1;
+    TrHs = true;  
+    if (nonblank(RepSpec.TransStr)) then begin
+      TrHs = false;  
+    end;
+    while (LoopKey(mykey,IVCr,mykeys,TrHs)) begin
+      if (DateInRange(IVCr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        TrHs = false;
+      end;
+      if (TrHs) then begin
+        testf = true;
+        if (nonblank(RepSpec.f1)) then begin
+          if (IVCr.SerNr<afr) then begin
+            testf = false;
+          end;
+          if (IVCr.SerNr>ato) then begin
+            testf = false;
+          end;
+        end;
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (IVCr.Location<frloc) then begin testf = false; end;
+          if (IVCr.Location>toloc) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f2)) then begin
+          if (IVCr.CustCode<RepSpec.f2) then begin testf = false; end;
+          if (IVCr.CustCode>RepSpec.f2) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.AccStr)) then begin
+          if (SetInSet(RepSpec.AccStr,IVCr.SalesMan)==false) then begin testf = false; end;
+        end;
+        switch (IVCr.OKFlag) begin
+          case 0:
+            if (RepSpec.flags[1]==0) then begin
+              testf = false;
+            end;
+          otherwise
+            if (RepSpec.flags[2]==0) then begin
+              testf = false;
+            end;
+        end;
+
+        if (IVCr.Invalid!=0) then begin testf = false; end;
+        if (testf) then begin
+          if ((nonblank(RepSpec.f3)) or (nonblank(RepSpec.f4)) or (nonblank(RepSpec.f5))) then begin
+            CUr.Code = IVCr.CustCode;
+            if (ReadFirstMain(CUr,1,true)) then begin
+              if (nonblank(RepSpec.f3)) then begin
+                if (CUr.CustCat!=RepSpec.f3) then begin
+                  testf = false;
+                end;
+              end;
+              if (nonblank(RepSpec.f4)) then begin
+                if (SetInSet(RepSpec.f4,CUr.Classification)==false) then begin
+                  testf = false;
+                end;
+              end;
+              if (nonblank(RepSpec.f5)) then begin
+                if (testf) then begin
+                  testf = false;
+                  ClassTypef(RepSpec.f5,CUr.Classification,testf);
+                end;
+              end;
+            end;        
+          end;
+        end;
+/*
+this is mad
+POS invoices in Open Purchase Invoices ? 
+        if (testf) then begin
+          APr.SerNr = IVCr.SerNr;
+          testf = !ReadFirstMain(APr,1,true);
+        end;
+*/
+        if (testf) then begin
+          IVCashVc_AddToLocationArray(IVCr,RepSpec.f6,alocation,aval,acnt,bval,InvCnt,CrInvCnt);
+        end;
+      end;
+    end;
+  end;
+  PrintLocationArray(alocation,aval,acnt,bval,InvCnt,CrInvCnt);                                 
+  PrintLocationTotal(alocation,aval,acnt,bval,InvCnt,CrInvCnt);                                                     
+  EndJob;
+  return;
+end;

@@ -1,0 +1,1299 @@
+external function Boolean GetCustAndBal(var record CUVc,var val,var val,Integer,Integer,Integer,Integer,Integer,Integer,var Boolean);
+external function val GetORRowReserv(LongInt,string,string,var val,var string,var string,Boolean);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean CheckPlanShipRows(string,record ORVc);
+external function Boolean CheckPlanShip(string,string);
+external function Boolean RefillShipRow(var Array record StockMovVc,var Integer,var record SHVc,record SHVc,record INVc,var Integer,Integer,Integer,var array string,var array string,var array string,var array val,var Integer);
+external procedure FindBatchBestBeforeDate(string,string,var Date);
+external function Boolean PasteCustInShip(record SHVc,string);
+external function Boolean SerialNrAvail(string,string,string,val);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external function Boolean ExpandStructItem(string,string,val,var record SHVc);
+external procedure CalcSHWeight(var record SHVc,Boolean);
+external procedure SHSumUp(var record SHVc);
+external function LongInt GetCurUserLastNr(string);
+external updating function Integer PasteOrdInShip(var Array record StockMovVc,var Integer,record ORVc,var record SHVc,Boolean,string,Integer,string,string,array string,array string,array string,array val,Integer);
+
+
+global
+function Boolean ORVc_CheckLocationRows(string location,record ORVc ORp)
+begin
+  Boolean res;
+  row ORVc ORrw;
+  Integer i,rwcnt;
+  
+  if (ORp.Location==location) then begin
+    res = true; 
+  end else begin
+    rwcnt = MatRowCnt(ORp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(ORp,i,ORrw);
+      if (nonblank(ORrw.Location)) then begin
+        if (ORrw.Location==location) then begin
+          res = true; 
+          goto LORVc_CheckLocationRows;
+        end;
+      end;
+    end;
+  end;  
+LORVc_CheckLocationRows:;
+  ORVc_CheckLocationRows = res;
+  return;
+end;
+
+function Boolean CustHasMessage(string cust,record CreditLimitBlock CreditLimitRec)
+BEGIN
+  record CUVc CUr;
+  val limit,bal;
+  Boolean res;
+  Boolean limitdaysf;
+
+  CUr.Code = cust;
+  if (GetCustAndBal(CUr,limit,bal,CreditLimitRec.Base,0,0,0,0,0,limitdaysf)) then begin
+    if (nonblank(CUr.WarnText1)) then begin res = true; end;
+    if (limitdaysf) then begin
+      if (CreditLimitRec.SHPaste==1) then begin    
+        res = true;
+      end;
+    end;
+    if (CreditLimitRec.SHPaste==1) then begin
+      if (blank(limit)==false) then begin 
+        if (bal>limit) then begin
+          res = true;
+        end;
+      end;
+    end;
+  end;
+  CustHasMessage = res;
+  RETURN;
+END;
+
+function
+Boolean CheckRequireLocation(record RcVc RepSpec,record SHVc SHp)
+BEGIN
+  record MainStockBlock MainStockRec;
+  row SHVc SHrw;
+  Boolean res;
+  Integer i,rwcnt;
+  
+  res = true;
+  if (RepSpec.flags[10]==0) then begin goto LCheckRequireLocation; end;//OK shipments not set
+  BlockLoad(MainStockRec);  
+  if (nonblank(SHp.Location)) then begin goto LCheckRequireLocation; end;
+  rwcnt = MatRowCnt(SHp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SHp,i,SHrw);
+    if (MainStockRec.requireLocation!=0) then begin
+      if (blank(SHrw.Location)) then begin
+        res = false;      
+        goto LCheckRequireLocation;
+      end;  
+    end;
+  end;
+LCheckRequireLocation:;  
+  CheckRequireLocation = res;
+  RETURN;
+END;
+
+function Boolean FullShipSHCheck(record SHVc SHp)
+begin
+   record MainStockBlock MSb;
+   record LocationVc Locr;
+   record ItemStatusVc ISr;
+   record INVc INr;
+   record SHVc RecSHr;
+   row SHVc SHrw;
+   row SHVc SHrw2;
+   row SHVc SHrw3;
+   Integer i,rwcnt,cnt,rwcnt2,j;
+   val prev,t;
+   Boolean res,isstruct;
+   string 255 location,loc2;
+
+   res = true;
+   BlockLoad(MSb);
+ //? This test has nothing to do with the wish to only deliver FULLY delivarable orders. 
+//?   if (MSb.dontAllowOvership!=1) then goto L99;
+
+   location = SHp.Location;
+   if (blank(location)) then begin
+     location = MSb.MainStock;
+   end;
+   Locr.Code = location;
+   if (nonblank(location)) then begin
+     if (ReadFirstMain(Locr,1,true)==false) then begin
+       res = false;
+       goto LFullShipSHCheck;
+     end;
+   end;
+   rwcnt = MatRowCnt(SHp);
+   for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SHp,i,SHrw);
+      if (blank(SHrw.ArtCode)) then begin
+        goto LNext;
+      end;
+      if (ReadFirstItem(SHrw.ArtCode,INr,true,true)==false) then begin  
+        res = false;
+        goto LFullShipSHCheck; 
+      end;
+      if (nonblank(SHrw.Location)) then begin
+        loc2 = SHrw.Location;
+      end else begin
+        loc2 = location;
+      end;
+      if ((INr.ItemType==1) or (nonblank(SHrw.Recepy))) then begin
+        if (nonblank(SHrw.Recepy)) then begin
+          prev = blankval;
+          isstruct = ExpandStructItem(SHrw.ArtCode,SHrw.Recepy,SHrw.Ship,RecSHr);
+          if (isstruct) then begin
+            rwcnt2 = MatRowCnt(RecSHr);
+            for (j=0;j<rwcnt2;j=j+1) begin
+              MatRowGet(RecSHr,j,SHrw2);
+              for (cnt=0;cnt<j;cnt=cnt+1) begin
+                MatRowGet(RecSHr,cnt,SHrw3);
+                if (SHrw3.ArtCode==SHrw.ArtCode) then begin
+                  prev = prev + SHrw3.Ordered;
+                end;
+              end;
+              prev = prev + SHrw2.Ordered;
+              FindStockValue(SHrw2.ArtCode,loc2,ISr);
+              t = ISr.Instock - ISr.InShipment;
+              if (t<prev) then begin
+                res = false;
+                goto LFullShipSHCheck;
+              end;
+            end;
+          end;
+        end else begin
+          prev = blankval;
+          for (cnt=0;cnt<i;cnt=cnt+1) begin
+            MatRowGet(SHp,cnt,SHrw3);
+            if (SHrw3.ArtCode==SHrw.ArtCode) then begin
+              prev = prev + SHrw3.Ordered;
+            end;
+          end;
+          prev = prev + SHrw.Ordered;
+          FindStockValue(SHrw.ArtCode,loc2,ISr);
+          t = ISr.Instock - ISr.InShipment;
+          if (t<prev) then begin
+            res = false;
+            goto LFullShipSHCheck;
+          end;
+        end;
+      end;
+      if ((INr.SerNrf>0) and (INr.SerNrf<3)) then begin
+        if (MSb.DelivSetBatch!=0) then begin
+          if (INr.SerNrf==2) then begin
+            if (blank(SHrw.SerialNr)) then begin
+              if (SHrw.Ship>0) then begin
+                 res = false;
+                 goto LFullShipSHCheck;
+               end;
+            end;
+          end;
+          if (SHrw.Ship>0) then begin
+            if (INr.SerNrf==1) then begin
+              if (nonblank(SHrw.SerialNr)) then begin
+                if (SerialNrAvail(SHrw.ArtCode,SHrw.SerialNr,loc2,SHrw.Ship)==false) then begin
+                  res = false;
+                  goto LFullShipSHCheck;
+                end;
+              end;
+            end else begin
+              prev = blankval;
+              for (cnt=0;cnt<i;cnt=cnt+1) begin
+                MatRowGet(SHp,cnt,SHrw2);
+                if ((SHrw2.ArtCode==SHrw.ArtCode) and (SHrw2.SerialNr==SHrw.SerialNr)) then begin
+                  prev = prev + SHrw2.Ship;
+                end;
+            end;
+            prev = prev + SHrw.Ship;
+            if (nonblank(SHrw.SerialNr)) then begin
+              if (SerialNrAvail(SHrw.ArtCode,SHrw.SerialNr,loc2,prev)==false) then begin
+                res = false;
+                goto LFullShipSHCheck;
+              end;
+            end;
+          end;
+        end;
+      end;
+      if (INr.SerNrf==1) then begin          
+        t = 1;
+        if (SHrw.Ship>t) then begin
+          res = false;
+          goto LFullShipSHCheck;
+        end;
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(SHp,j,SHrw2);
+          if (nonblank(SHrw.SerialNr)) or (nonblank(SHrw2.SerialNr)) then begin
+            if ((SHrw.ArtCode==SHrw2.ArtCode) and (SHrw.SerialNr==SHrw2.SerialNr)) then begin
+              res = false;
+              goto LFullShipSHCheck;
+            end;
+          end;
+        end;
+      end;
+    end;
+LNext:;
+  end;//for
+LFullShipSHCheck:;   
+  FullShipSHCheck = res;
+  RETURN;
+END;
+
+updating function Boolean SaveStockMov(record StockMovVc StockMovr,record SHVc SHp,Boolean expressf)
+BEGIN
+  Boolean res;
+  row StockMovVc StockMovrw;
+  Integer i,rwcnt;
+  
+  if (MatRowCnt(StockMovr)>0) then begin
+    StockMovr.TransDate = CurrentDate;
+    StockMovr.SerNr = NextSerNr("StockMovVc",StockMovr.TransDate,-1,false,"");
+    StockMovr.ToForkLiftQue = 1;
+    if (expressf==false) then begin
+      StockMovr.ToForkLiftQue = 1;
+    end else begin
+      StockMovr.ToForkLiftQue = 3;
+    end;
+    StockMovr.FileName = "SHVc";
+    if (StockMovr.TransNr<=0) then begin StockMovr.TransNr = SHp.SerNr; end;
+    res = RecordStore(StockMovr,false);
+    if (res) then begin
+      CreateRecordLink(SHp,CurrentCompany,StockMovr,CurrentCompany);  
+      CreateRecordLink(StockMovr,CurrentCompany,SHp,CurrentCompany);  
+    end;
+//maybe we should set position status, but only for position != then Delivery position
+  end;  
+  SaveStockMov = res;
+  RETURN;
+END;
+
+procedure AddPalletItemsToDelivery(var Array record StockMovVc aStockMovr,Integer asmcnt,record SHVc SHp)
+BEGIN
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  row SHVc SHrw;  
+  row SHVc pSHrw;  
+  Integer ai,shi,shrwcnt,lastshi;
+  Integer shrow;
+  Integer smi,smrwcnt;
+  record INVc locINr;
+  record ItemStatusVc ISr;
+  string 20 location;
+  record MainStockBlock MainStockRec;
+  val palletssofar,qtyonpallet;
+    
+  BlockLoad(MainStockRec);
+  smrwcnt = MatRowCnt(StockMovr);
+  
+  shrwcnt = MatRowCnt(SHp);
+  shrow = shrwcnt;
+  for (ai=0;ai<asmcnt;ai=ai+1) begin
+    StockMovr = aStockMovr[ai];
+    smrwcnt = MatRowCnt(StockMovr);
+    if (true) then begin
+      for (shi=lastshi;shi<shrwcnt;shi=shi+1) begin
+        MatRowGet(SHp,shi,SHrw);
+        if (ReadFirstItem(SHrw.ArtCode,locINr,true,true)) then begin
+          if (nonblank(locINr.DefPalletItem)) then begin
+            qtyonpallet = locINr.QtyonPallet;
+            locINr.Code = locINr.DefPalletItem;
+            if (ReadFirstMain(locINr,1,true)) then begin
+            if (SHrw.Ship>=qtyonpallet) then begin
+              location = SHrw.Location;
+              if (blank(location)) then begin
+                location = SHp.Location;
+              end;
+              if (blank(location)) then begin
+                location = MainStockRec.MainStock;
+              end;
+              FindStockValue(locINr.Code,location,ISr);
+              ClearRow(SHp,pSHrw,1);
+              pSHrw.OrdRow = -1;
+              pSHrw.PosCode = SHrw.PosCode;
+              pSHrw.ArtCode = locINr.Code;
+              pSHrw.Spec = locINr.Name;
+              pSHrw.Objects = locINr.Objects;
+              pSHrw.Ordered = 1;
+              pSHrw.InStock = ISr.Instock - palletssofar;
+              pSHrw.Ship = 1;
+              palletssofar = palletssofar + 1;
+              pSHrw.FIFO = blankval;
+              pSHrw.FIFORowVal = blankval;
+              pSHrw.BasePrice = locINr.UPrice1;
+              pSHrw.UnitXval = locINr.Width;
+              pSHrw.UnitYval = locINr.Height;
+              pSHrw.UnitZval = locINr.Depth;
+              for (smi=0;smi<smrwcnt;smi=smi+1) begin
+                MatRowGet(StockMovr,smi,StockMovrw);
+                if (StockMovrw.ToPosCode==pSHrw.PosCode) and (StockMovrw.ArtCode==pSHrw.ArtCode) then begin
+                  pSHrw.SerialNr = StockMovrw.SerialNr;
+                  smi = smrwcnt;
+                end;
+              end;
+
+              MatRowPut(SHp,shrow,pSHrw);
+              shrow = shrow + 1;
+              lastshi = shi + 1;
+              shi = shrwcnt;
+            end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  
+  RETURN;
+END;
+
+procedure AddToItemsArray(string ArtCode,val q,Array string aartcode,Array val aartcodeq,Array Integer anrofsm,var Integer acnt)
+BEGIN
+  Integer i;
+
+  for (i=0;i<acnt;i=i+1) begin
+    if (ArtCode==aartcode[i]) then begin
+      aartcodeq[i] = aartcodeq[i] + q;
+      anrofsm[i] = anrofsm[i] + 1;
+      goto LAddToItemsArray;
+    end;
+  end;
+  aartcode[acnt] = ArtCode;
+  aartcodeq[acnt] = q;
+  anrofsm[acnt] = anrofsm[acnt] + 1;
+  acnt = acnt + 1;
+LAddToItemsArray:;  
+  RETURN;
+END;
+
+procedure BuildItemsArray(record StockMovVc StockMovr,Array string aartcode,Array val aartcodeq,Array Integer anrofsm,var Integer acnt)
+BEGIN
+  row StockMovVc StockMovrw;
+  Integer i,rwcnt;
+  record INVc locINr;
+  string 20 palletitem;
+  
+  rwcnt = MatRowCnt(StockMovr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(StockMovr,i,StockMovrw);
+    if (ReadFirstItem(StockMovrw.ArtCode,locINr,true,true)) then begin      
+      if (nonblank(locINr.DefPalletItem)) then begin
+        palletitem = locINr.DefPalletItem;
+      end;
+    end;
+    if (StockMovrw.ArtCode!=palletitem) or (blank(palletitem)) then begin
+      AddToItemsArray(StockMovrw.ArtCode,StockMovrw.Quant,aartcode,aartcodeq,anrofsm,acnt);
+    end;
+  end;
+  RETURN;
+END;
+
+procedure PutintoArray(Integer where,var Array record StockMovVc aStockMovr,Integer asmcnt,Integer ai)
+BEGIN
+  Integer i;
+  record StockMovVc tmpStockMovr;
+  Array record StockMovVc atmpStockMovr;
+  
+  if (where==0) then begin
+    if (asmcnt<3) then begin goto LPutintoArray; end;
+    tmpStockMovr = aStockMovr[ai];
+    atmpStockMovr[0] = tmpStockMovr;
+  end;
+  if (where==1) then begin
+    if (asmcnt<3) then begin goto LPutintoArray; end;
+    tmpStockMovr = aStockMovr[0];
+    atmpStockMovr[0] = tmpStockMovr;
+    tmpStockMovr = aStockMovr[ai];
+    atmpStockMovr[1] = tmpStockMovr;
+  end;
+  for (i=where+1;i<=ai;i=i+1) begin
+    tmpStockMovr = aStockMovr[i-1];
+    atmpStockMovr[i] = tmpStockMovr;
+  end;
+  if (ai<asmcnt) then begin
+    for (i=ai+1;i<asmcnt;i=i+1) begin
+      tmpStockMovr = aStockMovr[i];
+      atmpStockMovr[i] = tmpStockMovr;
+    end;
+  end;
+  for (i=0;i<asmcnt;i=i+1) begin
+    tmpStockMovr = atmpStockMovr[i];
+    aStockMovr[i] = tmpStockMovr;
+  end;
+LPutintoArray:;  
+  RETURN;
+END;
+
+procedure SetNewDeliveryPositionOnSH(record SHVc SHp,string oldtoposcode,string newtopsocode)
+BEGIN
+  row SHVc SHrw;
+  Integer i,rwcnt;
+  
+  if (oldtoposcode!=newtopsocode) then begin
+    rwcnt = MatRowCnt(SHp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SHp,i,SHrw);
+      if (SHrw.PosCode==oldtoposcode) then begin
+        SHrw.PosCode = newtopsocode;
+        MatRowPut(SHp,i,SHrw);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+/*
+Mr Pierre Nordin has cahnged his mind, I keep it in case  
+updating procedure SetManualPickOnStockMovement(string artcode,val aq,Integer nrofsm,val QtyonPallet,var Array record StockMovVc aStockMovr,Integer asmcnt,
+                                                var record SHVc SHp)
+BEGIN
+  Integer ai;
+  Integer i,rwcnt;
+  Integer j;
+  record StockMovVc tmpStockMovr;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw,nextStockMovrw;
+  Integer cnt;
+  record INVc INr;
+  string 20 oldtoposcode;
+  record LocationVc Locr;
+
+  if (QtyonPallet>0) then begin
+  for (ai=asmcnt-1;ai>=0;ai=ai-1) begin
+    if ((cnt>0) and (nrofsm==1)) then begin
+      goto LSetManualPickOnStockMovement;
+    end;
+    StockMovr = aStockMovr[ai];
+    Locr.Code = StockMovr.ToLocation;
+    ReadFirstMain(Locr,1,true);
+    if (Locr.RequirePos==0) then begin goto LNextStockMov; end;
+    if (StockMovr.ManualPick!=0) then begin goto LNextStockMov; end;
+    rwcnt = MatRowCnt(StockMovr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(StockMovr,i,StockMovrw);
+      if ((StockMovrw.ArtCode==artcode) and (((StockMovrw.Quant==QtyonPallet) and (cnt==0)) or ((StockMovrw.Quant<QtyonPallet) and ((cnt>0) or (nrofsm==1))))) then begin
+        StockMovr.ManualPick = 1;
+        oldtoposcode = StockMovrw.ToPosCode;
+        StockMovrw.ToPosCode = Locr.WHMDeliveryPosCode;      
+        MatRowPut(StockMovr,i,StockMovrw);
+
+        for (j=i+1;j<rwcnt;j=j+1) begin
+          MatRowGet(StockMovr,j,nextStockMovrw);
+          if (nextStockMovrw.ToPosCode==oldtoposcode) then begin
+            nextStockMovrw.ToPosCode = Locr.WHMDeliveryPosCode;      
+            MatRowPut(StockMovr,j,nextStockMovrw);
+            j = rwcnt;
+          end;
+        end;
+        SetNewDeliveryPositionOnSH(SHp,oldtoposcode,StockMovrw.ToPosCode);
+        aStockMovr[ai] = StockMovr;
+        if ((StockMovrw.Quant==QtyonPallet) and (cnt==0)) then begin
+          PutintoArray(0,aStockMovr,asmcnt,ai);
+        end;
+        if (((StockMovrw.Quant<QtyonPallet) and (cnt>0)) and (nrofsm>1)) then begin
+          PutintoArray(1,aStockMovr,asmcnt,ai);
+        end;
+        ai = asmcnt;
+        cnt = cnt + 1;
+        goto LNextStockMov;
+      end;
+    end;
+LNextStockMov:;    
+  end;
+  end;
+  for (ai=asmcnt-1;ai>=0;ai=ai-1) begin
+    if ((cnt>0) and (nrofsm==1)) then begin
+      goto LSetManualPickOnStockMovement;
+    end;
+    StockMovr = aStockMovr[ai];
+    Locr.Code = StockMovr.ToLocation;
+    ReadFirstMain(Locr,1,true);
+    if (Locr.RequirePos==0) then begin goto LNextStockMov2; end;
+    if (StockMovr.ManualPick!=0) then begin goto LNextStockMov2; end;
+    rwcnt = MatRowCnt(StockMovr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(StockMovr,i,StockMovrw);
+      if ((StockMovrw.Quant<QtyonPallet) or (QtyonPallet==0)) and (StockMovrw.ArtCode==artcode) then begin
+        StockMovr.ManualPick = 1;
+        oldtoposcode = StockMovrw.ToPosCode;
+        StockMovrw.ToPosCode = Locr.WHMDeliveryPosCode;      
+        MatRowPut(StockMovr,i,StockMovrw);
+        for (j=i+1;j<rwcnt;j=j+1) begin
+          MatRowGet(StockMovr,j,nextStockMovrw);
+          if (nextStockMovrw.ToPosCode==oldtoposcode) then begin
+            nextStockMovrw.ToPosCode = Locr.WHMDeliveryPosCode;      
+            MatRowPut(StockMovr,j,nextStockMovrw);
+            j = rwcnt;
+          end;
+        end;
+        SetNewDeliveryPositionOnSH(SHp,oldtoposcode,StockMovrw.ToPosCode);
+        aStockMovr[ai] = StockMovr;
+        if ((StockMovrw.Quant==QtyonPallet) and (cnt==0)) then begin
+          PutintoArray(0,aStockMovr,asmcnt,ai);
+        end;
+        if (((StockMovrw.Quant<QtyonPallet) and (cnt>0)) and (nrofsm>1)) then begin
+          PutintoArray(1,aStockMovr,asmcnt,ai);
+        end;
+        ai = asmcnt;
+        cnt = cnt + 1;
+        goto LNextStockMov2;
+      end;
+    end;
+LNextStockMov2:;    
+  end;
+LSetManualPickOnStockMovement:;  
+  RETURN;
+END;
+
+updating procedure SetManualPickOnStockMovements(var Array record StockMovVc aStockMovr,Integer asmcnt,var record SHVc SHp)
+BEGIN
+  Integer i,m;
+  Integer inacnt;
+  record StockMovVc StockMovr;
+  Array string 60 aartcode;
+  Array val aartcodeq;
+  Array Integer anrofsm;
+  record INVc locINr;
+  
+  for (i=0;i<asmcnt;i=i+1) begin
+    StockMovr = aStockMovr[i];
+    BuildItemsArray(StockMovr,aartcode,aartcodeq,anrofsm,inacnt);
+  end;
+  for (i=0;i<inacnt;i=i+1) begin
+    if (ReadFirstItem(aartcode[i],locINr,true,true)) then begin
+      if (locINr.QtyonPallet!=0) then begin
+        m = 0;
+        if (aartcodeq[i]<locINr.QtyonPallet) then begin m = 1; end;
+        if (anrofsm[i]>1) then begin m = 1; end;
+        if (m==0) then begin
+          m = Mod(aartcodeq[i],locINr.QtyonPallet);
+        end;
+        if (m!=0) then begin
+          SetManualPickOnStockMovement(aartcode[i],aartcodeq[i],anrofsm[i],locINr.QtyonPallet,aStockMovr,asmcnt,SHp);
+        end;
+      end else begin
+        SetManualPickOnStockMovement(aartcode[i],aartcodeq[i],anrofsm[i],locINr.QtyonPallet,aStockMovr,asmcnt,SHp);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+*/
+
+updating function Boolean SetManualPickOnStockMovements_New(var Array record StockMovVc aStockMovr,Integer asmcnt,var record SHVc SHp)
+BEGIN
+  Boolean res;
+  Integer ai,m;
+  Integer inacnt;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  Integer smi,smrwcnt;
+  record INVc locINr;
+  Boolean manualf;
+  string 40 oldtoposcode;
+  string 20 palletitem;
+  string 255 location;
+  record LocationVc Locr;
+  
+//doesn't work with automactic and manual mixture, Rimpacs request
+  manualf = false;
+  for (ai=0;ai<asmcnt;ai=ai+1) begin
+    StockMovr = aStockMovr[ai];
+    smrwcnt = MatRowCnt(StockMovr);
+    for (smi=0;smi<smrwcnt;smi=smi+1) begin
+      MatRowGet(StockMovr,smi,StockMovrw);
+/*
+      if (nonblank(palletitem)) then begin
+        if (StockMovrw.ArtCode==palletitem) then begin
+          palletitem = "";
+          goto LSetManualPickOnStockMovementsManualSkipRow;
+        end;
+      end;
+*/      
+      if (ReadFirstItem(StockMovrw.ArtCode,locINr,true,true)) then begin
+        if (locINr.QtyonPallet==0) then begin 
+          manualf = true; 
+          goto LSetManualPickOnStockMovementsManual;
+        end;
+        m = 0;
+        if (StockMovrw.Quant<locINr.QtyonPallet) then begin m = 1; end;
+        if (m==0) then begin
+          m = Mod(StockMovrw.Quant,locINr.QtyonPallet);
+        end;
+        if (m!=0) then begin
+          manualf = true; 
+          goto LSetManualPickOnStockMovementsManual;
+        end;
+        palletitem = locINr.DefPalletItem;
+      end;
+LSetManualPickOnStockMovementsManualSkipRow:;
+    end;    
+  end;
+LSetManualPickOnStockMovementsManual:;  
+  if (manualf) then begin
+    res = true;
+  
+    for (ai=0;ai<asmcnt;ai=ai+1) begin
+      StockMovr = aStockMovr[ai];
+      StockMovr.ManualPick = 1;
+
+      Locr.Code = StockMovr.ToLocation;
+      ReadFirstMain(Locr,1,true);
+      
+      smrwcnt = MatRowCnt(StockMovr);
+      for (smi=0;smi<smrwcnt;smi=smi+1) begin
+        MatRowGet(StockMovr,smi,StockMovrw);
+        
+        if (StockMovrw.ToPosCode!=Locr.WHMDeliveryPosCode) then begin
+          oldtoposcode = StockMovrw.ToPosCode;
+          StockMovrw.ToPosCode = Locr.WHMDeliveryPosCode;      
+          MatRowPut(StockMovr,smi,StockMovrw);        
+
+          SetNewDeliveryPositionOnSH(SHp,oldtoposcode,StockMovrw.ToPosCode);
+        end;
+      end;
+
+      aStockMovr[ai] = StockMovr;      
+    end;
+  end;
+  SetManualPickOnStockMovements_New = res;
+  RETURN;
+END;
+
+
+procedure SortStockMovements_PositionPickOrder(var Array record StockMovVc aStockMovr,Integer smcnt)
+/*this came after other code was done so I made special function*/
+BEGIN
+  Integer smi;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  record INVc locINr;
+  record POSVc locPOSr;
+  Array LongInt apickorder;
+  Boolean changedf;
+
+  LongInt pickordertmp;
+  record StockMovVc StockMovrtmp;
+  
+  for (smi=0;smi<smcnt;smi=smi+1) begin
+    StockMovr = aStockMovr[smi];
+    
+    apickorder[smi] = 0;
+    if (StockMovr.ManualPick!=0) then begin
+      if (MatRowCnt(StockMovr)>0) then begin
+        MatRowGet(StockMovr,0,StockMovrw);
+        
+        
+        locPOSr.Code = StockMovrw.FrPosCode;
+        if (ReadFirstMain(locPOSr,1,true)) then begin end;
+        if (locPOSr.PickOrder>0) then begin
+          apickorder[smi] = locPOSr.PickOrder;
+        end;        
+        if (ReadFirstItem(StockMovrw.ArtCode,locINr,true,true)) then begin end;
+        if (locINr.QtyonPallet>0) then begin
+          if (StockMovrw.Quant>=locINr.QtyonPallet) then begin
+            apickorder[smi] = -2;//full pallets first
+          end;
+        end;
+        
+      end;
+    end;
+  end;
+  
+  changedf = true;
+  while (changedf) begin
+    changedf = false;  
+    for (smi=0;smi<smcnt-1;smi=smi+1) begin
+      if (apickorder[smi]>apickorder[smi+1]) then begin
+        changedf = true;
+        pickordertmp = apickorder[smi+1];
+        StockMovrtmp = aStockMovr[smi+1];
+        
+        StockMovr = aStockMovr[smi];
+        apickorder[smi+1] = apickorder[smi];
+        aStockMovr[smi+1] = StockMovr;
+        
+        apickorder[smi] = pickordertmp;
+        aStockMovr[smi] = StockMovrtmp;
+                
+      end;
+    end;    
+  end;
+  /*
+  for (smi=0;smi<smcnt;smi=smi+1) begin
+    StopAlert("2.apickorder[smi] " & apickorder[smi]);
+  end;
+  */  
+LSortStockMovements_PositionPickOrder:;
+  RETURN;
+END;
+
+global
+updating function Boolean StoreShipmentStockMovements(var record SHVc SHp,Array record StockMovVc aStockMovr,var Integer asmcnt,Boolean expressf)
+BEGIN
+  Boolean res,testf;
+  record StockMovVc StockMovr;
+  record MainStockBlock MSb;
+  Integer i;
+  record LocationVc Locr;
+  
+  res = true;
+  BlockLoad(MSb);
+  testf = true;
+  Locr.Code = SHp.Location;
+  if (blank(Locr.Code)) then begin
+    Locr.Code = MSb.MainStock;
+  end;
+  ReadFirstMain(Locr,1,true);
+  if (Locr.RequirePos==0) then begin testf = false; end;
+  if (testf) then begin
+    res = false;
+    if (asmcnt>0) then begin
+      AddPalletItemsToDelivery(aStockMovr,asmcnt,SHp);
+      if (SetManualPickOnStockMovements_New(aStockMovr,asmcnt,SHp)) then begin
+        SortStockMovements_PositionPickOrder(aStockMovr,asmcnt);
+      end;
+      for (i=0;i<asmcnt;i=i+1) begin
+        StockMovr = aStockMovr[i];
+        res = SaveStockMov(StockMovr,SHp,expressf);
+        if (res==false) then begin
+          goto LStoreShipmentStockMovements;
+        end;
+      end;
+    end;    
+  end;
+LStoreShipmentStockMovements:;  
+  asmcnt = 0;  
+  StoreShipmentStockMovements = res;
+  RETURN;
+END;
+
+updating procedure StoreShipment(record RcVc RepSpec,record SHVc SHp,var Integer flushcnt,var Array record StockMovVc aStockMovr,var Integer asmcnt,record ORVc ORr)
+BEGIN
+  record SHVc locSHr;
+  record SRBlock SRRec;
+  LongInt newnr;
+  Integer express;
+  record LocationVc Locr;
+  Boolean res;
+  record SHVc oldSHp;
+  record MainStockBlock MSb;
+  
+  switch (RepSpec.ArtMode) begin
+      case 0:
+       if (FullShipSHCheck(SHp)==false) then begin goto LStoreShipment; end;
+  end;  
+  if (CheckRequireLocation(RepSpec,SHp)==false) then begin goto LStoreShipment; end;
+  if (MatRowCnt(SHp)>0) then begin
+    if (SHp.SerNr==-1) then begin
+       BlockLoad(SRRec);
+       newnr = GetCurUserLastNr("SHVc");
+       if (newnr!=-1) then begin
+         newnr = SRRec.LastShipNr;
+       end;
+       SHp.SerNr = NextSerNr("SHVc",SHp.ShipDate,newnr,false,RepSpec.AccStr);
+       if (SHp.SerNr==-1) then begin goto LStoreShipment; end;
+    end;
+    locSHr.SerNr = SHp.SerNr;
+    if (ReadFirstMain(locSHr,1,true)==false) then begin
+       BlockLoad(MSb);
+       SHSumUp(SHp);
+       CalcSHWeight(SHp,false);       
+        Locr.Code = SHp.Location;
+        if (blank(Locr.Code)) then begin
+          Locr.Code = MSb.MainStock;
+        end;
+        ReadFirstMain(Locr,1,true);
+
+       res = StoreShipmentStockMovements(SHp,aStockMovr,asmcnt,ORr.OrderClass==Locr.WHMExpressOrderClass);       
+       if (res==false) then begin goto LStoreShipment; end;       
+       if (RecordStore(SHp,false)) then begin 
+         CreateRecordLink(SHp,CurrentCompany,ORr,CurrentCompany);  
+         CreateRecordLink(ORr,CurrentCompany,SHp,CurrentCompany);  
+       end;
+       if (SHp.OrderNr!=-1) then begin
+       end;
+       if (UserCanAction("SHOK",true)) then begin
+       if (RepSpec.flags[10]!=0) then begin
+          RecordCopy(oldSHp,SHp);
+          SHp.OKFlag = 1;
+          if (RecordUpdate(oldSHp,SHp,true)==0) then begin
+          end;
+/*          
+          UpdateSHFIFO(SHp);
+          SHUpdateItemHist(SHp);
+          SHUpdateSerialNr(SHp);
+          SHUpdateInShipment(SHp,true,locSHr,false,true);
+          SHUpdateStock(SHp,false);
+          UpdateProjFromShip(SHp);
+          if (RecordStore(SHp,true)) then begin end;//m4_RecordStore(SHVc,SHp,true);
+          if (UpdateOrderFromShip(SHp,true,locSHr,false,true)) then begin end;
+*/          
+       end;
+       end;
+       CheckFlush(flushcnt,10)
+    end else begin
+       goto LStoreShipment;
+    end;
+  end;
+LStoreShipment:;  
+  RETURN;
+END;
+
+procedure CreateLocRowHandle(record ORVc ORp,Array string lhlocation,Array Integer lhfirstrow,var Integer lhcnt)
+BEGIN
+   Boolean locexistf,testf;
+   Integer i,j,rwcnt;
+   row ORVc ORrw;
+   
+   rwcnt = MatRowCnt(ORp);
+   for (i=0;i<rwcnt;i=i+1) begin
+     MatRowGet(ORp,i,ORrw);
+     locexistf = false;
+     testf = true;
+     for (j=0;j<=lhcnt;j=j+1) begin
+       if (lhlocation[j]!=ORrw.Location) then begin
+         if (nonblank(ORrw.Location)) then begin
+           testf = false;          
+         end else begin 
+           if (lhlocation[j]!=ORp.Location) then begin testf = false; end;                    
+         end; 
+       end else begin
+         locexistf = true;//?
+       end;
+       if (testf) then begin
+         locexistf = true;
+         goto L22CreateLocRowHandle;
+       end;
+       testf = true;
+     end;
+     if (locexistf==false) then begin
+       lhcnt = lhcnt + 1;
+       lhlocation[lhcnt] = ORrw.Location;
+       if (blank(lhlocation[lhcnt])) then begin
+         lhlocation[lhcnt] = ORp.Location;
+       end;      
+       lhfirstrow[lhcnt] = i;
+     end;
+L22CreateLocRowHandle:;
+   end;
+   RETURN;
+END;
+
+updating procedure CreateOrderPerLocation(record RcVc RepSpec,record SHVc SHp,record ORVc ORp,string location,Integer firstrow,var Integer flushcnt,array string aincode,var array string aloc,var array string aserialnr,array val aqty,Integer acnt)
+BEGIN
+  record PlanDeliveryBlock PlanDelRec;
+  record INVc INr;
+  record CUVc CUr;
+  record SHVc NilSHr;
+  row ORVc ORrw;
+  row SHVc SHrw;
+  Date dat;
+  Integer srw;
+  Integer i,rwcnt,shrwcnt;
+  val remn,ordered,stock,t1;
+  Boolean testf;
+  Array record StockMovVc aStockMovr;
+  Integer asmcnt;
+
+  BlockLoad(PlanDelRec);
+  SHp.OrderNr = ORp.SerNr;
+  CUr.Code = ORp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    switch (CUr.DeliveryBasedOn) begin
+     case 1:
+       if (nonblank(ORp.PlanShip)) then begin
+         SHp.ShipDate = StringToDate(ORp.PlanShip);
+       end;
+    end;
+  end;  
+  if (PlanDelRec.PreventDelivery!=0) then begin
+    dat = StringToDate(ORp.PlanShip);
+    if (SHp.ShipDate<dat) then begin
+      goto LCreateOrderPerLocation;
+    end;
+  end;
+  if (blankdate(RepSpec.d1)) then begin 
+    SHp.ShipDate = ORp.OrdDate;
+  end else begin
+    SHp.ShipDate = RepSpec.d1;
+  end;
+  t1 = 1;
+  SHp.CustCode = ORp.CustCode;
+  if (PasteCustInShip(SHp,SHp.CustCode)) then begin
+  end;
+  if (nonblank(ORp.Addr0)) then begin
+    SHp.Addr0 = ORp.Addr0;
+  end;
+  if ((nonblank(ORp.ShipAddr0)) or
+      (nonblank(ORp.ShipAddr1)) or
+      (nonblank(ORp.ShipAddr2)) or
+      (nonblank(ORp.ShipAddr3))) then begin
+    SHp.Addr0 = ORp.ShipAddr0;
+    SHp.Addr1 = ORp.ShipAddr1;
+    SHp.Addr2 = ORp.ShipAddr2;
+    SHp.Addr3 = ORp.ShipAddr3;
+    SHp.DelAddr3 = ORp.DelAddr3;
+    SHp.DelAddr4 = ORp.DelAddr4;
+  end;
+  SHp.Packages = blankval;
+  SHp.ShipMode = ORp.ShipMode;
+  
+  SHp.LangCode = ORp.LangCode;
+  SHp.PRCode = ORp.PRCode;
+  SHp.Location = location;
+  srw = 0;
+  rwcnt = MatRowCnt(ORp);
+  for (i=firstrow;i<rwcnt;i=i+1) begin
+    MatRowGet(ORp,i,ORrw);
+    if ((ORrw.Location!=location) and (nonblank(ORrw.Location))) then begin goto L22CreateOrderPerLocation; end;
+    if ((ORp.Location!=location) and (blank(ORrw.Location))) then begin goto L22CreateOrderPerLocation; end;
+    remn = ORrw.Quant - ORrw.Shipd1;
+    ordered = remn;
+    testf = true;
+    if (PlanDelRec.PreventDelivery!=0) then begin
+      if (nonblank(ORrw.PlanShipRow)) then begin
+        dat = StringToDate(ORrw.PlanShipRow);
+        if (SHp.ShipDate<dat) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if ((((remn>0) and (remn!=blankval)) or
+        (ORrw.Sum==0)) and (testf)) then 
+    begin
+      stock = blankval;
+L10CreateOrderPerLocation:;
+      ClearRow(SHp,SHrw,1);
+      SHrw.OrdRow = i;
+      SHrw.ArtCode = ORrw.ArtCode;
+      SHrw.Spec = ORrw.Spec;
+      SHrw.SerialNr = ORrw.SerialNr;
+      SHrw.Recepy = ORrw.Recepy;
+      SHrw.VARList = ORrw.VARList;
+      SHrw.Source = ORrw.Source;
+      SHrw.DespatchRowTime = ORrw.DespatchRowTime;
+      SHrw.DespatchRowDate = ORrw.DespatchRowDate;
+      FindBatchBestBeforeDate(SHrw.ArtCode,SHrw.SerialNr,dat);
+      SHrw.BestBefore = dat;
+      if ((ORrw.Quant==blankval) and (remn==0)) then begin
+        remn = blankval;
+      end;
+      SHrw.Ordered = ordered;
+      SHrw.InStock = blankval;
+      SHrw.FIFO = blankval;
+      SHrw.FIFORowVal = blankval;
+      SHrw.Ship = SHrw.Ordered;
+      SHrw.BasePrice = ORrw.Price;
+      MatRowPut(SHp,srw,SHrw);
+      shrwcnt = MatRowCnt(SHp);
+      NilSHr.CustCode = "NIL";
+      if (RefillShipRow(aStockMovr,asmcnt,SHp,NilSHr,INr,srw,shrwcnt,0,aincode,aloc,aserialnr,aqty,acnt)==false) then begin
+      end;
+      MatRowGet(SHp,srw,SHrw);      
+      if (SHrw.Ship>0) then begin
+        srw = srw + 1;
+        if (INr.SerNrf==1) then begin
+          if (SHrw.Ship>0) then begin
+            SHrw.Ship = t1;
+            SHrw.Ordered = t1;
+            SHrw.InStock = SHrw.InStock - stock;
+            if (SHrw.InStock<=0) then begin
+              SHrw.Ship = 0;
+            end;
+            MatRowPut(SHp,srw-1,SHrw);
+            remn = remn - t1;
+            if (remn>0) then begin
+              stock = stock + t1;
+              goto L10CreateOrderPerLocation;
+            end;
+          end;
+        end;
+      end else begin
+        MatRowDelete(SHp,srw);
+      end;
+    end;          
+L22CreateOrderPerLocation:;
+  end;
+  StoreShipment(RepSpec,SHp,flushcnt,aStockMovr,asmcnt,ORp);
+LCreateOrderPerLocation:;
+  RETURN;
+END;
+
+procedure AddToReservationArray(LongInt sernr,string incode,string serialnr,string location,val qty,var array string aincode,var array string aloc,var array string aserialnr,var array val aqty,var Integer acnt)
+begin
+  Integer i;
+  Boolean foundf;
+  val ordqty,resrv;
+  string 60 comment,loc;
+  
+  resrv = GetORRowReserv(sernr,incode,serialnr,ordqty,comment,loc,false);
+  if ((loc==location) and (resrv>0)) then begin
+    if (resrv>qty) then begin
+      resrv = qty;
+    end;
+    foundf = false;
+    for (i=0;i<acnt;i=i+1) begin
+      if (aincode[i]==incode and aloc[i]==location and aserialnr[i]==serialnr) then begin
+        aqty[i] = aqty[i] + qty;
+        foundf = true;
+        i = acnt;
+      end;
+    end;
+    if (foundf==false) then begin
+      aincode[acnt] = incode;
+      aloc[i] = location;
+      aserialnr[i] = serialnr;
+      aqty[acnt] = qty;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+end;
+
+function 
+Boolean CheckIfFullyDeiverable(record ORVc ORr,record SHVc SHr,var array string aincode,var array string aloc,var array string aserialnr,var array val aqty,var Integer acnt)
+BEGIN
+  Integer ori,orrwcnt;
+  Integer shi,shrwcnt;
+  row ORVc ORrw;
+  row SHVc SHrw;
+  val shipq;
+  Boolean res;
+  string 40 loc;
+  
+  res = true;
+  shrwcnt = MatRowCnt(SHr);
+  orrwcnt = MatRowCnt(ORr);
+  for (ori=0;ori<orrwcnt;ori=ori+1) begin
+    MatRowGet(ORr,ori,ORrw);
+    if (nonblank(ORrw.ArtCode)) then begin
+      shipq = 0;
+      for (shi=0;shi<shrwcnt;shi=shi+1) begin
+        MatRowGet(SHr,shi,SHrw);
+        if (SHrw.OrdRow==ori) then begin 
+          shipq = shipq + SHrw.Ship;
+        end;      
+      end;      
+      if (shipq<(ORrw.Quant-ORrw.Shipd1)) then begin 
+        res = false;
+        goto LCheckIfFullyDeiverable;
+      end;
+    end;
+  end;
+LCheckIfFullyDeiverable:;  
+  if (res==false) then begin
+    for (shi=0;shi<shrwcnt;shi=shi+1) begin
+      MatRowGet(SHr,shi,SHrw);
+      loc = SHr.Location;
+      if (nonblank(SHrw.Location)) then begin
+        loc = SHr.Location;
+      end;
+      AddToReservationArray(ORr.SerNr,SHrw.ArtCode,SHrw.SerialNr,loc,SHrw.Ordered,aincode,aloc,aserialnr,aqty,acnt)
+    end;      
+  end;
+  CheckIfFullyDeiverable = res;
+  RETURN;
+END;
+
+global
+updating procedure CreateSHsFromSOsMn(record RcVc RepSpec)
+BEGIN
+  record CreditLimitBlock CreditLimitRec;
+  record ORVc ORr;
+  record SHVc SHr;
+  LongInt newnr,afr,ato;
+  Boolean TrHs, testf;
+//  LocRowType* locrw;
+  Integer lhcnt,j;
+  Array string 10 lhlocation;
+  Array Integer lhfirstrow;
+  Integer flushcnt;
+  Array record StockMovVc aStockMovr;
+  Integer asmcnt;
+  Integer err;
+  array string 40 aincode;
+  array string 40 aserialnr;
+  array string 40 aloc;
+  array val aqty;
+  Integer acnt;
+  
+  if (UserCanAction("ORToSH",true)==false) then begin goto LCreateSHsFromSOsMn; end;
+  
+  lhcnt = -1;
+  BlockLoad(CreditLimitRec);
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  if (RepSpec.flags[1]!=0) then begin//reserved first
+//  ORr.Reserved = 1; 
+//here should be code for reserved SO only.I do not know why this loockey does not work
+//  while (TrHs = m4_LoopCKey(ORVc,"Reserved",&ORr,2,(TrHs==true),&LLoop1)) begin
+  ORr.OSFlag = 1; 
+  ORr.SerNr = afr; 
+  TrHs = true; 
+  while (LoopKey("OSFlag",ORr,2,TrHs)) begin
+    testf = true;
+    if (ato!=-1) then begin
+      if (ORr.SerNr>ato) then begin 
+        TrHs = false;
+      end;
+    end;
+    if (ORr.OSFlag!=1) then begin
+      TrHs = false;
+    end;    
+    if (DateInRange(ORr.OrdDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+    if (testf) then begin
+      if (nonblank(RepSpec.Stext)) then begin
+        if (RepSpec.flags[5]==0) then begin   
+          if (CheckPlanShipRows(RepSpec.Stext,ORr)==false) then begin testf = false; end;
+        end else begin
+          if (StringToDate(ORr.PlanShip)>StringToDate(RepSpec.Stext)) then begin testf = false; end;
+          if (blank(ORr.PlanShip)) then begin testf = false; end;
+        end;
+      end;
+    end;  
+    if (ORr.Reserved==0) then begin testf = false; end;
+    if (ORr.ShipFlag==1) then begin testf = false; end;
+    if (nonblank(RepSpec.f2)) then begin
+      if (ORr.Sorting!=RepSpec.f2) then begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(RepSpec.FirstAcc)) then begin
+      if (ORr.OrderClass!=RepSpec.FirstAcc) then begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(RepSpec.f6)) then begin
+      if (ORr.Location!=RepSpec.f6) then begin
+        if (ORVc_CheckLocationRows(RepSpec.f6,ORr)==false) then begin testf = false; end;
+      end;
+    end;
+    if (testf) then begin
+      if (RepSpec.flags[3]!=0) then begin
+        if (CustHasMessage(ORr.CustCode,CreditLimitRec)) then begin testf = false; end;
+      end;  
+    end;  
+    if (ORr.OKFlag==0) then begin 
+      if (UserCanAction("NotOKORToSH",false)) then begin testf = false; end;
+    end;
+    if (TrHs and testf) then begin
+// Moved up to make SURE it is fully deliverable, if Del Per Location, this work is extra...
+      CheckFlush(flushcnt,10)
+      RecordNew(SHr);
+      SHr.OrderNr = ORr.SerNr;
+      err = PasteOrdInShip(aStockMovr,asmcnt,ORr,SHr,RepSpec.flags[4]==0,RepSpec.Stext,RepSpec.flags[6],RepSpec.f3,RepSpec.f6,aincode,aloc,aserialnr,aqty,acnt);
+      switch (RepSpec.ArtMode) begin
+        case 0:
+          if (CheckIfFullyDeiverable(ORr,SHr,aincode,aloc,aserialnr,aqty,acnt)==false) then begin testf = false; end;
+        case 1:
+          if (MatRowCnt(SHr)==0) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if (RepSpec.flags[2]!=0) then begin
+          CreateLocRowHandle(ORr,lhlocation,lhfirstrow,lhcnt);
+          for (j=0;j<=lhcnt;j=j+1) begin        
+            RecordNew(SHr);
+            CreateOrderPerLocation(RepSpec,SHr,ORr,lhlocation[j],lhfirstrow[j],flushcnt,aincode,aloc,aserialnr,aqty,acnt);
+          end;  
+        end else begin
+          if (blankdate(RepSpec.d1)) then begin
+            SHr.ShipDate = ORr.OrdDate;          
+          end else begin
+            SHr.ShipDate = RepSpec.d1;
+          end;
+          StoreShipment(RepSpec,SHr,flushcnt,aStockMovr,asmcnt,ORr);
+        end;
+      end;
+    end;
+    UserTrace(ORr.SerNr,M4Long);                          
+  end;
+  end;
+//end of code for reserved so
+
+//below, after reserved, all others
+  ResetLoop(ORr);
+  ORr.OSFlag = 1; 
+  ORr.SerNr = afr; 
+  TrHs = true; 
+  while (LoopKey("OSFlag",ORr,2,TrHs)) begin
+    testf = true;
+    if (ato!=-1) then begin
+      if (ORr.SerNr>ato) then begin 
+        TrHs = false;
+      end;
+    end;
+    if (ORr.OSFlag!=1) then begin
+      TrHs = false;
+    end;    
+    if (DateInRange(ORr.OrdDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+    if (testf) then begin
+      if (nonblank(RepSpec.Stext)) then begin
+        if (RepSpec.flags[5]==0) then begin   
+          if (CheckPlanShipRows(RepSpec.Stext,ORr)==false) then begin testf = false; end;
+        end else begin
+          if (StringToDate(ORr.PlanShip)>StringToDate(RepSpec.Stext)) then begin testf = false; end;
+          if (blank(ORr.PlanShip)) then begin testf = false; end;
+        end;
+      end;
+    end;  
+    if (ORr.ShipFlag==1) then begin testf = false; end;
+    if (nonblank(RepSpec.f2)) then begin
+      if (ORr.Sorting!=RepSpec.f2) then begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(RepSpec.FirstAcc)) then begin
+      if (ORr.OrderClass!=RepSpec.FirstAcc) then begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(RepSpec.f6)) then begin
+      if (ORr.Location!=RepSpec.f6) then begin
+        if (ORVc_CheckLocationRows(RepSpec.f6,ORr)==false) then begin testf = false; end;
+      end;
+    end;
+    if (testf) then begin
+      if (RepSpec.flags[3]!=0) then begin
+        if (CustHasMessage(ORr.CustCode,CreditLimitRec)) then begin testf = false; end;
+      end;  
+    end;  
+    if (ORr.OKFlag==0) then begin 
+      if (UserCanAction("NotOKORToSH",false)) then begin testf = false; end;
+    end;
+    if (TrHs and testf) then begin
+// Moved up to make SURE it is fully deliverable, if Del Per Location, this work is extra...
+      CheckFlush(flushcnt,10)
+      RecordNew(SHr);
+      SHr.OrderNr = ORr.SerNr;
+      err = PasteOrdInShip(aStockMovr,asmcnt,ORr,SHr,RepSpec.flags[4]==0,RepSpec.Stext,RepSpec.flags[6],RepSpec.f3,RepSpec.f6,aincode,aloc,aserialnr,aqty,acnt);
+      switch (RepSpec.ArtMode) begin
+        case 0:
+          if (CheckIfFullyDeiverable(ORr,SHr,aincode,aloc,aserialnr,aqty,acnt)==false) then begin testf = false; end;
+        case 1:
+          if (MatRowCnt(SHr)==0) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if (RepSpec.flags[2]!=0) then begin
+          CreateLocRowHandle(ORr,lhlocation,lhfirstrow,lhcnt);
+          for (j=0;j<=lhcnt;j=j+1) begin        
+            RecordNew(SHr);
+            CreateOrderPerLocation(RepSpec,SHr,ORr,lhlocation[j],lhfirstrow[j],flushcnt,aincode,aloc,aserialnr,aqty,acnt);
+          end;  
+        end else begin
+          if (blankdate(RepSpec.d1)) then begin
+            SHr.ShipDate = ORr.OrdDate;
+          end else begin
+            SHr.ShipDate = RepSpec.d1;                
+          end;
+          StoreShipment(RepSpec,SHr,flushcnt,aStockMovr,asmcnt,ORr);
+        end;  
+      end;
+    end;
+    UserTrace(ORr.SerNr,M4Long);                              
+  end;  
+LCreateSHsFromSOsMn:;  
+  RETURN;
+END;

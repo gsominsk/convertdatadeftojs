@@ -1,0 +1,263 @@
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function roundmode DefaultRoundMode();
+external function LongInt DateDiff(Date,Date);
+
+function Date LastPaymentDate(LongInt VINr)
+begin
+  Date res;
+  record OPrsVc OPrsr;
+  Boolean found;
+
+  found = true;
+  OPrsr.VINr = VINr;
+  while (LoopBackKey("VIKey",OPrsr,1,found)) begin
+    if (OPrsr.VINr!=VINr) then begin found = false; end;
+    if (found) then begin
+      switch (OPrsr.TransType) begin
+        case kOPrsTransTypeInvoice:
+        case kOPrsTransTypePurgeNLTransaction:
+        otherwise
+          res = OPrsr.TransDate;
+          found = false;
+      end;
+    end;
+  end;
+  LastPaymentDate = res;
+  return;
+end;
+
+function Boolean PrintPayments(record RcVc RepSpec,record VIVc theVIr,record APVc APr,var val totopval,var val totfee)
+begin
+  Boolean res;
+  Boolean found,testf,firstf;
+  record OPrsVc OPrsr;
+  record OPVc OPr;
+  row OPVc OPrw;
+  Integer i,rwcnt;
+  val fee,year;
+  LongInt diff;
+
+  year = 365;
+//  if (IsLeapYear(ed.year)) then begin
+ // end;
+  firstf = true;
+  found = true;
+  OPrsr.VINr = theVIr.SerNr;
+  while (LoopKey("VIKey",OPrsr,1,found)) begin
+    if (OPrsr.VINr!=theVIr.SerNr) then begin found = false; end;
+    if (found) then begin
+      switch (OPrsr.TransType) begin
+        case kOPrsTransTypeInvoice:
+        case kOPrsTransTypePayment:
+          OPr.SerNr = OPrsr.TransNr;
+          if (ReadFirstMain(OPr,1,true)) then begin
+            testf = true;
+            if (OPr.Invalid!=0) then begin testf = false; end;
+            if (OPr.OrderedFlag==0) then begin testf = false; end;
+            if (OPr.RejectedFlag!=0) then begin testf = false; end;
+            if (OPr.TransDate<=theVIr.DueDate) then begin testf = false; end;
+            if (testf) then begin
+              rwcnt = MatRowCnt(OPr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(OPr,i,OPrw);
+                testf = true;
+                if (OPrw.ovst!=0) then begin testf = false; end;
+                if (OPrw.VISerNr!=OPrsr.VINr) then begin testf = false; end;
+                if (OPrw.stp!=1 and OPrw.stp!=5 and OPrw.stp!=6) then begin
+                  testf = false;
+                end;                
+                if (testf) then begin
+                  if (firstf) then begin
+                    diff = DateDiff(CurrentDate,theVIr.DueDate);
+                    fee = APr.BookRVal*RepSpec.vals0;
+                    fee = fee/100.00;
+                    fee = Round(fee,DefaultRoundMode);
+                    fee = fee * diff;
+                    fee = fee/year;
+                    fee = Round(fee,DefaultRoundMode);
+
+                    StartFormat(15);
+                     OutLongInt(0,"DblVIVc",theVIr.SerNr,false);
+                     OutVal(3,0,theVIr.PayVal,M4Val,true);
+                     OutVal(4,0,APr.BookRVal,M4Val,true);
+                     OutLongInt(5,0,diff,false);
+                     OutVal(9,0,RepSpec.vals0,M4Val,true);
+                     if (APr.BookRVal>0) then begin
+                       OutVal(1,0,fee+RepSpec.vals1,M4Val,true);
+                       totfee = totfee + fee + RepSpec.vals1;
+                     end else begin
+                       OutVal(1,0,fee,M4Val,true);
+                       totfee = totfee + fee;
+                     end;
+                    EndFormat;  
+                    Gray_Divider(0,4);
+                    firstf = false;
+                  end;
+                  OPrw.PInvVal = MulRateToBase1(theVIr.CurncyCode,OPrw.PInvVal,theVIr.FrRate,theVIr.ToRateB1,theVIr.ToRateB2,theVIr.BaseRate1,theVIr.BaseRate2,DefaultCurRoundOff);
+                  diff = DateDiff(OPr.TransDate,theVIr.DueDate);
+                  fee = (OPrw.PInvVal*RepSpec.vals0);
+                  fee = fee/100.00;
+                  fee = Round(fee,DefaultRoundMode);
+                  fee = fee * diff;
+                  fee = fee/year;
+                  fee = Round(fee,DefaultRoundMode);
+                  StartFormat(15);
+                   OutLongInt(20,"DblOPVc",OPr.SerNr,false);
+                   OutDate(2,0,OPr.TransDate,false);
+                   OutDate(3,0,theVIr.DueDate,false);
+                   OutLongInt(5,0,diff,false);
+                   OutVal(8,0,OPrw.PInvVal,M4Val,true);
+                   OutVal(9,0,RepSpec.vals0,M4Val,true);
+                   OutVal(1,0,fee,M4Val,true);
+                  EndFormat;
+                  totfee = totfee + fee;
+                  totopval = totopval + OPrw.PInvVal;
+                  res = true;
+                end;
+              end;
+            end;
+          end;
+      end;
+    end;
+  end;
+  PrintPayments = res;
+  return;
+end;
+
+global
+procedure VIIntCostCalcRn(record RcVc RepSpec)
+begin
+  Boolean found,testf;
+  record VIVc VIr;
+  record APVc APr;
+  record CUVc VEr;
+  val totfee,totpayval,totopenval,totopval;
+  val fee,year;
+  string 255 index;
+  LongInt frvi,tovi;
+  string 255 frve,tove;
+  LongInt diff;
+  
+  frvi = FirstInRange(RepSpec.f1,10);
+  tovi = LastInRange(RepSpec.f1,10);
+  frve = FirstInRange(RepSpec.f2,20);
+  tove = LastInRange(RepSpec.f2,20);
+  StartReportJob(UsetStr(39400));
+  EndHeader;
+  SetRepCol(2,80);
+  SetRepCol(3,150);
+  SetRepCol(4,230);
+  SetRepCol(5,240);
+  SetRepCol(7,300);
+  SetRepCol(8,360);
+  SetRepCol(9,420);
+
+  StartFormat(15);
+   OutString(0,0,UsetStr(39401),false);
+   OutString(3,0,UsetStr(39402),true);
+   OutString(4,0,UsetStr(39403),true);
+  EndFormat;
+  StartFormat(15);
+   OutString(20,0,UsetStr(39404),false);
+   OutString(2,0,UsetStr(39405),false);
+   OutString(3,0,UsetStr(39406),false);
+   OutString(5,0,UsetStr(39407),false);
+   OutString(8,0,UsetStr(39408),true);
+   OutString(9,0,UsetStr(39409),true);
+   OutString(1,0,UsetStr(39410),true);
+  EndFormat;
+  Black_Divider(0,1);  
+  year = 365.00;
+  
+  found = true;
+  index = "TransDate";
+  if (nonblank(RepSpec.f1)) then begin
+    index = "SerNr";
+  end;
+  VIr.SerNr = frvi;
+  VIr.TransDate = RepSpec.sStartDate;
+  while (LoopKey(index,VIr,1,found)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (VIr.SerNr>tovi) then begin found = false; end;
+    end else begin
+      if (DateInRange(VIr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        found = false; 
+      end;
+    end;
+    if (found) then begin
+      VEr.Code = VIr.VECode;
+      ReadFirstMain(VEr,1,true);
+      testf = true;
+      if (DateInRange(VIr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false; 
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (VIr.VECode<frve or VIr.VECode>tove) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f7)) then begin
+        if (VEr.VECat!=RepSpec.f7) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f4)) then begin
+        if (SetInSet(RepSpec.f4,VEr.Classification)==false) then begin testf = false; end;
+      end;
+      if (VIr.OKFlag==0) then begin testf = false; end;
+      if (VIr.Invalid!=0) then begin testf = false; end;
+      if (RepSpec.flags[1]!=0) then begin
+        if (VIr.Closed!=0) then begin testf = false; end;
+      end;
+      if (VIr.InvType!=kInvoiceTypeNormal) then begin testf = false; end;
+      if (testf) then begin
+        APr.SerNr = VIr.SerNr;
+        ReadFirstMain(APr,1,true);
+        if (VIr.DueDate>=CurrentDate) then begin testf = false; end;
+        if (APr.RVal==0) then begin
+          if (VIr.DueDate>=LastPaymentDate(VIr.SerNr)) then begin testf = false; end;
+        end;
+        if (RepSpec.flags[0]!=0) then begin
+          if (APr.RVal!=0) then begin testf = false; end;
+        end;
+      end;
+      if (testf) then begin
+        VIr.PayVal = MulRateToBase1(VIr.CurncyCode,VIr.PayVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+        totpayval = totpayval + VIr.PayVal;
+        totopenval = totopenval + APr.BookRVal;
+        if (PrintPayments(RepSpec,VIr,APr,totopval,totfee)) then begin
+          Gray_Divider(0,1);
+          StartFormat(5);
+          EndFormat;  
+        end else begin
+          
+          diff = DateDiff(CurrentDate,VIr.DueDate);
+          fee = APr.BookRVal*RepSpec.vals0;
+          fee = fee/100.00;
+          fee = Round(fee,DefaultRoundMode);
+          fee = fee * diff;
+          fee = fee/year;
+          fee = Round(fee,DefaultRoundMode);
+
+          StartFormat(15);
+           OutLongInt(0,"DblVIVc",VIr.SerNr,false);
+           OutVal(3,0,VIr.PayVal,M4Val,true);
+           OutVal(4,0,APr.BookRVal,M4Val,true);
+           OutLongInt(5,0,diff,false);
+           OutVal(9,0,RepSpec.vals0,M4Val,true);
+           OutVal(1,0,fee+RepSpec.vals1,M4Val,true);
+          EndFormat;  
+          Gray_Divider(0,1);
+          StartFormat(5);
+          EndFormat;  
+          totfee = totfee + fee + RepSpec.vals1;
+        end;
+      end;
+    end;
+  end;
+  Black_Divider(0,1);
+  StartFormat(15);
+  OutVal(3,0,totpayval,M4Val,true);
+  OutVal(4,0,totopenval,M4Val,true);
+  OutVal(8,0,totopval,M4Val,true);
+  OutVal(1,0,totfee,M4Val,true);
+  EndFormat;  
+  EndJob;
+  return;
+end;

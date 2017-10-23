@@ -1,0 +1,384 @@
+external function Time ValToTime(val);
+external function val CalcTimeDiff(Date,Time,Date,Time);
+external function LongInt DateDiff(Date,Date);
+external function Time AddTime_Minutes(Time,Time);
+external function LongInt TimeDiffInSeconds(Time,Time);
+external function Integer SecondsToTime(LongInt,var Time);
+
+function Time TimeDiff(Time etime,Time stime)
+begin
+  Time res;
+  LongInt seconds;
+  Integer days;
+  
+  seconds = TimeDiffInSeconds(stime,etime);
+  days = SecondsToTime(seconds,res);
+  TimeDiff = res;
+  return;
+end;
+
+function Time CalcDuration(Date ed,Time et,Date sd,Time st)
+begin
+  Time res;
+  Time t;
+  Integer days;
+  LongInt seconds;
+  
+  if (ed==sd) then begin
+    res = TimeDiff(et,st);  
+  end else begin
+    t.hour = 23; t.minute = 59; t.second = 59;
+    seconds = TimeDiffInSeconds(st,t);
+    t.hour = 0; t.minute = 0; t.second = 0;
+    seconds = seconds + TimeDiffInSeconds(t,et);
+    if (seconds>24*60*60) then begin
+      t.hour = 23; t.minute = 59; t.second = 59;
+      res = t;
+    end else begin
+      res = TimeDiff(st,t);  
+      t.hour = 0; t.minute = 0; t.second = 0;
+      t = TimeDiff(t,et);
+      res = AddTime_Minutes(res,t);
+      days = DateDiff(ed,sd);
+      if (days>1) then begin
+        t.hour = 23; t.minute = 59; t.second = 59;
+        res = t;
+      end;
+    end;  
+  end; 
+  CalcDuration = res;
+  return;
+end;
+
+procedure PrintProjectData(record ActVc Actr,Integer pos1)
+begin
+ StartFormat(15);
+  OutStringID(pos1,"DblActVc",Actr.Comment,false,Actr.SerNr);
+  OutString(2,0,Actr.MainPersons,false);
+  OutString(3,"DblActStateVc",Actr.ActState,false);
+  OutString(4,0,Left(Actr.ActStateComment,20),false);
+  OutString(5,"DblActTypeVc",Actr.ActType,false);
+  OutString(6,0,Left(Actr.ActTypeComment,20),false);
+  EndFormat;
+  return;
+end;
+
+procedure ShowProjectChanges(record RcVc RepSpec,record ActVc PActr)
+begin
+  record RHistVc RHr;
+  record ActVc Actr;
+  record RHistVc RH2r;
+  record ActVc Act2r;
+  record RHistVc compRHr;
+  record ActVc compActr;
+  record RHistVc prevRHr;
+  record ActVc prevActr;
+  Boolean found,firstf;
+  string 255 rhlink;
+  array record RHistVc aRHr;
+  array record ActVc aActr;
+  Integer i,pos;
+  val timev;
+  record ResolveConflictVc RCr;
+  row ResolveConflictVc RCrw;
+  record RHistVc lastRHr;
+  row ResolveConflictVc lastRCrw;
+  Integer ri,rwcnt;
+  Time tt;
+  
+  found = true;
+  rhlink = BuildRecordIdStr(PActr,CurrentCompany);
+  RHr.RecidStr = rhlink;
+  while (LoopKey("RecidStr",RHr,1,found)) begin
+    if (CompareRecordIdStrings(RHr.RecidStr,rhlink)!=0) then begin found = false; end;
+    if (found) then begin
+//      if (RHr.logtype==kRegisterLogging_LogWhenFieldChanged_KeepRecord)
+      if (ReadOriginalRecord(RHr,Actr)) then begin
+        lastRHr = RHr;
+        if (ComparePosts(Actr,PActr)==false) then begin
+          pos = aRHr.length;
+          aRHr[pos] = RHr;
+          aActr[pos] = Actr;
+/*
+      StartFormat(15);
+       OutString(0,0,"1",false);
+       OutString(15,0,pos,false);
+       OutString(30,0,Actr.ActType,false);
+       OutString(100,0,Act2r.ActType,false);
+  OutString(270,0,RHr.TransDate,false);
+  OutString(320,0,RHr.TransTime,false);
+      EndFormat;
+*/
+        end;
+      end;
+  
+    end;
+  end;
+  if (pos==0) then begin
+  end else begin
+    pos = aRHr.length;
+    RHr.User = CurrentUser;
+    RHr.TransDate = CurrentDate;
+    RHr.TransTime = CurrentTime;
+    aRHr[pos] = RHr;
+    aActr[pos] = PActr;
+  end;
+ 
+  StartFormat(15);
+  OutString(15,0,USetStr(38456),false);
+  EndFormat;
+  Gray_Divider(15,300);
+  StartFormat(15);
+  OutString(40,0,USetStr(38460),false);
+  OutString(90,0,USetStr(38462),false);
+  OutString(160,0,USetStr(38461),false);
+  OutString(200,0,USetStr(38463),false);
+  OutString(245,0,USetStr(38464),false);
+  OutString(285,0,USetStr(38465),false);
+  EndFormat;
+  Gray_Divider(15,300);
+  
+  if (pos==0) then begin
+    lastRCrw.RemoteValue = PActr.ActState;
+  end else begin
+    RecordCopy(compRHr,aRHr[0]);
+    RecordCopy(compActr,aActr[0]);
+    for (i=0;i<aRHr.length-1;i=i+1) begin    
+    
+      RecordCopy(RHr,aRHr[i]);
+      RecordCopy(Actr,aActr[i]);
+      RecordCopy(RH2r,aRHr[i+1]);
+      RecordCopy(Act2r,aActr[i+1]);
+  /*
+        StartFormat(15);
+         OutString(0,0,"A",false);
+    OutString(270,0,RHr.TransDate,false);
+    OutString(320,0,RHr.TransTime,false);
+        EndFormat;
+  */
+
+      RecordClear(RCr);
+      if (GetRecordDifferences(compActr,Act2r,RCr)) then begin
+        rwcnt = MatRowCnt(RCr);
+        for (ri=0;ri<rwcnt;ri=ri+1) begin
+          MatRowGet(RCr,ri,RCrw);
+          if (RCrw.FieldName=="ActState") then begin
+            tt = CalcDuration(RHr.TransDate,RHr.TransTime,compRHr.TransDate,compRHr.TransTime);
+            StartFormat(15);
+             OutString(40,0,RCrw.LocalValue,false);
+             OutString(90,0,tt,false);
+             OutString(160,0,RCrw.RemoteValue,false);
+             OutString(200,0,RHr.TransDate,false);
+             OutString(245,0,RHr.TransTime,false);
+             OutString(285,0,RHr.User,false);
+            EndFormat;
+            ri = rwcnt;
+            RecordCopy(compRHr,RHr);
+            RecordCopy(compActr,Act2r);
+            CopyRow(RCr,RCrw,lastRCrw);
+            lastRHr = RHr;
+          end;
+        end;
+      end;
+    end;
+  end;
+  tt = CalcDuration(CurrentDate,CurrentTime,lastRHr.TransDate,lastRHr.TransTime);
+  StartFormat(15);
+   OutString(40,0,lastRCrw.RemoteValue,false);
+   OutString(90,0,tt,false);
+  EndFormat;
+  
+  StartFormat(15);
+  OutString(15,0,USetStr(38458),false);
+  EndFormat;
+  Gray_Divider(15,300);
+  StartFormat(15);
+  OutString(40,0,USetStr(38460),false);
+  OutString(90,0,USetStr(38462),false);
+  OutString(160,0,USetStr(38461),false);
+  OutString(200,0,USetStr(38463),false);
+  OutString(245,0,USetStr(38464),false);
+  OutString(285,0,USetStr(38465),false);
+  EndFormat;
+  Gray_Divider(15,300);
+  
+  if (pos==0) then begin
+    lastRCrw.RemoteValue = PActr.ActType;
+  end else begin
+    RecordCopy(compRHr,aRHr[0]);
+    RecordCopy(compActr,aActr[0]);
+    for (i=0;i<aRHr.length-1;i=i+1) begin    
+    
+      RecordCopy(RHr,aRHr[i]);
+      RecordCopy(Actr,aActr[i]);
+      RecordCopy(RH2r,aRHr[i+1]);
+      RecordCopy(Act2r,aActr[i+1]);
+
+      RecordClear(RCr);
+      if (GetRecordDifferences(compActr,Act2r,RCr)) then begin
+        rwcnt = MatRowCnt(RCr);
+        for (ri=0;ri<rwcnt;ri=ri+1) begin
+          MatRowGet(RCr,ri,RCrw);
+          if (RCrw.FieldName=="ActType") then begin
+            tt = CalcDuration(RHr.TransDate,RHr.TransTime,compRHr.TransDate,compRHr.TransTime);
+            StartFormat(15);
+             OutString(40,0,RCrw.LocalValue,false);
+             OutString(90,0,tt,false);
+             OutString(160,0,RCrw.RemoteValue,false);
+             OutString(200,0,RHr.TransDate,false);
+             OutString(245,0,RHr.TransTime,false);
+             OutString(285,0,RHr.User,false);
+            EndFormat;
+            ri = rwcnt;
+            RecordCopy(compRHr,RHr);
+            RecordCopy(compActr,Act2r);
+
+            CopyRow(RCr,RCrw,lastRCrw);
+            lastRHr = RHr;
+
+          end;
+        end;
+      end;
+    end;
+  end;
+  tt = CalcDuration(CurrentDate,CurrentTime,lastRHr.TransDate,lastRHr.TransTime);
+  StartFormat(15);
+   OutString(40,0,lastRCrw.RemoteValue,false);
+   OutString(90,0,tt,false);
+  EndFormat;
+
+  StartFormat(15);
+  OutString(15,0,USetStr(38459),false);
+  EndFormat;
+  Gray_Divider(15,300);
+  StartFormat(15);
+  OutString(40,0,USetStr(38460),false);
+  OutString(90,0,USetStr(38462),false);
+  OutString(160,0,USetStr(38461),false);
+  OutString(200,0,USetStr(38463),false);
+  OutString(245,0,USetStr(38464),false);
+  OutString(285,0,USetStr(38465),false);
+  EndFormat;
+  Gray_Divider(15,300);
+  
+  if (pos==0) then begin
+    lastRCrw.RemoteValue = PActr.MainPersons;
+  end else begin
+    RecordCopy(compRHr,aRHr[0]);
+    RecordCopy(compActr,aActr[0]);
+    for (i=0;i<aRHr.length-1;i=i+1) begin    
+    
+      RecordCopy(RHr,aRHr[i]);
+      RecordCopy(Actr,aActr[i]);
+      RecordCopy(RH2r,aRHr[i+1]);
+      RecordCopy(Act2r,aActr[i+1]);
+
+      RecordClear(RCr);
+      if (GetRecordDifferences(compActr,Act2r,RCr)) then begin
+        rwcnt = MatRowCnt(RCr);
+        for (ri=0;ri<rwcnt;ri=ri+1) begin
+          MatRowGet(RCr,ri,RCrw);
+          if (RCrw.FieldName=="MainPersons") then begin
+            tt = CalcDuration(RHr.TransDate,RHr.TransTime,compRHr.TransDate,compRHr.TransTime);
+            StartFormat(15);
+             OutString(40,0,RCrw.LocalValue,false);
+             OutString(90,0,tt,false);
+             OutString(160,0,RCrw.RemoteValue,false);
+             OutString(200,0,RHr.TransDate,false);
+             OutString(245,0,RHr.TransTime,false);
+             OutString(285,0,RHr.User,false);
+            EndFormat;
+            ri = rwcnt;
+            RecordCopy(compRHr,RHr);
+            RecordCopy(compActr,Act2r);
+
+            CopyRow(RCr,RCrw,lastRCrw);
+            lastRHr = RHr;
+          end;
+        end;
+      end;
+    end;
+  end;
+  tt = CalcDuration(CurrentDate,CurrentTime,lastRHr.TransDate,lastRHr.TransTime);
+  StartFormat(15);
+   OutString(40,0,lastRCrw.RemoteValue,false);
+   OutString(90,0,tt,false);
+  EndFormat;
+
+  return;
+end;
+
+procedure ProjectSubtasks(record RcVc RepSpec,record ActVc pActr)
+begin
+  record ActVc Actr;
+  Boolean found,firstf;
+
+  firstf = true;
+  found = true;
+  Actr.Mother = pActr.SerNr;
+  while (LoopKey("Mother",Actr,1,found)) begin
+    if (Actr.Mother!=pActr.SerNr) then begin found = false; end;
+    if (found) then begin
+      if (firstf) then begin
+        StartFormat(15);
+        OutString(15,0,USetStr(38457),false);
+        EndFormat;
+        Gray_Divider(15,70);
+        firstf = false;
+      end;
+      PrintProjectData(Actr,15);
+      ShowProjectChanges(RepSpec,Actr);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure ActProjStatRn(record RcVc RepSpec)
+begin
+  record ActVc Actr;
+  Boolean found;
+  LongInt frpr;
+  string 255 index;
+  
+  frpr = FirstInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(38450));
+  EndHeader;
+  SetRepCol(2,100);
+  SetRepCol(3,200);
+  SetRepCol(4,245);
+  SetRepCol(5,320);
+  SetRepCol(6,365);
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(38451),false);
+  OutString(2,0,USetStr(38452),false);
+  OutString(3,0,USetStr(38453),false);
+  OutString(5,0,USetStr(38455),false);
+  EndFormat;
+  Gray_Divider(0,1);
+  index = "TodoFlag";
+  if (nonblank(RepSpec.f1)) then begin
+    index = "SerNr";
+  end;
+  found = true;
+  Actr.SerNr = frpr;
+  Actr.TodoFlag = kTodoFlagProject;
+  while (LoopKey(index,Actr,1,found)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (Actr.SerNr!=frpr) then begin found = false; end;
+    end else begin
+      if (Actr.TodoFlag!=kTodoFlagProject) then begin found = false; end;
+    end;
+    if (found) then begin
+      PrintProjectData(Actr,0);
+      ShowProjectChanges(RepSpec,Actr);
+      if (RepSpec.flags[0]!=0) then begin
+        ProjectSubtasks(RepSpec,Actr);
+      end;
+      Gray_Divider(0,1);
+    end;
+  end;
+  EndJob;
+  return;
+end;

@@ -1,0 +1,1155 @@
+external function LongInt DateDiff(Date,Date);
+external function val HoursDiff(Date,Time,Date,Time);
+external function LongInt TimeToMinutes(Time);
+external updating procedure StopEmailQueueActivity(string,string,string);
+external outer function Boolean OuterInternalSystemAlertTest(record BASysIntVc);
+external outer function LongInt OuterInternalSystemAlertAction(record BASysIntVc,record ConfVc,Boolean);
+external updating procedure CheckAndSendExternalMail(longint,string,string,string,longint);
+external function Integer SetDateOrder(string);
+external procedure LongDateToStr(Date,Integer,var string);
+external procedure MailTextRow(string,string,string,var row MailTextVc,var Integer);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure FindUserMailboxName(string,var string,var string);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external function Boolean CurUserHasMailbox(var string);
+
+global
+procedure OpenNewSMSonClient(var record SMSVc SMSr)
+begin
+  OpenWindow("SMSDClass",1,0,"","",SMSr);
+  return;
+end;
+
+procedure OpenNewSMS(string frommobile,string mobile,string ltxtcode)
+begin
+  Integer i,line,rwcnt;
+  record SMSVc SMSr;
+  record LTxtVc LTxtr;
+  Integer wn;
+
+  RecordNew(SMSr);
+  SMSr.PhoneNo = mobile;
+  SMSr.FromPhoneNo = frommobile;
+  LTxtr.Code = ltxtcode;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    rwcnt = LineTextCnt(LTxtr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      LineTextPut(SMSr,LineTextCnt(SMSr),LineTextGet(LTxtr,i));
+      line = line + 1;        
+    end;    
+    AddCRToText(SMSr);
+  end;
+  if (ServerMode) then begin
+    ClientRemoteAsync.OpenNewSMSonClient(SMSr);
+//    OpenWindowOnClient("SMSDClass",1,0,"","",SMSr,CurrentUser,Rs_insert);
+  end else begin
+    wn = OpenWindow("SMSDClass",1,0,"","",SMSr);
+  end;
+  return;
+end;
+
+global
+updating function StoreSMSr(record SMSVc SMSr)
+begin
+  SMSr.SerNr = NextSerNr("SMSVc",SMSr.TransDate,-1,false,"");
+  if (RecordStore(SMSr,false)) then begin end;
+end;
+
+global
+function Boolean SendSMSFromSystem2(string systemmobile,string mobile,string text,string ltxtcode)
+begin
+  Boolean res;
+  Integer i,line,rwcnt;
+  record SMSVc SMSr;
+  record LTxtVc LTxtr;
+  Integer err;
+  string 255 lsystemmobile;
+  record BASysIntBlock BASysIntb;
+  Integer oldcomp;
+
+  lsystemmobile = systemmobile;
+
+  if (blank(lsystemmobile)) then begin
+    BlockLoad(BASysIntb);
+    lsystemmobile = BASysIntb.SystemMobile;
+    if (blank(lsystemmobile)) then begin
+      goto LSendSMSFromSystem2;
+    end;
+  end;
+  if (blank(mobile)) then begin
+    goto LSendSMSFromSystem2;
+  end;
+  RecordNew(SMSr);
+  SMSr.Person = "System";
+  SMSr.PhoneNo = mobile;
+  SMSr.FromPhoneNo = lsystemmobile;
+  SMSr.LTxtCode = ltxtcode;
+  if (nonblank(text)) then begin
+    LineTextPut(SMSr,LineTextCnt(SMSr),text);
+  end;
+/*  
+  oldcomp = CurrentCompany;
+  if (SetCompany(1,false)) then begin
+    LTxtr.Code = ltxtcode;
+    if (ReadFirstMain(LTxtr,1,true)) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        LineTextPut(SMSr,LineTextCnt(SMSr),LineTextGet(LTxtr,i));
+        AddCRToText(SMSr);
+        line = line + 1;        
+      end;    
+      AddCRToText(SMSr);
+    end;
+  end;
+*/  
+//why looking in comapny 1 for sednig sms in company 200 ? OpenNewSMS dont work like this
+  LTxtr.Code = ltxtcode;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    rwcnt = LineTextCnt(LTxtr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      LineTextPut(SMSr,LineTextCnt(SMSr),LineTextGet(LTxtr,i));
+      AddCRToText(SMSr);
+      line = line + 1;        
+    end;    
+    AddCRToText(SMSr);
+  end;
+  queued.StoreSMSr(SMSr);
+
+//  ResetCompany(oldcomp);//why looking in comapny 1 for sednig sms in company 200 ? OpenNewSMS dont work like this
+LSendSMSFromSystem2:;
+  SendSMSFromSystem2 = true;
+  return;
+end;
+
+global
+updating function Boolean SendSMSFromSystem(string systemmobile,string mobile,string text,string ltxtcode)
+begin
+  SendSMSFromSystem = SendSMSFromSystem2(systemmobile,mobile,text,ltxtcode);
+  return;
+end;
+
+global
+updating procedure SMSWhenJob(record JobVc Jobr,Integer action)
+begin
+  record CUVc CUr;
+  Boolean testf;
+  record BARulesBlock BARb;
+  record BAJobBlock BAJb;
+
+  BlockLoad(BARb);
+  if (BARb.SMS==0) then begin
+    goto LSMSWhenJob;
+  end;
+  switch (action) begin
+    case 1: if (BARb.SMS!=1) then begin goto LSMSWhenJob; end;
+    case 2: if (BARb.SMS!=2) then begin goto LSMSWhenJob; end;
+  end;
+  BlockLoad(BAJb);
+  if (BAJb.SMS==0) then begin
+    goto LSMSWhenJob;
+  end;
+  if (blank(BAJb.ResStatus)) then begin
+    goto LSMSWhenJob;
+  end;
+  if (Jobr.ResStatus!=BAJb.ResStatus) then begin
+    goto LSMSWhenJob;
+  end;
+  testf = false;
+  CUr.Code = Jobr.CUCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (nonblank(CUr.Mobile)) then begin
+      testf = true;
+    end;
+  end;  
+  if (testf) then begin
+    switch (BARb.SMS) begin
+      case 1: testf = SendSMSFromSystem(BARb.SystemMobile,CUr.Mobile,"",BAJb.LTxtCode);
+      case 2: OpenNewSMS(BARb.SystemMobile,CUr.Mobile,BAJb.LTxtCode);
+    end;
+  end;
+LSMSWhenJob:;  
+  return;
+end;
+
+updating procedure SMSWhenOR_Contact(record ORVc ORr,Integer smstype,string systemmobile)
+begin
+  record CUVc CUr;
+  record LTxtVc LTxtr;
+  Boolean testf;
+  Integer i,rwcnt,line,wn;
+  record BAORBlock BAORb;
+  string 255 mobile;
+
+  BlockLoad(BAORb);
+  if (BAORb.SMS==0) then begin
+    goto LSMSWhenOR_Contact;
+  end;
+  if (nonblank(BAORb.ORClass)) then begin
+    if (ORr.OrderClass!=BAORb.ORClass) then begin
+      goto LSMSWhenOR_Contact;
+    end;
+  end;
+  if (nonblank(BAORb.CClass)) then begin
+    CUr.Code = ORr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (SetInSet(BAORb.CClass,CUr.Classification)==false) then begin goto LSMSWhenOR_Contact; end;
+    end;
+  end;
+  testf = false;
+  if (nonblank(BAORb.LImit)) then begin
+    if (ORr.Sum4>BAORb.LImit) then begin testf = true; end;
+  end;
+  if (nonblank(ORr.CustContact)) then begin
+    if (FindCustomerRelation(ORr.CustCode,ORr.CustContact,CUr)) then begin
+      if (nonblank(CUr.Mobile)) then begin
+        mobile = CUr.Mobile;
+      end;
+    end;    
+  end;
+  if (blank(mobile)) then begin
+    CUr.Code = ORr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (nonblank(CUr.Mobile)) then begin
+        mobile = CUr.Mobile;
+      end;
+      if (blank(mobile)) then begin
+        CUr.Name = ORr.CustContact;
+        if (ReadFirstKey("Name",CUr,1,true)) then begin
+          if (nonblank(CUr.Mobile)) then begin
+            mobile = CUr.Mobile;
+          end;
+        end;
+      end;
+    end;
+  end;  
+  if (blank(mobile)) then begin
+    testf = false;
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BAORb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BAORb.LTxtCode);
+    end;
+  end;
+LSMSWhenOR_Contact:;  
+  return;
+end;
+
+updating procedure SMSWhenOR_Internal(record ORVc ORr,Integer smstype,string systemmobile)
+begin
+  record CUVc CUr;
+  record UserVc Userr;
+  record LTxtVc LTxtr;
+  Boolean testf;
+  Integer i,rwcnt,line,wn;
+  record BAORIntBlock BAORIntb;
+  string 255 mobile;
+
+  BlockLoad(BAORIntb);
+  if (BAORIntb.SMS==0) then begin
+    goto LSMSWhenOR_Internal;
+  end;
+  if (nonblank(BAORIntb.ORClass)) then begin
+    if (ORr.OrderClass!=BAORIntb.ORClass) then begin
+      goto LSMSWhenOR_Internal;
+    end;
+  end;
+  if (nonblank(BAORIntb.CClass)) then begin
+    CUr.Code = ORr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (SetInSet(BAORIntb.CClass,CUr.Classification)==false) then begin goto LSMSWhenOR_Internal; end;
+    end;
+  end;
+  testf = false;
+  if (nonblank(BAORIntb.LImit)) then begin
+    if (ORr.Sum4>BAORIntb.LImit) then begin testf = true; end;
+  end;
+  if (nonblank(BAORIntb.GPLImit)) then begin
+    if (ORr.TotGP<BAORIntb.GPLImit) then begin testf = true; end;
+  end;
+  Userr.Code = BAORIntb.User;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    CUr.Code = Userr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      mobile = CUr.Mobile;
+    end;
+    if (blank(mobile)) then begin
+      mobile = Userr.Phone1;
+    end;
+    if (blank(mobile)) then begin
+      mobile = Userr.Phone2;
+    end;
+  end;
+  if (blank(mobile)) then begin
+    testf = false;
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BAORIntb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BAORIntb.LTxtCode);
+    end;
+  end;
+LSMSWhenOR_Internal:;  
+  return;
+end;
+  
+global
+updating procedure SMSWhenOR(record ORVc ORr,Integer action)
+begin
+  record BARulesBlock BARb;
+
+  BlockLoad(BARb);
+  if (BARb.SMS==0) then begin
+    goto LSMSWhenOR;
+  end;
+  switch (action) begin
+    case 1: if (BARb.SMS!=1) then begin goto LSMSWhenOR; end;
+    case 2: if (BARb.SMS!=2) then begin goto LSMSWhenOR; end;
+  end;
+  SMSWhenOR_Contact(ORr,BARb.SMS,BARb.SystemMobile);
+  SMSWhenOR_Internal(ORr,BARb.SMS,BARb.SystemMobile);
+LSMSWhenOR:;  
+  RETURN;
+END;
+
+updating procedure SMSWhenSH_Contact(LongInt ornr,string custcode,Integer smstype,string systemmobile)
+begin
+  record CUVc CUr;
+  record LTxtVc LTxtr;
+  Boolean testf;
+  record ORVc ORr;
+  Integer i,rwcnt,line,wn;
+  record BASHBlock BASHb;
+  string 255 mobile;
+
+  BlockLoad(BASHb);
+  if (BASHb.SMS==0) then begin
+    goto LSMSWhenSH_Contact;
+  end;
+  if (nonblank(BASHb.CClass)) then begin
+    if (nonblank(custcode)) then begin
+      CUr.Code = custcode;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        if (SetInSet(BASHb.CClass,CUr.Classification)==false) then begin goto LSMSWhenSH_Contact; end;
+      end;
+    end;
+  end;
+  
+  testf = false;
+  ORr.SerNr = ornr;
+  if (ReadFirstMain(ORr,1,true)) then begin
+    if (nonblank(ORr.CustContact)) then begin
+      if (FindCustomerRelation(custcode,ORr.CustContact,CUr)) then begin
+        if (nonblank(CUr.Mobile)) then begin
+          mobile = CUr.Mobile;
+          testf = true;
+        end;
+      end;      
+    end;
+    if (blank(mobile)) then begin
+      CUr.Code = custcode;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        if (nonblank(CUr.Mobile)) then begin
+          testf = true;
+          mobile = CUr.Mobile;
+        end;
+        if (blank(mobile)) then begin
+          CUr.Name = ORr.CustContact;
+          if (ReadFirstKey("Name",CUr,1,true)) then begin
+            if (nonblank(CUr.Mobile)) then begin
+              mobile = CUr.Mobile;
+              testf = true;
+            end;
+          end;
+        end;
+      end;
+    end;           
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BASHb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BASHb.LTxtCode);
+    end;
+  end;
+LSMSWhenSH_Contact:;  
+  return;
+end;
+  
+global
+updating procedure SMSWhenSHOK(LongInt ornr,string custcode,Integer action)
+begin
+  record BARulesBlock BARb;
+
+  BlockLoad(BARb);
+  if (BARb.SMS==0) then begin
+    goto LSMSWhenSHOK;
+  end;
+  switch (action) begin
+    case 1: if (BARb.SMS!=1) then begin goto LSMSWhenSHOK; end;
+    case 2: if (BARb.SMS!=2) then begin goto LSMSWhenSHOK; end;
+  end;
+
+  SMSWhenSH_Contact(ornr,custcode,BARb.SMS,BARb.SystemMobile);
+
+LSMSWhenSHOK:;  
+  return;
+end;
+
+global
+updating procedure BAEMailFromCreditNote(record IVVc IVr)
+begin
+  record BAIVIntBlock BAIVIntb;
+  record MailVc Mailr;
+  row MailVc marw;
+  record LTxtVc LTxtr;
+  string 255 tstr;
+  Integer line,i,rwcnt;
+  record ConfVc Confr;
+  record MailSettingsBlock MSb;
+
+  BlockLoad(BAIVIntb);
+  if (BAIVIntb.CNEMail!=0) then begin
+    if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+      if (IVr.Sum4>=BAIVIntb.CNLImit) then begin
+/*      
+        if (CurUserHasMailbox(tstr)==false) then begin
+          goto LBAEMailFromCreditNote;
+        end;
+*/        
+        BlockLoad(MSb);
+        if (blank(MSb.FromSystem)) then begin
+          goto LBAEMailFromCreditNote;
+        end;
+        RecordNew(Mailr);
+        
+        Confr.AddrCode = BAIVIntb.User;
+        if (ReadFirstKey("AddrCode",Confr,1,true)==false) then begin
+          goto LBAEMailFromCreditNote;
+        end;
+        Mailr.Header = USetStr(1803) & "  " & IVr.SerNr;        
+        ClearRow(Mailr,marw,kMailRowTypeFrom);
+        marw.RowTyp = kMailRowTypeFrom;
+        marw.AddrCode = MSb.FromSystem;
+        MatRowPut(Mailr,0,marw);
+
+        ClearRow(Mailr,marw,1);
+        marw.RowTyp = 0;
+        marw.AddrCode = Confr.AddrName;
+        MatRowPut(Mailr,1,marw);
+
+        LTxtr.Code = BAIVIntb.CNLTxtCode;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          rwcnt = LineTextCnt(LTxtr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            LineTextPut(Mailr,LineTextCnt(Mailr),LineTextGet(LTxtr,i));
+            line = line + 1;        
+          end;    
+          AddCRToText(Mailr);
+        end;
+
+        Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+        Mailr.SendFlag = 1;
+        if (RecordStore(Mailr,false)) then begin
+          CreateRecordLink(Mailr,CurrentCompany,IVr,CurrentCompany);  
+          CreateRecordLink(IVr,CurrentCompany,Mailr,CurrentCompany);  
+        end;
+        
+      end;
+    end;
+  end;
+LBAEMailFromCreditNote:;  
+  return;
+end;
+
+procedure AddAlarmVcDetailstoMail(var record MailVc Mailr,string subject,LongInt actsernr,Integer actcompno)
+begin
+  Integer oldcomp;
+  record LTxtVc LTxtr;
+  record ActVc Actr;
+  row MailTextVc MTrw;
+  row ActVc Actrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  string 1 TAB;
+  Integer IgnoreRecordDetails;
+  
+  if (actsernr>=0) then begin
+    oldcomp = CurrentCompany;
+    if (oldcomp!=actcompno) then begin
+      if (SetCompany(actcompno,false)==false) then begin
+        goto LLAddAlarmVcDetailstoMail;
+      end;
+    end;
+    Actr.SerNr = actsernr;
+    if (ReadFirstMain(Actr,1,true)) then begin
+      MailTextRow("AlarmVc","",Actr.LangCode,MTrw,IgnoreRecordDetails);
+      tstr= ""; 
+      if (blank(MTrw.Header)) then begin 
+        tstr = USetStr(33871);
+      end;
+      Mailr.Header = MTrw.Header & tstr & " " & Actr.Comment;
+      LTxtr.Code = MTrw.FirstTxt;
+      if (ReadFirstMain(LTxtr,1,true)) then begin
+        Mailr.HtmlFlag = LTxtr.HtmlFlag;
+        rwcnt = LineTextCnt(LTxtr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          tstr = LineTextGet(LTxtr,i);
+          LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+        end;    
+        AddCRToText(Mailr);
+      end;
+      if (IgnoreRecordDetails==0) then begin
+        TAB = chr(9);
+        LongDateToStr(Actr.TransDate,SetDateOrder(Actr.LangCode),tstr);
+        tstr = USetStr(12846) & ": " & TAB & tstr;
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);    
+        tstr = USetStr(14285) & ": " & TAB & Actr.StartTime;
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);          
+        LongDateToStr(Actr.EndDate,SetDateOrder(Actr.LangCode),tstr);
+        tstr = USetStr(12877) & ": " & TAB & tstr;
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);           
+        tstr = USetStr(14286) & ": " & TAB & Actr.EndTime;
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);          
+        tstr = USetStr(12008) & ": " & TAB & Actr.CUCode & "  " &  Actr.CUName;
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);     
+        AddCRToText(Mailr);  
+
+        rwcnt = MatRowCnt(Actr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(Actr,i,Actrw);
+          tstr = Actrw.TextCode & TAB;
+          tstr = tstr & Actrw.Text & TAB;
+          LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+        end;
+      end;
+      LTxtr.Code = MTrw.LastTxt;
+      if (ReadFirstMain(LTxtr,1,true)) then begin
+        if (Mailr.HtmlFlag==0) then begin
+          Mailr.HtmlFlag = LTxtr.HtmlFlag;
+        end;
+        rwcnt = LineTextCnt(LTxtr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          tstr = LineTextGet(LTxtr,i);
+          LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+        end;    
+        AddCRToText(Mailr);
+      end;
+    end;
+LLAddAlarmVcDetailstoMail:;    
+    ResetCompany(oldcomp);
+  end;
+  return;
+end;
+
+global
+updating function Boolean SendMailFromSystem(string sender,string recipient,string subject,string ltxtcode,LongInt actsernr,Integer actcompno,string filename)
+begin
+  Boolean res;
+  record MailVc Mailr;
+  row MailVc marw;
+  record LTxtVc LTxtr;
+  Integer line,i,rwcnt;
+  record ConfVc Confr;
+  record MailSettingsBlock MSb;
+  record ActVc Actr;
+  Integer oldcomp;
+  string 255 user;
+  string 255 mailboxnr,mailboxname;
+  Integer pos;
+  string 255 fromsystem,fromaddresscode,toaddresscode;
+  record BARulesBlock BARb;
+
+  BlockLoad(BARb);      
+  fromsystem = BARb.SystemeMail;
+  if (blank(fromsystem)) then begin
+    BlockLoad(MSb);      
+    fromsystem = MSb.FromSystem;
+  end;
+  if (blank(fromsystem)) then begin
+    LogText(33872,""); 
+    goto LSendMailFromSystem;
+  end;
+  RecordNew(Mailr);
+  
+  if (nonblank(sender)) then begin
+    pos = 0;
+    ExtractObj(sender,pos,user);
+    while (nonblank(user)) begin
+      FindUserMailboxName(user,mailboxnr,mailboxname);
+      if (nonblank(mailboxname)) then begin
+        ClearRow(Mailr,marw,1);
+        marw.RowTyp = kMailRowTypeFrom;
+        marw.AddrCode = mailboxname;
+        marw.Mailbox = StringToLongInt(mailboxnr);
+        MatRowPut(Mailr,1,marw);
+      end;
+      ExtractObj(sender,pos,user);
+    end;
+  end else begin
+    ClearRow(Mailr,marw,1);
+    marw.RowTyp = kMailRowTypeFrom;
+    marw.AddrCode = fromsystem;
+    MatRowPut(Mailr,0,marw);
+    Confr.AddrCode = recipient;
+    if (ReadFirstKey("AddrCode",Confr,1,true)==false) then begin
+      goto LSendMailFromSystem;
+    end;
+  end;
+  fromaddresscode = marw.AddrCode;
+  Mailr.Header = subject;
+  ClearRow(Mailr,marw,1);
+  marw.RowTyp = kMailRowTypeTo;
+  marw.AddrCode = Confr.AddrName;
+  MatRowPut(Mailr,1,marw);
+  toaddresscode = marw.AddrCode;
+  switch (filename) begin
+    case "AlarmVc": AddAlarmVcDetailstoMail(Mailr,subject,actsernr,actcompno);
+    otherwise
+      LTxtr.Code = ltxtcode;
+      if (ReadFirstMain(LTxtr,1,true)) then begin
+        rwcnt = LineTextCnt(LTxtr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          LineTextPut(Mailr,LineTextCnt(Mailr),LineTextGet(LTxtr,i));
+          line = line + 1;        
+        end;    
+        AddCRToText(Mailr);
+      end;
+  end;
+  Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+  Mailr.SendFlag = 1;
+  res = RecordStore(Mailr,false);
+  if (res) then begin
+    if (actsernr>=0) then begin
+      oldcomp = CurrentCompany;
+      if (oldcomp!=actcompno) then begin
+        if (SetCompany(actcompno,false)) then begin
+        end;
+      end;
+      qupdating.CheckAndSendExternalMail(actsernr,filename,toaddresscode,fromaddresscode,Mailr.SerNr);
+      Actr.SerNr = actsernr;
+      if (ReadFirstMain(Actr,1,true)) then begin
+        CreateRecordLink(Mailr,actcompno,Actr,actcompno);
+        CreateRecordLink(Actr,actcompno,Mailr,actcompno);
+      end;
+      ResetCompany(oldcomp);
+    end;
+  end;
+LSendMailFromSystem:;
+  SendMailFromSystem = res;
+  return;
+end;
+
+global
+updating procedure BAEMailFromOverdueInvoice_Contact(record IVVc IVr)
+begin
+  record BAIVBlock BAIVb;
+  record BARulesBlock BARb;
+  record MailVc Mailr;
+  row MailVc marw;
+  record LTxtVc LTxtr;
+  string 255 tstr,fromsystem;
+  Integer line,i,rwcnt;
+  record ConfVc Confr;
+  record MailSettingsBlock MSb;
+  Boolean testf;
+  record CUVc CUr;
+
+  BlockLoad(BAIVb);
+  if (BAIVb.EmailOverdueInvoice!=0) then begin
+    if (IVr.InvType!=kInvoiceTypeCash and IVr.InvType!=kInvoiceTypeCredit and IVr.InvType!=kInvoiceTypeCreditSpecialSales and IVr.InvType!=kInvoiceTypeCashInvoiceReceiptPRT and IVr.InvType!=kInvoiceTypeDownpayment and IVr.InvType!=kInvoiceTypePrepayment and IVr.InvType!=kInvoiceTypeEmployee) then begin
+      testf = true;
+      if (DateDiff(CurrentDate,IVr.PayDate)<=BAIVb.OverdueDays) then begin
+        testf = false;
+      end;
+      if (nonblank(BAIVb.SalesMan)) then begin
+        if (BAIVb.SalesMan!=IVr.SalesMan) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        CUr.Code = IVr.CustCode;
+        ReadFirstMain(CUr,1,true);
+        if (nonblank(BAIVb.CClass)) then begin
+          if (SetInSet(BAIVb.CClass,CUr.Classification)==false) then begin testf = false; end;
+        end;
+        if (blank(CUr.eMail)) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        BlockLoad(BARb);      
+        fromsystem = BARb.SystemeMail;
+        if (blank(fromsystem)) then begin
+          BlockLoad(MSb);      
+          fromsystem = MSb.FromSystem;
+        end;
+        if (blank(fromsystem)) then begin
+          goto LBAEMailFromOverdueInvoice_Contact;
+        end;
+        RecordNew(Mailr);
+        
+        Mailr.Header = USetStr(1803) & "  " & IVr.SerNr;        
+        ClearRow(Mailr,marw,kMailRowTypeFrom);
+        marw.RowTyp = kMailRowTypeFrom;
+        marw.AddrCode = fromsystem;
+        MatRowPut(Mailr,0,marw);
+
+        ClearRow(Mailr,marw,1);
+        marw.RowTyp = 0;
+        marw.AddrCode = CUr.eMail;
+        MatRowPut(Mailr,1,marw);
+
+        LTxtr.Code = BAIVb.LTxtCode;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          rwcnt = LineTextCnt(LTxtr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            LineTextPut(Mailr,LineTextCnt(Mailr),LineTextGet(LTxtr,i));
+            line = line + 1;        
+          end;    
+          AddCRToText(Mailr);
+        end;
+
+        Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+        Mailr.SendFlag = 1;
+        if (RecordStore(Mailr,false)) then begin
+          CreateRecordLink(Mailr,CurrentCompany,IVr,CurrentCompany);  
+          CreateRecordLink(IVr,CurrentCompany,Mailr,CurrentCompany);  
+        end;
+        
+      end;
+    end;
+  end;
+LBAEMailFromOverdueInvoice_Contact:;  
+  return;
+end;
+
+updating procedure SMSWhenQT_Contact(record QTVc QTr,Integer smstype,string systemmobile)
+begin
+  record BAQTBlock BAQTb;
+  string 255 mobile;
+  record CUVc CUr;
+  record LTxtVc LTxtr;
+  Boolean testf;
+  Integer i,rwcnt,line,wn;
+
+  BlockLoad(BAQTb);
+  if (BAQTb.SMS==0) then begin
+    goto LSMSWhenQT_Contact;
+  end;
+  if (nonblank(BAQTb.QuoteClass)) then begin
+    if (QTr.QuoteClass!=BAQTb.QuoteClass) then begin
+      goto LSMSWhenQT_Contact;
+    end;
+  end;
+  if (nonblank(BAQTb.CClass)) then begin
+    CUr.Code = QTr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (SetInSet(BAQTb.CClass,CUr.Classification)==false) then begin goto LSMSWhenQT_Contact; end;
+    end;
+  end;
+  testf = false;
+  if (nonblank(BAQTb.LImit)) then begin
+    if (QTr.Sum4>BAQTb.LImit) then begin testf = true; end;
+  end;
+  if (nonblank(QTr.CustContact)) then begin
+    if (FindCustomerRelation(QTr.CustCode,QTr.CustContact,CUr)) then begin
+      if (nonblank(CUr.Mobile)) then begin
+        mobile = CUr.Mobile;
+      end;
+    end;    
+  end;
+  if (blank(mobile)) then begin
+    CUr.Code = QTr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (nonblank(CUr.Mobile)) then begin
+        mobile = CUr.Mobile;
+      end;
+      if (blank(mobile)) then begin
+        CUr.Name = QTr.CustContact;
+        if (ReadFirstKey("Name",CUr,1,true)) then begin
+          if (nonblank(CUr.Mobile)) then begin
+            mobile = CUr.Mobile;
+          end;
+        end;
+      end;
+    end;
+  end;         
+  if (blank(mobile)) then begin
+    testf = false;
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BAQTb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BAQTb.LTxtCode);
+    end;
+  end;
+LSMSWhenQT_Contact:;  
+  return;
+end;
+
+updating procedure SMSWhenQT_Internal(record QTVc QTr,Integer smstype,string systemmobile)
+begin
+  record BAQTIntBlock BAQTIntb;
+  string 255 mobile;
+  record CUVc CUr;
+  record LTxtVc LTxtr;
+  Boolean testf,usf;
+  Integer i,rwcnt,line,wn;
+  record UserVc Userr;
+
+  BlockLoad(BAQTIntb);
+  if (BAQTIntb.SMS==0) then begin
+    goto LSMSWhenQT_Internal;
+  end;
+  if (nonblank(BAQTIntb.QuoteClass)) then begin
+    if (QTr.QuoteClass!=BAQTIntb.QuoteClass) then begin
+      goto LSMSWhenQT_Internal;
+    end;
+  end;
+  if (nonblank(BAQTIntb.CClass)) then begin
+    CUr.Code = QTr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (SetInSet(BAQTIntb.CClass,CUr.Classification)==false) then begin goto LSMSWhenQT_Internal; end;
+    end;
+  end;
+  testf = false;
+  if (nonblank(BAQTIntb.LImit)) then begin
+    if (QTr.Sum4>BAQTIntb.LImit) then begin testf = true; end;
+  end;
+  if (nonblank(BAQTIntb.GPLImit)) then begin
+    if (QTr.TotGP<BAQTIntb.GPLImit) then begin testf = true; end;
+  end;  
+  Userr.Code = BAQTIntb.User;
+  usf = ReadFirstMain(Userr,1,true);
+  if (usf==false) then begin
+    Userr.Code = QTr.SalesMan;
+    usf = ReadFirstMain(Userr,1,true);
+  end;
+  if (usf) then begin
+    CUr.Code = Userr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      mobile = CUr.Mobile;
+    end;
+    if (blank(mobile)) then begin
+      mobile = Userr.Phone1;
+    end;
+    if (blank(mobile)) then begin
+      mobile = Userr.Phone2;
+    end;
+  end;
+  if (blank(mobile)) then begin
+    testf = false;
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BAQTIntb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BAQTIntb.LTxtCode);
+    end;
+  end;
+LSMSWhenQT_Internal:;  
+  return;
+end;
+
+global
+updating procedure SMSWhenQT(record QTVc QTr,Integer action)
+begin
+  record BARulesBlock BARb;
+
+  BlockLoad(BARb);
+  if (BARb.SMS==0) then begin
+    goto LSMSWhenQT;
+  end;
+  switch (action) begin
+    case 1: if (BARb.SMS!=1) then begin goto LSMSWhenQT; end;
+    case 2: if (BARb.SMS!=2) then begin goto LSMSWhenQT; end;
+  end;
+  SMSWhenQT_Contact(QTr,BARb.SMS,BARb.SystemMobile);
+  SMSWhenQT_Internal(QTr,BARb.SMS,BARb.SystemMobile);
+LSMSWhenQT:;  
+  return;
+end;
+
+updating procedure SMSWhenOY_Contact(record OYVc OYr,Integer smstype,string systemmobile)
+begin
+  record BAQTBlock BAQTb;
+  string 255 mobile;
+  record CUVc CUr;
+  record LTxtVc LTxtr;
+  Boolean testf;
+  Integer i,rwcnt,line,wn;
+
+  BlockLoad(BAQTb);
+  if (BAQTb.SMS==0) then begin
+    goto LSMSWhenOY_Contact;
+  end;
+  if (nonblank(BAQTb.QuoteClass)) then begin
+    if (OYr.QuoteClass!=BAQTb.QuoteClass) then begin
+      goto LSMSWhenOY_Contact;
+    end;
+  end;
+  if (nonblank(BAQTb.CClass)) then begin
+    CUr.Code = OYr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (SetInSet(BAQTb.CClass,CUr.Classification)==false) then begin goto LSMSWhenOY_Contact; end;
+    end;
+  end;
+  testf = false;
+  if (nonblank(BAQTb.LImit)) then begin
+    if (OYr.Sum4>BAQTb.LImit) then begin testf = true; end;
+  end;
+  if (nonblank(OYr.CustContact)) then begin
+    if (FindCustomerRelation(OYr.CustCode,OYr.CustContact,CUr)) then begin
+      if (nonblank(CUr.Mobile)) then begin
+        mobile = CUr.Mobile;
+      end;
+    end;    
+  end;
+  if (blank(mobile)) then begin
+    CUr.Code = OYr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (nonblank(CUr.Mobile)) then begin
+        mobile = CUr.Mobile;
+      end;
+      if (blank(mobile)) then begin
+        CUr.Name = OYr.CustContact;
+        if (ReadFirstKey("Name",CUr,1,true)) then begin
+          if (nonblank(CUr.Mobile)) then begin
+            mobile = CUr.Mobile;
+          end;
+        end;
+      end;
+    end;
+  end;         
+  if (blank(mobile)) then begin
+    testf = false;
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BAQTb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BAQTb.LTxtCode);
+    end;
+  end;
+LSMSWhenOY_Contact:;  
+  return;
+end;
+
+updating procedure SMSWhenOY_Internal(record OYVc OYr,Integer smstype,string systemmobile)
+begin
+  record BAQTIntBlock BAQTIntb;
+  string 255 mobile;
+  record CUVc CUr;
+  record LTxtVc LTxtr;
+  Boolean testf,usf;
+  Integer i,rwcnt,line,wn;
+  record UserVc Userr;
+
+  BlockLoad(BAQTIntb);
+  if (BAQTIntb.SMS==0) then begin
+    goto LSMSWhenOY_Internal;
+  end;
+  if (nonblank(BAQTIntb.QuoteClass)) then begin
+    if (OYr.QuoteClass!=BAQTIntb.QuoteClass) then begin
+      goto LSMSWhenOY_Internal;
+    end;
+  end;
+  if (nonblank(BAQTIntb.CClass)) then begin
+    CUr.Code = OYr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (SetInSet(BAQTIntb.CClass,CUr.Classification)==false) then begin goto LSMSWhenOY_Internal; end;
+    end;
+  end;
+  testf = false;
+  if (nonblank(BAQTIntb.LImit)) then begin
+    if (OYr.Sum4>BAQTIntb.LImit) then begin testf = true; end;
+  end;
+  if (nonblank(BAQTIntb.GPLImit)) then begin
+    if (OYr.TotGP<BAQTIntb.GPLImit) then begin testf = true; end;
+  end;  
+  Userr.Code = BAQTIntb.User;
+  usf = ReadFirstMain(Userr,1,true);
+  if (usf==false) then begin
+    Userr.Code = OYr.SalesMan;
+    usf = ReadFirstMain(Userr,1,true);
+  end;
+  if (usf) then begin
+    CUr.Code = Userr.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      mobile = CUr.Mobile;
+    end;
+    if (blank(mobile)) then begin
+      mobile = Userr.Phone1;
+    end;
+    if (blank(mobile)) then begin
+      mobile = Userr.Phone2;
+    end;
+  end;
+  if (blank(mobile)) then begin
+    testf = false;
+  end;
+  if (testf) then begin
+    switch (smstype) begin
+      case 1: testf = SendSMSFromSystem(systemmobile,mobile,"",BAQTIntb.LTxtCode);
+      case 2: OpenNewSMS(systemmobile,mobile,BAQTIntb.LTxtCode);
+    end;
+  end;
+LSMSWhenOY_Internal:;  
+  return;
+end;
+
+global
+updating procedure SMSWhenOY(record OYVc OYr,Integer action)
+begin
+  record BARulesBlock BARb;
+
+  BlockLoad(BARb);
+  if (BARb.SMS==0) then begin
+    goto LSMSWhenOY;
+  end;
+  switch (action) begin
+    case 1: if (BARb.SMS!=1) then begin goto LSMSWhenOY; end;
+    case 2: if (BARb.SMS!=2) then begin goto LSMSWhenOY; end;
+  end;
+  SMSWhenOY_Contact(OYr,BARb.SMS,BARb.SystemMobile);
+  SMSWhenOY_Internal(OYr,BARb.SMS,BARb.SystemMobile);
+LSMSWhenOY:;  
+  return;
+end;
+
+global
+updating procedure SMSWhenNotProperlyTerminated()
+begin
+  record BASysIntBlock BASysIntb;
+  Boolean testf;
+
+  BlockLoad(BASysIntb);
+  if (BASysIntb.SMS==0) then begin
+    goto LSMSWhenNotProperlyTerminated;
+  end;
+  testf = SendSMSFromSystem(BASysIntb.SystemMobile,BASysIntb.SMSNumbers,USetStr(20233),BASysIntb.LTxtCode);
+LSMSWhenNotProperlyTerminated:; 
+  return;
+end;
+
+function Boolean IsEmailsQueueStopped()
+begin
+  Boolean res;
+  record EMailQueVc EMQr;
+  LongInt aminutes,bminutes;
+
+  if (RecordsInIndex("EMailQueVc","SerNr")>0) then begin
+    EMQr.EMailSent = 0;
+    res = ReadFirstKey("Sending",EMQr,1,true);
+    if (res==false) then begin
+      EMQr.EMailSent = 2;
+      res = ReadFirstKey("Sending",EMQr,1,true);
+    end;
+    if (res) then begin
+      res = false;
+      if (EMQr.TransDate<CurrentDate) then begin res = true; end;
+      if (res==false) then begin
+        aminutes = TimeToMinutes(EMQr.TransTime);
+        bminutes = TimeToMinutes(CurrentTime);
+        if ((bminutes-aminutes)>2) then begin res = true; end;
+      end;
+    end;
+  end;   
+  IsEmailsQueueStopped = res;   
+  return;
+end;
+
+function Boolean AreEInvoicesNotSent()
+begin
+  Boolean res,found;
+  record EInvoiceQueVc EIQr;
+  val hdiff;
+  
+  found = true;
+  EIQr.Status = 0;
+  while (LoopBackKey("Status",EIQr,1,found)) begin
+    if (EIQr.Status!=0) then begin found = false; end;
+    if (found) then begin
+      hdiff = -HoursDiff(CurrentDate,CurrentTime,EIQr.CreationDate,EIQr.CreationTime);
+      if (hdiff>24) then begin
+        res = true;
+        found = false;
+      end;
+    end;
+  end;
+  AreEInvoicesNotSent = res;   
+  return;
+end;
+
+global
+procedure InternalSystemAlertsIdleTask(string arg)
+begin
+  record MailSettingsBlock MailSb;
+  record BASysIntVc BASIr;
+  record ConfVc Confr;
+  Boolean found,postmasterf,testf; 
+  
+  if (CountRecords("BASysIntVc")>0) then begin
+  BlockLoad(MailSb);
+  if (nonblank(MailSb.Postmaster)) then begin
+    Confr.AddrName = MailSb.Postmaster;
+    postmasterf = ReadFirstKey("AddrName",Confr,1,true);
+  end;
+  found = true;
+  while (LoopKey("ActSerNr",BASIr,1,found)) begin
+    if (found) then begin
+      testf = false;
+      switch (BASIr.Triger) begin
+        case "kBATrigerUnexpectedSytemRestart":
+          if (LastSesTerminated!=0) then begin testf = true; end;
+        case "kBATrigerEmailsQueueStopped":
+          testf = IsEmailsQueueStopped;
+        case "kBATrigerEInvoicesQueueStopped":
+          if (TaskExists("SendEInvoice")==false) then begin testf = true; end;
+        case "kBATrigerEInvoicesNotSent":
+          testf = AreEInvoicesNotSent;
+        otherwise
+          testf = OuterInternalSystemAlertTest(BASIr);
+      end;
+      
+      if (testf) then begin
+        switch (BASIr.Triger) begin
+          case "kBATrigerUnexpectedSytemRestart":
+            switch (BASIr.Action) begin
+              case kBAActionSendSMS:
+                testf = qupdating.SendSMSFromSystem(BASIr.SystemMobile,BASIr.SMSNumbers,USetStr(20233),BASIr.LTxtCode);
+              case kBAActionSendEmail:
+                if (postmasterf and nonblank(BASIr.ActType)) then begin
+                  qupdating.StopEmailQueueActivity(Confr.AddrCode,USetStr(20233),BASIr.ActType);
+                end;
+            end;
+          case "kBATrigerEmailsQueueStopped":
+            switch (BASIr.Action) begin
+              case kBAActionSendSMS:
+                testf = qupdating.SendSMSFromSystem(BASIr.SystemMobile,BASIr.SMSNumbers,USetStr(20284),BASIr.LTxtCode);
+              case kBAActionSendEmail:
+                if (postmasterf and nonblank(BASIr.ActType)) then begin
+                  qupdating.StopEmailQueueActivity(Confr.AddrCode,USetStr(20284),BASIr.ActType);
+                end;
+            end;
+          case "kBATrigerEInvoicesQueueStopped":
+            switch (BASIr.Action) begin
+              case kBAActionSendSMS:
+                testf = qupdating.SendSMSFromSystem(BASIr.SystemMobile,BASIr.SMSNumbers,USetStr(20285),BASIr.LTxtCode);
+              case kBAActionSendEmail:
+                if (postmasterf and nonblank(BASIr.ActType)) then begin
+                  qupdating.StopEmailQueueActivity(Confr.AddrCode,USetStr(20285),BASIr.ActType);
+                end;
+            end;
+          case "kBATrigerEInvoicesNotSent":
+            switch (BASIr.Action) begin
+              case kBAActionSendSMS:
+                testf = qupdating.SendSMSFromSystem(BASIr.SystemMobile,BASIr.SMSNumbers,USetStr(20288),BASIr.LTxtCode);
+              case kBAActionSendEmail:
+                if (postmasterf and nonblank(BASIr.ActType)) then begin
+                  qupdating.StopEmailQueueActivity(Confr.AddrCode,USetStr(20288),BASIr.ActType);
+                end;
+            end;
+          otherwise
+            OuterInternalSystemAlertAction(BASIr,Confr,postmasterf);
+        end;
+      end;
+    end;
+  end;
+  end;
+  return;
+end;

@@ -1,0 +1,226 @@
+procedure UpdatePMBlock(Record PMBlock PayModes,string pm,val Valor)
+Begin
+  Row PMBlock PayModesrw;
+  Integer j,rows,ret;
+  
+  rows = MatRowCnt(PayModes);
+  for (j=0;j<rows;j=j+1) begin
+    MatRowGet(PayModes,j,PayModesrw);
+    if (PayModesrw.Code == pm)then begin
+      PayModesrw.TAX = PayModesrw.TAX + Valor;
+      MatRowPut(PayModes,j,PayModesrw);
+      j       = rows;
+    end;
+  end;
+  Return;
+end;
+
+function integer GetPMNumber(String pm)
+Begin
+  Record PMBlock PayModes;
+  Row PMBlock PayModesrw;
+  Integer j,rows,ret;
+  
+  Blockload(PayModes);
+  rows = MatRowCnt(PayModes);
+  for (j=0;j<rows;j=j+1) begin
+    MatRowGet(PayModes,j,PayModesrw);
+    if (PayModesrw.Code == pm)then begin
+      ret     = j;
+      j       = rows;
+    end;
+  end;
+  GetPMNumber = ret;
+  Return;
+end;
+
+function boolean HotelCashSelect(Record RcVc RepSpec,Record IVVc IVr,var Boolean foundf) 
+begin
+  boolean res;
+  
+  res = false;
+  If (IVr.TransDate>RepSpec.sEndDate) then begin
+    foundf = false;
+  end else begin
+    if (IVr.Invalid==0) then begin
+      if ((RepSpec.flags[2]<>0) or (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT)) then begin
+        if ((RepSpec.f2==IVr.Sign) or blank(RepSpec.f2)) then begin
+          if ((RepSpec.f3==IVr.PayDeal) or blank(RepSpec.f3)) then begin
+            if ((RepSpec.long1<IVr.SerNr) or (RepSpec.long1==-1)) then begin
+              res = true;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  HotelCashSelect = res;  
+  return;
+end;
+
+procedure PrintCashResults(Record PMBlock PayModes)
+Begin
+  Row PMBlock PayModesrw;
+  Integer j,rows,ret;
+  
+  EndFormat;
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(12470),false);
+  StartFormat(15);
+  OutString(0,0,USetStr(12471),false);
+  OutString(2,0,"",false);
+  OutString(3,0,USetStr(12469),true);
+  EndFormat;
+  Gray_Divider(0,1);
+
+  rows = MatRowCnt(PayModes);
+  for (j=0;j<rows;j=j+1) begin
+    MatRowGet(PayModes,j,PayModesrw);
+    if (PayModesrw.TAX<>0)then begin
+      StartFormat(15);
+      OutString(0,0,PayModesrw.Code,false);
+      OutString(2,0,PayModesrw.Comment,false);
+      OutVal(8,0,PayModesrw.TAX,M4Val,true);
+      EndFormat;
+    end;
+  end;
+  Return;
+end;
+
+global
+procedure HotelCashRn(record RcVc RepSpec)
+begin
+  Record IVVc IVr;
+  Row IVVc IVrw;
+  Record IPVc IPr;
+  Row IPVc IPrw;
+  Boolean TsHr,Skip;
+  Integer i,rows,j;
+  String 40 PMode;
+  val deductDownPaid,tmp;
+  Record PMBlock PayModes;
+  Row PMBlock PayModesrw;
+
+  StartReportJob(USetStr(12460));
+  EndHeader;
+
+  SetRepCol(2,30);
+  SetRepCol(3,100);
+  SetRepCol(4,170);  
+  SetRepCol(5,240);  
+  SetRepCol(8,480);  
+
+  TsHr = true;
+  i = 0;
+
+  Blockload(PayModes);
+  rows = MatRowCnt(PayModes);
+  for (j=0;j<rows;j=j+1) begin
+    matrowget(PayModes,j,PayModesrw);
+    PayModesrw.TAX = 0;
+    matrowput(PayModes,j,PayModesrw);
+  end;
+  
+  StartFormat(15);
+  EndFormat;
+
+  if (RepSpec.flags[1]==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(12461),false);
+    OutString(2,0,USetStr(12462),false);
+    OutString(3,0,USetStr(12463),false);
+    OutString(4,0,USetStr(12464),false);
+    OutString(5,0,USetStr(12465),false);
+    OutString(8,0,USetStr(12466),true);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+ 
+  i = 1;
+  TsHr = true;
+  IVr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",IVr,1,TsHr)) begin
+    
+    if HotelCashSelect(RepSpec,IVr,TsHr) then begin 
+
+      deductDownPaid = 0;
+
+      rows = MatrowCnt(IVr);
+      for (i=0;i<rows;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        if (IVrw.stp==6) then begin
+          deductDownPaid = deductDownPaid + IVrw.Sum;
+        end;
+      end;
+      tmp = IVr.Sum4 - deductDownPaid;
+      UpdatePMBlock(PayModes,IVr.PayDeal,tmp);
+      if (RepSpec.flags[1]==0) then begin
+        StartFormat(15);
+        OutString(0,0,USetStr(12467),false);
+        OutLongInt(2,"DblCustPS2",IVr.SerNr,false);
+        OutString(3,0,IVr.TransDate,false);
+        if (IVr.JobNr<>-1) then begin
+          OutString(4,"DblJobVc",IVr.JobNr,false);
+        end;
+        OutString(5,0,IVr.Addr0,false);
+        OutVal(8,0,IVr.Sum4 - deductDownPaid,M4Val,true);
+        EndFormat;
+      end;  
+    end;   
+  end;
+
+  TsHr = true;
+  IPr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",IPr,1,TsHr)) begin
+
+     Skip = false;
+     If (IPr.TransDate>RepSpec.sEndDate) then begin
+       Skip = true;
+       TsHr = false;
+     end;
+     if ((RepSpec.f2<>IPr.Sign) and nonblank(RepSpec.f2)) then begin
+       Skip = true;
+     end;
+     if ((RepSpec.long2>IPr.SerNr) and (RepSpec.long2<>-1)) then begin
+       Skip = true;
+     end;
+     
+     if (not skip) then begin 
+
+       rows = MatrowCnt(IPr);
+       for (i=0;i<rows;i=i+1) begin
+         MatRowGet(IPr,i,IPrw);
+         
+         PMode = IPr.PayMode;
+         if nonblank(IPrw.PayMode) then begin
+           PMode = IPrw.PayMode;
+         end;
+         if ((RepSpec.f3==PMode) or blank(RepSpec.f3)) then begin
+
+           UpdatePMBlock(PayModes,PMode,IPrw.RecVal);
+           if (RepSpec.flags[1]==0) then begin
+             StartFormat(15);
+             OutString(0,0,USetStr(12468),false);
+             OutLongInt(2,"DblIPVc",IPr.SerNr,false);
+             OutString(3,0,IPr.TransDate,false);
+             if (IPrw.CUPNr<>-1) then begin
+               OutString(4,"DblJobVc",IPrw.CUPNr,false);
+             end;  
+             OutString(5,0,IPrw.CustName,false);
+             OutVal(8,0,IPrw.RecVal,M4Val,true);
+             EndFormat;
+           end;
+         end;  
+       end;  
+     end;   
+  end;
+
+  PrintCashResults(PayModes);
+
+  Gray_Divider(0,1);
+  StartFormat(15);
+
+  EndJob;
+  return;
+end;

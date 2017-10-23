@@ -1,0 +1,594 @@
+external function roundmode GetCostRoundMode(record RoundBlock);
+external function roundmode SetRoundModeD(Integer);
+external function val FindCostPrice(string,string,string,val,val,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external procedure Base1ToBase2(var val,Date,var val);
+
+procedure FindWeighdPrice(string item,string location,var val avgp,Integer curncytday,Date todatp,val pricefactorp,var val avgp2,record CostAccBlock CAb,record BaseCurBlock BCb)
+BEGIN
+  record PUVc PUr;
+  row PUVc PUrw;
+  record RetVc Retr;
+  row RetVc Retrw;
+  record ProdVc Prodr;
+  row ProdVc Prodrw;
+  record SRVc SRr;
+  row SRVc SRrw;
+  record StockMovVc SMr;
+  row StockMovVc SMrw;
+  record ItemHistVc IHr;
+  Boolean found;
+  Integer i,rwcnt;
+  val cost,incost,oldcost;
+  val cost2,incost2,oldcost2,tempcost2;
+  val curinstock,rowqty;
+  val temp,frrate,to1,to2,br1,br2;
+  Boolean testf;
+  date wdate;
+  string 200 thelocation;
+
+  IHr.ArtCode = item;
+  found = true;
+  while (LoopKey("ArtCode",IHr,1,found)) begin
+    if (found) then begin
+      if (IHr.ArtCode!=item) then begin found = false; end;
+    end;
+    if (found) then begin
+      testf = true;
+      if (nonblankdate(todatp)) then begin
+        if (IHr.TransDate>todatp) then begin testf = false; end;
+      end;
+      if (IHr.StockAffectf==0) then begin testf = false; end;
+      if (IHr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        if (IHr.FileName=="ProdVc") then begin
+          Prodr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(Prodr,1,true)) then begin
+            if ((blank(location)) or (location==Prodr.Location)) then begin
+            rwcnt = MatRowCnt(Prodr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(Prodr,i,Prodrw);
+              if (Prodrw.Item==item) then begin
+                if (Prodrw.OutQty>0) then begin
+                  switch (Prodr.RowsHoldActualQty) begin
+                    case 1: rowqty = Prodrw.OutQty;
+                    otherwise rowqty = Prodr.Qty*Prodrw.OutQty;
+                  end;
+                  oldcost = curinstock*cost;
+                  incost = rowqty*Prodrw.ItemCost;
+                  incost = incost + oldcost;
+                  curinstock = curinstock + rowqty;
+                  cost = incost/curinstock;
+                  
+                  tempcost2 = rowqty*Prodrw.ItemCost;
+
+                  if (nonblank(BCb.BaseCur2)) then begin
+                    Base1ToBase2(temp,IHr.TransDate,incost2);
+                  end else begin
+                    incost2 = blankval;
+                  end;
+                  incost2 = incost2 + oldcost2;  
+                  cost2 = incost2/curinstock;
+                  oldcost2 = curinstock*cost2;
+                end;
+                if (Prodrw.InQty>0) then begin                  
+                  switch (Prodr.RowsHoldActualQty) begin
+                    case 1: rowqty = Prodrw.InQty;
+                    otherwise rowqty = Prodr.Qty*Prodrw.InQty;
+                  end;      
+                  curinstock = curinstock - rowqty;
+                end;
+              end;
+            end;
+            end;
+          end;
+        end;
+        if (IHr.FileName=="PUVc") then begin
+          PUr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(PUr,1,true)) then begin
+            rwcnt = MatRowCnt(PUr);
+//            for (i=0;i<rwcnt;i=i+1) begin
+              i = IHr.Row;
+              MatRowGet(PUr,i,PUrw);
+              if (blank(PUrw.Location)) then begin
+                thelocation = PUr.Location;
+              end else begin
+                thelocation = PUrw.Location;
+              end;
+              if ((blank(location)) or (location==thelocation)) then begin
+                if ((PUrw.ArtCode==item) and
+                    (PUrw.Quant>0) and (PUrw.ovst==0)) then begin
+                  if (curncytday!=0) then begin
+                    GetFullCurncyRate(PUr.CurncyCode,CurrentDate,frrate,to1,to2,br1,br2);
+                    temp = DivRateToBase1(PUr.CurncyCode,PUrw.CostPrice,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    incost = MulRateToBase1(PUr.CurncyCode,temp,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    wdate = CurrentDate;
+                  end else begin
+                    incost = PUrw.CostPrice;
+                    wdate = IHr.TransDate;
+                  end;
+                  if (PUrw.Quant<=0) then begin
+                    curinstock = curinstock + PUrw.Quant; 
+                  end else begin
+                    oldcost = curinstock*cost;
+                    tempcost2 = PUrw.Quant*incost;
+                    if (nonblank(BCb.BaseCur2)) then begin
+                      Base1ToBase2(tempcost2,wdate,incost2);
+                    end else begin
+                      incost2 = blankval;
+                    end;
+                    incost = PUrw.Quant*incost;
+                    incost = incost + oldcost;
+                    curinstock = curinstock + PUrw.Quant;
+                    cost = incost/curinstock;
+                    incost2 = incost2 + oldcost2;  
+                    cost2 = incost2/curinstock;
+                    oldcost2 = curinstock*cost2;
+                  end;
+                  if (pricefactorp!=0) then begin
+                    cost = cost*pricefactorp;
+                    cost2 = cost2*pricefactorp;
+                  end;
+                end;
+              end;
+//            end;
+          end;
+        end;
+        if (IHr.FileName=="SRVc") then begin
+          SRr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(SRr,1,true)) then begin
+            rwcnt = MatRowCnt(SRr);
+//            for (i=0;i<rwcnt;i=i+1) begin
+              i = IHr.Row;
+              MatRowGet(SRr,i,SRrw);
+              if (blank(SRrw.Location)) then begin
+                thelocation = SRr.Location;
+              end else begin
+                thelocation = SRrw.Location;
+              end;
+              if ((blank(location)) or (location==thelocation)) then begin
+                if ((SRrw.ArtCode==item) and (IHr.Qty>0)) then begin
+                  incost = SRrw.NewFIFO;
+                  wdate = IHr.TransDate;
+                  if (SRrw.Qty<=0) then begin
+                    curinstock = curinstock + SRrw.Qty; 
+                  end else begin
+                    oldcost = curinstock*cost;
+                    tempcost2 = SRrw.Qty*incost;
+                    if (nonblank(BCb.BaseCur2)) then begin
+                      Base1ToBase2(tempcost2,wdate,incost2);
+                    end else begin
+                      incost2 = blankval;
+                    end;
+                    incost = SRrw.Qty*SRrw.NewFIFO;
+
+                    curinstock = curinstock + SRrw.Qty - SRrw.Qty;
+                    cost = incost/SRrw.Qty;
+                    incost2 = incost2 + oldcost2;  
+                    cost2 = incost2/curinstock;
+                    oldcost2 = curinstock*cost2;
+                  end;
+                  if (pricefactorp!=0) then begin
+                    cost = cost*pricefactorp;
+                    cost2 = cost2*pricefactorp;
+                  end;
+                end;
+              end;
+//            end;
+          end;
+        end;
+        if (IHr.FileName=="RetVc") then begin
+          Retr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(Retr,1,true)) then begin
+            rwcnt = MatRowCnt(Retr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(Retr,i,Retrw);
+              if ((Retrw.ArtCode==item) and
+                  (Retrw.Quant>0)) then begin
+                if (blank(Retrw.Location)) then begin
+                  thelocation = Retr.Location;
+                end else begin
+                  thelocation = Retrw.Location;
+                end;
+                if ((blank(location)) or (location==thelocation)) then begin
+                  if (curncytday!=0) then begin
+                    GetFullCurncyRate(Retr.CurncyCode,CurrentDate,frrate,to1,to2,br1,br2);
+                    temp = DivRateToBase1(Retr.CurncyCode,Retrw.CostPrice,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    incost = MulRateToBase1(Retr.CurncyCode,temp,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    wdate = CurrentDate;
+                  end else begin
+                    incost = Retrw.CostPrice;
+                    wdate = IHr.TransDate;
+                  end;
+                  if (Retrw.Quant<=0) then begin
+                    curinstock = curinstock + Retrw.Quant;
+                  end else begin
+                    if (CAb.UpdWeightAvFromRet!=0) then begin
+                      oldcost = curinstock*cost;
+                      tempcost2 = Retrw.Quant*incost;
+                      if (nonblank(BCb.BaseCur2)) then begin
+                        Base1ToBase2(tempcost2,wdate,incost2);
+                        Base1ToBase2(oldcost,wdate,oldcost2);
+                      end else begin
+                        incost2 = blankval;
+                        oldcost2 = blankval;
+                      end;
+                      incost = Retrw.Quant*incost;
+                      incost = incost + oldcost;
+                    end;
+                    curinstock = curinstock + Retrw.Quant;
+                    if (CAb.UpdWeightAvFromRet!=0) then begin
+                      cost = incost/curinstock;
+                      incost2 = incost2 + oldcost2;  
+                      cost2 = incost2/curinstock;
+                      oldcost2 = curinstock*cost2;
+                    end;
+                  end;
+                end;
+              end;
+          end;
+        end;
+        end;
+        if (IHr.FileName=="StockMovVc") then begin
+          if (IHr.Qty>0) then begin
+          SMr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(SMr,1,true)) then begin
+            rwcnt = MatRowCnt(SMr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(SMr,i,SMrw);
+              if (SMrw.ArtCode==item) then begin
+                if ((SMrw.SentQuant>0)) then begin
+                  if (curncytday!=0) then begin
+                    GetFullCurncyRate(SMr.CurncyCode,CurrentDate,SMr.FrRate,SMr.ToRateB1,SMr.ToRateB2,SMr.BaseRate1,SMr.BaseRate2);
+                    temp = DivRateToBase1(SMr.CurncyCode,SMrw.SentNewPrice,SMr.FrRate,SMr.ToRateB1,SMr.ToRateB2,SMr.BaseRate1,SMr.BaseRate2,DefaultCurRoundOff);
+                    incost = MulRateToBase1(SMr.CurncyCode,temp,SMr.FrRate,SMr.ToRateB1,SMr.ToRateB2,SMr.BaseRate1,SMr.BaseRate2,DefaultCurRoundOff);
+                    wdate = CurrentDate;
+                  end else begin
+                    incost = SMrw.SentNewPrice;
+                    wdate = IHr.TransDate;
+                  end;
+                  curinstock = curinstock - SMrw.SentQuant;
+                  oldcost = curinstock*cost;
+                  tempcost2 = SMrw.SentQuant*incost;
+
+                  if (nonblank(BCb.BaseCur2)) then begin
+                    Base1ToBase2(tempcost2,wdate,incost2);
+                    Base1ToBase2(oldcost,wdate,oldcost2);
+                  end else begin
+                    incost2 = blankval;
+                    oldcost2 = blankval;
+                  end;
+                  incost = SMrw.SentQuant*incost;
+                  incost = incost + oldcost;
+                  curinstock = curinstock + SMrw.SentQuant;
+                  cost = incost/curinstock;
+                  incost2 = incost2 + oldcost2;  
+                  cost2 = incost2/curinstock;
+                  oldcost2 = curinstock*cost2;
+                end;
+                if ((SMrw.Quant>0)) then begin
+                  if (curncytday!=0) then begin
+                    GetFullCurncyRate(SMr.CurncyCode,CurrentDate,SMr.FrRate,SMr.ToRateB1,SMr.ToRateB2,SMr.BaseRate1,SMr.BaseRate2);
+                    temp = DivRateToBase1(SMr.CurncyCode,SMrw.NewPrice,SMr.FrRate,SMr.ToRateB1,SMr.ToRateB2,SMr.BaseRate1,SMr.BaseRate2,DefaultCurRoundOff);
+                    incost = MulRateToBase1(SMr.CurncyCode,temp,SMr.FrRate,SMr.ToRateB1,SMr.ToRateB2,SMr.BaseRate1,SMr.BaseRate2,DefaultCurRoundOff);
+                    wdate = CurrentDate;
+                  end else begin
+                    incost = SMrw.NewPrice;
+                    wdate = IHr.TransDate;
+                  end;
+                  curinstock = curinstock - SMrw.Quant;
+                  oldcost = curinstock*cost;
+                  tempcost2 = SMrw.Quant*incost;
+
+                  if (nonblank(BCb.BaseCur2)) then begin
+                    Base1ToBase2(tempcost2,wdate,incost2);
+                    Base1ToBase2(oldcost,wdate,oldcost2);
+                  end else begin
+                    incost2 = blankval;
+                    oldcost2 = blankval;
+                  end;
+
+                  incost = SMrw.Quant*incost;
+                  incost = incost + oldcost;
+
+
+                  curinstock = curinstock + SMrw.Quant;
+                  cost = incost/curinstock;  
+                                  
+                  incost2 = incost2 + oldcost2;  
+                  cost2 = incost2/curinstock;
+                  oldcost2 = curinstock*cost2;
+                end;
+                                
+              end;
+            end;
+          end;
+          end;
+        end;
+        
+        if (IHr.FileName=="SHVc") then begin
+          curinstock = curinstock + IHr.Qty;
+        end;
+        if (IHr.FileName=="SDVc") then begin
+          curinstock = curinstock + IHr.Qty;
+        end;
+        if (IHr.FileName=="IVVc") then begin
+          curinstock = curinstock + IHr.Qty;
+        end;
+        if (IHr.FileName=="INTransferAVcStock") then begin
+          curinstock = curinstock + IHr.Qty;
+        end;
+        if (IHr.FileName=="StockTakeVc") then begin
+//          curinstock = curinstock + IHr.Qty; I think it is wrong
+        end;
+        if (curinstock<=0) then begin
+          curinstock = blankval;
+        end;
+      end;  
+    end;
+  end;
+  avgp = cost;
+  avgp2 = cost2;
+  RETURN;
+END;
+
+procedure FindLastPurchPrice(string item,string location,Integer purc,var val cost,Integer curncytday,Date todatp,val pricefactorp)
+BEGIN
+  record PUVc PUr;
+  row PUVc PUrw;
+  record RetVc Retr;
+  row RetVc Retrw;
+  record ProdVc Prodr;
+  row ProdVc Prodrw;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  record ItemHistVc IHr;
+  Boolean found;
+  Boolean testf;
+  Integer i,rwcnt;
+  val temp,frrate,to1,to2,br1,br2;
+  string 200 thelocation;
+
+  IHr.ArtCode = item;
+  found = true;
+  while (LoopBackKey("ActiveQty",IHr,1,found)) begin
+    if (found) then begin
+      if (IHr.ArtCode!=item) then begin found = false; end;
+    end;
+    if (IHr.RemQty<0) then begin
+      if ((blank(IHr.SerialNr)) and (blank(IHr.Variety))) then begin // If a normal stocked item has a record with negative RemQty, there is no need to read further
+        found = false;
+      end;
+    end;
+    if (found) then begin
+      testf = true;
+      if (nonblankdate(todatp)) then begin
+        if (IHr.TransDate>todatp) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if ((IHr.FileName=="ProdVc") and (purc==0)) then begin
+          Prodr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(Prodr,1,true)) then begin
+            if ((blank(location)) or (location==Prodr.Location)) then begin
+              rwcnt = MatRowCnt(Prodr);
+              for (i=rwcnt-1;i>=0;i=i-1) begin
+                MatRowGet(Prodr,i,Prodrw);
+                if ((Prodrw.Item==item) and
+                    (Prodrw.OutQty>0)) then begin
+                  cost = Prodrw.ItemCost;
+                  goto LFindLastPurchPrice;
+                end;
+              end;
+            end;
+          end;
+        end;
+        if (IHr.FileName=="PUVc") then begin
+          PUr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(PUr,1,true)) then begin
+            rwcnt = MatRowCnt(PUr);
+//            for (i=rwcnt-1;i>=0;i=i-1) begin
+              i = IHr.Row;
+              MatRowGet(PUr,i,PUrw);
+              if (blank(PUrw.Location)) then begin
+                thelocation = PUr.Location;
+              end else begin
+                thelocation = PUrw.Location;
+              end;
+              if ((blank(location)) or (location==PUr.Location)) then begin
+                if ((PUrw.ArtCode==item) and
+                    (PUrw.Quant>0) and (PUrw.ovst==0)) then begin
+                  if (purc==1) then begin
+                    if (curncytday!=0) then begin
+                      GetFullCurncyRate(PUr.CurncyCode,CurrentDate,frrate,to1,to2,br1,br2);
+                    end else begin
+                      frrate = PUr.FrRate;
+                      to1 = PUr.ToRateB1;
+                      to2 = PUr.ToRateB2;
+                      br1 = PUr.BaseRate1;
+                      br2 = PUr.BaseRate2;
+                    end;
+                    cost = MulRateToBase1(PUr.CurncyCode,PUrw.UPrice,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                  end else begin
+                    if (curncytday!=0) then begin
+                      GetFullCurncyRate(PUr.CurncyCode,CurrentDate,frrate,to1,to2,br1,br2);
+                      temp = DivRateToBase1(PUr.CurncyCode,PUrw.CostPrice,PUr.FrRate,PUr.ToRateB1,PUr.ToRateB2,PUr.BaseRate1,PUr.BaseRate2,DefaultCurRoundOff);
+                      cost = MulRateToBase1(PUr.CurncyCode,temp,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    end else begin
+                      cost = PUrw.CostPrice;
+                    end;
+                  end;
+                  if (pricefactorp!=0) then begin cost = cost*pricefactorp; end;
+                  goto LFindLastPurchPrice;
+                end;
+              end;
+//            end;
+          end;
+        end;
+        if ((IHr.FileName=="RetVc") and (purc==0)) then begin
+          Retr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(Retr,1,true)) then begin
+            if ((blank(location)) or (location==Retr.Location)) then begin
+              rwcnt = MatRowCnt(Retr);
+              for (i=rwcnt-1;i>=0;i=i-1) begin
+                MatRowGet(Retr,i,Retrw);
+                if ((Retrw.ArtCode==item) and
+                    (Retrw.Quant>0)) then begin
+                  if (curncytday!=0) then begin
+                    GetFullCurncyRate(Retr.CurncyCode,CurrentDate,frrate,to1,to2,br1,br2);
+                    temp = DivRateToBase1(Retr.CurncyCode,Retrw.CostPrice,Retr.FrRate,Retr.ToRateB1,Retr.ToRateB2,Retr.BaseRate1,Retr.BaseRate2,DefaultCurRoundOff);
+                    cost = MulRateToBase1(Retr.CurncyCode,temp,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                  end else begin
+                    cost = Retrw.CostPrice;
+                  end;
+                  goto LFindLastPurchPrice;
+                end;
+              end;
+            end;
+          end;
+        end;
+        if ((IHr.FileName=="StockMovVc") and (purc==0)) then begin
+          StockMovr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(StockMovr,1,true)) then begin
+            if ((blank(location)) or (location==StockMovr.ToLocation)) then begin
+              rwcnt = MatRowCnt(StockMovr);
+              for (i=rwcnt-1;i>=0;i=i-1) begin
+                MatRowGet(StockMovr,i,StockMovrw);
+                if ((StockMovrw.ArtCode==item) and
+                    (StockMovrw.Quant>0)) then begin
+                  if (curncytday!=0) then begin
+                    GetFullCurncyRate(StockMovr.CurncyCode,CurrentDate,frrate,to1,to2,br1,br2);
+                  end else begin
+                    frrate = StockMovr.FrRate;
+                    to1 = StockMovr.ToRateB1;
+                    to2 = StockMovr.ToRateB2;
+                    br1 = StockMovr.BaseRate1;
+                    br2 = StockMovr.BaseRate2;
+                  end;
+                  cost = MulRateToBase1(StockMovr.CurncyCode,StockMovrw.NewPrice,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                  goto LFindLastPurchPrice;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;  
+    end;
+  end;
+LFindLastPurchPrice:;
+  RETURN;
+END;
+
+global
+updating procedure UpdInpriceMn(record RcVc RepSpec)
+BEGIN
+  record RoundBlock RoundRec;
+  record INVc oldINr;
+  record INVc INr;
+  record ItemStatusVc ISr;
+  Boolean TrHs,testf,curncytday;
+  val cost,weightcost,weightcostb2,cost2;
+  string 255 fromart,toart;
+  string 255 frcc,tocc;
+  Date blankd;
+  Integer flushcnt;
+  record CostAccBlock CAb;
+  record BaseCurBlock BCb;
+
+  BlockLoad(BCb);
+  BlockLoad(RoundRec);
+  BlockLoad(CAb);
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart = LastInRange(RepSpec.f1,20);
+  frcc = FirstInRange(RepSpec.f3,20);
+  tocc = LastInRange(RepSpec.f3,20);
+  INr.Code = fromart;
+  TrHs = true;
+  while (LoopMain(INr,1,TrHs)) begin
+    RecordCopy(oldINr,INr);
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group!=RepSpec.f3) then begin
+          goto L80;
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      if (nonblank(toart)) then begin
+        if (INr.Code>toart) then begin
+          TrHs = false;
+        end;
+      end;      
+    end;
+    if (TrHs) then begin
+      if (INr.ItemType==1) then begin
+        testf = true;
+        if (RepSpec.flags[2]!=0) then begin 
+          FindStockValue(INr.Code,"",ISr);        
+          if (ISr.Instock<=0) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          cost = blankval;
+          weightcost = blankval;
+          weightcostb2 = blankval;
+          switch (RepSpec.flags[3]) begin
+            case 0:
+              switch (INr.UpdateCost) begin
+                case 0: cost = INr.InPrice;
+                case 1: FindLastPurchPrice(INr.Code,"",0,cost,RepSpec.flags[1],blankd,INr.PriceFactor);
+                case 2: FindWeighdPrice(INr.Code,"",cost,RepSpec.flags[1],blankd,INr.PriceFactor,cost2,CAb,BCb);
+                case 3: FindLastPurchPrice(INr.Code,"",1,cost,RepSpec.flags[1],blankd,INr.PriceFactor);
+              end;
+            case 1:
+              FindStockValue(INr.Code,"",ISr); //RepSpec.f2 on Location, this doesn't exist in window 
+              if (RepSpec.flags[1]!=0) then begin
+                curncytday = true;
+              end else begin
+                curncytday = false;
+              end;
+              cost = FindCostPrice(INr.Code,"","",ISr.Instock,0,curncytday);
+              cost = cost/ISr.Instock;
+              Base1ToBase2(cost,CurrentDate,cost2);
+          end;
+          if (RepSpec.flags[4]!=0) then begin
+            if ((RepSpec.flags[3]==0) and (INr.UpdateCost==2)) then begin
+              weightcost = cost;
+              weightcostb2 = cost2;
+            end else begin
+              FindWeighdPrice(INr.Code,"",weightcost,RepSpec.flags[1],blankd,INr.PriceFactor,weightcostb2,CAb,BCb);
+            end;
+            INr.WeighedAvPrice = Round(weightcost,GetCostRoundMode(RoundRec));
+            INr.WeighedAvPrice = weightcost;
+            //WeighedAvPriceB2  
+            
+
+            INr.WeighedAvPriceB2 = Round(weightcostb2,GetCostRoundMode(RoundRec));
+            INr.WeighedAvPriceB2 = weightcostb2;
+          end;
+          switch(INr.UpdateCost) begin
+            case 0:;
+            otherwise
+              cost = Round(cost,GetCostRoundMode(RoundRec));
+              cost2 = Round(cost2,GetCostRoundMode(RoundRec));
+          end;
+          INr.InPrice = cost;
+          if (nonblank(BCb.BaseCur2)) then begin
+            INr.InPriceB2 = cost2;
+          end else begin
+            INr.InPriceB2 = blankval;
+          end;
+          INr.LastPriceChange = CurrentDate;
+          if (RecordUpdate(oldINr,INr,false)==0) then begin
+          end;
+          CheckFlush(flushcnt,10);
+        end;
+      end;
+L80:;
+    end;
+    UserTrace(INr.Code,M4Code);        
+  end;
+  RETURN;
+END;

@@ -1,0 +1,590 @@
+external procedure HTArtGroup(string, var string);
+external procedure HTItemClass(string,var string);
+external function Boolean HasItemClassification();
+external function Boolean HasItemGroups();
+external function Boolean SetInSet2(string,string);
+external function roundmode SetRoundModeD(Integer);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTArts(string, string, var string);
+external procedure HTDepartment(string,var string);
+external procedure HTArtGroup(string, var string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure Find2StockValue(string,string,var val,Date);
+
+function
+Boolean PrintOneItemBatch(record RcVc RepSpec,record INVc INp,string serialnr,var val qp,val uprp,var val sump,string location,Boolean printloc)
+BEGIN
+  record BatchTextVc btr;
+  record LocationVc LocRec;
+  Date bbfd;
+  Boolean res;
+  Boolean testf;
+    
+  testf = true;
+  btr.ArtCode = INp.Code;
+  btr.SerialNr = serialnr;
+  if (ReadFirstMain(btr,2,true)) then begin
+    bbfd = btr.BestBefore;
+    if (DateInRange(bbfd,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+  end;  
+  if(nonblankdate(bbfd))then begin
+  if ((INp.ItemType==1) and (testf)) then begin  
+    if (RepSpec.ArtMode==1) then begin
+      if (printloc) then begin
+        StartFormat(15);
+        EndFormat;
+        StartFormat(15);
+        OutString(0,0,location,false);
+        LocRec.Code = location;
+        if (ReadFirstMain(LocRec,1,true)) then begin
+          OutString(80,0,LocRec.Name,false);
+        end;  
+        EndFormat;
+        Gray_Divider(0,250);
+      end;
+    end;    
+    StartFormat(15);
+    OutString(0,0,INp.Code,false);
+    OutString(60,0,INp.Name,false);
+    OutString(200,0,serialnr,false);
+    OutDate(280,0,bbfd,false);
+    OutVal(360,0,qp,M4UVal,true);
+    OutVal(420,0,uprp,M423Val,true);
+    OutVal(480,0,sump,M4Val,true);
+    EndFormat;
+    res = true;
+  end;
+  end;
+  PrintOneItemBatch = res;
+  RETURN;
+END;
+
+procedure BBListItemsSer(record RcVc RepSpec,record INVc INp,var val sump,var val nrp)
+BEGIN
+  record ItemHistVc IHr;
+  record PUVc PUr;
+  row PUVc PUrw;
+  record RetVc Retr;
+  row RetVc Retrw;
+  record ProdVc Prodr;
+  row ProdVc Prodrw;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  record SRVc SRr;
+  row SRVc SRrw;
+  val rem,q;
+  Boolean found,found2,testf;
+  Integer i,rwcnt;
+  val instock,t,t2,sum;
+  val frrate,to1,to2,br1,br2;
+  string 10 location,curcode;
+  string 10 thelocation;
+  Boolean printloc;
+  Date curdate,blankd;
+  record SerBalVc SerBalr;
+  val serbalq;
+
+  Find2StockValue(INp.Code,RepSpec.f2,instock,blankd);  
+  rem = Round(instock,SetRoundModeD(0));
+  if (rem<=0) then begin 
+    goto LBBListItemsSer;     
+  end;
+  IHr.ArtCode = INp.Code;
+  found = true; 
+  while (LoopBackKey("ActiveQty",IHr,1,found)) begin
+    if (found) then begin
+      if (IHr.ArtCode!=INp.Code) then begin found = false; end;
+    end;  
+    if (found) then begin    
+      testf = true;
+      if (IHr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+      if (IHr.FileName=="PUVc") then begin      
+        PUr.SerNr = IHr.TransNr;
+        if (ReadFirstMain(PUr,1,true)) then begin        
+          rwcnt = MatRowCnt(PUr);
+//          for (i=0;i<rwcnt;i=i+1) begin
+            i = IHr.Row;
+            MatRowGet(PUr,i,PUrw);
+            if (blank(PUrw.Location)) then begin
+              thelocation = PUr.Location;
+            end else begin
+              thelocation = PUrw.Location;
+            end;
+            if (thelocation!=location) then begin
+              location = thelocation;
+              printloc = true;
+            end;
+            if (PUrw.ArtCode==INp.Code) then begin
+              if (nonblank(PUrw.SerialNr)) then begin             
+                serbalq = blankval;
+                SerBalr.Item = INp.Code;
+                SerBalr.Serial = PUrw.SerialNr;
+                if (nonblank(RepSpec.f2)) then begin
+                  SerBalr.Location = RepSpec.f2;
+                  if (ReadFirstMain(SerBalr,3,true)) then begin end;
+                  serbalq = SerBalr.Quant;
+                end else begin
+//                    if (ReadFirstKey("ItemSerial",SerBalr,2,true)) then begin end;
+                  SerBalr.Item = INp.Code;
+                  SerBalr.Serial = PUrw.SerialNr;
+                  found2 = true;
+                  ResetLoop(SerBalr);
+                  while (LoopKey("ItemSerial",SerBalr,2,found2)) begin
+                    if (SerBalr.Item!=INp.Code) then begin found2 = false; end;
+                    if (SerBalr.Serial!=PUrw.SerialNr) then begin found2 = false; end;
+                    if (found2) then begin
+                      serbalq = serbalq + SerBalr.Quant;
+                    end;
+                  end;
+                end;
+                if (serbalq!=0) then begin
+                if (true) then begin
+                  t = rem - serbalq;
+                  if (t<0) then begin
+                    q = rem;
+                  end else begin
+                    q = serbalq;
+                  end;                  
+                end else begin
+                  t = rem - PUrw.Quant;
+                  if (t<0) then begin
+                    q = rem;
+                  end else begin
+                    q = PUrw.Quant;
+                  end;                         
+                end;   
+                if (RepSpec.flags[11]==1) then begin                
+                  if (RepSpec.flags[1]!=0) then begin
+                    curcode = PUr.CurncyCode;
+                    curdate = CurrentDate;
+                    GetFullCurncyRate(curcode,curdate,frrate,to1,to2,br1,br2);
+                    t2 = DivRateToBase1(PUr.CurncyCode,PUrw.CostPrice,PUr.FrRate,PUr.ToRateB1,PUr.ToRateB2,PUr.BaseRate1,PUr.BaseRate2,DefaultCurRoundOff);
+                    t2 = MulRateToBase1(PUr.CurncyCode,t2,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                  end else begin
+                    t2 = PUrw.CostPrice;
+                  end;
+                end else begin
+                  t2 = INp.UPrice1;
+                end;
+                sum = q*t2;	           
+                if (PrintOneItemBatch(RepSpec,INp,PUrw.SerialNr,q,t2,sum,location,printloc)) then begin
+                  sump = sump + sum;
+                  nrp = nrp + q;
+                  printloc = false;
+                end;
+                rem = rem - q;
+                if (rem<=0) then begin goto LBBListItemsSer; end;
+              end;
+            end;
+          end;
+//          end;
+        end;
+      end;
+        if (IHr.FileName=="StockMovVc")then begin
+          StockMovr.SerNr = IHr.TransNr;
+          if (ReadFirstMain(StockMovr,1,true)) then begin
+            i = IHr.Row;
+            MatRowGet(StockMovr,i,StockMovrw);
+            // ???
+            thelocation = IHr.Location;
+            if (thelocation!=location) then begin
+              location = thelocation;
+              printloc = true;
+            end;
+            if (StockMovrw.ArtCode==INp.Code) then begin
+              if (nonblank(StockMovrw.SerialNr)) then begin             
+                serbalq = blankval;
+                SerBalr.Item = INp.Code;
+                SerBalr.Serial = StockMovrw.SerialNr;
+                if (nonblank(RepSpec.f2)) then begin
+                  SerBalr.Location = RepSpec.f2;
+                  if (ReadFirstMain(SerBalr,3,true)) then begin end;
+                  serbalq = SerBalr.Quant;
+                end else begin
+                  SerBalr.Item = INp.Code;
+                  SerBalr.Serial = StockMovrw.SerialNr;
+                  found2 = true;
+                  ResetLoop(SerBalr);
+                  while (LoopKey("ItemSerial",SerBalr,2,found2)) begin
+                    if (SerBalr.Item!=INp.Code) then begin found2 = false; end;
+                    if (SerBalr.Serial!=StockMovrw.SerialNr) then begin found2 = false; end;
+                    if (found2) then begin
+                      serbalq = serbalq + SerBalr.Quant;
+                    end;
+                  end;
+                end;
+                if (serbalq!=0) then begin
+                  if (true) then begin
+                    t = rem - serbalq;
+                    if (t<0) then begin
+                      q = rem;
+                    end else begin
+                      q = serbalq;
+                    end;                  
+                  end else begin
+                    /*
+                    t = rem - StockMovrw.Quant;
+                    if (t<0) then begin
+                      q = rem;
+                    end else begin
+                      q = StockMovrw.Quant;
+                    end;
+                    */                  
+                  end;                
+                  if (RepSpec.flags[11]==1) then begin                
+                    //if (RepSpec.flags[1]!=0) then begin
+                      curcode = StockMovr.CurncyCode;
+                      curdate = CurrentDate;
+                      GetFullCurncyRate(curcode,curdate,frrate,to1,to2,br1,br2);
+                      t2 = DivRateToBase1(StockMovr.CurncyCode,StockMovrw.NewPrice,StockMovr.FrRate,StockMovr.ToRateB1,StockMovr.ToRateB2,StockMovr.BaseRate1,StockMovr.BaseRate2,DefaultCurRoundOff);
+                      t2 = MulRateToBase1(StockMovr.CurncyCode,t2,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    //end else begin
+                     // t2 = StockMovrw.BasePrice;
+                    //end;
+                  end else begin
+                    t2 = INp.UPrice1;
+                  end;
+                  sum = q*t2;	           
+                  if (PrintOneItemBatch(RepSpec,INp,StockMovrw.SerialNr,q,t2,sum,location,printloc)) then begin
+                    sump = sump + sum;
+                    nrp = nrp + q;
+                    printloc = false;
+                  end;
+                  rem = rem - q;
+                  if (rem<=0) then begin 
+                    goto LBBListItemsSer; 
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      if (IHr.FileName=="ProdVc") then begin      
+        Prodr.SerNr = IHr.TransNr;
+        if (ReadFirstMain(Prodr,1,true)) then begin        
+          rwcnt = MatRowCnt(Prodr);
+//          for (i=0;i<rwcnt;i=i+1) begin
+            i = IHr.Row;
+            MatRowGet(Prodr,i,Prodrw);
+            thelocation = Prodr.Location;
+            if (thelocation!=location) then begin
+              location = thelocation;
+              printloc = true;
+            end;
+            if (Prodrw.Item==INp.Code) then begin
+              if (nonblank(Prodrw.SerialNr)) then begin             
+                serbalq = blankval;
+                SerBalr.Item = INp.Code;
+                SerBalr.Serial = Prodrw.SerialNr;
+                if (nonblank(RepSpec.f2)) then begin
+                  SerBalr.Location = RepSpec.f2;
+                  if (ReadFirstMain(SerBalr,3,true)) then begin end;
+                  serbalq = SerBalr.Quant;
+                end else begin
+//                    if (ReadFirstKey("ItemSerial",SerBalr,2,true)) then begin end;
+                  SerBalr.Item = INp.Code;
+                  SerBalr.Serial = Prodrw.SerialNr;
+                  found2 = true;
+                  ResetLoop(SerBalr);
+                  while (LoopKey("ItemSerial",SerBalr,2,found2)) begin
+                    if (SerBalr.Item!=INp.Code) then begin found2 = false; end;
+                    if (SerBalr.Serial!=Prodrw.SerialNr) then begin found2 = false; end;
+                    if (found2) then begin
+                      serbalq = serbalq + SerBalr.Quant;
+                    end;
+                  end;
+                end;
+                if (serbalq!=0) then begin
+                if (true) then begin
+                  t = rem - serbalq;
+                  if (t<0) then begin
+                    q = rem;
+                  end else begin
+                    q = serbalq;
+                  end;                  
+                end else begin
+                  t = rem - Prodrw.OutQty;
+                  if (t<0) then begin
+                    q = rem;
+                  end else begin
+                    q = Prodrw.OutQty;
+                  end;                  
+                end;                
+                if (RepSpec.flags[11]==1) then begin                
+                  if (RepSpec.flags[1]!=0) then begin
+                    t2 = Prodrw.ItemCost;
+                  end else begin
+                    t2 = Prodrw.ItemCost;
+                  end;
+                end else begin
+                  t2 = INp.UPrice1;
+                end;
+                sum = q*t2;	                
+                if (PrintOneItemBatch(RepSpec,INp,Prodrw.SerialNr,q,t2,sum,location,printloc)) then begin
+                  sump = sump + sum;
+                  nrp = nrp + q;
+                  printloc = false;
+                end;
+                rem = rem - q;
+                if (rem<=0) then begin goto LBBListItemsSer; end;
+                end;
+              end;
+            end;
+//          end;
+        end;
+      end;
+      
+      if (IHr.FileName=="SRVc")then begin
+        SRr.SerNr = IHr.TransNr;
+        if (ReadFirstMain(SRr,1,true)) then begin
+          i = IHr.Row;
+          MatRowGet(SRr,i,SRrw);
+          thelocation = IHr.Location;
+          if (thelocation!=location) then begin
+            location = thelocation;
+            printloc = true;
+          end;
+          if (SRrw.ArtCode==INp.Code) then begin
+            if (nonblank(SRrw.SerialNr)) then begin
+              serbalq = blankval;
+              SerBalr.Item = INp.Code;
+              SerBalr.Serial = SRrw.SerialNr;
+              if (nonblank(RepSpec.f2)) then begin
+                SerBalr.Location = RepSpec.f2;
+                if (ReadFirstMain(SerBalr,3,true)) then begin end;
+                serbalq = SerBalr.Quant;
+              end else begin
+                SerBalr.Item = INp.Code;
+                SerBalr.Serial = SRrw.SerialNr;
+                found2 = true;
+                ResetLoop(SerBalr);
+                while (LoopKey("ItemSerial",SerBalr,2,found2)) begin
+                  if (SerBalr.Item!=INp.Code) then begin found2 = false; end;
+                  if (SerBalr.Serial!=SRrw.SerialNr) then begin found2 = false; end;
+                  if (found2) then begin
+                    serbalq = serbalq + SerBalr.Quant;
+                  end;
+                end;
+              end;
+              if (serbalq!=0) then begin
+                if (true) then begin
+                  t = rem - serbalq;
+                  if (t<0) then begin
+                    q = rem;
+                  end else begin
+                    q = serbalq;
+                  end;
+                end;
+                t2 = INp.UPrice1;
+                sum = q*t2;
+                if (PrintOneItemBatch(RepSpec,INp,SRrw.SerialNr,q,t2,sum,location,printloc)) then begin
+                  sump = sump + sum;
+                  nrp = nrp + q;
+                  printloc = false;
+                end;
+                rem = rem - q;
+                if (rem<=0) then begin 
+                  goto LBBListItemsSer; 
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+          
+      if (IHr.FileName=="RetVc") then begin
+        
+        Retr.SerNr = IHr.TransNr;
+        if (ReadFirstMain(Retr,1,true)) then begin
+          rwcnt = MatRowCnt(Retr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(Retr,i,Retrw);
+            if (Retrw.ArtCode==INp.Code) then begin
+              if (blank(Retrw.Location)) then begin
+                thelocation = Retr.Location;
+              end else begin
+                thelocation = Retrw.Location;
+              end;
+              if (thelocation!=location) then begin
+                location = thelocation;
+                printloc = true;
+              end;
+              if (nonblank(Retrw.SerialNr)) then begin
+                serbalq = blankval;
+                SerBalr.Item = INp.Code;
+                SerBalr.Serial = Retrw.SerialNr;
+                if (nonblank(RepSpec.f2)) then begin
+                  SerBalr.Location = RepSpec.f2;
+                  if (ReadFirstMain(SerBalr,3,true)) then begin end;
+                  serbalq = SerBalr.Quant;
+                end else begin
+//                    if (ReadFirstKey("ItemSerial",SerBalr,2,true)) then begin end;
+                  SerBalr.Item = INp.Code;
+                  SerBalr.Serial = Retrw.SerialNr;
+                  found2 = true;
+                  ResetLoop(SerBalr);
+                  while (LoopKey("ItemSerial",SerBalr,2,found2)) begin
+                    if (SerBalr.Item!=INp.Code) then begin found2 = false; end;
+                    if (SerBalr.Serial!=Retrw.SerialNr) then begin found2 = false; end;
+                    if (found2) then begin
+                      serbalq = serbalq + SerBalr.Quant;
+                    end;
+                  end;
+                end;
+
+                if (serbalq!=0) then begin
+                t = rem - Retrw.Quant;
+                if (t<0) then begin                
+                  q = rem;
+                end else begin
+                  q = Retrw.Quant;
+                end;  
+                if (RepSpec.flags[11]==1) then begin
+                  if (RepSpec.flags[1]!=0) then begin
+                    curcode = Retr.CurncyCode;
+                    curdate = CurrentDate;
+                    GetFullCurncyRate(curcode,curdate,frrate,to1,to2,br1,br2);
+                    t2 = DivRateToBase1(Retr.CurncyCode,Retrw.CostPrice,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                    t2 = MulRateToBase1(Retr.CurncyCode,t2,frrate,to1,to2,br1,br2,DefaultCurRoundOff);
+                  end else begin
+                    t2 = Retrw.CostPrice;
+                  end;
+                end else begin
+                  t2 = INp.UPrice1;
+                end;
+                sum = q*t2;
+                if (PrintOneItemBatch(RepSpec,INp,Retrw.SerialNr,q,t2,sum,location,printloc)) then begin
+                  sump = sump + sum;
+                  nrp = nrp + q;
+                  printloc = false;
+                end;
+                rem = rem - Retrw.Quant;
+                if (rem<=0) then begin goto LBBListItemsSer; end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+      end;
+    end;
+  end;
+LBBListItemsSer:;
+  RETURN;
+END;
+
+global
+procedure BestBefRn(record RcVc RepSpec)
+BEGIN
+  record INVc INr;
+  string 255 fromart,toart;
+  string 255 frcc,tocc;
+  Boolean TrHs,testf;
+  val nr,sum1;
+  string 255 tstr;
+  Integer rw;
+
+  StartReportJob(USetStr(2391));
+  RepSpec.flags[10] = 1;
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.AccStr)) then begin
+    HTDepartment(RepSpec.AccStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f2)) then begin
+    tstr = USetStr(2768);
+    tstr = RepSpec.f2;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if ((nonblank(RepSpec.f1)) or (blank(RepSpec.AccStr))) then begin
+    HTArts(RepSpec.f1,RepSpec.f1,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;  
+  if (HasItemGroups) then begin
+    HTArtGroup(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasItemClassification) then begin
+    HTItemClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;  
+  EndHeader;
+  SetRepCol(2,90);
+  SetRepCol(3,288);
+  SetRepCol(4,384);
+  StartFormat(15);
+  OutString(0,0,USetStr(2325),false);
+  OutString(60,0,USetStr(2326),false);
+  OutString(200,0,USetStr(2392),false);
+  OutString(280,0,USetStr(2393),false);
+  OutString(360,0,USetStr(2394),true);
+  if (RepSpec.flags[11]==0) then begin
+    OutString(420,0,USetStr(2350),true);
+  end else begin
+    OutString(420,0,USetStr(2331),true);
+  end;
+  OutString(480,0,USetStr(2332),true);
+  EndFormat;
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart = LastInRange(RepSpec.f1,20);
+  frcc = FirstInRange(RepSpec.f3,20);
+  tocc = LastInRange(RepSpec.f3,20);
+  INr.Code = fromart;
+  Gray_Divider(0,1);
+  TrHs = true;
+  while (LoopKey("Code",INr,1,TrHs)) begin
+    testf = true;
+    if (TrHs) then begin
+      if (nonblank(toart)) then begin
+        if (INr.Code>toart) then begin
+          TrHs = false;
+        end; 
+      end;
+    end;    
+    if (TrHs) then begin
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (INr.Department!=RepSpec.AccStr) then begin
+          testf = false;
+        end;
+      end;    
+      if ((INr.SerNrf==0) or (INr.SerNrf==3)) then begin
+        testf = false;
+      end;  
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group>frcc) then begin testf = false; end;
+        if (INr.Group<tocc) then begin testf = false; end;
+      end;
+      if (testf) then begin 
+        if (nonblank(RepSpec.f4)) then begin
+          testf = SetInSet2(RepSpec.f4,INr.DispGroups);
+        end;
+      end; 
+    end;
+    if (TrHs==false) then begin testf = false; end;
+    if (testf) then begin
+      BBListItemsSer(RepSpec,INr,sum1,nr);
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutVal(360,0,nr,M4UVal,true);
+  OutVal(480,0,sum1,M4Val,true);
+  EndFormat;
+  EndJob; 
+  RETURN;
+END;

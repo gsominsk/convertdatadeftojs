@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fRowNr: { public: true, type: 'INTEGER' },
+     fAgreementNr: { public: true, type: 'INTEGER' },
+     fCode: { public: true, type: 'TEXT' },
+     fSerialNr: { public: true, type: 'TEXT' },
+     fLengthClass: { public: true, type: 'INTEGER' },
+     fTransDate: { public: true, type: 'DATE' },
+     fEndDate: { public: true, type: 'DATE' },
+     fStartTime: { public: true, type: 'TIME' },
+     fEndTime: { public: true, type: 'TIME' },
+     fOpenRentQuant: { public: true, type: 'FLOAT' },
+     fAgreeStatus: { public: true, type: 'TEXT' },
+     fLocation: { public: true, type: 'TEXT' },
+     fCustCode: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex360: { fields: [ 'fSerNr', 'fRowNr' ], indicesType: 'UNIQUE' } } }

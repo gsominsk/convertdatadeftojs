@@ -1,0 +1,1364 @@
+external procedure AutomatedSalesOrderly(string);
+external function roundmode SetRoundModeD(Integer);
+external procedure B1ToB2ValRM(val,val,val,var val,roundmode);
+external function roundmode GetCostRoundModeRB();
+external procedure FindTempStockRow(LongInt,string,Boolean,record TempStockVc,var row TempStockVc);
+external function Boolean StockRecordForLocationAllowed(string,string,string,date,integer,var Integer,var string);
+external function Boolean HasIntegratedNL();
+external function Integer CheckSerialatPositionInItemHist(string,string,string,string,val);
+external procedure VerifyRowObjects(String,String,String,String,var Integer,var String,var Boolean,Array string,Array string,var Integer);
+external function Boolean SerialNrAvail2(string,string,val);
+external function Boolean IsDigit(string);
+external function string 255 NextSerialNumber(string,string,record SerNrTrackBlock);
+external updating procedure FindAcptRulesAndCreateAcceptanceAlert(Integer,Integer,string,string,string,val,string,string,string,string);
+external updating procedure CancelApprovalRequestActivities(Integer,string,string,string);
+external function Boolean AcceptanceRulesExists(Integer,string);
+external procedure FindStockValueInclStockReserv(LongInt,string,string,string,var record ItemStatusVc,var val);
+external procedure WarnFutureDate(Boolean,Date);
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external procedure CalcInCurtoTBIV(var record TBIVVc);
+external function Boolean TBIVItemsUsage(record PRVc,record INVc,val);
+external function Boolean CheckProjectMember(record PRVc);
+external function Boolean IsPRPhaseLocked(string,Date,var string);
+external function roundmode GetCostRoundMode(record RoundBlock);
+external updating procedure UpdateTrans_Stock(record TRVc);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external function Boolean ItemHistExists(string,LongInt);
+external updating procedure StoreUnOKHistory(string,LongInt,Date,Time,string);
+external updating procedure UpdateRecalcStockNeeded(Integer);
+external function Integer IsUnOKAllowed_SDVc(record SDVc);
+external updating procedure UpdateStockResFromSD(record SDVc);
+external function Boolean AllowedToTakeFromThisLoc(record LocationVc);
+external function Boolean CanOKStockRecord(var Integer);
+external updating procedure AddTTrans_SDVc(record TRVc,record SDVc);
+external procedure GetCurUser(var record UserVc);
+external procedure Base1ToBase2(var val,Date,var val);
+external procedure FindStockValueAtPosition(string,string,string,var record PISVc);
+external procedure GetPRName(string, var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean IsSerialNrCorrect(string);
+external function Integer MakeTransFromSD(record TRVc,record SDVc,Boolean,var string,var Integer);
+external procedure UpdateSDFIFO(record SDVc);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external function Boolean ExistStockTrans(string,Date,var Integer,var string,string,LongInt,record MainStockBlock);
+external function Boolean SerialNrAvail(string,string,string,val);
+external function Boolean CheckStructureItemsLevel(string,string,string,val);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean Date2Test(string,Date,string,Integer);
+external function Boolean SerNrTestSDVc(LongInt,Date,var Boolean);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure SDSumUp(var record SDVc);
+external updating procedure SDUpdateSerialNr(record SDVc,Boolean,Boolean);
+external updating procedure SDUpdateItemHist(record SDVc);
+external updating procedure UpdateInstock(string,string,string,string,date,val,val,val,val,val,val,val,val,val);
+external function Boolean ShouldItemUpdateStock(string);
+external function Boolean ExpandStructItem(string,string,val,var record SHVc);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure GetPRInvSep(string,var Integer,var Integer);
+external function Integer GetItemTypeGroup(string,var string);
+external updating function val NextLocOKNr(string);
+external function val GetAcceptanceSum_SDVc(record SDVc);
+
+global
+function LongInt SDVcRecordDefaults(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  record AccBlock ARb;
+  record UserVc USr;
+  LongInt res;
+
+  BlockLoad(ARb);
+  SDr.TransDate = CurrentDate;
+  SDr.OKFlag = 0;
+  SDr.CostAcc = ARb.StockLossAcc;
+  SDr.SerNr = -1;
+  if (SingleUserMode) then begin
+    SDr.SerNr = NextSerNr("SDVc",SDr.TransDate,-1,false,"");
+  end;
+  GetCurUser(USr);
+  SDr.Location = USr.Location;
+  SDVcRecordDefaults = res;
+  RETURN;
+END;
+
+global
+function LongInt SDVcRecordDuplicate(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Integer i,rwcnt;
+  row SDVc SDrw;
+
+  SDr.TransDate = CurrentDate;
+  SDr.OKFlag = 0;
+  SDr.SerNr = -1;
+  if (SingleUserMode) then begin
+    SDr.SerNr = NextSerNr("SDVc",SDr.TransDate,-1,false,"");
+  end;
+  rwcnt = MatRowCnt(SDr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDr,i,SDrw);
+    SDrw.FIFO = blankval;
+    SDrw.FIFORowVal  = blankval;
+    MatRowPut(SDr,i,SDrw);
+  end;
+  SDr.LocOKNr = blankval;
+  SDr.AcceptanceBy = "";
+  SDr.AcceptanceFYI = "";
+  WarnFutureDate(true,SDr.TransDate);
+  SDVcRecordDuplicate = res;
+  RETURN;
+END;
+
+updating procedure SDCreateTBIV(record SDVc SDp,Integer rownr,Boolean setinvd,Integer UseDiscount,Boolean negf)
+begin
+  record TBIVVc oldTBIVr;
+  record TBIVVc TBIVr;
+  record PRVc PRr;
+  record INVc INr;
+  row SDVc sdrp;
+  string 20 prcode;
+  string 255 tstr;
+  Integer i,j;
+  Date blankd;
+  val t;
+  
+  MatRowGet(SDp,rownr,sdrp);
+  prcode = sdrp.PRCodeRow;
+  if (blank(prcode)) then begin prcode = SDp.PRCode; end;
+  if (blank(prcode)) then begin goto LSDCreateTBIV; end;
+  if (negf) then begin
+    oldTBIVr.PRCode = prcode;
+    oldTBIVr.oVc = 7;
+    oldTBIVr.SerNr = SDp.SerNr;
+    oldTBIVr.Row = rownr;
+    oldTBIVr.ArtCode = sdrp.ArtCode;
+    oldTBIVr.EMCode = "";
+    oldTBIVr.ChildNr = -1;
+    if (ReadFirstMain(oldTBIVr,0,true)) then begin
+      RecordDelete(oldTBIVr);
+    end;
+    goto LSDCreateTBIV;
+  end;
+  PRr.Code = prcode;
+  if (ReadFirstMain(PRr,1,true)) then begin end;
+  TBIVr.oVc = 7;
+  TBIVr.SerNr = SDp.SerNr;
+  TBIVr.Row = rownr;
+  TBIVr.TransDate = SDp.TransDate;
+  TBIVr.Discount = blankval;
+  TBIVr.EMCode = "";
+  TBIVr.PRCode = prcode;
+  TBIVr.PRName = PRr.Name;
+  TBIVr.Comment = SDp.Comment;
+  TBIVr.ArtCode = sdrp.ArtCode;
+  TBIVr.ItemType = GetItemTypeGroup(TBIVr.ArtCode,tstr);
+  TBIVr.INGroup = tstr;
+  if (TBIVr.ItemType==0) then begin TBIVr.ItemType = 5; end;
+  TBIVr.Objects = sdrp.Objects;
+  if ((PRr.Objects!=TBIVr.Objects) or (blank(TBIVr.Objects))) then begin
+    if (nonblank(TBIVr.Objects) and (nonblank(PRr.Objects))) then begin
+      TBIVr.Objects = TBIVr.Objects & ",";
+    end;
+    TBIVr.Objects = TBIVr.Objects & PRr.Objects;
+  end;
+  TBIVr.Qty = sdrp.Qty;
+  TBIVr.Comment = SDp.Comment;
+  GetPRInvSep(prcode,i,j);
+  TBIVr.InvSeparately = i;
+  TBIVr.InvQty = sdrp.Qty;
+  TBIVr.Invoice = -1;
+  TBIVr.InvDate = blankd;
+  if (setinvd) then begin TBIVr.Invoice = -2; end;
+  TBIVr.InvAfter = blankd;
+  TBIVr.CurncyCode = PRr.CurncyCode;  
+  TBIVr.Price = sdrp.BasePrice;
+  CalcSum(TBIVr.InvQty,TBIVr.Price,0,TBIVr.Discount,t,UseDiscount);
+  TBIVr.Sum = t;
+  TBIVr.GP = blankval;
+  if (ReadFirstMain(INr,1,true)) then begin end;
+  if (INr.ItemType==2) then begin
+    TBIVr.CostPrice = INr.InPrice;
+  end else begin
+    TBIVr.CostPrice = sdrp.FIFO;
+  end;  
+  TBIVr.GP = TBIVr.CostPrice*TBIVr.Qty;
+  TBIVr.GP = TBIVr.Sum - TBIVr.GP;
+  CalcInCurtoTBIV(TBIVr);
+  RecordCopy(oldTBIVr,TBIVr);
+  if (ReadFirstMain(oldTBIVr,0,true)==false) then begin
+    if (RecordInsert(TBIVr,false)) then begin end;
+  end;
+LSDCreateTBIV:;
+  RETURN;
+END;
+
+updating procedure SDOK(record SDVc SDp,Boolean negf)
+begin
+  row SDVc SDrw;
+  Integer i,rwcnt;
+  record GeneralOptionBlock GenOptRec;
+
+  if (SDp.OKFlag==0) then begin
+    goto LSDOK;
+  end;
+  BlockLoad(GenOptRec);
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDp,i,SDrw);
+    if (SDrw.Qty!=0) then begin
+      SDCreateTBIV(SDp,i,false,GenOptRec.UseDiscount,negf);
+    end;
+  end;
+LSDOK:;
+  RETURN;
+END;
+
+global
+updating function LongInt SDVcRecordSave(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (SDr.OKFlag!=0) then begin
+    SDr.LocOKNr = NextLocOKNr(SDr.Location);
+  end;  
+  SDVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating procedure SDUpdateStock2(record SDVc SDp,Boolean negf,record TempStockVc TSr,Boolean usetmpstkf)
+begin
+  record MainStockBlock MSb;
+  record SHVc RecSHr;
+  row SHvc SH2rw;
+  row SDVc SDrw;
+  Integer i,rwcnt;
+  val t,t2,q2;
+  Boolean isstruct,testf;
+  Integer j,shrwcnt;
+  string 10 location,loc2;
+  row TempStockVc TSrw;
+  
+  BlockLoad(MSb);
+  location = SDp.Location;
+  if (blank(location)) then begin
+    location = MSb.MainStock;
+  end;
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDp,i,SDrw);
+    if (nonblank(SDrw.Location)) then begin
+      loc2 = SDrw.Location;
+    end else begin
+      loc2 = location;
+    end;
+    testf = true;
+    if (blank(SDrw.ArtCode)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      if (usetmpstkf) then begin
+        FindTempStockRow(i,SDrw.ArtCode,blank(SDrw.Recepy),TSr,TSrw);
+        if (TSrw.StockAffectf==0) then begin testf = false; end;
+        if (TSrw.ItemType!=kItemTypeStocked) then begin testf = false; end;
+      end;
+    end;
+    if (testf) then begin
+      isstruct = ExpandStructItem(SDrw.ArtCode,SDrw.Recepy,SDrw.Qty,RecSHr);
+      if (isstruct==false) then begin
+        t2 = -SDrw.Qty;
+        if (ShouldItemUpdateStock(SDrw.ArtCode)==false) then begin
+          t2 = blankval;
+        end;
+        if (MSb.UnitConvCalc==0) then begin
+          q2 = t2*SDrw.Coefficient;
+        end else begin
+          q2 = t2/SDrw.Coefficient;
+        end;
+        if (t2!=0) then begin
+          if (negf) then begin 
+            t2 = -t2; 
+            q2 = -q2; 
+          end;
+          UpdateInstock("SDVc",SDp.SerNr,SDrw.ArtCode,loc2,SDp.TransDate,t2,t,t,t,t,q2,t,t,t);
+        end;
+      end else begin
+        shrwcnt = MatRowCnt(RecSHr);
+        for (j=0;j<shrwcnt;j=j+1) begin
+          MatRowGet(RecSHr,j,SH2rw);
+          t2 = -Round(SH2rw.Ship,SetRoundModeD(3));
+          if (ShouldItemUpdateStock(SH2rw.ArtCode)==false) then begin
+            t2 = blankval;
+          end;
+          if (MSb.UnitConvCalc==0) then begin
+            q2 = t2*SH2rw.Coefficient;
+          end else begin
+            q2 = t2/SH2rw.Coefficient;
+          end;
+          if (t2!=0) then begin
+            if (negf) then begin 
+              t2 = -t2; 
+              q2 = -q2; 
+            end;
+            UpdateInstock("SDVc",SDp.SerNr,SH2rw.ArtCode,loc2,SDp.TransDate,t2,t,t,t,t,q2,t,t,t);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure SDUpdateStock(record SDVc SDp,Boolean negf)
+begin
+  record TempStockVc TSr;
+  
+  SDUpdateStock2(SDp,negf,TSr,false);
+  return;
+end;
+
+updating procedure SDUpdateCostPrice(record SDVc SDp)
+begin
+  record INVc oldINr;
+  record INVc INr;
+  record ItemStatusVc ISr;
+  row SDVc SDrw;
+  Boolean found;
+  Integer i,rwcnt,outrows;
+  val q,t,t2,rs,rsb2;
+  record RoundBlock RoundRec;
+  
+  BlockLoad(RoundRec);
+  outrows = 0;
+  i = -1;
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDp,i,SDrw);
+    if (SDrw.Qty!=0) then begin
+      INr.Code = SDrw.ArtCode;
+      found = ReadFirstMain(INr,1,true);
+      RecordCopy(oldINr,INr);
+      if ((found) and (SDrw.FIFO!=0)) then begin
+        switch (INr.UpdateCost) begin
+          case 2:
+//? This looks very different from 3.6....
+            rs = SDrw.FIFO;
+            Base1ToBase2(rs,SDp.TransDate,rsb2);
+            FindStockValue(SDrw.ArtCode,"",ISr);
+            q = ISr.Instock - SDrw.Qty;
+            t = q*INr.WeighedAvPrice;
+            if (INr.PriceFactor!=0) then begin
+              rs = rs*INr.PriceFactor;
+            end;
+            t2 = SDrw.Qty*rs;
+            t = t + t2;
+            q = q + SDrw.Qty;
+            rs = t/q;
+            if (q>=0) then begin
+              INr.WeighedAvPrice = rs;
+            end;
+
+            q = ISr.Instock - SDrw.Qty;
+            t = q*INr.InPriceB2;
+            if (INr.PriceFactor!=0) then begin
+              rsb2 = rsb2*INr.PriceFactor;
+            end;
+            t2 = SDrw.Qty*rsb2;
+            t = t + t2;
+            q = q + SDrw.Qty;
+            rsb2 = t/q;
+            if (q>=0) then begin
+              INr.WeighedAvPriceB2 = rsb2;
+            end;
+
+      //?      UpdateLocationWeightedAv(INr.Code
+            if (INr.InPrice!=INr.WeighedAvPrice) then begin  //? inprice has changed 
+              if (INr.WeighedAvPrice!=0) then begin
+                INr.InPrice = INr.WeighedAvPrice;
+                INr.LastPriceChange = CurrentDate;
+              end;
+            end else begin
+              found = false;
+            end;
+            if ((INr.InPriceB2!=INr.WeighedAvPriceB2) and (rsb2!=0)) then begin  //? inprice has changed 
+              INr.InPriceB2 = INr.WeighedAvPriceB2;
+            end;
+          otherwise 
+            found = false;
+         end;
+        if (found) then begin
+          INr.WeighedAvPrice = Round(INr.WeighedAvPrice,GetCostRoundMode(RoundRec));
+          INr.WeighedAvPriceB2 = Round(INr.WeighedAvPriceB2,GetCostRoundMode(RoundRec));
+          switch(INr.UpdateCost) begin
+            case 0:;
+            otherwise
+              INr.InPrice = Round(INr.InPrice,GetCostRoundMode(RoundRec));
+              INr.InPriceB2 = Round(INr.InPriceB2,GetCostRoundMode(RoundRec));
+              INr.LastPriceChange = CurrentDate;
+          end;
+          if (RecordUpdate(oldINr,INr,false)==0) then begin end;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure SetIntORFlags(record IntORVc IntORp)
+begin
+  row IntORVc IntORrw;
+  Integer rwcnt,i;
+  Boolean fullyshipd;
+
+  fullyshipd = true;
+  rwcnt = MatRowCnt(IntORp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntORp,i,IntORrw);
+    if (IntORrw.Shipd1<IntORrw.Quant) then begin fullyshipd = false; end;
+    if (IntORrw.Shipd2<IntORrw.Shipd1) then begin fullyshipd = false; end;
+  end;
+  if ((fullyshipd) and (IntORp.StatusFlag==1)) then begin
+    IntORp.StatusFlag = 2;
+  end;
+  IntORp.OSFlag = 0;  
+  switch (IntORp.StatusFlag) begin
+    case 0: 
+      IntORp.StatusMark = 0; 
+      IntORp.OSFlag = 1;
+    case 1: 
+      IntORp.StatusMark = asc("+"); 
+      IntORp.OSFlag = 1;
+    case 2: IntORp.StatusMark = 18; //checkMarkChar
+    case 3: IntORp.StatusMark = 18; //checkMarkChar
+    case 4: 
+      IntORp.StatusMark = asc("-"); 
+      IntORp.OSFlag = 1;
+  end;
+  if (IntORp.Closed!=0) then begin
+    IntORp.OSFlag = 0;
+    IntORp.StatusMark = 18;
+  end;    
+  RETURN;
+END;
+
+updating procedure UpdateIntOrderFromSD(record SDVc SDp,record SDVc SD2p,Boolean sh2only)
+begin
+  record IntORVc oldIntORr;
+  record IntORVc IntORr;
+  record IntORSettingBlock IORSb;
+  Integer i,rwcnt;
+  Integer orw,orcnt;
+  row IntORVc IntORrw;
+  row SDVc SDrw;
+  Boolean treatedf;
+  
+  treatedf = false;
+  if (SDp.CostAcc!="NIL") then begin
+    IntORr.SerNr = SDp.IntORNo;
+  end else begin
+    IntORr.SerNr = SD2p.IntORNo;
+  end;
+  if (ReadFirstMain(IntORr,1,true)) then begin
+    RecordCopy(oldIntORr,IntORr);
+    orcnt = MatRowCnt(IntORr);
+    if (SD2p.CostAcc!="NIL") then begin
+      rwcnt = MatRowCnt(SD2p);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SD2p,i,SDrw);
+        if (SDrw.IntORRow!=-1) then begin
+          orw = SDrw.IntORRow;
+          if (orw<orcnt) then begin
+            MatRowGet(IntORr,orw,IntORrw);
+            if (sh2only==false) then begin
+              IntORrw.Shipd1 = IntORrw.Shipd1 - SDrw.Qty;
+            end;
+            if (SD2p.OKFlag!=0) then begin
+              IntORrw.Shipd2 = IntORrw.Shipd2 - SDrw.Qty;
+            end;
+            if (IntORrw.Shipd1==0) then begin
+              IntORrw.Shipd1 = blankval;
+            end;
+            if (IntORrw.Shipd2==0) then begin
+              IntORrw.Shipd2 = blankval;
+            end;
+            if (IntORrw.Shipd1!=0 or IntORrw.Shipd1!=0) then begin
+              treatedf = true;
+            end;
+            MatRowPut(IntORr,orw,IntORrw);
+          end;
+        end;
+      end;
+    end;
+    if (SDp.CostAcc!="NIL") then begin
+      rwcnt = MatRowCnt(SDp);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SDp,i,SDrw);
+        if (SDrw.IntORRow!=-1) then begin
+          orw = SDrw.IntORRow;
+          if (orw<orcnt) then begin
+            MatRowGet(IntORr,orw,IntORrw);
+            if (sh2only==false) then begin
+              IntORrw.Shipd1 = IntORrw.Shipd1 + SDrw.Qty;
+              treatedf = true;
+            end;
+            if (SDp.OKFlag!=0) then begin
+              IntORrw.Shipd2 = IntORrw.Shipd2 + SDrw.Qty;
+              if (IntORrw.Shipd2==0) then begin
+                IntORrw.Shipd2 = blankval;
+              end else begin
+                treatedf = true;
+              end;
+            end;
+            if (IntORrw.Shipd1==0) then begin
+              IntORrw.Shipd1 = blankval;
+            end;
+            if (IntORrw.Shipd1!=0 or IntORrw.Shipd1!=0) then begin
+              treatedf = true;
+            end;
+            MatRowPut(IntORr,orw,IntORrw);
+          end;
+        end;
+      end;
+    end;
+    SetIntORFlags(IntORr);
+    if (treatedf) then begin
+      BlockLoad(IORSb);
+      if (IORSb.AutoCloseIntOR!=0) then begin
+        IntORr.Closed = 1;
+      end;
+    end;
+    if (RecordUpdate(oldIntORr,IntORr,false)==0) then begin end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt SDVcRecordSaveAfter(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record SDVc NilSDr;
+  record UserVc Userr;
+
+  Userr.Code = SDr.Sign;
+  ReadFirstMain(Userr,1,true);
+  SDr.SalesGroup = Userr.SalesGroup;  
+  if (SDr.OKFlag!=0) then begin
+    SDUpdateStock(SDr,false);
+//    SDUpdateCostPrice(SDr);//waht the heck ? 
+    SDUpdateItemHist(SDr);
+    SDUpdateSerialNr(SDr,false,true);
+    SDOK(SDr,false);
+    AutomatedSalesOrderly("HasIntegratedNL");
+  end;  
+  if (SDr.IntORNo!=-1) then begin
+    NilSDr.CostAcc = "NIL";
+    UpdateIntOrderFromSD(SDr,NilSDr,false);
+  end;
+  SDVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt SDVcRecordUpdate(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if ((SD2r.OKFlag==0) and (SDr.OKFlag!=0)) then begin
+    if (ItemHistExists("SDVc",SDr.SerNr)==false) then begin
+      SDr.LocOKNr = NextLocOKNr(SDr.Location);
+      UpdateStockResFromSD(SDr);
+    end;
+  end;
+  SDVcRecordUpdate = res;
+  RETURN;
+END;
+
+global
+updating procedure UnOKStockDepreciation(record SDVc SDr,record SDVc SD2r,Boolean deltrf)
+begin
+  SDUpdateStock(SDr,true);
+  SDUpdateSerialNr(SDr,true,true);
+//  SDOK(SD2r,true);//JJRECALCSTOCK
+  UpdateRecalcStockNeeded(1);
+//    UpdateStockResFromSD(SDr); //JJRECALCSTOCK
+  StoreUnOKHistory("SDVc",SDr.SerNr,CurrentDate,CurrentTime,CurrentUser);    
+  if (deltrf) then begin
+    DeleteTransaction(SDr.SerNr,SDYc);
+  end;
+  return;
+end;
+
+global
+updating function LongInt SDVcRecordUpdateAfter(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  val LocOKNr;  
+  Boolean ihef;
+  
+  ihef = ItemHistExists("SDVc",SDr.SerNr);
+  if ((SD2r.OKFlag==0) and (SDr.OKFlag!=0)) then begin
+    SDUpdateStock(SDr,false);
+//    SDUpdateCostPrice(SDr);//waht the heck ? 
+    if (ihef==false) then begin
+      SDUpdateItemHist(SDr);
+    end;
+    SDUpdateSerialNr(SDr,false,true);
+    SDOK(SDr,false);
+    AutomatedSalesOrderly("HasIntegratedNL");
+  end;
+  if ((SDr.IntORNo!=-1) and (SD2r.OKFlag==0)) then begin
+    UpdateIntOrderFromSD(SDr,SD2r,false);
+  end;
+//  if ((IVr.Invalid==0) and (IV2r.Invalid==0)) then begin
+  if ((SDr.OKFlag==0) and (SD2r.OKFlag!=0)) then begin//unok
+    UnOKStockDepreciation(SDr,SD2r,true);
+  end;
+  SDVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+procedure SDVcConvertB1ToB2Date(record SDVc SDp,string curp,Date datp)
+begin
+  row SDVc SDrw;
+  val fr,to1,to2,br1,br2,t;
+  Integer rwcnt,i;
+  string 20 curncy;
+
+  curncy = curp;
+  GetFullCurncyRate(curncy,datp,fr,to1,to2,br1,br2);
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDp,i,SDrw);
+    B1ToB2ValRM(SDrw.FIFO,br1,br2,t,GetCostRoundModeRB);
+    SDrw.FIFO = t;
+    B1ToB2ValRM(SDrw.FIFORowVal,br1,br2,t,GetCostRoundModeRB);
+    SDrw.FIFORowVal = t;
+    MatRowPut(SDp,i,SDrw);
+  end;
+  SDSumUp(SDp);
+  RETURN;
+END;
+
+global
+updating function LongInt SDVcRecordImport(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record ConvMasterBlock cvm;
+  Boolean gBase1ToBase2;
+
+  if (SDr.TotQty==0) then begin
+    SDSumUp(SDr);
+  end;
+  BlockLoad(cvm);
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    SDVcConvertB1ToB2Date(SDr,"",SDr.TransDate);
+  end;
+  SDVcRecordImport = res;
+  RETURN;
+END;
+
+global
+updating function LongInt SDVcRecordImportAfter(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record ConvMasterBlock cvm;
+  record SDVc locSDr;
+  Boolean gBase1ToBase2;
+  Integer err;
+
+  locSDr.SerNr = SDr.SerNr;
+  if (SDr.OKFlag!=0) then begin
+    SDUpdateSerialNr(SDr,false,true);
+    if (ImportingTextBackup==false and CanOKStockRecord(err)==true) then begin
+      SDUpdateStock(SDr,false);
+//    SDUpdateCostPrice(SDr);//waht the heck ? 
+      SDUpdateItemHist(SDr);
+    end;
+  end;
+  SDVcRecordImportAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt SDVcRecordRemove(var record SDVc SDr,record SDVc SD2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record SDVc NilSDr;
+  
+  if (SDr.IntORNo!=-1) then begin
+    NilSDr.CostAcc = "NIL";
+    UpdateIntOrderFromSD(NilSDr,SDr,false);
+  end;  
+  SDVcRecordRemove = res;
+  RETURN;
+END;
+
+global
+function LongInt SDVcRecordRemoveTest(var record SDVc SDr,record SDVc SD2r,LongInt long3,LongInt long4)
+begin
+  record DBLockBlock DBLockRec;
+  LongInt res;
+  record IVCashVc IVCashr;
+  Integer actnr;
+  record ActVc Actr;
+  record RLinkVc RLr;
+
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (SDr.TransDate<=DBLockRec.DeleteBeforeDate) then begin
+    res = 1;
+    goto LSDVcRecordRemoveTest;
+  end;
+  if (SDr.OKFlag!=0) then begin
+    if (long3>0) then begin MessageBox(1560,"") end;
+    res = 0;
+  end;
+  if (res!=0) then begin
+    IVCashr.SDNr = SDr.SerNr;
+    if (ReadFirstKey("SDNr",IVCashr,1,true)) then begin
+      if (long3>0) then begin MessageBox(1560,"") end;
+      res = 0;
+    end;
+  end;
+  actnr = 1;
+  while (ReadRecordLink(SDr,actnr,Actr,RLr)) begin
+    if (Actr.TodoFlag==kTodoFlagApproval) then begin
+      if (long3>0) then begin MessageBox(22408,""); end;
+      res = 0;
+      goto LSDVcRecordRemoveTest;
+    end;
+    actnr = actnr + 1;
+  end;
+LSDVcRecordRemoveTest:;
+  SDVcRecordRemoveTest = res;
+  RETURN;
+END;
+
+function Integer ValidateBulkSerialNoRow(record SerNrTrackBlock SNrb,record SDVc SDr,row SDVc SDrw,Integer currow,var string gotofield,var Integer gotorow)
+begin
+  Integer res;
+  Integer j,rwcnt;
+  row SDVc SD2rw;
+  Boolean testf;
+  string 255 serialnr;
+  string 255 serialnr2;
+  val qty,qty2;
+
+  gotorow = -1;
+  gotofield = "";  
+  if (SDrw.Qty>1) then begin
+    rwcnt = len(SDrw.SerialNr);
+    for (j=0;j<rwcnt;j=j+1) begin
+      if ((IsDigit(Mid(SDrw.SerialNr,j,1))==false) and (Mid(SDrw.SerialNr,j,1)!=":")) then begin
+        res = 20434;
+        gotorow = currow;
+        gotofield = "SerialNr";
+        goto LValidateBulkSerialNoRow;
+      end;
+    end;
+  end;
+  rwcnt = MatRowCnt(SDr);
+  serialnr = FirstInRange(SDrw.SerialNr,60);
+  while (nonblank(serialnr)) begin
+    for (j=0;j<currow;j=j+1) begin  
+      MatRowGet(SDr,j,SD2rw);
+      if (SD2rw.Qty!=0) then begin
+        if (SDrw.ArtCode==SD2rw.ArtCode) then begin
+          qty2 = blankval;
+          serialnr2 = FirstInRange(SD2rw.SerialNr,60);
+          while (nonblank(serialnr2)) begin
+            if (serialnr==serialnr2) then begin
+              res = 1241;
+              gotorow = currow;
+              gotofield = "SerialNr";
+              goto LValidateBulkSerialNoRow;
+            end;
+            qty2 = qty2 + 1;
+            serialnr2 = NextSerialNumber(SD2rw.ArtCode,serialnr2,SNrb);
+            if (qty2>=SD2rw.Qty) then begin serialnr2 = ""; end;
+          end;
+        end;
+      end;
+    end;
+    qty = qty + 1;
+    serialnr = NextSerialNumber(SDrw.ArtCode,serialnr,SNrb);
+    if (qty>=SDrw.Qty) then begin serialnr = ""; end;
+  end;
+LValidateBulkSerialNoRow:;  
+  ValidateBulkSerialNoRow = res;
+  return;
+end;
+
+global
+updating function LongInt SDVcRecordCheck(var record SDVc SDp,record SDVc SD2p,LongInt stat,LongInt check)
+begin
+  LongInt res,sernr;
+  row SDVc SDrw;
+  record INVc INr;
+  record AccVc Accr;
+  record LocationVc LocRec;
+  record MainStockBlock MSb;
+  record TRVc gTRp;
+  record SDVc locSDr;
+  record ItemStatusVc ISr;
+  record PRVc PRr;
+  row SDVc SD2rw;            
+  Integer i,rwcnt,j,cnt,errcode;
+  Integer insertmode,updatemode;
+  LongInt oldnr,newnr;
+  Boolean transf,gentrans,thesamelocf;
+  val t,prev,stockreservq;
+  string 10 location,loc2,loc3;
+  string 255 objstr,accstr,errstr,errofield;
+  Integer errorrow;
+  record PISVc PISr;
+  Boolean unokf,testf;
+  transaction string 255 gRuniningMaint;
+  string 255 prcode;
+  record PosVc Posr;
+  record SerNrTrackBlock SNrb;
+  val serqty;
+  string 255 serialnr;
+  Array string 255 otcheckaccs;
+  Array string 255 otcheckobjtyps;
+  Integer otcheckcnt;
+  Boolean initotcheckf;    
+  
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  BlockLoad(MSb);
+  BlockLoad(SNrb);
+  if (stat==updatemode) then begin
+    if (SDp.SerNr<=0) and (SD2p.OKFlag==0) then begin
+      SDp.SerNr = SD2p.SerNr;
+    end;
+  end;        
+  oldnr = SDp.SerNr; 
+  if (SDp.OKFlag==0) then begin
+    if (stat==updatemode) then begin
+      if (SD2p.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    errcode = IsUnOKAllowed_SDVc(SDp);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",-1,"TransDate");      
+      res = -1; 
+    end;
+    goto LSDVcRecordCheck;
+  end;  
+  transf = false;
+  if (SDp.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (SD2p.OKFlag==0) then begin transf = true; end;
+    end;
+  end;
+  if (stat==Rs_update) then begin
+    if (SD2p.OKFlag!=0) then begin
+      goto LSDVcRecordCheck;
+    end;
+  end;
+  if ((stat==insertmode) or (SDp.SerNr!=SD2p.SerNr)) then begin
+    locSDr.SerNr = SDp.SerNr;
+    if (ReadFirstMain(locSDr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1;
+      goto LSDVcRecordCheck;
+    end;
+  end;
+  if (SDp.SerNr<=0) then begin
+    SDp.SerNr = NextSerNr("SDVc",SDp.TransDate,-1,false,"");
+  end;
+  if (SerNrTestSDVc(SDp.SerNr,SDp.TransDate,gentrans)==false) then begin
+    if (check>0) then begin
+      RecordCheckError(1557,"",-1,"SerNr");      
+      res = -1; 
+      goto LSDVcRecordCheck;
+    end;
+  end;
+  if (check==0) then begin
+    goto LSDVcRecordCheck_GenTrans;
+  end;
+  if (Date2Test("SDVc",SDp.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto LSDVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,SDp.TransDate,"TransDate",-1)) then begin
+    res = -1;
+    goto LSDVcRecordCheck;
+  end;
+  if (transf) then begin
+    if (UserCanAction("SDOK",true)==false) then begin
+      RecordCheckError(1274,StringFromStringSet(3,"SDOK"),-1,"SerNr");      
+      res = -1; 
+      goto LSDVcRecordCheck;
+    end;
+  end;  
+
+  location = SDp.Location;
+  if (blank(location)) then begin
+    location = MSb.MainStock;
+  end;
+  if (nonblank(location)) then begin
+    LocRec.Code = location;
+    if (ReadFirstMain(LocRec,1,true)==false) then begin
+      RecordCheckError(1120,location,-1,"Location");      
+      res = -1;
+      goto LSDVcRecordCheck;
+    end;
+    if (AllowedToTakeFromThisLoc(LocRec)==false) then begin
+      RecordCheckError(1768,"",-1,"Location");      
+      res = -1;
+      goto LSDVcRecordCheck;
+    end;
+  end;
+  if (nonblank(SDp.Objects)) then begin
+    errcode = CheckObjs("",SDp.Objects,errstr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,errstr,-1,"Objects");      
+      res = -1;
+      goto LSDVcRecordCheck;
+    end;
+  end; 
+  if (MSb.ForceReason!=0 and blank(SDp.Reason)) then begin
+    RecordCheckError(2210,"",-1,"Reason");      
+    res = -1;
+    goto LSDVcRecordCheck;
+  end; 
+  if (nonblank(SDp.CostAcc)) then begin
+    testf = true;
+    if (IsStandardProduct) then begin
+      testf = HasIntegratedNL and transf;
+    end;
+    if (testf) then begin
+      Accr.AccNumber = SDp.CostAcc;
+      if (ReadFirstMain(Accr,1,true)==false) then begin
+        RecordCheckError(1007,SDp.CostAcc,-1,"CostAcc");  
+        res = -1;
+        goto LSDVcRecordCheck;
+      end else begin
+        if ((Accr.blockedFlag!=0) or (Accr.GroupAcc!=0)) then begin
+          RecordCheckError(1084,SDp.CostAcc,-1,"CostAcc");  
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+      end;
+    end;
+  end;  
+  rwcnt = MatRowCnt(SDp);
+  if (check!=0) then begin
+    if (SDp.OKFlag!=0) and (rwcnt==0) then begin
+      RecordCheckError(1030,"",0,"ArtCode");      
+      res = -1;
+      goto LSDVcRecordCheck;
+    end;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    thesamelocf = false;
+    MatRowGet(SDp,i,SDrw);
+    if (check!=0) then begin
+      testf = true;
+      if (IsStandardProduct) then begin
+        testf = HasIntegratedNL and transf;
+      end;
+      if (testf) then begin
+        loc2 = SDrw.CostAcc;
+        if (blank(loc2)) then begin
+          loc2 = SDp.CostAcc;
+        end;
+        if (blank(loc2)) then begin
+          RecordCheckError(1058,loc2,-1,"CostAcc");      
+          res = -1; 
+          goto LSDVcRecordCheck;
+        end;
+      end;
+    
+      if (nonblank(SDrw.Location)) then begin
+        loc2 = SDrw.Location;
+      end else begin
+        loc2 = SDp.Location;
+      end;
+      if (MSb.requireLocation!=0) then begin
+        if (blank(loc2)) then begin
+          RecordCheckError(1058,loc2,-1,"Location");      
+          res = -1; 
+          goto LSDVcRecordCheck;
+        end;
+      end;
+    end;
+    if (nonblank(SDrw.Location)) then begin
+      loc2 = SDrw.Location;
+      if (MSb.Chronology==1) then begin//Chronology per Location
+        if (SDrw.Location!=location) then begin
+          RecordCheckError(20857,"",i,"Location");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+      end;
+    end else begin
+      loc2 = location;
+    end;
+    if (location==SDrw.Location) then begin
+      thesamelocf = true;
+    end;
+    if (nonblank(loc2)) then begin
+      LocRec.Code = loc2;
+      if (ReadFirstMain(LocRec,1,true)==false) then begin
+        RecordCheckError(1120,loc2,i,"Location");      
+        res = -1;
+        goto LSDVcRecordCheck;
+      end;
+      if (AllowedToTakeFromThisLoc(LocRec)==false) then begin
+        RecordCheckError(1768,"",i,"Location");      
+        res = -1;
+        goto LSDVcRecordCheck;
+      end;
+    end;  
+    if (check) then begin
+      if (SDrw.Qty>0) then begin
+        if (blank(SDrw.ArtCode)) then begin
+          RecordCheckError(1058,"",i,"ArtCode"); 
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+      end;
+    end;
+    if (nonblank(SDrw.ArtCode)) then begin
+      if (LocRec.RequirePos!=0) then begin
+        if (SDrw.Qty>0) and (blank(SDrw.PosCode)) then begin
+          RecordCheckError(1854,"",i,"PosCode"); 
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+      end;           
+      if (nonblank(SDrw.PosCode)) then begin
+        Posr.Code = SDrw.PosCode;
+        if (ReadFirstMain(Posr,1,true)==false) then begin
+          RecordCheckError(1120,"",i,"PosCode");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+      end;
+      if (ReadFirstItem(SDrw.ArtCode,INr,true,true)==false) then begin
+        RecordCheckError(1233,"",i,"ArtCode");      
+        res = -1;
+        goto LSDVcRecordCheck;
+      end;
+      if (nonblank(SDrw.CostAcc)) then begin
+        Accr.AccNumber = SDrw.CostAcc;
+        if (ReadFirstMain(Accr,1,true)==false) then begin
+          RecordCheckError(1007,SDrw.CostAcc,i,"CostAcc");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end else begin
+          if ((Accr.blockedFlag!=0) or (Accr.GroupAcc!=0)) then begin
+            RecordCheckError(1084,SDrw.CostAcc,i,"CostAcc");      
+            res = -1;
+            goto LSDVcRecordCheck;
+          end;
+        end;
+      end;
+      if (StockRecordForLocationAllowed("SDVc",loc2,SDrw.ArtCode,SDp.TransDate,SDp.OKFlag,errcode,errstr)==false) then begin
+        RecordCheckError(errcode,errstr,i,"ArtCode");      
+        res = -1;
+        goto LSDVcRecordCheck;
+      end;
+      if (SDrw.Qty<0) then begin
+        RecordCheckError(1574,"",i,"Qty");      
+        res = -1; 
+        goto LSDVcRecordCheck;
+      end;
+//      if (nonblank(SDrw.Objects)) then begin 
+        accstr = SDrw.CostAcc;
+        if blank(accstr) then begin
+          accstr = SDp.CostAcc;
+        end;
+        VerifyRowObjects("PL",SDp.Objects,SDrw.Objects,accstr,errcode,errstr,initotcheckf,otcheckaccs,otcheckobjtyps,otcheckcnt); 
+        if (errcode!=0) then begin
+          RecordCheckError(errcode,errstr,i,"Objects");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+//      end;         
+      if (check!=0) then begin
+        if (transf) then begin
+          if (MSb.dontAllowOvership==1) then begin
+            prev = 0;
+            for (j=0;j<i;j=j+1) begin
+              MatRowGet(SDp,j,SD2rw);
+              if (nonblank(SD2rw.Location)) then begin
+                loc3 = SD2rw.Location;
+              end else begin
+                loc3 = location;
+              end;
+              testf = true;
+              if (loc3!=loc2) then begin testf = false; end;
+              if (SD2rw.ArtCode!=SDrw.ArtCode) then begin testf = false; end;
+              if (INr.SerNrf!=0) then begin
+                if ((SD2rw.SerialNr!=SDrw.SerialNr) or (SNrb.BulkSerialNos!=0)) then begin testf = false; end;
+              end;
+              if (testf) then begin
+                prev = prev + SD2rw.Qty;
+              end;
+            end;  
+            
+            prev = prev + SDrw.Qty;
+            switch (INr.ItemType) begin
+              case 1:           
+//                FindStockValue(SDrw.ArtCode,loc2,ISr);
+                if (SNrb.BulkSerialNos!=0) then begin
+                  FindStockValueInclStockReserv(-1,SDrw.ArtCode,"",loc2,ISr,stockreservq);
+                end else begin
+                  FindStockValueInclStockReserv(-1,SDrw.ArtCode,SDrw.SerialNr,loc2,ISr,stockreservq);
+                end;
+                if (ISr.Instock<(prev+stockreservq)) then begin
+                  RecordCheckError(1247,"",i,"Qty");      
+                  res = -1;
+                  goto LSDVcRecordCheck;
+                end;
+                if (LocRec.RequirePos!=0) then begin
+                  FindStockValueAtPosition(SDrw.ArtCode,loc2,SDrw.PosCode,PISr);
+                  if (SDrw.Qty>PISr.LeftQty) then begin
+                    RecordCheckError(1397,"",i,"PosCode");      
+                    res = -1; 
+                    goto LSDVcRecordCheck;
+                  end;
+                end;                
+                if (nonblank(SDrw.PosCode) and nonblank(SDrw.SerialNr)) then begin           
+                  errcode = CheckSerialatPositionInItemHist(SDrw.ArtCode,loc2,SDrw.PosCode,SDrw.SerialNr,prev);
+                  if (errcode!=0) then begin 
+                    RecordCheckError(15057," : " & USetStr(12872) & " " & USetStr(16148) ,i,"PosCode");
+                    res = -1;
+                    goto LSDVcRecordCheck;
+                  end; 
+                end;
+              case 2:
+                if (nonblank(SDrw.Recepy)) then begin
+                  if (CheckStructureItemsLevel(SDrw.ArtCode,SDrw.Recepy,loc2,prev)==false) then begin
+                    RecordCheckError(1247,"",i,"Quant");      
+                    res = -1; 
+                    goto LSDVcRecordCheck;
+                  end;            
+                end;                  
+            end;
+          end;
+        end;
+      end;
+      prcode = SDrw.PRCodeRow;
+      if (blank(prcode)) then begin prcode = SDp.PRCode; end;
+      if (nonblank(prcode)) then begin 
+        if (IsPRPhaseLocked(prcode,SDp.TransDate,errstr)) then begin
+          RecordCheckError(20408," " & errstr,i,"PRCode");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+        PRr.Code = prcode;
+        if ReadFirstMain(PRr,1,true) then begin 
+          if (UserCanAction("DisallowPostPRActualsfornonPRMan",false)) then begin
+            if (CheckProjectMember(PRr)==false) then begin 
+              RecordCheckError(1274,StringFromStringSet(3,"DisallowPostPRActualsfornonPRMan"),i,"PRCode");        
+              res = -1;
+              goto LSDVcRecordCheck;
+            end;
+          end;   
+        end else begin
+          RecordCheckError(1232,"",-1,"PRCode");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+        switch (PRr.TBIVItemsUsage) begin
+          case 0:
+          case 1:
+            if (TBIVItemsUsage(PRr,INr,SDrw.Qty)) then begin
+             MessageBox(20409,"");
+            end;
+          case 2:
+            if (TBIVItemsUsage(PRr,INr,SDrw.Qty)) then begin
+              RecordCheckError(20409,"",i,"ArtCode");      
+              res = -1;
+              goto LSDVcRecordCheck;
+            end;
+        end;
+      end;
+      if ((check!=0) and (transf)) then begin
+        if ((nonblank(SDrw.ArtCode)) and ((blank(SDrw.Qty)) or (SDrw.Qty == 0))) then begin
+          RecordCheckError(1058,"",i,"Qty");      
+          res = -1; 
+          goto LSDVcRecordCheck;
+        end;
+      if (((INr.SerNrf>0) and (INr.SerNrf<3)) and (MSb.NoSerOnPU==0)) then begin
+        if ((nonblank(SDrw.SerialNr)) and (blank(SDrw.ArtCode))) then begin
+          RecordCheckError(1058,"",i,"ArtCode");      
+          res = -1; 
+          goto LSDVcRecordCheck;
+        end;
+        if (SNrb.BulkSerialNos==0) then begin
+          if (IsSerialNrCorrect(SDrw.SerialNr)==false) then begin
+            RecordCheckError(24154,SDrw.SerialNr,i,"SerialNr");      
+            res = -1; 
+            goto LSDVcRecordCheck;
+          end;        
+        end;
+        if (blank(SDrw.SerialNr)) then begin
+          if (SDrw.Qty!=0) then begin
+            RecordCheckError(1239,"",i,"SerialNr");      
+            res = -1; 
+            goto LSDVcRecordCheck;
+          end;
+        end;
+        if (INr.SerNrf==1) then begin
+          if (SNrb.BulkSerialNos!=0) then begin
+            errcode = ValidateBulkSerialNoRow(SNrb,SDp,SDrw,i,errofield,j);
+            if (errcode) then begin
+              RecordCheckError(errcode,"",j,errofield);      
+              res = -1;
+              goto LSDVcRecordCheck;
+            end;
+          end else begin
+            if (SDrw.Qty!=1) then begin
+              RecordCheckError(1242,"",i,"SerialNr");      
+              res = -1; 
+              goto LSDVcRecordCheck;
+            end;
+            if (SDrw.Qty>0) then begin
+              for (cnt=0;cnt<i;cnt=cnt+1) begin
+                MatRowGet(SDp,cnt,SD2rw);
+                if ((SDrw.ArtCode==SD2rw.ArtCode) and (SDrw.SerialNr==SD2rw.SerialNr)) then begin
+                  RecordCheckError(1242,"",i,"SerialNr");      
+                  res = -1; 
+                  goto LSDVcRecordCheck;
+                end;
+              end;
+            end;
+          end;          
+        end;
+        if (SDrw.Qty>0) then begin
+          if (INr.SerNrf==1) then begin
+            if (SNrb.BulkSerialNos!=0) then begin
+              serqty = blankval;
+              serialnr = FirstInRange(SDrw.SerialNr,60);
+              while (nonblank(serialnr)) begin
+                if (SerialNrAvail(SDrw.ArtCode,serialnr,loc2,1.00)==false) then begin
+                  RecordCheckError(1240,"",i,"SerialNr");      
+                  res = -1; 
+                  goto LSDVcRecordCheck;
+                end;
+                serqty = serqty + 1;
+                serialnr = NextSerialNumber(SDrw.ArtCode,serialnr,SNrb);
+                if (serqty>=SDrw.Qty) then begin serialnr = ""; end;
+              end;
+            end else begin
+              if (SerialNrAvail(SDrw.ArtCode,SDrw.SerialNr,loc2,SDrw.Qty)==false) then begin
+                RecordCheckError(1240,"",i,"SerialNr");      
+                res = -1; 
+                goto LSDVcRecordCheck;
+              end;
+            end;
+          end else begin
+            prev = 0;
+            for (cnt=0;cnt<i;cnt=cnt+1) begin
+              MatRowGet(SDp,cnt,SD2rw);
+              if (nonblank(SDrw.Location)) then begin
+                if (((SD2rw.ArtCode==SDrw.ArtCode) and (SD2rw.SerialNr==SDrw.SerialNr)) and
+                   ((SD2rw.Location==SDrw.Location) or ((blank(SD2rw.Location)) and (thesamelocf)))) then begin
+                    prev = prev + SD2rw.Qty;
+                end;
+              end else begin
+                if (((SD2rw.ArtCode==SDrw.ArtCode) and (SD2rw.SerialNr==SDrw.SerialNr)) and
+                  ((blank(SD2rw.Location)) or (SD2rw.Location==location))) then begin
+                    prev = prev + SD2rw.Qty;
+                end;
+              end;
+            end;
+            prev = prev + SDrw.Qty;
+            if (SerialNrAvail(SDrw.ArtCode,SDrw.SerialNr,loc2,prev)==false) then begin
+              RecordCheckError(1240,"",i,"SerialNr");      
+              res = -1; 
+              goto LSDVcRecordCheck;
+            end;
+          end;
+        end;
+        
+      end;
+      end;
+    end;
+  end;
+  if (check!=0) then begin 
+    UpdateSDFIFO(SDp);
+  end;
+  if (transf) then begin 
+    sernr = -1;
+    if (stat==updatemode) then begin
+      sernr = SD2p.SerNr;
+    end;
+
+    if (check>0) then begin
+      if (MSb.Chronology!=0) then begin 
+        if (ExistStockTrans(SDp.Location,SDp.TransDate,errcode,errstr,"SDVc",sernr,MSb)) then begin
+          RecordCheckError(errcode,errstr,-1,"TransDate");      
+          res = -1;
+          goto LSDVcRecordCheck;
+        end;
+      end;
+    end;
+    if (CanOKStockRecord(errcode)==false) then begin
+      RecordCheckError(errcode,"",-1,"SerNr");      
+      res = -1; 
+      goto LSDVcRecordCheck;
+    end;
+  end;
+LSDVcRecordCheck_GenTrans:;
+  if (gentrans==false) then begin transf = false; end;
+  if (IsStandardProduct) then begin
+    transf = HasIntegratedNL and transf;
+  end;
+  if (transf) then begin
+    errcode = MakeTransFromSD(gTRp,SDp,false,errofield,errorrow);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",errorrow,errofield);      
+      res = -1;
+      goto LSDVcRecordCheck;
+    end;
+    if ((gTRp.Number>0) and (gTRp.IntYc==SDYc)) then begin
+      errstr = CheckTrans(gTRp,2,true);
+      if (nonblank(errstr)) then begin
+        RecordCheckError(1085,errstr,-1,"SerNr");      
+        res = -1;
+        goto LSDVcRecordCheck;
+      end;
+      if (MatRowCnt(gTRp)>0) then begin
+        switch (gRuniningMaint) begin    
+          case "RecalcStockMn":
+            UpdateTrans_Stock(gTRp);          
+          otherwise
+            SaveTrans(gTRp);
+            AddTTrans_SDVc(gTRp,SDp);
+        end;
+      end;
+    end;        
+  end;
+  
+LSDVcRecordCheck:;
+  if (res!=0) then begin
+    SDp.SerNr = oldnr;
+  end;
+  SDVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt SDVcRecordReset(var record SDVc SDr,record SDVc SD2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  SDr.OKFlag = 0;
+  SDVcRecordReset = res;
+  RETURN;
+END;

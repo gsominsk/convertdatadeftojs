@@ -1,0 +1,842 @@
+external procedure ActVcRecordDefClient(var record ActVc);
+external procedure GetPriceList(string,Date,Time,var string,var Integer);
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+remote updating procedure CreateRentQTAdvPrice(record RentQTVc);
+external function string 40 DelAddrSClassSpecPName(string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+remote function Boolean PasteCustInRentQT(var record RentQTVc,string,Boolean,var string);
+remote function Boolean PasteAgreementInRentQT(var record RentQTVc,Boolean,var string);
+remote function Boolean RentQTVc_PasteAgreeType(var record RentQTVc,Integer,var string);
+remote function Boolean RentQTVc_PasteType(var record RentQTVc,Integer,var string);
+remote procedure RentQTVc_GetCustomerWarning(var record RentQTVc,var string);
+remote function Boolean RentQTVc_PasteInvItem(var record RentQTVc,Integer,var string);
+remote function Boolean RentQTVc_PasteArtCode(var record RentQTVc,Integer,var string);
+remote function Boolean RentQTVc_PasteSerialNr(var record RentQTVc,Integer,var string);
+remote updating function Integer RecordAction_raAcceptRentQT(LongInt,var record AgreementVc);
+remote procedure RentQTSumup(var record RentQTVc);
+remote updating function Boolean MakeActFromRentQT(record RentQTVc,var record ActVc);
+remote updating function Integer CreateMailFromRentQTD(record RentQTVc,var record MailVc,var string,string);
+external updating procedure RentQTCreateHtmlFile(record RentQTVc,record MailVc);
+remote function Boolean SumupRentRecListQT(var record RentQTVc);
+
+global
+procedure RentQTAdvRowsSumup(var record RentQTVc RentQTp)
+begin
+  row RentQTVc RentQTrw;
+  row RentQTVc RentQT2rw;
+  Integer i,j,rwcnt;
+  val sum;
+
+  rwcnt = MatRowCnt(RentQTp);
+  for (i = 0 ; i<rwcnt ;i=i+1) begin
+    MatRowGet(RentQTp,i,RentQTrw);
+    sum = RentQTrw.Sum;
+    for (j=i;j<rwcnt;j=j+1) begin
+      MatRowGet(RentQTp,j,RentQT2rw);
+      if (RentQT2rw.BelongsTo==i+1) then begin
+        sum = sum + RentQT2rw.PerPrice;
+      end;
+    end;
+    RentQTrw.Sum = sum;
+    MatRowPut(RentQTp,i,RentQTrw);
+  end;
+  return;
+end;
+
+function Boolean RentQTDClassCustCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if ((changed!=0) or ((blank(RentQTr.Addr0)) and (nonblank(RentQTr.CustCode)))) then begin
+    GetWindowRecord(wn,RentQTr);    
+    DeselectWindow(wn,false);
+    if (PasteCustInRentQT(RentQTr,WindEFstr(wn),true,warning)) then begin
+      PutWindowRecord(wn,RentQTr);
+      if (nonblank(warning)) then begin
+        MessageBox(0,warning);
+      end;
+    end else begin
+      Beep;
+    end;
+  end;
+  RentQTDClassCustCodeEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassDealerCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  record CUVc CUr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if ((changed!=0) or ((blank(RentQTr.DealerName)) and (nonblank(RentQTr.DealerCode)))) then begin
+    GetWindowRecord(wn,RentQTr);    
+    DeselectWindow(wn,false);
+    CUr.Code = RentQTr.DealerCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      RentQTr.DealerName = CUr.Name;
+      PutWindowRecord(wn,RentQTr);
+    end else begin
+      Beep;
+    end;
+  end;
+  RentQTDClassDealerCodeEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassSiteEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  record DelAddrVc DelAddrr;
+  Boolean res,sitefoundf;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,RentQTr);
+    sitefoundf = false;
+    DelAddrr.DelCode = RentQTr.Site;
+    DelAddrr.CustCode = RentQTr.CustCode;
+    if (ReadFirstMain(DelAddrr,2,true)) then begin
+      sitefoundf = true;
+    end else begin
+      DelAddrr.DelCode = RentQTr.Site;
+      DelAddrr.CustCode = "";
+      if (ReadFirstMain(DelAddrr,2,true)) then begin
+        sitefoundf = true;
+      end;
+    end;
+    if (sitefoundf) then begin
+      RentQTr.ShipAddr0 = DelAddrr.Comment;
+      RentQTr.ShipAddr1 = DelAddrr.DelAddr0;
+      RentQTr.ShipAddr2 = DelAddrr.DelAddr1;
+      RentQTr.ShipAddr3 = DelAddrr.DelAddr2;
+      RentQTr.DelAddr3 = DelAddrr.DelAddr3;
+      RentQTr.DelAddr4 = DelAddrr.DelAddr4;
+    end;
+    PutWindowRecord(wn,RentQTr);
+  end;
+  return;
+end;
+
+function Boolean RentQTDClassTransDateEFAfter(Integer wn,Boolean changedf)
+begin
+  record RentQTVc RentQTr;
+  record DelAddrVc DelAddrr;
+  Boolean res,sitefoundf;
+  Time blankt;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,RentQTr);
+    GetPriceList(RentQTr.CustCat,RentQTr.TransDate,blankt,RentQTr.PriceList,RentQTr.InclVAT);
+    PutWindowRecord(wn,RentQTr);
+  end;
+  return;
+end;
+
+function Boolean RentQTDClassAgreementNrEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if ((changed!=0) or ((blank(RentQTr.Addr0)) and (nonblank(RentQTr.AgreementNr)))) then begin
+    GetWindowRecord(wn,RentQTr);    
+    DeselectWindow(wn,false);
+    if (PasteAgreementInRentQT(RentQTr,true,warning)) then begin
+      PutWindowRecord(wn,RentQTr);
+      if (nonblank(warning)) then begin
+        MessageBox(0,warning);
+      end;
+    end else begin
+      Beep;
+    end;
+  end;
+  RentQTDClassAgreementNrEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassArtCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if (changed!=0) then begin
+    if ((rownr>=0) and (rownr<MatRowCnt(RentQTr))) then begin
+      if (RentQTVc_PasteArtCode(RentQTr,rownr,warning)) then begin
+        PutWindowRecord(wn,RentQTr);
+        if (nonblank(warning)) then begin
+          MessageBox(0,warning);
+        end;
+      end else begin
+        Beep;
+      end;
+    end;
+  end;
+  RentQTDClassArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassSerialNrEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if (changed!=0) then begin
+    if ((rownr>=0) and (rownr<MatRowCnt(RentQTr))) then begin
+      if (RentQTVc_PasteSerialNr(RentQTr,rownr,warning)) then begin
+        PutWindowRecord(wn,RentQTr);
+        if (nonblank(warning)) then begin
+          MessageBox(0,warning);
+        end;
+      end else begin
+        Beep;
+      end;
+    end;
+  end;
+  RentQTDClassSerialNrEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassInvItemEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if (changed!=0) then begin
+    if ((rownr>=0) and (rownr<MatRowCnt(RentQTr))) then begin
+      if (RentQTVc_PasteInvItem(RentQTr,rownr,warning)) then begin
+        PutWindowRecord(wn,RentQTr);
+        if (nonblank(warning)) then begin
+          MessageBox(0,warning);
+        end;
+      end else begin
+        Beep;
+      end;
+    end;
+  end;
+  RentQTDClassInvItemEFAfter = true;
+  return;
+end;
+
+procedure RentQTChSum(Integer wn,Integer rownr)
+begin
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+  val factor,s;
+ 
+  GetWindowRecord(wn,RentQTr);
+  if ((rownr>=0) and (rownr<MatRowCnt(RentQTr))) then begin
+    MatRowGet(RentQTr,rownr,RentQTrw);
+    factor = BlankVal;
+    CalcSum(RentQTrw.InvQuant,RentQTrw.Price,factor,RentQTrw.vRebate,s,0);
+    CalcSum(RentQTrw.Quant,s,factor,0,s,0);
+    RentQTrw.Sum = Round(s,DefaultRoundMode);
+    MatRowPut(RentQTr,rownr,RentQTrw);
+    RentQTAdvRowsSumup(RentQTr);
+    RentQTSumup(RentQTr);
+    PutWindowRecord(wn,RentQTr);
+  end;
+  return;
+end;
+
+function Boolean RentQTDClassPriceEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentQTChSum(wn,rownr);
+  end;
+  RentQTDClassPriceEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassvRebateEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentQTChSum(wn,rownr);
+  end;
+  RentQTDClassvRebateEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassInvQuantEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentQTChSum(wn,rownr);
+  end;
+  RentQTDClassInvQuantEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassQuantEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentQTChSum(wn,rownr);
+  end;
+  RentQTDClassQuantEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassAgreeTypeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if (changedf!=0) then begin
+    if (RentQTVc_PasteAgreeType(RentQTr,rownr,warning)) then begin
+      PutWindowRecord(wn,RentQTr);
+    end else begin
+      Beep;
+    end;
+  end;
+  RentQTDClassAgreeTypeEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassTypeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentQTr);    
+  if (changedf!=0) then begin
+    if (RentQTVc_PasteType(RentQTr,rownr,warning)) then begin
+      PutWindowRecord(wn,RentQTr);
+    end else begin
+      Beep;
+    end;
+  end;
+  RentQTDClassTypeEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassClientContactEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record RentQTVc RentQTr;
+  string 255 warning;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,RentQTr);    
+    RentQTVc_GetCustomerWarning(RentQTr,warning);
+    if (nonblank(warning)) then begin
+      MessageBox(0,warning);
+    end;
+  end;
+  RentQTDClassClientContactEFAfter = true;
+  return;
+end;
+
+function Boolean RentQTDClassSumEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+  val q,s,hund;
+ 
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,RentQTr);
+    if ((rownr>=0) and (rownr<MatRowCnt(RentQTr))) then begin
+      MatRowGet(RentQTr,rownr,RentQTrw);
+      q = 1;
+      hund = 100;
+      s = RentQTrw.Sum;
+      s = s/q;
+      s = RentQTrw.Price - s;
+      s = s*100;
+      s = s/RentQTrw.Price;
+      RentQTrw.vRebate = Round(s,SetRoundModeD(1));
+      RentQTSumup(RentQTr);
+      MatRowPut(RentQTr,rownr,RentQTrw);
+      PutWindowRecord(wn,RentQTr);
+    end;
+  end;
+  RentQTDClassSumEFAfter = true;
+  return;
+end;
+
+global
+function Boolean RentQTDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "CustCode": res = RentQTDClassCustCodeEFAfter(wn,fn,rownr,changed);
+    case "AgreementNr": res = RentQTDClassAgreementNrEFAfter(wn,fn,rownr,changed);
+    case "ArtCode": res = RentQTDClassArtCodeEFAfter(wn,fn,rownr,changed); // Rental item
+    case "SerialNr": res = RentQTDClassSerialNrEFAfter(wn,fn,rownr,changed);
+    case "InvItem": res = RentQTDClassInvItemEFAfter(wn,fn,rownr,changed); // Invoice Item
+    case "Price": res = RentQTDClassPriceEFAfter(wn,fn,rownr,changed);
+    case "vRebate": res = RentQTDClassvRebateEFAfter(wn,fn,rownr,changed);
+    case "Sum": res = RentQTDClassSumEFAfter(wn,fn,rownr,changed);
+    case "InvQuant": res = RentQTDClassInvQuantEFAfter(wn,fn,rownr,changed);
+    case "Quant": res = RentQTDClassQuantEFAfter(wn,fn,rownr,changed);
+    case "AgreeType": res = RentQTDClassAgreeTypeEFAfter(wn,fn,rownr,changed);
+    case "Type": res = RentQTDClassAgreeTypeEFAfter(wn,fn,rownr,changed);
+    case "ClientContact": res = RentQTDClassClientContactEFAfter(wn,fn,rownr,changed);
+    case "DealerCode": res = RentQTDClassDealerCodeEFAfter(wn,fn,rownr,changed);
+    case "Site": res = RentQTDClassSiteEFAfter(wn,fn,rownr,changed);
+    case "TransDate": res = RentQTDClassTransDateEFAfter(wn,changed!=0);
+  end;
+  RentQTDClassAfterEditField = res;
+  RETURN;
+END;
+
+function Boolean RentQTQTButtonAction(string fieldname,Integer wn,Integer wnst)
+begin
+  Boolean res;
+  record RentQTVc RentQTr;
+  record RentControlBlock RCb;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  BlockLoad(RCb);
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,RentQTr);
+    if (RentQTr.Status!=0) then begin
+      switch (fieldname) begin
+        case "Status":
+          res = false;
+          if (UserCanAction("UnOKAll",true)) then begin
+//          if (UserCanAction("UnOKAgree",true)) then begin
+            res = true;
+          end;
+        otherwise
+          res = false;
+      end;
+    end;
+    if (RentQTr.Rejected!=0) then begin
+      if (RCb.MaxOneQTPerAgr!=0) then begin
+        res = false;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,RentQTr);
+    if (RentQTr.Status!=0) then begin
+      switch (fieldname) begin
+        otherwise
+          res = false;
+      end;
+    end;
+    if (RentQTr.Rejected!=0) then begin
+      if (RCb.MaxOneQTPerAgr!=0) then begin
+        res = false;
+      end;
+    end;
+  end;
+  RentQTQTButtonAction = res;
+  return;
+end;
+
+global
+function Boolean RentQTDClassStatusButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+
+//  res = RentQTQTButtonAction("Status",wn,WindowState(wn));
+  res = true;
+  RentQTDClassStatusButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean RentQTDClassRejectedButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+
+  res = RentQTQTButtonAction("Rejected",wn,WindowState(wn));
+  RentQTDClassRejectedButtonAction = res;
+  RETURN;
+END;
+
+function Boolean RentQTVcEFActiveCheck(string fieldname,Integer wn,Integer wnst,Integer rownr)
+BEGIN
+  Boolean res;
+  record RentQTVc RentQTr;
+
+  res = true;
+  if (wnst==Rs_update) then begin
+    GetWindowRecord(wn,RentQTr);
+    if (RentQTr.Status<>0) then begin
+      res = false;
+    end;
+    if (RentQTr.Rejected<>0) then begin
+      res = false;
+    end;
+    switch (fieldname) begin
+      case "endDate":
+        res = true;
+      case "CancelDate":
+        res = true;
+       case "SalesMan":
+        res = true;
+      case "ClientContact":
+        res = true;
+      case "PriceList": 
+        res = UserCanAction("ChangePrices",true);
+      case "Price": 
+        res = UserCanAction("ChangeUnitPrices",true);
+      case "vRebate": 
+        res = UserCanAction("ChangeUnitPrices",true);
+      case "Sum": 
+        res = UserCanAction("ChangeUnitPrices",true);      
+    end;
+  end else begin
+    switch (fieldname) begin
+      case "PriceList": 
+        res = UserCanAction("ChangePrices",true);
+      case "Price": 
+        res = UserCanAction("ChangeUnitPrices",true);
+      case "vRebate": 
+        res = UserCanAction("ChangeUnitPrices",true);
+      case "Sum": 
+        res = UserCanAction("ChangeUnitPrices",true);      
+    end;
+  end;
+  RentQTVcEFActiveCheck = res;
+  RETURN;
+END;
+
+global
+function Boolean RentQTDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer ef)
+BEGIN
+  Boolean res;
+  
+  res = RentQTVcEFActiveCheck(fieldname,wn,wnst,rownr);
+  RentQTDClassActiveEditField = res;
+  return;
+end;
+
+global
+function string 40 RentQTDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "DelAddrCode": psname = DelAddrSClassSpecPName(defpsname);
+  end;
+  RentQTDClassSpecPasteName = psname;
+  return;
+end;
+
+global
+updating procedure AcceptRentQTDsm()
+BEGIN
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  record RentControlBlock RCb;
+  record RentQTVc RentQTr;
+  Integer nwn,wn;
+  LongInt r;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin//Rs_normal
+    GetWindowRecord(wn,RentQTr);
+    if (UserCanAction("RentQTToRentRes",true)) then begin
+      if ((RentQTr.Status==0) and (RentQTr.Rejected==0) and nonblank(RentQTr.CustCode)) then begin
+        if (RentQTr.AgreementNr>-1) then begin
+          BlockLoad(RCb);
+          if (RCb.MaxOneQTPerAgr!=0) then begin
+            MessageBox(20560,"");
+            goto LAcceptRentQTDsm;
+          end;
+        end;
+        RecordNew(Agreementr);
+        Agreementr.SerNr = RentQTr.AgreementNr;
+        r = RecordAction_raAcceptRentQT(RentQTr.SerNr,Agreementr);
+        if (r!=-1) then begin
+          nwn = OpenWindow("AgreementDClass",1,0,"","",Agreementr);
+          CloseWindow(wn);
+          UpdateBrowses("AgreementVc");
+          UpdateBrowses("RentResVc");
+          UpdateBrowses("RentQTVc");
+        end else begin
+          Beep;
+        end;
+      end;  
+    end else begin
+      MessageBox(1274,StringFromStringSet(3,"RentQTToRentRes"));
+    end;
+  end else begin
+    Beep;
+  end;
+LAcceptRentQTDsm:;
+  RETURN;
+END;
+
+global 
+function Boolean RentQTDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  Boolean res;
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+
+  res = true;
+  if (rownr>-1) then begin
+    GetWindowRecord(wn,RentQTr);
+    if (RentQTr.Status!=0) then begin
+      res = false;
+    end;
+    if (RentQTr.Rejected!=0) then begin
+      res = false;
+    end;
+    if (res) then begin
+      MatRowGet(RentQTr,rownr,RentQTrw);
+      if (RentQTrw.BelongsTo>0) then begin
+        res = false;
+      end;
+    end;
+  end;
+  RentQTDClassDeleteRowTest = res;
+  return;
+end;
+
+global 
+function Boolean RentQTDClassInsertRowTest(Integer wn, Integer rownr)
+BEGIN
+  Boolean res;
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+  Integer rwcnt,i;
+
+  res = true;
+  switch (WindowState(wn)) begin
+    case 0://Rs_normal
+      GetWindowRecord(wn,RentQTr);
+      if (RentQTr.Rejected!=0) then begin res = false; end;
+    case 1://Rs_insert
+      res = true;
+    case 2://Rs_update
+      GetPrevWindowRecord(wn,RentQTr);
+      if (RentQTr.Rejected!=0) then begin res = false; end;
+  end;
+  if (res) then begin
+// If there was a message for InsertRow, I could allow it. Now I have to stop it....
+/*
+    MatRowGet(RentQTr,rownr,RentQTrw);
+    if (RentQTrw.BelongsTo>0) then begin
+      res = false;
+    end;
+*/
+    rwcnt = MatRowCnt(RentQTr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentQTr,i,RentQTrw);
+      if (RentQTrw.BelongsTo>0) then begin
+        res = false;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  RentQTDClassInsertRowTest = res;
+  RETURN;
+END;
+
+global
+function Boolean RentQTDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+  Integer rwcnt,i,linesremoved;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,RentQTr);
+    linesremoved = 0;
+    rwcnt = MatRowCnt(RentQTr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentQTr,i,RentQTrw);
+      if (RentQTrw.BelongsTo==rownr+1) then begin
+        MatRowDelete(RentQTr,i);
+        rwcnt = MatRowCnt(RentQTr);
+        i = i - 1;
+        linesremoved = linesremoved + 1;
+      end;
+    end;
+    for (i=rownr;i<rwcnt;i=i+1) begin
+      MatRowGet(RentQTr,i,RentQTrw);
+      if (RentQTrw.BelongsTo>0) then begin
+        RentQTrw.BelongsTo = RentQTrw.BelongsTo - linesremoved - 1;
+        MatRowPut(RentQTr,i,RentQTrw);
+      end;
+    end;
+    
+    RentQTSumup(RentQTr);
+    PutWindowRecord(wn,RentQTr);    
+  end;
+  res = true;
+  RentQTDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global
+updating procedure CreateActFromRentQTDsm()
+BEGIN
+  record RentQTVc RentQTr;
+  record ActVc Actr;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+//  if (WindowState(wn)==0)then begin//Rs_normal
+    GetWindowRecord(wn,RentQTr);
+    RecordNew(Actr);
+    ActVcRecordDefClient(Actr);
+    if (MakeActFromRentQT(RentQTr,Actr)) then begin
+      nwn = OpenWindow("ActDClass",1,0,"","",Actr);
+      SetRlink(wn,true);
+    end;
+//  end;
+  RETURN;
+END;
+
+global
+updating procedure RentQTVcCreateActivity()
+begin
+  CreateActFromRentQTDsm;
+  return;
+end;
+
+global 
+updating procedure CreateMailFromRentQTDsm()
+BEGIN
+  Integer wn,nwn;
+  record MailVc Mailr;
+  record RentQTVc RentQTr;
+  string 255 tstr;
+  Integer err;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    GetWindowRecord(wn,RentQTr);  
+    err = CreateMailFromRentQTD(RentQTr,Mailr,tstr,WindowFormName(wn));
+    if (err!=0) then begin
+      MessageBox(err,": " & tstr);
+    end else begin
+      nwn = OpenWindow("MailDClass",1,0,"","",Mailr);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure SumupRentQTDsm()
+BEGIN
+  record RentQTVc RentQTr;
+  Integer wn;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,RentQTr);
+    if (SumupRentRecListQT(RentQTr)) then begin
+      PutWindowRecord(wn,RentQTr);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure RentQTAvailRn()
+begin
+  record RentQTVc RentQTr;
+  record RcVc RepSpec;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,RentQTr);
+  ReportDefaults(RepSpec,"RentResAvailRClass");
+  if (nonblankdate(RentQTr.startDate)) then begin
+    RepSpec.sStartDate = RentQTr.startDate;
+  end;
+  if (nonblankdate(RentQTr.endDate)) then begin
+    RepSpec.sEndDate = RentQTr.endDate;
+  end else begin
+    if (RepSpec.sEndDate<RepSpec.sStartDate) then begin
+      RepSpec.sEndDate = AddYear(RepSpec.sEndDate,1);
+    end;
+  end;
+  RepSpec.f1 = RentQTr.Location;
+  RepSpec.f4 = RentQTr.SerNr;
+  RepSpec.f5 = RentQTr.CustCode;
+  RepSpec.Media = mtScreen;
+  RepSpec.repname = "RentResAvail2Rn";
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+procedure RentQTStatusDsm()
+begin
+  record RentQTVc RentQTr;
+  record RcVc RepSpec;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,RentQTr);
+  RepSpec.f1 = RentQTr.SerNr;
+  RepSpec.Media = mtScreen;
+  RepSpec.repname = "RentQTStatusRn";
+  RunReport(RepSpec,0);
+  return;
+end;
+
+/*
+global
+updating procedure AdvPrDetRentQTD()
+BEGIN
+  record RcVc RepSpec;
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+  record AdvPriceRecVc AdvPriceRecr;
+  Integer rwcnt,i,cnt,therow;
+  Integer wn;
+
+  GetWindowRecord(CurWindow,RentQTr);
+  cnt = 0;
+  rwcnt = MatRowCnt(RentQTr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentQTr,i,RentQTrw);
+    if (nonblank(RentQTrw.ArtCode)) then begin
+      cnt = cnt + 1;
+      therow = i;
+    end;
+  end;
+  if (cnt>1) then begin
+    ReportDefaults(RepSpec,"RentQTAdvPricesRn");
+    RepSpec.f1 = RentQTr.SerNr;
+    RepSpec.Media = mtScreen;
+    RepSpec.repname = "RentQTAdvPricesRn";
+    RunReport(RepSpec,0);
+  end else begin
+    if (cnt==1) then begin
+      AdvPriceRecr.FileName = "RentQTVc";
+      AdvPriceRecr.SerNr = RentQTr.SerNr;
+      AdvPriceRecr.RowNr = therow;
+      if (ReadFirstMain(AdvPriceRecr,3,true)) then begin
+        wn = OpenWindow("AdvPriceRecDClass",0,0,"","",AdvPriceRecr);
+      end else begin
+        CreateRentQTAdvPrice(RentQTr);
+        AdvPriceRecr.FileName = "RentQTVc";
+        AdvPriceRecr.SerNr = RentQTr.SerNr;
+        AdvPriceRecr.RowNr = therow;
+        if (ReadFirstMain(AdvPriceRecr,3,true)) then begin
+          wn = OpenWindow("AdvPriceRecDClass",0,0,"","",AdvPriceRecr);
+        end;
+      end;
+    end else begin
+      Beep;
+    end;
+  end;
+  RETURN;
+END;
+
+*/
+

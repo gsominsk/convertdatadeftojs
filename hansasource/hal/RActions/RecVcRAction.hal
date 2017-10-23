@@ -1,0 +1,247 @@
+external function Boolean ReadFirstItemInclClosed(string,var record INVc,Boolean,Boolean);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure RecSumup(record RecVc);
+
+global
+function LongInt RecVcRecordInIndex(record RecVc Recr,string indexname)
+BEGIN
+  LongInt res;
+  
+  res = 1;
+  if (Recr.Closed!=0) then begin 
+    if (indexname=="ActCode")  then begin res = 0; end;
+    if (indexname=="ActComment")  then begin res = 0; end;
+  end;
+  RecVcRecordInIndex = res;
+  RETURN;
+END;
+
+global
+function LongInt RecVcRecordDefaults(var record RecVc Recr,record RecVc Rec2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+      
+  Recr.NormProdQty = blankval;
+  Recr.MinProdQty = blankval;
+  Recr.InSum = blankval;
+  Recr.OutSum = blankval;
+  Recr.FixedAssembDays = blankval;
+  Recr.QtyAssemblyDays = blankval;
+  RecVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt RecVcRecordDuplicate(var record RecVc Recr,record RecVc Rec2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  Recr.OKFlag = 0;
+  RecVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function LongInt RecVcRecordCheck(var record RecVc Recr,record RecVc Rec2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Integer insertmode,updatemode;
+  row RecVc Recrw;
+  record INVc INr;
+  Integer i,rwcnt;
+  Integer totoutlines,totoutrellines;
+  record RoutingVc Routingr;
+  Boolean relf;
+  
+  totoutlines = 0;
+  totoutrellines = 0;
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  if (blank(Recr.Code)) then begin
+    RecordCheckError(1959,"",-1,"Code");      
+    res = -1;
+    goto LResVcRecordCheck;
+  end;  
+  if (nonblank(Recr.DefaultRouting)) then begin
+    Routingr.Code = Recr.DefaultRouting;
+    if (ReadFirstMain(Routingr,1,true)==false) then begin
+      RecordCheckError(1120,Recr.DefaultRouting,-1,"DefaultRouting");      
+      res = -1;
+      goto LResVcRecordCheck;
+    end;
+  end;
+  relf = true;
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    if (nonblank(Recrw.Item)) then begin
+      if (ReadFirstItemInclClosed(Recrw.Item,INr,true,true)==false) then begin
+        RecordCheckError(1120," " & Recrw.Item,i,"Item");      
+        res = -1;
+        goto LResVcRecordCheck;
+      end;
+      if (Recr.Closed==0) then begin
+        if (INr.Terminated!=0) then begin
+          RecordCheckError(1266," " & Recrw.Item,i,"Item");      
+          res = -1;
+          goto LResVcRecordCheck;
+        end;
+      end;
+      if (Recrw.OutQty!=0) then begin
+        totoutlines = totoutlines + 1;
+        if (Recrw.RelVal!=0) then begin
+          totoutrellines = totoutrellines + 1;
+        end;
+        if (relf) then begin
+          relf = nonblank(Recrw.RelVal);
+        end;
+      end;
+      if (Recrw.InQty!=0) then begin
+        if (INr.ItemType==2) then begin
+          RecordCheckError(20565," " & Recrw.Item,i,"Item");      
+          res = -1;
+          goto LResVcRecordCheck;
+        end;
+      end;
+      if (nonblank(Recr.DefaultRouting)) then begin
+        if (Recrw.ExtraCost!=0) then begin
+          RecordCheckError(20757,"",i,"ExtraCost");      
+          res = -1;
+          goto LResVcRecordCheck;
+        end;
+      end;
+    end else begin
+      goto LResVcRecordCheck;
+    end;    
+  end;  
+  if (totoutlines==0) then begin//what about structure items?
+//    RecordCheckError(2167,"",-1,"SerNr");
+//    res = -1;
+//    goto LResVcRecordCheck;
+  end;
+  if ((totoutlines>1) and (totoutrellines!=totoutlines)) then begin
+    if (relf==false) then begin
+      RecordCheckError(2177,"",-1,"Code");
+      res = -1;
+      goto LResVcRecordCheck;
+    end;
+  end;
+  if (BuildProductCode=="PurplesoftERP") then begin
+    if (CountRecords("RecVc")>14) then begin
+      RecordCheckError(1426,"",-1,"Code");
+      res = -1;
+      goto LResVcRecordCheck;
+    end;
+  end;
+LResVcRecordCheck:;
+  RecVcRecordCheck = res; 
+  RETURN;
+END;
+
+procedure RecVcConvertB1ToB2Date(var record RecVc Recr)
+BEGIN
+  row RecVc Recrw;
+  Integer i,rwcnt;
+  string 5 curncy;
+  val fr,to1,to2,br1,br2,t;
+
+  GetFullCurncyRate(curncy,CurrentDate,fr,to1,to2,br1,br2);
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    B1ToB2Val(Recrw.ItemCost,br1,br2,t);
+    Recrw.ItemCost = t;
+    B1ToB2Val(Recrw.ExtraCost,br1,br2,t);
+    Recrw.ExtraCost = t;
+    MatRowPut(Recr,i,Recrw);
+  end;
+  RecSumup(Recr);
+  RETURN;
+END;
+
+global
+function LongInt RecVcRecordImport(var record RecVc Recr,record RecVc Rec2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Boolean gBase1ToBase2;
+  record ConvMasterBlock cvm;
+
+  BlockLoad(cvm);
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    RecVcConvertB1ToB2Date(Recr);
+  end;
+  RecVcRecordImport = res; 
+  RETURN;
+END;
+
+global
+function LongInt RecVcRecordSave(var record RecVc Recr,record RecVc Rec2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row RecVc Recrw;
+  record INVc INr;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    if (ReadFirstItem(Recrw.Item,INr,false,false)) then begin
+      if (nonblank(INr.Recepy)) then begin
+        Recrw.Recipe = 1;
+      end else begin
+        Recrw.Recipe = 0;
+      end;
+      MatRowPut(Recr,i,Recrw);
+    end;
+  end;
+  RecVcRecordSave = res; 
+  RETURN;
+END;
+
+global
+function LongInt RecVcRecordUpdate(var record RecVc Recr,record RecVc Rec2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row RecVc Recrw;
+  record INVc INr;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Recr,i,Recrw);
+    if (ReadFirstItem(Recrw.Item,INr,false,false)) then begin
+      if (nonblank(INr.Recepy)) then begin
+        Recrw.Recipe = 1;
+      end else begin
+        Recrw.Recipe = 0;
+      end;
+      MatRowPut(Recr,i,Recrw);
+    end;
+  end;
+  RecVcRecordUpdate = res; 
+  RETURN;
+END;
+
+global 
+function Boolean RecVcRecordShouldBeSynchronised(record RecVc Recr,string tagstr)
+begin
+  Boolean res;
+  
+  res = true;
+  RecVcrecordShouldBeSynchronised = res;
+  return;
+end;
+
+global 
+function Boolean RecVcRecordSync(record RecVc Recr,string tagstr)
+begin
+  Boolean res;
+  
+  res = true;
+  RecVcRecordSync = res;
+  return;
+end;

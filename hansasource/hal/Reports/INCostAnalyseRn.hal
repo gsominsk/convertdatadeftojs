@@ -1,0 +1,179 @@
+external procedure HTItem(string,var string);
+external procedure HTArtGroup(string, var string);
+external procedure HTItemClass(string,var string);
+external function Boolean HasItemClassification();
+external function Boolean HasItemGroups();
+external function Boolean SetInSet2(string,string);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external function val AbsoluteVal(val);
+external procedure PUCalcPerc(val,string,var val);
+
+global
+function Boolean INCostAnalyseTest(record RcVc RepSpec,record INVc INr,Integer sorting,string frin,string toin,
+                                   var val diff,var val instock)
+begin
+  Boolean res;
+  val tolerance,v;
+  record ItemStatusVc ISr;
+  
+  diff = blankval;
+  res = true;
+  switch (sorting) begin
+    case 0:
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (INr.Code<frin) then begin res = false; end;
+        if (INr.Code>toin) then begin res = false; end;
+      end;
+  end;
+  if (INr.ItemType!=1) then begin res = false; end;
+  if (res) then begin
+    switch (RepSpec.flags[0]) begin
+      case 0: diff = INr.InPrice - INr.LastPurchPrice; 
+      case 1: diff = INr.InPrice - INr.WeighedAvPrice; 
+      case 2: 
+        v = MulWithRateToBase1(INr.LastPurchCurncyCode,CurrentDate,INr.LastPurchPrice2,DefaultCurRoundOff);
+        diff = INr.InPrice - v; 
+    end;
+  end;
+  if (diff==0) then begin res = false; end;
+  if (res) then begin
+    if (nonblank(RepSpec.LastAcc)) then begin
+      RepSpec.LastAcc = RepSpec.LastAcc & "%";
+      PUCalcPerc(INr.InPrice,RepSpec.LastAcc,tolerance);
+      if (AbsoluteVal(diff)<tolerance) then begin res = false; end;
+    end;
+  end;
+  if (res) then begin
+    FindStockValue(INr.Code,";;;",ISr);
+    instock = ISr.Instock;
+    if (RepSpec.flags[1]!=0) then begin
+      if (ISr.Instock<=0) then begin
+        res = false;
+      end;
+    end;
+  end;
+  INCostAnalyseTest = res;
+  return;
+end;
+      
+global
+procedure INCostAnalyseRn(record RcVc RepSpec)
+begin
+  record INVc INr;
+  Boolean found,testf;
+  string 255 keystr;
+  Integer sorting,rw;
+  string 255 frin,toin,tstr;
+  val totdiff,totinprice,totcost,v;
+  val diff,instock;
+  record ItemStatusVc ISr;
+  
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(17550));
+  rw = 1;
+  HTItem(RepSpec.f1,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (HasItemGroups) then begin
+    HTArtGroup(RepSpec.FirstAcc,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasItemClassification) then begin
+    HTItemClass(RepSpec.f2,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;  
+  EndHeader;
+  SetRepCol(2,100);
+  SetRepColBiDi(5,270,310);
+  SetRepColBiDi(6,330,370);
+  SetRepColBiDi(7,380,420);
+  SetRepColBiDi(8,430,470);
+  SetRepColBiDi(9,480,520);
+  StartFormat(15);
+   OutString(1,"DblSRCostAnalysis",USetStr(17558),true);
+  EndFormat;
+  StartFormat(15);
+   OutString(0,0,USetStr(17551),false);
+   OutString(2,0,USetStr(17552),false);
+   OutStringAdjust(5,0,USetStr(17559),true,M4Val);
+   OutStringAdjust(6,0,USetStr(17553),true,M4Val);
+   OutStringAdjust(7,0,USetStr(17554+RepSpec.flags[0]),true,M4Val);
+   OutStringAdjust(8,0,"%",true,M4Val);
+   OutStringAdjust(9,0,USetStr(17557),true,M4Val);
+  EndFormat;
+  Gray_Divider(0,1);
+  sorting = 0;
+  keystr = "Code";
+  INr.Code = frin;
+  if (blank(RepSpec.f1)) and (nonblank(RepSpec.FirstAcc)) then begin
+    sorting = 1;
+    keystr = "Group";
+    INr.Group = RepSpec.FirstAcc;
+  end;
+  found = true;
+  while (LoopKey(keystr,INr,1,found)) begin
+    switch (sorting) begin
+      case 0:
+        if (nonblank(RepSpec.f1)) then begin
+          if (INr.Code>toin) then begin found = false; end;
+        end;
+      case 1:
+        if (INr.Group!=RepSpec.FirstAcc) then begin
+          found = false;
+        end;
+    end;
+    if (found) then begin
+      testf = true;
+      if (nonblank(RepSpec.f2)) then begin
+        testf = SetInSet2(RepSpec.f2,INr.DispGroups);
+      end;
+      if (testf) then begin 
+        testf = INCostAnalyseTest(RepSpec,INr,sorting,frin,toin,diff,instock);
+      end; 
+      if (instock<=0) then begin testf = false; end;
+      if (testf) then begin
+        StartFormat(15);
+         OutString(0,"DblINVc",INr.Code,false);
+         OutString(2,0,Left(INr.Name,30),false);
+         OutVal(5,0,instock,M45Val,true);
+         OutVal(6,0,INr.InPrice,M45Val,true);
+         switch (RepSpec.flags[0]) begin
+           case 0:
+             OutVal(7,0,INr.LastPurchPrice,M45Val,true);
+             totcost = totcost + INr.LastPurchPrice;
+           case 1:
+             OutVal(7,0,INr.WeighedAvPrice,M45Val,true);
+             totcost = totcost + INr.WeighedAvPrice;
+           case 2:
+             v = MulWithRateToBase1(INr.LastPurchCurncyCode,CurrentDate,INr.LastPurchPrice2,DefaultCurRoundOff);
+             OutVal(7,0,v,M45Val,true);
+             totcost = totcost + v;
+         end;
+         OutVal(8,0,(diff*100)/INr.InPrice,M4Val,true);
+         OutVal(9,0,diff,M45Val,true);
+        EndFormat;
+        totdiff = totdiff + diff;
+        totinprice = totinprice + INr.InPrice;
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+   OutVal(6,0,totinprice,M4Val,true);
+   OutVal(7,0,totcost,M4Val,true);
+   OutVal(8,0,(totdiff*100)/totinprice,M4Val,true);
+   OutVal(9,0,totdiff,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

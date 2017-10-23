@@ -1,0 +1,300 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external procedure ContractFindReceiptAmount(record IVVc,Date,var val);
+
+procedure CUHistPrintInvoiceToCustomer(string CustCode)
+BEGIN
+  record CUVc CUr;
+  
+  CUr.Code = CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    StartFormat(15);
+     OutString(20,0,USetStr(9606),false);
+     OutString(3,"DblCUVc",CUr.Code,false);
+     OutString(4,0,CUr.Name,false);
+    EndFormat;      
+  end;
+  RETURN;
+END;
+
+function Boolean CheckCOIV(LongInt conr,LongInt cochildnr,LongInt ivnr)
+BEGIN
+  Boolean res;
+  record COIVVc COIVr;
+    
+  res = true;
+  COIVr.CONr = conr;
+  COIVr.COChildNr = cochildnr;
+  COIVr.IVNr = ivnr;
+  COIVr.Type = 0;
+  res = ReadFirstKey("IVNr",COIVr,4,true);  
+  CheckCOIV = res;  
+  RETURN;    
+END;
+
+procedure COHistPrintContractInvoices(Date sEndDate,string CustCode,LongInt conr,LongInt cochildnr,var Boolean printivf)
+BEGIN
+  Boolean TrHs,testf;
+  record IVVc IVr;
+  val t,paid;
+
+  IVr.CustCode = CustCode;
+  TrHs = true;
+  while (LoopKey("CustCode",IVr,1,TrHs)) begin
+    testf = true;
+    if (IVr.CustCode<>CustCode) then begin TrHs = false; end;
+    if (CheckCOIV(conr,cochildnr,IVr.SerNr)==false) then begin 
+      testf = false;       
+    end;
+    if (TrHs and testf) then begin
+      ContractFindReceiptAmount(IVr,sEndDate,paid);
+      if (printivf) then begin
+        StartFormat(15);
+        OutString(2,0,USetStr(9611),false);
+        OutString(6,0,USetStr(9603),true);
+        OutString(7,0,USetStr(9604),true);
+        OutString(8,0,USetStr(9605),true);
+         EndFormat;  
+        Gray_Divider(50,1);
+        printivf = false;
+      end;              
+      StartFormat(15);
+      OutLongInt(2,"DblCustPS2",IVr.SerNr,false);
+      if (IVr.OKFlag==0) then begin
+        OutString(4,0,USetStr(2366),false);
+      end;  
+      if (IVr.Invalid!=0) then begin
+        OutString(4,0,USetStr(1282),false);
+      end;  
+      OutVal(6,0,IVr.Sum4,M4Val,true);
+      OutVal(7,0,paid,M4Val,true);
+      OutVal(8,0,IVr.Sum4-paid,M4Val,true);
+      EndFormat;
+    end;  
+  end;
+  if (printivf==false) then begin
+    Gray_Divider(20,1);
+  end;
+  RETURN;    
+END;
+    
+function Boolean CheckCOOR(LongInt conr,LongInt cochildnr,LongInt ornr)
+BEGIN
+  Boolean res;
+  record COIVVc COIVr;
+    
+  res = true;
+  COIVr.CONr = conr;
+  COIVr.COChildNr = cochildnr;
+  COIVr.IVNr = ornr;
+  COIVr.Type = 1;
+  res = ReadFirstKey("IVNr",COIVr,4,true);  
+  CheckCOOR = res;  
+  RETURN;    
+END;
+
+procedure COHistPrintContractOrders(string CustCode,LongInt conr,LongInt cochildnr,var Boolean printivf)
+BEGIN
+  Boolean TrHs,testf;
+  record ORVc ORr;
+  val t;
+
+  ORr.CustCode = CustCode;
+  TrHs = true;
+  while (LoopKey("CustCode",ORr,1,TrHs)) begin
+    testf = true;
+    if (ORr.CustCode<>CustCode) then begin TrHs = false; end;
+    if (CheckCOOR(conr,cochildnr,ORr.SerNr)==false) then begin 
+      testf = false;       
+    end;
+    if (TrHs and testf) then begin
+      if (printivf) then begin
+        StartFormat(15);
+        OutString(2,0,USetStr(9612),false);
+        OutString(8,0,USetStr(9603),true);
+        EndFormat;  
+        Gray_Divider(50,1);
+        printivf = false;
+      end;              
+      StartFormat(15);
+      OutLongInt(2,"DblORVc",ORr.SerNr,false);
+      OutVal(8,0,ORr.Sum4,M4Val,true);
+      EndFormat;
+    end;  
+  end;
+  if (printivf==false) then begin
+    Gray_Divider(20,1);
+  end;
+  RETURN;    
+END;
+    
+global
+procedure COHistRn(record RcVc RepSpec)
+BEGIN
+  record COVc COr;
+  Boolean TrHs,printcustf,printivf,printorf,testf;
+  val paid,t;
+  LongInt frco,toco,lastconr;
+  string 20 frcu,tocu,lastcustcode;
+  string 255 tstr;
+  integer rw;
+
+  if (RepSpec.flags[0]==0) then begin
+    StartReportJob(USetStr(9615));
+  end else begin
+    StartReportJob(USetStr(9615));
+/*    
+    tstr = USetStr(8153);
+    tstr = tstr & " ";
+    tstr = tstr & USetStr(8257);
+    StartReportJob(tstr);
+*/    
+  end;  
+  rw = 1;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  EndHeader;
+  SetRepCol(2,50);
+  SetRepCol(3,100);
+  SetRepCol(4,200);
+  SetRepCol(5,300);
+  SetRepCol(6,360);
+  SetRepCol(7,420);
+  SetRepCol(8,480);
+  TrHs = true;
+  frco = FirstInRange(RepSpec.f1,10);
+  toco = LastInRange(RepSpec.f1,10);
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+
+  COr.CustCode = frcu;
+  while (LoopKey("CustCode",COr,1,TrHs)) begin
+    testf = true;
+    if (nonblank(tocu)) then begin
+      if (COr.CustCode>tocu) then begin TrHs = false; end;
+    end; 
+    if (nonblank(RepSpec.f1)) then begin
+      if (COr.SerNr<frco) then begin testf = false; end;
+      if (COr.SerNr>toco) then begin testf = false; end;
+    end;
+    if (RepSpec.flags[29]==0) then begin
+      if (DateInRange(COr.startDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      testf = ContactInGroupClass(COr.CustCode,RepSpec.f4,RepSpec.f3,"CUST","","");
+    end;
+    if (TrHs and testf) then begin    
+      if (lastcustcode!=COr.CustCode) then begin
+        printcustf = true;
+        lastcustcode = COr.CustCode;      
+      end;
+      printivf = true;
+      printorf = true;
+      if (printcustf) then begin
+        StartFormat(15);
+         OutString(0,0,USetStr(9616),false);
+         OutString(2,"DblCUVc",COr.CustCode,false);
+         OutString(3,0,COr.Addr0,false);
+        EndFormat;         
+        Gray_Divider(0,1);
+        printcustf = false;
+      end;  
+      if (RepSpec.flags[0]==1) then begin
+        CUHistPrintInvoiceToCustomer(COr.InvoiceToCode);
+      end;        
+      lastconr = COr.SerNr;
+      StartFormat(15);
+      OutString(20,0,USetStr(9617),false);
+      OutStringID(120,"DblCOVc",COr.SerNr,false,COr.ChildSerNr);
+      if ((lastconr==COr.SerNr) and (lastconr!=-1)) then begin
+        OutString(180,0,USetStr(9607),true);
+      end;
+      OutLongInt(240,0,COr.ChildSerNr,false);
+      OutDate(5,0,COr.startDate,false);
+      OutDate(6,0,COr.endDate,false);
+      t = COr.Sum4;
+      if (COr.normalFactor!=blankval) then begin
+        t = t * COr.normalFactor;
+      end;
+      OutVal(8,0,t,M4Val,true);
+      EndFormat;
+      if (RepSpec.flags[0]==0) then begin
+        COHistPrintContractOrders(COr.CustCode,COr.SerNr,COr.ChildSerNr,printorf);
+        COHistPrintContractInvoices(RepSpec.sEndDate,COr.CustCode,COr.SerNr,COr.ChildSerNr,printivf);
+      end;  
+    end;  
+  end;  
+  if (RepSpec.flags[0]==0) then begin
+  ResetLoop(COr);
+  TrHs = true;
+  COr.InvoiceToCode = frcu;
+  while (LoopKey("InvoiceToCode",COr,1,TrHs)) begin
+    testf = true;
+    if (nonblank(tocu)) then begin
+      if (COr.InvoiceToCode>tocu) then begin TrHs = false; end;
+    end else begin
+      if (blank(COr.InvoiceToCode)) then begin testf = false; end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (COr.SerNr<frco) then begin testf = false; end;
+      if (COr.SerNr>toco) then begin testf = false; end;
+    end;
+    if (RepSpec.flags[29]==0) then begin
+      if (DateInRange(COr.startDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      testf = ContactInGroupClass(COr.InvoiceToCode,RepSpec.f4,RepSpec.f3,"CUST","","");
+    end;    
+    if (TrHs and testf) then begin    
+      if (lastcustcode!=COr.InvoiceToCode) then begin
+        printcustf = true;
+        lastcustcode = COr.InvoiceToCode;      
+      end;
+      printivf = true;
+      printorf = true;
+      if (printcustf) then begin
+        StartFormat(15);
+         OutString(0,0,USetStr(9616),false);
+         OutString(2,"DblCUVc",COr.InvoiceToCode,false);
+         OutString(3,0,COr.Addr0,false);
+        EndFormat;         
+        Gray_Divider(0,300);
+        printcustf = false;
+      end;  
+      if (RepSpec.flags[0]==1) then begin
+        CUHistPrintInvoiceToCustomer(COr.InvoiceToCode);
+      end;        
+      lastconr = COr.SerNr;
+      if (RepSpec.flags[0]==0) then begin
+        StartFormat(15);
+        OutString(20,0,USetStr(9617),false);
+        OutStringID(120,"DblCOVc",COr.SerNr,false,COr.ChildSerNr);
+        if ((lastconr==COr.SerNr) and (lastconr!=-1)) then begin
+          OutString(180,0,"Child",true);
+        end;
+        OutLongInt(240,0,COr.ChildSerNr,false);
+        EndFormat;
+        COHistPrintContractOrders(COr.CustCode,COr.SerNr,COr.ChildSerNr,printorf);
+        COHistPrintContractInvoices(RepSpec.sEndDate,COr.InvoiceToCode,COr.SerNr,COr.ChildSerNr,printivf);
+      end;  
+    end;  
+  end;   
+  end;    
+  EndJob;
+  RETURN;
+END;

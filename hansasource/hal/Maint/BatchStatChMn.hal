@@ -1,0 +1,202 @@
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean PasteCuInAct(var record ActVc,var string);
+external function Boolean PasteActTypeInAct(string,var record ActVc);
+external function Boolean GetBatchStatus(var record QualConVc,string,string);
+
+Function
+Boolean TestBatchStatus(string sel,string newstat,string itemcode,string serialnr)
+begin
+  record QualConVc QCr;
+  Boolean testf;
+  Boolean foundf;
+  
+  testf = true;
+  if (GetBatchStatus(QCr,itemcode,serialnr)) then begin
+    if (nonblank(sel)) then begin
+      if (QCr.StatusCode!=sel) then begin
+        testf = false;
+      end;
+    end;
+    if (QCr.StatusCode==newstat) then begin
+      testf = false;
+    end;
+  end else begin
+    if (nonblank(sel)) then begin
+      testf = false;
+    end;
+  end;
+  if (testf) then begin
+    QCr.OKFlag = 0;
+    QCr.ArtCode = itemcode;
+    QCr.SerialNr = serialnr;
+    foundf = true;
+    while (LoopKey("AnalyseDone",QCr,3,foundf)) begin
+      if ((QCr.OKFlag!=0) or (QCr.ArtCode!=itemcode) or (QCr.SerialNr!=serialnr)) then begin
+        foundf = false;
+      end;
+      if (foundf) then begin
+        if (QCr.StatusCode==newstat) then begin
+          testf = false;
+          foundf = false;
+        end;
+      end;
+    end;
+  end;
+  TestBatchStatus = testf;
+  return;
+end;
+
+updating procedure StoreBatchStatus(string item,string serial,string custcode,record RcVc RepSpec,var Integer flushcnt)
+begin
+  record QualConVc QCr;
+  record NotepadVc Noter;
+  record ActVc Actr;
+  row ActVc Actrw;
+  record BatchStatusVc BSr;
+  record RLinkVc RLr;
+  Integer curcomp;
+  Integer cnt;
+  string 200 comment;
+
+  curcomp = CurrentCompany;
+  RecordNew(QCr);
+  QCr.ArtCode = item;
+  QCr.SerialNr = serial;
+  QCr.AnalyseDate = RepSpec.d1;
+  QCr.StatusCode = RepSpec.ObjStr;
+  if (RepSpec.ArtMode!=0) then begin
+    if (UserCanAction("AuthQualCon",true)) then begin
+      QCr.OKFlag = 1;
+    end;
+  end;
+  if (RecordInsert(QCr,true)) then begin
+    CheckFlush(flushcnt,10);
+    if (nonblank(RepSpec.AccStr)) then begin
+      BSr.Code = QCr.StatusCode;
+      if (ReadFirstMain(BSr,1,true)) then begin
+        RecordNew(Actr);
+        Actr.TransDate = QCr.AnalyseDate;
+        Actr.ArtCode = QCr.ArtCode;
+        Actr.SerialNr = QCr.SerialNr;
+        Actr.ActType = RepSpec.AccStr;
+        if (PasteActTypeInAct("",Actr)) then begin
+        end;
+        Actr.CUCode = custcode;
+        if (PasteCuInAct(Actr,comment)) then begin
+        end;
+        Actr.TodoFlag = 1;
+        Actr.Comment = BSr.Comment;
+        Actr.MainPersons = RepSpec.f2;
+        Actr.PrioLevel = RepSpec.long1;
+        cnt = 0;
+        if (nonblank(BSr.Comment1)) then begin
+          ClearRow(Actr,Actrw,1);
+          Actrw.Text = BSr.Comment1;
+          MatRowPut(Actr,cnt,Actrw);
+          cnt = cnt + 1;
+        end;
+        if (nonblank(BSr.Comment2)) then begin
+          ClearRow(Actr,Actrw,1);
+          Actrw.Text = BSr.Comment2;
+          MatRowPut(Actr,cnt,Actrw);
+          cnt = cnt + 1;
+        end;
+        if (nonblank(BSr.Comment3)) then begin
+          ClearRow(Actr,Actrw,1);
+          Actrw.Text = BSr.Comment3;
+          MatRowPut(Actr,cnt,Actrw);
+          cnt = cnt + 1;
+        end;
+        if (nonblank(BSr.Comment4)) then begin
+          ClearRow(Actr,Actrw,1);
+          Actrw.Text = BSr.Comment4;
+          MatRowPut(Actr,cnt,Actrw);
+          cnt = cnt + 1;
+        end;
+        Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");  
+        if (RecordInsert(Actr,false)) then begin
+        end;
+        CreateRecordLink(Actr,curcomp,QCr,curcomp);
+        CheckFlush(flushcnt,10);
+        cnt = 1;
+        while (ReadRecordLink(BSr,cnt,Noter,RLr)) begin
+          CreateRecordLink(Actr,curcomp,Noter,curcomp);
+          cnt = cnt + 1;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure BatchStatChMn(record RcVc RepSpec)
+BEGIN
+  record QualConVc QCr;
+  record SVOSerVc SVOSerr;
+  record SerBalVc SBr;
+  string 200 frser,toser;
+  Boolean foundf,testf;
+  Integer flushcnt;
+  
+  foundf = true;
+  if ((nonblank(RepSpec.ObjStr)) and (nonblankdate(RepSpec.d1))) then begin
+    frser = FirstInRange(RepSpec.f1,60);
+    toser = LastInRange(RepSpec.f1,60);
+    if (RepSpec.flags[0]==0) then begin
+      SVOSerr.ItemCode = RepSpec.FirstAcc;
+      SVOSerr.SerialNr = frser;
+      foundf = true;
+      while (LoopKey("ItemCode",SVOSerr,2,foundf)) begin
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          if (RepSpec.FirstAcc<>SVOSerr.ItemCode) then begin
+            foundf = false;
+          end;
+        end;
+        if (nonblank(toser)) then begin
+          if (SVOSerr.SerialNr>toser) then begin
+            foundf = false;
+          end;
+        end;
+        testf = true;
+        if (foundf==false) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          testf = TestBatchStatus(RepSpec.f3,RepSpec.ObjStr,SVOSerr.ItemCode,SVOSerr.SerialNr);
+        end;
+        if (testf) then begin
+          StoreBatchStatus(SVOSerr.ItemCode,SVOSerr.SerialNr,SVOSerr.CustCode,RepSpec,flushcnt);
+        end;
+      end;
+      SBr.Item = RepSpec.FirstAcc;
+      SBr.Serial = frser;
+      foundf = true;
+      while (LoopKey("ItemSerial",SBr,2,foundf)) begin
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          if (RepSpec.FirstAcc<>SBr.Item) then begin
+            foundf = false;
+          end;
+        end;
+        if (nonblank(toser)) then begin
+          if (SBr.Serial>toser) then begin
+            foundf = false;
+          end;
+        end;
+        testf = true;
+        if (foundf==false) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          testf = TestBatchStatus(RepSpec.f3,RepSpec.ObjStr,SBr.Item,SBr.Serial);
+        end;
+        if (testf) then begin
+          StoreBatchStatus(SBr.Item,SBr.Serial,"",RepSpec,flushcnt);
+        end;
+      end;
+    end else begin
+//      Don't know how to generate all serial no between A10 to B40....
+    end;
+  end;
+  RETURN;
+END;

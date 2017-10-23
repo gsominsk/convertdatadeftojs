@@ -1,0 +1,187 @@
+external procedure ItemBC39(string,var string);
+external procedure ItemBCEAN(string,var string);
+external procedure ItemBCEAN13(string,var string);
+external procedure GetLangNr(string,var record LangNrVc);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+
+procedure ProdLabel(record DocVc Docr,record RcVc RepSpec,record ProdVc Prodr,record LangNrVc LangNrr,record SysFormatBlock SysFormatRec)
+BEGIN
+  record LocationVc Locationr;
+  row ProdVc Prodrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  Integer maxcps;
+  row DocVc Docrw;
+
+  OUTFORMFIELD("F_PRODNR",Prodr.SerNr);
+  OUTFORMFIELD("F_PRODDATE",Prodr.ProdDate);
+  OUTFORMFIELD("F_RECEPY",Prodr.Recepy);
+  OUTFORMFIELD("F_RECNAME",Prodr.RecName);
+  OUTFORMFIELD("F_TOTWEIGHT",Prodr.TotOutWeight);
+/*  OUTFORMFIELD("F_COMMENT1",Prodr.Comment);
+  OUTFORMFIELD("F_COMMENT2",Prodr.Comment2);
+  OUTFORMFIELD("F_COMMENT3",Prodr.Comment3); */
+  OUTFORMFIELD("F_FIXASSETCODE",Prodr.FixAssCode);
+  OUTFORMFIELD("F_LOCATION",Prodr.Location);
+  OUTFORMFIELD("F_STARTTIME",Prodr.StartTime);  
+  OUTFORMFIELD("F_ENDTIME",Prodr.EndTime);
+  OUTFORMFIELD("F_ANTAL",Prodr.Qty);
+  if (FIELDINFORM("F_LOCATIONNAME")) then begin
+    Locationr.Code = Prodr.Location;
+    if (ReadFirstMain(Locationr,1,true)) then begin
+      OUTFORMFIELD("F_LOCATIONNAME",Locationr.Name);
+    end;
+  end;
+  if (FIELDINFORM("F_ARTNR")) or (FIELDINFORM("F_SERIALNR")) or (FIELDINFORM("F_OUTQTY")) or (FIELDINFORM("F_OUTITEMNAME")) then begin
+    rwcnt = MatRowCnt(Prodr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      if (Prodrw.OutQty > -1) then begin
+        OUTFORMFIELD("F_ARTNR",Prodrw.Item);
+     /*   if (FIELDINFORM("F_ARTNRBC39")) then begin
+          ItemBC39(Prodrw.Item,tstr);
+          OUTFORMFIELD("F_ARTNRBC39",tstr);
+        end;  
+        if (FIELDINFORM("F_ARTNRBCEAN")) then begin
+          ItemBCEAN(Prodrw.Item,tstr);
+          OUTFORMFIELD("F_ARTNRBCEAN",tstr);
+        end;  
+        if (FIELDINFORM("F_ARTNRBCEAN13")) then begin
+          ItemBCEAN13(Prodrw.Item,tstr);      
+          OUTFORMFIELD("F_ARTNRBCEAN13",tstr);
+        end; */
+        if (FIELDINFORM("F_OUTQTY")) then begin
+          OUTFORMFIELD("F_OUTQTY",Prodrw.OutQty);
+        end;
+        if (FIELDINFORM("F_SERIALNR")) then begin
+          OUTFORMFIELD("F_SERIALNR",Prodrw.SerialNr);
+        end;
+        if (FIELDINFORM("F_OUTITEMNAME")) then begin
+          OUTFORMFIELD("F_OUTITEMNAME",Prodrw.Comment);
+        end;
+      end;  
+    end;  
+  end;
+  rwcnt = MatRowCnt(Docr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Docr,i,Docrw);
+    if (Docrw.fieldSetNr==0) then begin
+      OUTFORMFIELD(Docrw.unitText,Docrw.unitText);
+    end;
+  end;  
+  RETURN;
+END;
+
+
+
+global
+procedure DoProdLabelFormPrint(record RcVc RepSpec, string formcode,string printer)
+begin
+  record LangNrVc LangNrr;
+  record DocVc Docr;
+  record SysFormatBlock SysFormatRec;
+  record ProdVc Prodr;
+  Boolean TrHs,tmpf;
+  LongInt afr,ato;
+  integer maxcps;
+  boolean formisopen;
+  Integer curcp;
+  
+  BlockLoad(SysFormatRec);
+  GetLangNr("",LangNrr);
+  if (OpenForm(formcode)==false) then begin goto L99; end;
+  SetPrinter(printer);  
+  Docr.Code = formcode;
+  if (ReadFirstMain(Docr,1,true)) then begin end;
+  formisopen = true;  
+ 
+  curcp = 1;
+  maxcps = 1;  
+  FormLabelGrid(1,1,1,1); 
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  Prodr.SerNr = afr;
+  TrHs = true;
+  while (LoopMain(Prodr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f1)) then begin
+        if (Prodr.SerNr>ato) then begin
+          TrHs = false;
+        end;  
+      end;     
+    end;
+    if (TrHs) then begin
+      if (formisopen==false) then begin
+        if (OpenForm(formcode)==false) then begin goto L99; end;
+        formisopen = true;
+      end;
+      SetPrinter(printer);  
+      FormLabelGrid(1,1,1,1); 
+      ProdLabel(Docr,RepSpec,Prodr,LangNrr,SysFormatRec);
+      EndFormLabel;
+      CloseForm;
+     formisopen = false;
+    end;
+  end;
+  if (formisopen) then begin
+    CloseForm;
+  end;
+L99:;
+  return;
+end;
+
+global
+procedure DoProdLabelForm(record RcVc Dummyr,record RcVc RepSpec)
+BEGIN
+  Integer i,rwcnt;  
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoProdLabelForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,-1,"",
+                      "",intdocnr,"",formcode)) then
+      begin
+        goto LBREAKProdLabel;
+      end;
+    end;
+LBREAKProdLabel:;
+    if (nonblank(formcode)) then begin
+      DoProdLabelFormPrint(RepSpec,formcode,FDrw.PrintGroupCode);
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoProdLabelForm:;  
+  RETURN;
+END; 
+
+global
+procedure ProdLabelForm(record RcVc RepSpec)
+BEGIN
+  boolean tmpf;
+  if (blank(RepSpec.f1)) then begin
+    goto LProdLabelForm;
+  end;
+  tmpf = PrintDocument(RepSpec,"ProdLabelForm",false);
+ LProdLabelForm:;
+  RETURN;
+END;

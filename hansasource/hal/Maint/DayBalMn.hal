@@ -1,0 +1,377 @@
+external procedure AddVATVat(var record SMVc,string,val,Integer);
+external procedure MulVATIVExecute(string,val,var val,var val,Integer,Integer,roundmode);
+external function string 255 TaxTemplateVATCodeOnTRRows(record TaxMatrixVc,string);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function roundmode GetRowSumRoundModeRB();
+external function roundmode DefaultRoundMode();
+external function Integer TRVc_AddRoundOffRow(var record TRVc,val,val,string,Boolean,Boolean,Boolean,val,var val);
+external procedure CheckFlush(var Integer,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure GetItemSalesAcc(string,Integer,var string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external procedure TRSumup(var record TRVc,var val);
+external procedure GetPayModeAccNumber(string,var string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+
+procedure SumupTRVATCode(record TRVc TRr,string vatcode,var val resv,var string firstrev)
+BEGIN
+  Integer i,rwcnt;
+  row TRVc TRrw;
+  
+  resv = 0;
+  firstrev = "";
+  rwcnt = MatRowCnt(TRr);
+  for (i=0; i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    if (TRrw.VATCode==vatcode) then begin
+      resv = resv + TRrw.DebVal;
+      resv = resv - TRrw.CredVal;
+      if (blank(firstrev)) then begin
+        firstrev = TRrw.AccNumber;
+      end;  
+    end;
+  end;
+  RETURN;
+END;
+
+procedure AddVATIVCashTransRows(record TRVc TRr,record IVCashVc IVCashr,record SMVc VATr,record AccBlock ARAccRec,var val TotSum,record RoundBlock RoundRec)
+BEGIN
+  record VATCodeBlock VATRec;
+  row VATCodeBlock vatrw;
+  row SMVc IRrw;
+  Integer i,rwcnt;
+  string 10 vatcode,vatacc,firstVAT,blanks;
+  string 255 ftxt;
+  val vatbasev,vatv,trvatbasev;
+  val bvatbasev,bvatv,btrvatbasev;
+  val t,t1;
+  roundmode rndline,rndtotal,rndvat,rndnone;
+  val nilv,temp;
+  record DefCashBlock DCr;
+  
+  BlockLoad(DCr); // Annoying...
+  nilv = -1;
+  BlockLoad(VATRec); 
+  rwcnt = MatRowCnt(VATRec); 
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATRec,i,vatrw);
+    if (nonblank(vatrw.VATCode)) then begin
+      SumupTRVATCode(TRr,vatrw.VATCode,trvatbasev,vatacc);
+      MatRowGet(VATr,i,IRrw);
+
+//Trace("vatrw.SalesVATAcc " & vatrw.SalesVATAcc," IRrw.VATCode " & IRrw.VATCode);
+
+      vatbasev = IRrw.DebVal;
+      GetCurncyRoundoff(IVCashr.CurncyCode,DCr.DefCashPayMode,"IVCashVc",rndline,rndtotal,rndvat);
+      if (RoundRec.VATCalcWay==1) then begin 
+        vatv = Round(IRrw.CredVal,rndvat);
+      end else begin
+        MulVATIVExecute(vatrw.VATCode,vatbasev,vatv,t1,IVCashr.InclVAT,IVCashr.NoTAXonVAT,rndnone);    
+      end;
+      bvatbasev = MulRateToBase1(IVCashr.CurncyCode,vatbasev,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+      bvatv = MulRateToBase1(IVCashr.CurncyCode,vatv,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+      if (IVCashr.InclVAT<>0) then begin
+        bvatbasev = bvatbasev - bvatv;
+      end;
+      t = trvatbasev - bvatbasev;
+      if (t<>0) then begin
+        if ((IVCashr.InclVAT==0) or (ARAccRec.RevInclVAT==0)) then begin
+//          AddEuroTrRow(gTRp,firstrev,gBlankString,vcrp[i].VATCode,NIL,&t,&baserate1,&baserate2,false,dc1,&TotSum,"","","");
+        end;
+      end;
+      if (bvatv<>0) then begin
+        if (blank(firstVAT)) then begin
+          if (nonblank(vatrw.SalesVATAcc)) then begin
+            firstVAT = vatrw.SalesVATAcc;
+          end;    
+        end;
+        if (GetAccName(vatrw.SalesVATAcc,ftxt,60)==false) then begin goto L29; end;
+        AddEuroCurncyTrRow(TRr,vatrw.SalesVATAcc,blanks,vatrw.VATCode,ftxt,bvatv,true,false,TotSum,IVCashr.CurncyCode,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,bvatv,nilv,-1,false,"");
+
+//        AddEuroTrRow(TRr,vatrw.SalesVATAcc,blanks,vatrw.VATCode,ftxt,bvatv,IVCashr.BaseRate1,IVCashr.BaseRate2,true,false,TotSum,"","","");
+      end;
+      /*
+      if (M4ValZeroTest(&tax1val)==false) then begin
+        if (GetAccName(vcrp[i].Tax1Acc,tstr,60)==false) then begin 
+          errstrno = 1902;
+          goto L99;
+        end;
+        AddEuroTrRow(gTRp,vcrp[i].Tax1Acc,gBlankString,gBlankString,tstr,&tax1val,&baserate1,&baserate2,true,dc2,&TotSum,false,"","","");
+      end;      
+      */
+    end;  
+  end;      
+L29:;
+  RETURN;
+END;
+  
+procedure AddSalesIVCashTransRows(record TRVc TRr,record SMVc VATr,Integer vatcnt,record IVCashVc IVCashr,record AccBlock ARAccRec,string cuobj,Integer rownr,var val TotSum,record RoundBlock RoundRec)
+BEGIN
+  row IVCashVc IVCashrw;
+  string 255 blanks,ftxt;
+  string 255 dsalesacc,dftxt;
+  string 10 salesacc;
+  val rs,nilv,salesv,vatv,t1,d,rsd,q;
+  roundmode roundlines,rndtotal,rndvat,rndnone;
+  string 60 locobj,vatcodes;
+  record DownPayBlock DownPayRec;
+  record DefCashBlock DCr;
+  row PMBlock PMrw;
+  Boolean dcf;
+  record TaxMatrixVc TMr;
+  
+  BlockLoad(DCr); // Annoying...
+  nilv = -1;
+  MatRowGet(IVCashr,rownr,IVCashrw);
+  if (IVCashrw.ovst!=0) then begin
+    goto L19;
+  end;
+  if ((IVCashrw.stp!=kInvoiceRowTypeNormal) and (IVCashrw.stp!=kInvoiceRowTypeOnAccountPayment) and (IVCashrw.stp!=kInvoiceRowTypeGiftVoucherPayment) and (IVCashrw.stp!=kInvoiceRowTypeCashPayment) and (IVCashrw.stp!=kInvoiceRowTypeCreditCardPayment) and (IVCashrw.stp!=kInvoiceRowTypeLoyaltyPointsPayment)) then begin
+    goto L19;
+  end;
+  dcf = false;
+  switch (IVCashrw.stp) begin
+    case kInvoiceRowTypeNormal:
+      salesacc = IVCashrw.SalesAcc;
+      if (blank(salesacc)) then begin salesacc = ARAccRec.DomSalesAcc; end;
+    case kInvoiceRowTypeGiftVoucherPayment:
+      goto LkInvoiceRowTypeCashPayment;
+    case kInvoiceRowTypeCreditCardPayment:
+      goto LkInvoiceRowTypeCashPayment;
+    case kInvoiceRowTypeLoyaltyPointsPayment:
+      goto LkInvoiceRowTypeCashPayment;
+    case kInvoiceRowTypeOnAccountPayment:
+      salesacc = IVCashrw.SalesAcc;
+      if (blank(salesacc)) then begin
+        GetPMRow(IVCashrw.PayMode,PMrw);
+        salesacc = PMrw.AccNr;
+      end;
+      dcf = false;
+    case kInvoiceRowTypeCashPayment:
+LkInvoiceRowTypeCashPayment:;
+      GetPMRow(IVCashrw.PayMode,PMrw);
+      salesacc = PMrw.AccNr;
+      dcf = true;
+  end;
+  if (GetAccName(salesacc,ftxt,60)==false) then begin goto L19; end;
+  salesv = IVCashrw.Sum;
+  AddVATBase(VATr,IVCashrw.VATCode,salesv,blankval,vatcnt,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+
+  if (IVCashr.InclVAT<>0) then begin
+    GetCurncyRoundoff(IVCashr.CurncyCode,DCr.DefCashPayMode,"IVCashVc",rndtotal,roundlines,rndvat);
+    if (RoundRec.VATCalcWay==1) then begin 
+      MulVATIV(IVCashrw.VATCode,salesv,vatv,t1,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+    end else begin
+      MulVATIVExecute(IVCashrw.VATCode,salesv,vatv,t1,IVCashr.InclVAT,IVCashr.NoTAXonVAT,rndnone);    
+    end;
+    AddVATVat(VATr,IVCashrw.VATCode,vatv,vatcnt);  // Adding individual vat calculations per row
+    salesv = salesv - vatv;
+  end;
+  rs = MulRateToBase1(IVCashr.CurncyCode,salesv,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+  if (nonblank(IVCashr.Objects)) then begin
+    if (nonblank(locobj)) then begin
+      locobj = locobj & ",";
+    end;  
+    locobj = locobj & IVCashr.Objects;
+  end;  
+  if (nonblank(IVCashrw.Objects)) then begin
+    if (nonblank(locobj)) then begin
+      locobj = locobj & ",";
+    end;  
+    locobj = locobj & IVCashrw.Objects;
+  end;  
+  if (IVCashrw.OrdQuant!=0) then begin
+    BlockLoad(DownPayRec);
+    
+    GetItemSalesAcc(DownPayRec.ArtCode,0,dsalesacc);
+    if (GetAccName(dsalesacc,dftxt,60)==false) then begin goto L19; end;
+    if (IVCashrw.DownPaidSum==0) then begin
+      d = salesv;
+      rsd = rs;
+      salesv = salesv - d;
+      rs = rs - rsd;
+    end else begin
+      d = IVCashrw.DownPaidSum;
+      rsd = MulRateToBase1(IVCashr.CurncyCode,d,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+      UnpackRowFieldMatrix(IVCashrw,"TaxMatrix",TMr);
+      vatcodes = TaxTemplateVATCodeOnTRRows(TMr,IVCashrw.VATCode);
+      AddEuroCurncyTrRow(TRr,dsalesacc,locobj,vatcodes,dftxt,rsd,true,false,TotSum,IVCashr.CurncyCode,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,d,nilv,-1,false,"");//cuobj
+      q = IVCashrw.Quant-IVCashrw.OrdQuant;
+      if (q>0) then begin
+        salesv = q*IVCashrw.Price;
+        rs = MulRateToBase1(IVCashr.CurncyCode,salesv,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+      end else begin
+        salesv = 0;
+        rs = 0;
+      end;
+    end;
+    
+  end;
+  UnpackRowFieldMatrix(IVCashrw,"TaxMatrix",TMr);
+  vatcodes = TaxTemplateVATCodeOnTRRows(TMr,IVCashrw.VATCode);
+  AddEuroCurncyTrRow(TRr,salesacc,locobj,vatcodes,ftxt,rs,true,dcf,TotSum,IVCashr.CurncyCode,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,salesv,nilv,-1,false,"");//cuobj
+L19:;  
+  RETURN;          
+END;
+
+global
+updating procedure TRfromIVCash(record RcVc RepSpec,record TRVc TRr,Integer reportmode)
+BEGIN
+  record IVCashVc IVCashr;
+  record UserVc Userr;
+  record CashierBalVc CashierBalr;
+  record AccBlock ARAccRec;
+  record CostAccBlock CostAccRec;
+  record TRGenBlock TRGenRec;  
+  record RoundBlock RoundRec;
+  record SMVc VATr;
+  record TRVc TRprer; 
+  Integer i,rwcnt;
+  Boolean TrHs,testf;
+  string 255 cuobj,aracc,ftxt,blanks;
+  string 10 useracc;
+  val rs,TotSum,nilv,temp;
+  Integer flushcnt;
+  Integer vatcnt;
+  
+  nilv = -1;
+  BlockLoad(ARAccRec);
+  BlockLoad(CostAccRec);
+  BlockLoad(TRGenRec);
+  BlockLoad(RoundRec);
+  Userr.Code = CurrentUser;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    useracc = Userr.PersAcc;
+  end;  
+  RecordNew(TRr);
+  TRprer.IntYc = 228;
+  if (ReadLastMain(TRprer,1,true)) then begin    
+  end;
+  if (nonblankdate(RepSpec.d1)) then begin
+    TRr.TransDate = RepSpec.d1;
+    TRr.RegDate = RepSpec.d1;
+  end;
+  TRr.IntYc = 228;
+  TRr.Number = TRprer.Number + 1;
+  TrHs = true;
+  IVCashr.NLFlag = 0;
+  IVCashr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",IVCashr,1,TrHs)) begin
+//    if (IVCashr.NLFlag<>0) then begin TrHs = false; end;
+//    if (DateInRange(IVCashr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+    if (IVCashr.TransDate>RepSpec.sEndDate) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (IVCashr.SalesMan<>RepSpec.AccStr) then begin testf = false; end;
+      end; 
+      if (RepSpec.flags[0]==0) then begin
+        if (IVCashr.NLFlag<>0) then begin testf = false; end;
+      end;
+      if (IVCashr.OKFlag==0) then begin testf = false; end;   
+      if (IVCashr.Invalid!=0) then begin testf = false; end;   
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (IVCashr.LocalMachineCode<>RepSpec.FirstAcc)then begin testf = false; end;
+      end;
+      if (testf) then begin
+        RecordNew(VATr);        
+        cuobj = "";
+        if (ARAccRec.ARUseObj<>0) then begin
+          if (nonblank(IVCashr.Objects)) then begin
+            if (nonblank(cuobj)) then begin
+              cuobj = cuobj & ",";
+            end;  
+            cuobj = cuobj & IVCashr.Objects;
+          end;
+        end; 
+        temp = IVCashr.CashValue - IVCashr.RetValue;
+        aracc = ARAccRec.CashAcc;
+        if (GetAccName(aracc,ftxt,60)==false) then begin goto L99; end;
+        rs = MulRateToBase1(IVCashr.CurncyCode,temp,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);  
+        AddEuroCurncyTrRow(TRr,aracc,cuobj,blanks,ftxt,rs,true,true,TotSum,IVCashr.CurncyCode,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,temp,nilv,-1,false,"");  
+      
+        temp = IVCashr.RecValue;
+        GetPayModeAccNumber(IVCashr.PayDeal,aracc);
+        if (blank(aracc)) then begin aracc = ARAccRec.CashAcc; end;
+        if (GetAccName(aracc,ftxt,60)==false) then begin goto L99; end;
+        rs = MulRateToBase1(IVCashr.CurncyCode,temp,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);  
+        AddEuroCurncyTrRow(TRr,aracc,cuobj,blanks,ftxt,rs,true,true,TotSum,IVCashr.CurncyCode,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,temp,nilv,-1,false,"");  
+      
+        temp = IVCashr.RecValue2;
+        GetPayModeAccNumber(IVCashr.PayDeal2,aracc);
+        if (blank(aracc)) then begin aracc = ARAccRec.CashAcc; end;
+        if (GetAccName(aracc,ftxt,60)==false) then begin goto L99; end;
+        rs = MulRateToBase1(IVCashr.CurncyCode,temp,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);  
+        AddEuroCurncyTrRow(TRr,aracc,cuobj,blanks,ftxt,rs,true,true,TotSum,IVCashr.CurncyCode,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,temp,nilv,-1,false,"");  
+      
+        SetupVATBase(VATr,vatcnt);
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin 
+        //requires PrepareAddIVCashTransRowNew  and AddIVCashTransRowsNew
+          AddSalesIVCashTransRows(TRr,VATr,vatcnt,IVCashr,ARAccRec,cuobj,i,TotSum,RoundRec);
+        end;  
+
+        
+        AddVATIVCashTransRows(TRr,IVCashr,VATr,ARAccRec,TotSum,RoundRec);
+        switch (reportmode) begin
+          case 0:
+            IVCashr.NLFlag = 18;
+            if (RecordStore(IVCashr,true)) then begin end;
+            CheckFlush(flushcnt,10);
+        end;  
+        if (TotSum!=0) then begin
+          if (TRVc_AddRoundOffRow(TRr,IVCashr.BaseRate1,IVCashr.BaseRate2,"",false,false,false,TotSum,TotSum)!=0) then begin 
+            goto L99;
+          end;
+        end;        
+        switch (reportmode) begin
+          case 0: MaintTrace(IVCashr.SerNr);
+          case 1:
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+               OutLongInt(0,0,IVCashr.SerNr,false);
+               OutDate(2,0,IVCashr.TransDate,false);
+               OutString(3,0,IVCashr.CustCode,false);
+              EndFormat;
+            end;  
+        end;  
+        TotSum = 0;
+      end;         
+    end;  
+  end; 
+  if (MatRowCnt(TRr)>0) then begin
+    if (nonblank(useracc)) then begin
+      CashierBalr.UserCode = CurrentUser;
+      CashierBalr.TransDate = RepSpec.sStartDate;
+      if (ReadFirstMain(CashierBalr,2,true)) then begin
+        rs = CashierBalr.EndBal-(CashierBalr.StartBal+RepSpec.vals0);
+        if (GetAccName(useracc,ftxt,60)==false) then begin goto L99; end;
+        AddEuroTrRow(TRr,useracc,Userr.PersObjx,blanks,ftxt,rs,IVCashr.BaseRate1,IVCashr.BaseRate2,true,true,TotSum,false,"","","");
+        if (GetAccName(ARAccRec.CashBackAcc,ftxt,60)==false) then begin goto L99; end;
+        AddEuroTrRow(TRr,ARAccRec.CashBackAcc,Userr.PersObjx,blanks,ftxt,rs,IVCashr.BaseRate1,IVCashr.BaseRate2,true,false,TotSum,false,"","","");
+      end;        
+    end;
+    TRSumup(TRr,nilv);   
+    TRr.Comment = USetStr(1754) & " " & RepSpec.sStartDate; 
+    TRr.Comment = TRr.Comment & ":" & RepSpec.sEndDate;
+    TRr.Comment = TRr.Comment & ";" & RepSpec.AccStr;
+  end;             
+L99:;  
+  RETURN;
+END;
+
+global
+updating procedure DayBalMn(record RcVc RepSpec)
+BEGIN
+  record TRVc TRr;
+  
+  TRfromIVCash(RepSpec,TRr,0);
+  if (RecordInsert(TRr,false)) then begin end;  
+  RETURN;
+END;

@@ -1,0 +1,1700 @@
+external function val CalculateDiscountPercentage(val,val,val);
+external procedure ReverseString(string,var string);
+external procedure NewLineExport();
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure GetVATdouble(string,var val,var val,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val ValFromString(string,string,string);
+external procedure ExtractObjWithSeparator(string,string,Boolean,var Integer,var string);
+external function string 255 NumToHex(string);
+
+//FS, Field Separator = 0x1C
+
+enum begin
+  FB05_DELAY = 10,
+  FB05_LONGDELAY = 30
+end;
+
+enum begin
+  FB05_STX = 2,
+  FB05_ETX = 3,
+  FB05_FS = 28
+end;
+
+function string 255 NumToHexL(string instr)
+begin
+  string 255 res;
+  string 16 hexs;
+  LongInt l,i,m;
+  string 255 tstr;
+  val inv,v;
+  
+  hexs = "0123456789ABCDEF";
+  inv = StringToVal(instr,M40Val);
+  v = inv;
+  while (v>=1) begin
+    v = v/16;
+    l = v;
+    m = (v - l)*16;
+    res = res & Mid(hexs,m,1);    
+  end;
+  ReverseString(res,res);
+  while (len(res)<8) begin
+    res = "0" & res;
+  end;
+  NumToHexL = res;
+  return;
+end;
+
+function Integer FindStrPosition(string tstr,string decsep)
+begin
+  Integer res;
+  Integer i,slen;
+  
+  slen = len(tstr);
+  for (i=slen;i>=0;i=i-1) begin
+    if (Mid(tstr,i,1)==decsep) then begin
+       res = i;
+       goto LFindStrPosition;
+    end;
+  end;
+LFindStrPosition:;  
+  FindStrPosition = res;
+  return;  
+end;
+
+function Integer HexToInt(string instr)
+begin
+  Integer res;
+  string 16 hexs;
+  Integer pos,slen,i,t;
+
+  res = 0;
+  slen = len(instr);
+  hexs = "0123456789ABCDEF";
+  for (i=slen;i>0;i=i-1) begin
+    pos = FindStrPosition(hexs,Mid(instr,i-1,1));
+    res = res + pos*Power(16,(slen-i));
+  end; 
+  HexToInt = res; 
+  return;  
+end;
+
+function string 255 CalculateLRC(string CtrlSeq)
+begin
+  string 255 res;
+  Integer i,resi,a;
+  
+  resi = 0;
+  for (i=0;i<len(CtrlSeq);i=i+1) begin
+    a = GetByteFromString(Mid(CtrlSeq,i,1),0);
+    resi = BitXor(resi,a);
+//    resi = BitXor(resi,asc(Mid(CtrlSeq,i,1)));
+  end;
+  res = NumToHex(resi);
+  res = Right(res,2);
+  CalculateLRC = res;
+  return;
+end;
+
+procedure ResetFiscal()
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,cmd;
+  
+  CtrlSeq = CtrlSeq & "J";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+
+  res = OutComPort(0,CtrlSeq);
+  if (res!=0) then begin
+    res = 0;
+  end else begin
+    res = 1;
+  end;
+  return;
+end;
+
+function Integer WaitForFB05Receipt(LongInt waittickscoef,var Area aresponse)
+begin
+  Integer res;
+  Integer noErr;
+  LongInt waitticks;
+  LongInt currenttick, starttick;
+  Integer l,responselen;
+  Boolean waitf;
+  string 255 c,fpresp,errorcode,response;
+  Integer pos,i;
+  string 255 tstr,tstr2;
+
+  res = noErr;
+  response = "";
+  waitticks = waittickscoef*1000;
+  starttick = GetCurTick;
+  response = "";
+  
+  waitf = true;
+  while (waitf) begin
+    currenttick = GetCurTick;
+
+    c = ReadComPort(0,1);
+    response = response & c;
+    if (len(response)>=150) then begin
+      if (GetAreaLength(aresponse)==0) then begin
+        pos = 0;
+        ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,tstr);
+        ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,response);
+      end;
+      AddTextToArea(response,aresponse);
+      response = "";
+    end;
+
+    if (asc(c)==FB05_ETX) then begin
+      waitf = false;
+    end;    
+    if ((currenttick-starttick)>waitticks) then begin
+      waitf = false;
+    end;
+  end;
+LWaitForFB05Receipt:;
+  if (nonblank(response)) then begin
+//    response = Left(response,len(response)-2);
+    pos = 0;
+    ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,tstr);
+    ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,tstr2);
+    if (nonblank(tstr2)) then begin
+      response = tstr;
+    end else begin
+      response = tstr;
+    end;
+    AddTextToArea(response,aresponse);
+    response = "";
+  end;
+
+/*
+  errorcode = Right(fpresp,1);
+  if (asc(errorcode)!=0) then begin
+    res = asc(errorcode);
+  end;
+
+  if (asc(errorcode)!=0) then begin
+    LogText(0,"WaitForFB05Receipt errorcode " & errorcode & " res " & res);
+    ResetFiscal;
+  end;
+*/  
+  if (res==noErr) then begin
+    if (GetAreaLength(aresponse)>0) then begin
+      res = 1;
+    end;
+  end;
+  WaitForFB05Receipt = res;
+  return;
+end;
+
+function Integer FB05WriteAndGetReceipt(string CtrlSeq,LongInt delay,var Area aresponse) 
+begin
+  Integer res;
+
+  res = OutComPort(0,CtrlSeq);
+  if (res!=0) then begin
+    res = WaitForFB05Receipt(delay,aresponse);
+  end else begin
+    res = 1;
+  end;
+  FB05WriteAndGetReceipt = res;
+  return;
+end;
+
+function Integer WaitForFB05Reply(LongInt waittickscoef,var string response)
+begin
+  Integer res;
+  Integer noErr;
+  LongInt waitticks;
+  LongInt currenttick, starttick;
+  Integer l,responselen;
+  Boolean waitf;
+  string 255 c,fpresp,errorcode;
+  Integer pos,i;
+  string 255 tstr,tstr2;
+
+  res = noErr;
+  response = "";
+  waitticks = waittickscoef*1000;
+  starttick = GetCurTick;
+
+  waitf = true;
+  while (waitf) begin
+    currenttick = GetCurTick;
+
+    c = ReadComPort(0,1);
+    response = response & c;
+
+    if (asc(c)==FB05_ETX) then begin
+      waitf = false;
+    end;    
+    if ((currenttick-starttick)>waitticks) then begin
+      waitf = false;
+    end;
+  end;
+LWaitForFB05Reply:;
+
+  ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,fpresp);
+
+  errorcode = Right(fpresp,1);
+  if (asc(errorcode)!=0) then begin
+    res = asc(errorcode);
+  end;
+
+  if (asc(errorcode)!=0) then begin
+    LogText(0,"WaitForFB05Reply errorcode " & errorcode & " res " & res);
+    ResetFiscal;
+  end;
+  
+  if (res==noErr) then begin
+    if (blank(errorcode)) then begin
+      res = 1;
+    end;
+  end;
+  WaitForFB05Reply = res;
+  return;
+end;
+
+function Integer FB05Write(string CtrlSeq,LongInt delay) 
+begin
+  Integer res;
+  string 255 response;
+  
+  res = OutComPort(0,CtrlSeq);
+  if (res!=0) then begin
+    res = WaitForFB05Reply(delay,response);
+  end else begin
+    res = 1;
+  end;
+  FB05Write = res;
+  return;
+end;
+
+function Integer FB05WriteAndGetResponse(string CtrlSeq,LongInt delay,var string response) 
+begin
+  Integer res;
+
+  response = "";
+  res = OutComPort(0,CtrlSeq);
+  if (res!=0) then begin
+    res = WaitForFB05Reply(delay,response);
+  end else begin
+    res = 1;
+  end;
+  FB05WriteAndGetResponse = res;
+  return;
+end;
+ 
+procedure SendEscSeqAfter(string EscSeqAfter)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,cmd;
+  Integer pos;
+  
+  if (blank(EscSeqAfter)) then begin
+    goto LSendEscSeqAfter;
+  end;
+  pos = 0;
+  ExtractObj(EscSeqAfter,pos,cmd);
+  while (nonblank(cmd)) begin
+    CtrlSeq = CtrlSeq & uchr(StringToInt(cmd));
+    CtrlSeq = CtrlSeq & chr(FB05_FS);
+    ExtractObj(EscSeqAfter,pos,cmd);
+  end;
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+  
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+LSendEscSeqAfter:;
+  return;
+end;
+ 
+global
+function Integer FB05GetFiscalData(string command)
+begin
+  Integer res,msglen;
+  string 255 CtrlSeq,msglenhex;  
+
+//<COMMAND>=<0x4F><FS><Õ9Õ><FS>
+
+  msglen = 5 + len(command);
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(msglenhex));
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x4F"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & command;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));
+  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_LONGDELAY);
+
+  FB05GetFiscalData = res;
+  return;
+end;
+
+function Integer FB05GetFiscalDataResponse(string command,var string response)
+begin
+  Integer res,msglen;
+  string 255 CtrlSeq,msglenhex;  
+
+  response = "";
+//<COMMAND>=<0x4F><FS><Õ9Õ><FS>
+
+  msglen = 5 + len(command);
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(msglenhex));
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x4F"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & command;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));
+  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);
+
+  res = FB05WriteAndGetResponse(CtrlSeq,FB05_DELAY,response);
+
+  FB05GetFiscalDataResponse = res;
+  return;
+end;
+
+function Integer GetCopyOfReceipt(string fr,string to,var area aresponse)
+begin
+  Integer res,msglen,i;
+  string 255 CtrlSeq,msglenhex;  
+
+  SetAreaZeroSize(aresponse);
+
+  CtrlSeq = chr(HexToInt("0x61"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & fr;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & to;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);
+
+  res = FB05WriteAndGetReceipt(CtrlSeq,FB05_LONGDELAY,aresponse);
+  GetCopyOfReceipt = res;
+  return;
+end;
+ 
+function Integer FB05Open(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res;
+  
+  if (OpenComPort(0,LSPDr.Port,LSPDr.BaudRate,LSPDr.Parity,LSPDr.ByteSize,LSPDr.StopBits,LSPDr.FlowControl)) then begin
+    res = FB05GetFiscalData("3");
+    SetComPortCodepage("UTF-8");
+  end else begin
+    res = 1;
+  end;
+  FB05Open = res;
+  return;
+end;
+
+procedure FB05Close()
+begin
+  Integer res;
+
+  res = CloseComPort(0);
+  return;
+end;
+
+function Integer CheckFB05Clock()
+begin
+  INteger res,msglen,noErr,pos;
+  string 255 CtrlSeq,msglenhex,response,fpresp; 
+  Date td; 
+  Integer pY,pM,pD;
+  
+//<COMMAND>=<0x4F><FS><Õ5Õ><FS>
+
+  td = CurrentDate;
+  msglen = 6;
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(msglenhex));
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x4F"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x35"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));
+  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);
+
+  res = FB05WriteAndGetResponse(CtrlSeq,FB05_DELAY,response);
+  
+  if (res!=noErr) then begin
+    if (res>=12400) then begin
+      MessageBox(0,USetStr(res));
+    end else begin
+      MessageBox(0,"error " & USetStr(res));
+    end;
+    goto LCheckFB05Clock;
+  end;
+
+  ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,fpresp);
+  ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,fpresp);
+  pY = StringToInt(Left(fpresp,4));
+  pM = StringToInt(Mid(fpresp,4,2));
+  pD = StringToInt(Mid(fpresp,6,2));
+    
+  if ((td.year==pY) and (td.month==pM) and (td.day==pD)) then begin
+     res = noErr;
+  end else begin
+     MessageBox(0,USetStr(12402));
+     MessageBox(0,USetStr(12403) & pY & pM & pD);
+     MessageBox(0,USetStr(12404) & GetYear(td) & GetMonth(td) & GetDay(td));
+     res = 12402;
+  end;
+LCheckFB05Clock:;
+  CheckFB05Clock = res;
+  return;
+end;
+
+function Integer LoadFB05VATRate(string vatrate,var val vr)
+begin
+  INteger res,msglen,noErr,pos;
+  string 255 CtrlSeq,msglenhex,response,fpresp; 
+
+  vr = blankval;
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x4F"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & vatrate;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));
+
+  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);
+  res = FB05WriteAndGetResponse(CtrlSeq,FB05_DELAY,response);
+  if (res!=noErr) then begin
+    res = 12405;
+    goto LLoadFB05VATRate;
+  end;
+  ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,fpresp);
+  ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,fpresp);
+  ExtractObjWithSeparator(chr(FB05_FS),response,true,pos,fpresp);
+  vr = ValFromString(fpresp,".","");
+LLoadFB05VATRate:;
+  LoadFB05VATRate = res;
+  return;
+end;
+
+function Integer LoadFB05VATRates(vector val vatrates)
+begin
+  Integer res;
+  val vr;
+  
+  res = LoadFB05VATRate("40",vr);
+  if (res!=0) then begin
+    MessageBox(0,USetStr(res));
+    goto LLoadFB05VATRates;
+  end;
+  vatrates[0] = vr;
+  res = LoadFB05VATRate("41",vr);
+  if (res!=0) then begin
+    MessageBox(0,USetStr(res));
+    goto LLoadFB05VATRates;
+  end;
+  vatrates[1] = vr;
+  res = LoadFB05VATRate("42",vr);
+  if (res!=0) then begin
+    MessageBox(0,USetStr(res));
+    goto LLoadFB05VATRates;
+  end;
+  vatrates[2] = vr;
+  res = LoadFB05VATRate("43",vr);
+  if (res!=0) then begin
+    MessageBox(0,USetStr(res));
+    goto LLoadFB05VATRates;
+  end;
+  vatrates[3] = vr;
+  res = LoadFB05VATRate("44",vr);
+  if (res!=0) then begin
+    MessageBox(0,USetStr(res));
+    goto LLoadFB05VATRates;
+  end;
+  vatrates[4] = vr;
+  res = LoadFB05VATRate("45",vr);
+  if (res!=0) then begin
+    MessageBox(0,USetStr(res));
+    goto LLoadFB05VATRates;
+  end;
+  vatrates[5] = vr;   
+LLoadFB05VATRates:;
+  LoadFB05VATRates = res;
+  return;
+end;
+
+function Integer BeginFiscalReceipt()
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+  res = FB05Write(CtrlSeq,FB05_DELAY);
+  BeginFiscalReceipt = res;
+  return;
+end;
+
+procedure CalculatePaymentModeSums(record IVVc IVr,vector val vpaymodesums)
+begin
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  val t;
+  
+  vpaymodesums[kInvoiceRowTypeCreditCardPayment] = 0.00;
+  vpaymodesums[kInvoiceRowTypeCashPayment] = 0.00;
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    switch (IVrw.stp) begin
+//      case kInvoiceRowTypeGiftVoucherPayment:
+      case kInvoiceRowTypeCreditCardPayment:
+        vpaymodesums[kInvoiceRowTypeCreditCardPayment] = vpaymodesums[kInvoiceRowTypeCreditCardPayment] + MulRateToBase1(IVrw.CurncyCode,IVrw.Sum,IVrw.FrRate,IVrw.ToRateB1,IVrw.ToRateB2,IVrw.BaseRate1,IVrw.BaseRate2,DefaultCurRoundOff);
+//      case kInvoiceRowTypeLoyaltyPointsPayment:
+      case kInvoiceRowTypeCashPayment:
+        vpaymodesums[kInvoiceRowTypeCashPayment] = vpaymodesums[kInvoiceRowTypeCashPayment] + MulRateToBase1(IVrw.CurncyCode,IVrw.Sum,IVrw.FrRate,IVrw.ToRateB1,IVrw.ToRateB2,IVrw.BaseRate1,IVrw.BaseRate2,DefaultCurRoundOff);
+//      case kInvoiceRowTypeChequePayment:
+    end;
+  end;
+  switch (IVr.InvType) begin
+    case kInvoiceTypeCreditSpecialSales: goto LkInvoiceTypeCredit;
+    case kInvoiceTypeCredit:
+      LkInvoiceTypeCredit:;
+      t = IVr.BaseSum4 - vpaymodesums[kInvoiceRowTypeCashPayment] - vpaymodesums[kInvoiceRowTypeCreditCardPayment];
+      if (t>0) then begin
+        vpaymodesums[kInvoiceRowTypeCashPayment] = vpaymodesums[kInvoiceRowTypeCashPayment] + t;  
+      end;
+    otherwise
+      t = IVr.BaseSum4 - vpaymodesums[kInvoiceRowTypeCashPayment] - vpaymodesums[kInvoiceRowTypeCreditCardPayment];
+      if (t>0) then begin
+        vpaymodesums[kInvoiceRowTypeCashPayment] = vpaymodesums[kInvoiceRowTypeCashPayment] + t;  
+      end;
+  end;
+  return;
+end;
+
+function Integer EndFiscalReceiptCurr(record IVVc IVr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  vector val vpaymodesums;
+
+  CalculatePaymentModeSums(IVr,vpaymodesums);
+
+  if (vpaymodesums[kInvoiceRowTypeCashPayment]<0) or (vpaymodesums[kInvoiceRowTypeCreditCardPayment]<0) then begin
+    CtrlSeq = "7";
+    vpaymodesums[kInvoiceRowTypeCashPayment] = -vpaymodesums[kInvoiceRowTypeCashPayment];
+    vpaymodesums[kInvoiceRowTypeCreditCardPayment] = -vpaymodesums[kInvoiceRowTypeCreditCardPayment];
+  end else begin
+    CtrlSeq = "2";
+  end;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(vpaymodesums[kInvoiceRowTypeCashPayment],M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+//credit card payments  
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(vpaymodesums[kInvoiceRowTypeCreditCardPayment],M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "2";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "3";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "4";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+//Cash payments in foreign currency  
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "2";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "3";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+
+  res = FB05Write(CtrlSeq,FB05_LONGDELAY);
+
+  FB05GetFiscalData("9");
+  EndFiscalReceiptCurr = res;
+  return;
+end;
+
+function string 255 GetFB05VATCode(Integer InclVAT,string vatcode,vector val vatrates)
+begin
+  string 255 res;
+  val vatprc,tax1;
+
+  GetVATdouble(vatcode,vatprc,tax1,0);
+  if (vatprc==vatrates[0]) then begin 
+    res = "0"; 
+    goto LGetFB05VATCode;
+  end;
+  if (vatprc==vatrates[1]) then begin 
+    res = "1"; 
+    goto LGetFB05VATCode;
+  end;
+  if (vatprc==vatrates[2]) then begin 
+    res = "2"; 
+    goto LGetFB05VATCode;
+  end;
+  if (vatprc==vatrates[3]) then begin 
+    res = "3"; 
+    goto LGetFB05VATCode;
+  end;
+  if (vatprc==vatrates[4]) then begin 
+    res = "4"; 
+    goto LGetFB05VATCode;
+  end;
+  if (vatprc==vatrates[5]) then begin 
+    res = "5"; 
+    goto LGetFB05VATCode;
+  end;
+LGetFB05VATCode:;
+  GetFB05VATCode = res;
+  return;
+end;
+
+function Integer DiscountAdditionForItem(record IVVc IVr,row IVVc IVrw)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  
+  CtrlSeq = CtrlSeq & "4";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(-IVrw.vRebate,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+  
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  DiscountAdditionForItem = res;
+  return;
+end;
+
+function Integer PrintRecItem(record IVVc IVr,row IVVc IVrw,vector val vatrates)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,unit;
+  Area CtrlSeqArea;
+  
+  unit = IVrw.UnitCode;
+  if (blank(unit)) then begin
+    unit = "PCS";
+  end;
+  CtrlSeq = CtrlSeq & "3";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ConvertStringToCodePage("CP1257",IVrw.Spec);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  if (IVrw.Quant<0) then begin
+    IVrw.Quant = -IVrw.Quant;
+  end;
+  CtrlSeq = CtrlSeq & ValToString(IVrw.Quant,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(IVrw.Price,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & GetFB05VATCode(IVr.InclVAT,IVrw.VATCode,vatrates);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & unit;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  AddStringToArea(CtrlSeq,CtrlSeqArea);
+  AddByteToArea(HexToInt(CalculateLRC(CtrlSeq)),CtrlSeqArea);
+
+
+  CtrlSeq = chr(FB05_STX);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,1,msglen-1);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,msglen,1);
+  CtrlSeq = CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+
+  if (res==noErr) then begin
+    if (IVrw.vRebate!=0) then begin
+      res = DiscountAdditionForItem(IVr,IVrw);
+    end;
+  end;
+  PrintRecItem = res;
+  return;
+end;
+
+function Integer PrintRecReturn(record IVVc IVr,row IVVc IVrw,vector val vatrates)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,unit;
+  Area CtrlSeqArea;
+  
+  unit = IVrw.UnitCode;
+  if (blank(unit)) then begin
+    unit = "PCS";
+  end;
+  CtrlSeq = CtrlSeq & "6";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ConvertStringToCodePage("CP1257",IVrw.Spec);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(-IVrw.Quant,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(IVrw.Price,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & GetFB05VATCode(IVr.InclVAT,IVrw.VATCode,vatrates);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & unit;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(1.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(2.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  AddStringToArea(CtrlSeq,CtrlSeqArea);
+  AddByteToArea(HexToInt(CalculateLRC(CtrlSeq)),CtrlSeqArea);
+
+
+  CtrlSeq = chr(FB05_STX);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,1,msglen-1);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,msglen,1);
+  CtrlSeq = CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+
+  PrintRecReturn = res;
+  return;
+end;
+
+function Integer PrintCommentLine(record IVVc IVr,row IVVc IVrw)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  Area CtrlSeqArea;
+  
+  CtrlSeq = CtrlSeq & "C";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x45"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ConvertStringToCodePage("CP1257",IVrw.Spec);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  AddStringToArea(CtrlSeq,CtrlSeqArea);
+  AddByteToArea(HexToInt(CalculateLRC(CtrlSeq)),CtrlSeqArea);
+
+
+  CtrlSeq = chr(FB05_STX);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,1,msglen-1);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,msglen,1);
+  CtrlSeq = CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  PrintCommentLine = res;
+  return;
+end;
+
+function Integer PrintItemRows(record IVVc IVr,vector val vatrates)
+begin
+  INteger res,noErr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal1;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal1:;
+        if (nonblank(IVrw.ArtCode)) then begin
+          res = PrintRecItem(IVr,IVrw,vatrates);
+          if (res!=noErr) then begin
+            goto LPrintItemRows;
+          end;
+        end else begin
+          res = PrintCommentLine(IVr,IVrw);
+          if (res!=noErr) then begin
+            goto LPrintItemRows;
+          end;
+        end;
+      case kInvoiceRowTypeVoid:
+        res = PrintRecReturn(IVr,IVrw,vatrates);
+        if (res!=noErr) then begin
+          goto LPrintItemRows;
+        end;
+    end;
+  end;
+LPrintItemRows:;  
+  PrintItemRows = res;
+  return;
+end;
+
+global
+updating procedure PrintFB05Receipt(var record IVVc aIVr,record LSerialPortDeviceVc LSPDr)
+begin
+  record IVVc IVr;
+  record IVVc oldIVr;
+  Integer noErr,res;
+  record LocalMachineBlock LMb;
+  record MachineCashVc MCr;
+  vector val vatrates;
+  
+  noErr = 0;
+  res = FB05Open(LSPDr);
+
+  if (res==noErr) then begin
+    noErr = 0;
+    BlockLoad(LMb);
+    
+//    MCr.Code = LMb.LocalMachineCode;
+//    ReadFirstMain(MCr,1,true);
+
+    res = CheckFB05Clock;
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = LoadFB05VATRates(vatrates);
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = BeginFiscalReceipt;
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = PrintItemRows(aIVr,vatrates);
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = EndFiscalReceiptCurr(aIVr);
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    SendEscSeqAfter(LSPDr.EscSeqAfter);
+    IVr.SerNr = aIVr.SerNr;
+    if (ReadFirstMain(IVr,1,true)) then begin
+      if (IVr.Prntdf==0) then begin
+        RecordCopy(oldIVr,IVr);
+        IVr.Prntdf = 1;
+        RecordUpdate(oldIVr,IVr,false);
+      end;
+    end;    
+LPrintFB05Receipt:;
+    FB05Close;
+    if (res!=0) then begin
+      MessageBox(res,"");
+    end;
+  end;
+  return;
+end;
+
+procedure IVCash_CalculatePaymentModeSums(record IVCashVc IVCashr,vector val vpaymodesums)
+begin
+  row IVCashVc IVCashrw;
+  Integer i,rwcnt;
+  val t;
+  
+  vpaymodesums[kInvoiceRowTypeCreditCardPayment] = 0.00;
+  vpaymodesums[kInvoiceRowTypeCashPayment] = 0.00;
+  rwcnt = MatRowCnt(IVCashr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVCashr,i,IVCashrw);
+    switch (IVCashrw.stp) begin
+//      case kInvoiceRowTypeGiftVoucherPayment:
+      case kInvoiceRowTypeCreditCardPayment:
+        vpaymodesums[kInvoiceRowTypeCreditCardPayment] = vpaymodesums[kInvoiceRowTypeCreditCardPayment] + MulRateToBase1(IVCashrw.CurncyCode,IVCashrw.Sum,IVCashrw.FrRate,IVCashrw.ToRateB1,IVCashrw.ToRateB2,IVCashrw.BaseRate1,IVCashrw.BaseRate2,DefaultCurRoundOff);
+//      case kInvoiceRowTypeLoyaltyPointsPayment:
+      case kInvoiceRowTypeCashPayment:
+        vpaymodesums[kInvoiceRowTypeCashPayment] = vpaymodesums[kInvoiceRowTypeCashPayment] + MulRateToBase1(IVCashrw.CurncyCode,IVCashrw.Sum,IVCashrw.FrRate,IVCashrw.ToRateB1,IVCashrw.ToRateB2,IVCashrw.BaseRate1,IVCashrw.BaseRate2,DefaultCurRoundOff);
+//      case kInvoiceRowTypeChequePayment:
+    end;
+  end;
+  t = IVCashr.BaseSum4 - vpaymodesums[kInvoiceRowTypeCashPayment] - vpaymodesums[kInvoiceRowTypeCreditCardPayment];
+  if (t>0) then begin
+    vpaymodesums[kInvoiceRowTypeCashPayment] = vpaymodesums[kInvoiceRowTypeCashPayment] + t;  
+  end;
+  return;
+end;
+
+function Integer IVCash_EndFiscalReceiptCurr(record IVCashVc IVCashr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  vector val vpaymodesums;
+
+  IVCash_CalculatePaymentModeSums(IVCashr,vpaymodesums);
+
+  if (vpaymodesums[kInvoiceRowTypeCashPayment]<0) or (vpaymodesums[kInvoiceRowTypeCreditCardPayment]<0) then begin
+    CtrlSeq = "7";
+    vpaymodesums[kInvoiceRowTypeCashPayment] = -vpaymodesums[kInvoiceRowTypeCashPayment];
+    vpaymodesums[kInvoiceRowTypeCreditCardPayment] = -vpaymodesums[kInvoiceRowTypeCreditCardPayment];
+  end else begin
+    CtrlSeq = "2";
+  end;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(vpaymodesums[kInvoiceRowTypeCashPayment],M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+//credit card payments  
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(vpaymodesums[kInvoiceRowTypeCreditCardPayment],M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "2";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "3";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "4";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+//Cash payments in foreign currency  
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "2";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "3";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+
+  res = FB05Write(CtrlSeq,FB05_LONGDELAY);
+
+  FB05GetFiscalData("9");
+  IVCash_EndFiscalReceiptCurr = res;
+  return;
+end;
+
+function Integer IVCash_DiscountAdditionForItem(record IVCashVc IVCashr,row IVCashVc IVCashrw)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  
+  CtrlSeq = CtrlSeq & "4";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "1";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(-CalculateDiscountPercentage(IVCashrw.Quant,IVCashrw.Price,IVCashrw.Sum),M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+  
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  IVCash_DiscountAdditionForItem = res;
+  return;
+end;
+
+function Integer IVCash_PrintRecItem(record IVCashVc IVCashr,row IVCashVc IVCashrw,vector val vatrates)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  string 255 unit;
+  Area CtrlSeqArea;
+  
+  unit = IVCashrw.UnitCode;
+  if (blank(unit)) then begin
+    unit = "PCS";
+  end;
+  CtrlSeq = CtrlSeq & "3";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ConvertStringToCodePage("CP1257",IVCashrw.Spec);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  if (IVCashrw.Quant<0) then begin
+    IVCashrw.Quant = -IVCashrw.Quant;
+  end;
+  CtrlSeq = CtrlSeq & ValToString(IVCashrw.Quant,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(IVCashrw.Price,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & GetFB05VATCode(IVCashr.InclVAT,IVCashrw.VATCode,vatrates);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & unit;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  AddStringToArea(CtrlSeq,CtrlSeqArea);
+  AddByteToArea(HexToInt(CalculateLRC(CtrlSeq)),CtrlSeqArea);
+
+
+  CtrlSeq = chr(FB05_STX);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,1,msglen-1);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,msglen,1);
+  CtrlSeq = CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  if (res==noErr) then begin
+    if (nonblank(IVCashrw.vRebate)) then begin
+      res = IVCash_DiscountAdditionForItem(IVCashr,IVCashrw);
+    end;
+  end;
+  IVCash_PrintRecItem = res;
+  return;
+end;
+
+function Integer IVCash_PrintRecReturn(record IVCashVc IVCashr,row IVCashVc IVCashrw,vector val vatrates)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,unit;
+  Area CtrlSeqArea;
+  
+  unit = IVCashrw.UnitCode;
+  if (blank(unit)) then begin
+    unit = "PCS";
+  end;
+  CtrlSeq = CtrlSeq & "6";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ConvertStringToCodePage("CP1257",IVCashrw.Spec);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(-IVCashrw.Quant,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(IVCashrw.Price,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & GetFB05VATCode(IVCashr.InclVAT,IVCashrw.VATCode,vatrates);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & unit;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(1.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(2.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(0.00,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  AddStringToArea(CtrlSeq,CtrlSeqArea);
+  AddByteToArea(HexToInt(CalculateLRC(CtrlSeq)),CtrlSeqArea);
+
+
+  CtrlSeq = chr(FB05_STX);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,1,msglen-1);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,msglen,1);
+  CtrlSeq = CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  IVCash_PrintRecReturn = res;
+  return;
+end;
+
+function Integer IVCash_PrintCommentLine(record IVCashVc IVCashr,row IVCashVc IVCashrw)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  Area CtrlSeqArea;
+  
+  CtrlSeq = CtrlSeq & "C";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(HexToInt("0x45"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ConvertStringToCodePage("CP1257",IVCashrw.Spec);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  AddStringToArea(CtrlSeq,CtrlSeqArea);
+  AddByteToArea(HexToInt(CalculateLRC(CtrlSeq)),CtrlSeqArea);
+
+
+  CtrlSeq = chr(FB05_STX);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,1,msglen-1);
+  CtrlSeq = CtrlSeq & GetStringFromArea(CtrlSeqArea,msglen,1);
+  CtrlSeq = CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  IVCash_PrintCommentLine = res;
+  return;
+end;
+
+function Integer IVCash_PrintItemRows(record IVCashVc IVCashr,vector val vatrates)
+begin
+  INteger res,noErr;
+  row IVCashVc IVCashrw;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(IVCashr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVCashr,i,IVCashrw);
+    switch (IVCashrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal2;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal2:;
+        if (nonblank(IVCashrw.ArtCode)) then begin
+          res = IVCash_PrintRecItem(IVCashr,IVCashrw,vatrates);
+          if (res!=noErr) then begin
+            goto LPrintItemRows;
+          end;
+        end else begin
+          res = IVCash_PrintCommentLine(IVCashr,IVCashrw);
+          if (res!=noErr) then begin
+            goto LPrintItemRows;
+          end;
+        end;
+      case kInvoiceRowTypeVoid:
+        res = IVCash_PrintRecReturn(IVCashr,IVCashrw,vatrates);
+        if (res!=noErr) then begin
+          goto LPrintItemRows;
+        end;
+    end;
+  end;
+LPrintItemRows:;  
+  IVCash_PrintItemRows = res;
+  return;
+end;
+
+global
+updating procedure PrintFB05IVCashReceipt(var record IVCashVc IVCashr,record LSerialPortDeviceVc LSPDr)
+begin
+  record IVCashVc oldIVCashr;
+  Integer noErr,res;
+  record LocalMachineBlock LMb;
+  record MachineCashVc MCr;
+  vector val vatrates;
+  
+  noErr = 0;
+  res = FB05Open(LSPDr);
+  if (res==noErr) then begin
+    noErr = 0;
+    BlockLoad(LMb);
+    
+//    MCr.Code = LMb.LocalMachineCode;
+//    ReadFirstMain(MCr,1,true);
+
+    res = CheckFB05Clock;
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = LoadFB05VATRates(vatrates);
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = BeginFiscalReceipt;
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = IVCash_PrintItemRows(IVCashr,vatrates);
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    res = IVCash_EndFiscalReceiptCurr(IVCashr);
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    SendEscSeqAfter(LSPDr.EscSeqAfter);
+    if (IVCashr.Prntdf!=0) then begin
+      RecordCopy(oldIVCashr,IVCashr);
+      IVCashr.Prntdf = 1;
+      RecordUpdate(oldIVCashr,IVCashr,false);
+    end;    
+LPrintFB05Receipt:;
+    FB05Close;
+    if (res!=0) then begin
+      MessageBox(res,"");
+    end;
+  end;
+  return;
+end;
+
+function Integer MoneyOutCurr(record CashVc Cashr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  
+  CtrlSeq = CtrlSeq & "Y";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "0";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(Cashr.Total,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+  
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  MoneyOutCurr = res;
+  return;
+end;
+
+function Integer MoneyInCurr(record CashVc Cashr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex;
+  
+  CtrlSeq = CtrlSeq & "I";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & "0";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & ValToString(Cashr.Total,M4UVal,"",".",0);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+  
+  res = FB05Write(CtrlSeq,FB05_DELAY);  
+  MoneyInCurr = res;
+  return;
+end;
+
+global
+procedure PrintFB05CashEvent(var record CashVc Cashr,record LSerialPortDeviceVc LSPDr)
+begin
+  Integer noErr,res;
+  
+  noErr = 0;
+  res = FB05Open(LSPDr);
+  if (res==noErr) then begin    
+    res = CheckFB05Clock;
+    if (res!=noErr) then begin
+      goto LPrintFB05Receipt;
+    end;
+    switch (Cashr.Event) begin
+      case 0:
+        MoneyOutCurr(Cashr);
+      case 1:
+        MoneyInCurr(Cashr);
+    end;
+LPrintFB05CashEvent:;
+    FB05Close;
+    if (res!=0) then begin
+      MessageBox(res,"");
+    end;
+  end;
+  return;
+end;
+
+function Integer CommitZReport(string FMBCRC32)
+begin
+  Integer res,msglen,i;
+  string 255 CtrlSeq,msglenhex;  
+
+  CtrlSeq = chr(HexToInt("0x75"));
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & FMBCRC32;
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);
+
+  res = FB05Write(CtrlSeq,FB05_DELAY);
+
+  CommitZReport = res;
+  return;
+end;
+
+global
+procedure FB05DailyReport(record LSerialPortDeviceVc LSPDr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,response; 
+  record LocalMachineBlock LMb;
+  string 255 tstr,FMBCRC32,filename,filename2;
+  Integer pos;
+  LongInt FMBCount,l,NumberOfFirstReceipt;
+  Area aresponse;
+
+/*
+//  FMBCRC32 = "4280805205";
+//  FMBCRC32 = "590";
+Trace("FMBCRC32 " & FMBCRC32,"");  
+//Trace("STRINGTOLONGINTWRAP(FMBCRC32) " & STRINGTOLONGINTWRAP(FMBCRC32),"");  
+//Trace("LongIntToHex(STRINGTOLONGINTWRAP(FMBCRC32)) " & LongIntToHex(STRINGTOLONGINTWRAP(FMBCRC32)),"");  
+Trace("NumToHexL(FMBCRC32) " & NumToHexL(FMBCRC32),"");  
+//Trace(""," FMBCRC32 " & FMBCRC32 & " LongIntToHex(STRINGTOLONGINTWRAP(FMBCRC32)) " & LongIntToHex(STRINGTOLONGINTWRAP(FMBCRC32)));    
+*/
+
+  res = FB05Open(LSPDr);
+  if (res!=noErr) then begin
+    goto LFB05DailyReport;
+  end;
+  
+  BlockLoad(LMb);
+  if (nonblank(LMb.FiscalPrinterEJournalPath)) then begin
+    res = FB05GetFiscalDataResponse("3",response);
+    res = FB05GetFiscalDataResponse("900",response);
+    res = FB05GetFiscalDataResponse("900",response);
+
+    pos = 0;
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+    FMBCount = StringToLongInt(tstr);
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,FMBCRC32);
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+    NumberOfFirstReceipt = StringToLongInt(tstr);
+
+    FMBCRC32 = NumToHexL(FMBCRC32);
+
+  //  filename = LMb.FiscalPrinterEJournalPath & "/" & DateToString(CurrentDate,"YYYYMMDD") & "_" & FMBNumber & "_" & ZNumber & "_" & FMBCRC32 & ".txt";
+    filename = LMb.FiscalPrinterEJournalPath & "/" & DateToString(CurrentDate,"YYYYMMDD") & "_" & FMBCRC32 & ".txt";
+    CreateFile(filename);
+    CloseFile;      
+    if (nonblank(LMb.FiscalPrinterEJournalPath2)) then begin
+      filename2 = LMb.FiscalPrinterEJournalPath2 & "/" & DateToString(CurrentDate,"YYYYMMDD") & "_" & FMBCRC32 & ".txt";
+      CreateFile(filename2);
+      CloseFile;      
+    end;
+
+    for (l=1;l<=FMBCount;l=l+1) begin
+      SetAreaZeroSize(aresponse);    
+      res = GetCopyOfReceipt(l,l,aresponse);
+      OutAreaToFile(aresponse,filename,1);
+      if (nonblank(filename2)) then begin
+        OutAreaToFile(aresponse,filename2,1);
+      end;
+    end;
+
+    res = FB05GetFiscalDataResponse("900",response);
+
+    CtrlSeq = CtrlSeq & "Z";
+    CtrlSeq = CtrlSeq & chr(FB05_FS);
+    msglen = len(CtrlSeq) + 2;  //msglen and lrc
+    msglenhex = NumToHex(msglen);
+    msglenhex = Right(msglenhex,2);
+    CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+    CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+    CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+    res = FB05Write(CtrlSeq,FB05_DELAY); 
+
+    res = FB05GetFiscalDataResponse("3",response);
+    res = FB05GetFiscalDataResponse("900",response);
+    res = FB05GetFiscalDataResponse("900",response);
+
+    pos = 0;
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+    FMBCount = StringToLongInt(tstr);
+
+    SetAreaZeroSize(aresponse);    
+    res = GetCopyOfReceipt(FMBCount,FMBCount,aresponse);
+    OutAreaToFile(aresponse,filename,1);
+    if (nonblank(filename2)) then begin
+      OutAreaToFile(aresponse,filename2,1);
+    end;    
+    res = FB05GetFiscalDataResponse("3",response);
+    res = FB05GetFiscalDataResponse("900",response);
+    
+    pos = 0;
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,tstr);
+//    FMBCount = StringToLongInt(tstr);
+    ExtractObjWithSeparator(chr(FB05_FS),response,false,pos,FMBCRC32);
+
+    FMBCRC32 = NumToHexL(FMBCRC32);
+
+    res = FB05GetFiscalDataResponse("3",response);
+    res = FB05GetFiscalDataResponse("7",response);
+    res = FB05GetFiscalDataResponse("9",response);
+    res = FB05GetFiscalDataResponse("900",response);
+    res = FB05GetFiscalDataResponse("900",response);
+
+    CommitZReport(FMBCRC32);    
+  end else begin
+    CtrlSeq = CtrlSeq & "Z";
+    CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+    msglen = len(CtrlSeq) + 2;  //msglen and lrc
+    msglenhex = NumToHex(msglen);
+    msglenhex = Right(msglenhex,2);
+    CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+    CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+    CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+
+    res = FB05Write(CtrlSeq,FB05_DELAY); 
+  end;
+    
+  
+ LFB05DailyReport:;  
+  FB05Close;
+  return;
+end;
+
+global
+procedure FB05MonthlyReport(record LSerialPortDeviceVc LSPDr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,response; 
+
+  res = FB05Open(LSPDr);
+  if (res!=noErr) then begin
+    goto LFB05MonthlyReport;
+  end;
+  
+  CtrlSeq = CtrlSeq & "X";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+
+  res = FB05Write(CtrlSeq,FB05_DELAY); 
+  FB05Close;
+ LFB05MonthlyReport:;  
+  return;
+end;
+
+global
+procedure FB05PeriodicReport(record RcVc RepSpec,record LSerialPortDeviceVc LSPDr)
+begin
+  INteger res,msglen,noErr;
+  string 255 CtrlSeq,msglenhex,response; 
+
+  res = FB05Open(LSPDr);
+  if (res!=noErr) then begin
+    goto LFB05PeriodicReport;
+  end;
+  
+  CtrlSeq = CtrlSeq & "F";
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & DateToString(RepSpec.d1,"YYYYMMDD");
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+  CtrlSeq = CtrlSeq & DateToString(RepSpec.d2,"YYYYMMDD");
+  CtrlSeq = CtrlSeq & chr(FB05_FS);
+
+  msglen = len(CtrlSeq) + 2;  //msglen and lrc
+  msglenhex = NumToHex(msglen);
+  msglenhex = Right(msglenhex,2);
+  CtrlSeq = chr(HexToInt(msglenhex)) & CtrlSeq;
+
+  CtrlSeq = CtrlSeq & chr(HexToInt(CalculateLRC(CtrlSeq)));  
+  CtrlSeq = chr(FB05_STX) & CtrlSeq & chr(FB05_ETX);    
+
+  res = FB05Write(CtrlSeq,FB05_DELAY); 
+  FB05Close;
+ LFB05PeriodicReport:;  
+  return;
+end;
+
+global
+procedure SetPOSWindowDisplay_Generic(record LSerialPortDeviceVc LSPDr,string dispstr,string disp2str)
+begin
+  INteger res,noErr;
+  string 255 CtrlSeq,tstr;
+  Area CtrlSeqArea;
+  
+  if (OpenComPort(0,LSPDr.Port,LSPDr.BaudRate,LSPDr.Parity,LSPDr.ByteSize,LSPDr.StopBits,LSPDr.FlowControl)) then begin
+    SetComPortCodepage(StringSetFromString(89,LSPDr.Codepage));
+    CtrlSeq = chr(12); //0x0C
+    res = OutComPort(0,CtrlSeq);
+    
+    if (blank(dispstr)) and (blank(disp2str)) then begin
+      SetComPortCodepage("UTF-8");
+      res = CloseComPort(0);
+      goto LSetPOSWindowDisplay_Generic;
+    end;
+    CtrlSeq = "";
+
+    if (nonblank(dispstr)) then begin
+      CtrlSeq = CtrlSeq & chr(8);  //0x08
+      M4PadString(Left(dispstr,19),19," ",true,tstr);//20 doesnt want to work nicely
+      CtrlSeq = CtrlSeq & tstr;
+    end;
+
+    if (nonblank(disp2str)) then begin
+      if (nonblank(dispstr)) then begin
+        CtrlSeq = CtrlSeq & chr(9);
+      end else begin
+        CtrlSeq = CtrlSeq & chr(10);  //0x0A
+      end;
+      M4PadString(Left(disp2str,19),19," ",true,tstr);
+      CtrlSeq = CtrlSeq & tstr;
+    end;
+    res = OutComPort(0,CtrlSeq);
+    
+    res = CloseComPort(0);
+    SetComPortCodepage("UTF-8");
+  end;
+LSetPOSWindowDisplay_Generic:;  
+  return;
+end;
+
+global
+procedure SetPOSWindowDisplay_Posiflex(record LSerialPortDeviceVc LSPDr,string dispstr,string disp2str)
+begin
+  INteger res,noErr;
+  string 255 CtrlSeq,tstr;
+  Area CtrlSeqArea;
+  
+  if (OpenComPort(0,LSPDr.Port,LSPDr.BaudRate,LSPDr.Parity,LSPDr.ByteSize,LSPDr.StopBits,LSPDr.FlowControl)) then begin
+    SetComPortCodepage(StringSetFromString(89,LSPDr.Codepage));//set Codepage 866
+    if (StringSetFromString(89,LSPDr.Codepage)=="CP866") then begin
+      CtrlSeq = chr(27) & chr(116) & chr(6); //set Codepage 866
+    end;
+    res = OutComPort(0,CtrlSeq);
+    CtrlSeq = chr(12); //0x0C
+    res = OutComPort(0,CtrlSeq);
+    CtrlSeq = chr(11); //0x0B
+    res = OutComPort(0,CtrlSeq);
+    
+    if (blank(dispstr)) and (blank(disp2str)) then begin
+      SetComPortCodepage("UTF-8");
+	    res = CloseComPort(0);
+      goto LSetPOSWindowDisplay_Posiflex;
+    end;
+    CtrlSeq = "";
+    if (nonblank(dispstr)) then begin
+      CtrlSeq = CtrlSeq & chr(8);  //0x08
+      M4PadString(Left(dispstr,19),20," ",true,tstr);//20 doesnt want to work nicely
+      CtrlSeq = CtrlSeq & tstr;
+    end;
+
+    if (nonblank(disp2str)) then begin
+      if (nonblank(dispstr)) then begin
+        CtrlSeq = CtrlSeq & chr(9);
+      end else begin
+        CtrlSeq = CtrlSeq & chr(10);  //0x0A
+      end;
+      M4PadString(Left(disp2str,20),20," ",true,tstr);
+      CtrlSeq = CtrlSeq & tstr;
+    end;
+
+    res = OutComPort(0,CtrlSeq);
+    
+    res = CloseComPort(0);
+    SetComPortCodepage("UTF-8");
+  end;
+LSetPOSWindowDisplay_Posiflex:;  
+  return;
+end;

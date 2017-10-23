@@ -1,0 +1,481 @@
+external function string 255 CreateInvoiceNumber(LongInt,string);
+external function Boolean HasMultiCurrency();
+external procedure HT2Per(Date, Date , var string);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure BeginCurncyTotals(var Integer);
+external procedure AddCurncyTotals(var array string,var array val,var Integer,string,val);
+external procedure PrintCurncyTotals(array string,array val,array val,array val,Integer,Integer,Integer,Integer,Integer,Boolean,Integer);
+external procedure HTCusts(string, string, var string);
+external procedure HTOKF(Integer ,Integer, var string);
+
+external function Boolean HasModCheck();
+
+
+function
+Boolean CheckCustCode(string accstr,record IPVc IPr)
+begin
+  Boolean res;
+  row IPVc IPrw;
+  Integer i,rwcnt;
+    
+  res = false;
+  rwcnt = MatRowCnt(IPr);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(IPr,i,IPrw);
+    if (accstr==IPrw.CustCode) then begin
+      res = true;
+      goto L99;
+    end;
+  end;  
+L99:;  
+  CheckCustCode = res;
+  return;
+end;
+
+global
+procedure IPRn(record RcVc RepSpec)
+BEGIN
+  record IPVc IPr;
+  row IPVc IPrw;
+  record PMBlock PMRec;
+  row PMBlock pmrw;
+  record BFVc BFr;
+  row BFVc BFrw;  
+  record AccBlock ARAccRec;
+  Integer i,rwcnt,j;
+  Integer pmrows;
+  Integer rw;
+  val pmsums;
+  val arsum,invbase1;
+  val Rsum;
+  val Csum;
+  val Fsum;
+  val rs,totipsum;
+  Boolean TrHs;
+  Boolean testf;
+  LongInt afr,ato;
+  string 255 tstr;
+  string 20 frcu,tocu;
+  record BaseCurBlock bascur;
+  array val av1;
+  array val av2;
+  array val av3;
+  array string 20 acur;
+  Integer curcnt;
+  record CheckVc Checkr;
+  string 255 wrofacc;
+  record IVVc IVr;
+
+  BlockLoad(bascur);
+  TrHs = false;
+  Fsum = 0;
+  Rsum = 0;
+  Csum = 0;
+  arsum = 0;
+  invbase1 = 0;
+  BlockLoad(PMRec);
+  BlockLoad(ARAccRec);
+  pmrows = MatRowCnt(PMRec);
+/*  RecordNew(BFr);*/
+  for (i = 0; i<pmrows; i=i+1) begin
+/*    MatRowGet(BFr,i,BFrw);*/
+    BFrw.crvval = 0;
+    MatRowPut(BFr,i,BFrw);
+  end;
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  frcu = FirstInRange(RepSpec.AccStr,20);
+  tocu = LastInRange(RepSpec.AccStr,20);
+  
+  StartReportJob(USetStr(2441));
+   rw = 1;
+   HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   if (nonblank(RepSpec.f1)) then begin
+     tstr = USetStr(1141);
+     tstr = RepSpec.f1;
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   HTCusts(frcu,tocu,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   if (nonblank(RepSpec.f3)) then begin
+     tstr = USetStr(1140);
+     tstr = RepSpec.f3;
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+   if (nonblank(tstr)) then begin
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;        
+  EndHeader;
+  BeginCurncyTotals(curcnt);
+  SetRepCol(2,100);
+  SetRepCol(3,200);
+  SetRepCol(4,384);
+  
+  StartFormat(15);
+   OutString(0,0,USetStr(2442),false);
+   OutString(3,0,USetStr(2445),false);
+   OutString(4,0,USetStr(2444),true);
+  EndFormat;
+  StartFormat(15);
+   OutString(30,0,USetStr(2443),false);
+   OutString(2,0,USetStr(2447),false);
+   OutString(3,0,USetStr(2448),false);
+   if (HasModCheck) then begin
+     OutString(370,0,USetStr(8457),false);
+   end;
+   OutString(1,0,USetStr(2450),true);
+  EndFormat;
+  IPr.SerNr = afr;
+
+  TrHs = true;
+  while (LoopMain(IPr,1,TrHs)) begin
+    if (ato<>-1) then begin
+      if (IPr.SerNr>ato) then begin
+        TrHs = false;
+      end;
+    end;       
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[3]==1) then begin
+        if (IPr.ReceivedFlag<>0) then begin testf = true; end;
+        if (IPr.OKFlag<>0) then begin testf = false; end;
+        if (IPr.RejectedFlag<>0) then begin testf = false; end;    
+      end;
+      if (RepSpec.flags[1]==1) then begin
+        if (IPr.OKFlag==0) then begin testf = true; end;
+        if (IPr.ReceivedFlag<>0) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[2]==1) then begin
+        if (IPr.OKFlag<>0) then begin testf = true; end;
+        if (IPr.RejectedFlag<>0) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[4]==1) then begin
+        if (IPr.RejectedFlag<>0) then begin testf = true; end;
+      end;
+      if (testf==true) then begin
+        if (nonblank(RepSpec.f3)) then begin
+          testf = false;
+          rwcnt = MatRowCnt(IPr);
+          for (i = 0; i<rwcnt; i=i+1) begin
+            MatRowGet(IPr,i,IPrw);
+            tstr = IPrw.PayMode;
+            if (blank(tstr)) then begin
+              tstr = IPr.PayMode;
+            end;
+            if (RepSpec.f3==tstr) then begin
+              testf = true;
+            end;
+          end;
+        end;
+      end;
+      if (nonblank(RepSpec.f4)) then begin
+        if (IPr.Sign<>RepSpec.f4) then begin testf = false; end;
+      end;  
+      if (nonblankdate(RepSpec.sStartDate)) then begin
+        if (IPr.TransDate<RepSpec.sStartDate) then begin testf = false; end;
+      end;  
+      if (nonblankdate(RepSpec.sEndDate)) then begin
+        if (IPr.TransDate>RepSpec.sEndDate) then begin testf = false; end;
+      end;  
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (CheckCustCode(RepSpec.AccStr,IPr)==false) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if (RepSpec.TransStr!=IPr.RecNumber) then begin
+          testf = false;
+        end;
+      end;
+      
+    if (testf) then begin
+      Gray_Divider(0,1);
+      invbase1 = 0;
+      totipsum = 0;
+      StartFormat(15);
+       OutLongInt(0,"DblCuPerIP",IPr.SerNr,false);
+       OutString(2,0,IPr.Comment,false);
+       OutString(3,0,IPr.PayMode,false);
+       OutDate(4,0,IPr.TransDate,true);
+       if (IPr.OKFlag==0) then begin
+         OutString(400,0,USetStr(2366),true);
+       end;  
+      EndFormat;
+      if (HasLocalization("PRT")) then begin 
+        StartFormat(15);
+        if (IPr.IPBookVAT!=0) then begin 
+          tstr = "[X]";
+        end else begin
+          tstr = "[ ]";
+        end;
+        OutString(2,0,USetStr(33709),false);
+        OutString(3,0,tstr,false);
+        EndFormat;   
+      end;           
+      rwcnt = MatRowCnt(IPr);
+      for (i=0; i<rwcnt; i=i+1) begin
+        MatRowGet(IPr,i,IPrw);
+        testf = true;
+        if (nonblank(RepSpec.f3)) then begin
+          testf = false;
+          tstr = IPrw.PayMode;
+          if (blank(tstr)) then begin
+            tstr = IPr.PayMode;
+          end;
+          if (RepSpec.f3==tstr) then begin
+            testf = true;
+          end;
+        end;
+        if (nonblank(RepSpec.AccStr)) then begin
+          if (RepSpec.AccStr<>IPrw.CustCode) then begin
+            testf = false;
+          end;
+        end;      
+        if (testf==true) then begin
+        if (IPrw.BankCurncy==bascur.BaseCur1) then begin
+          rs = IPrw.BankVal;
+        end else begin
+          rs = MulWithRateToBase1(IPrw.InvCurncy,IPr.TransDate,IPrw.InvVal,DefaultCurRoundOff);
+        end;
+        if ((IPrw.stp<>5) and (IPrw.stp<>6) and (IPrw.stp<>7)) then begin
+            arsum = rs + arsum;
+            invbase1 = rs + invbase1;
+            StartFormat(15);
+             if (RepSpec.flags[16]==2) then begin
+               tstr = IPrw.InvoiceOfficialSerNr;
+               if (blank(tstr)) then begin
+                 IVr.SerNr = IPrw.InvoiceNr;
+                 ReadFirstMain(IVr,1,true);
+                 tstr = IVr.OfficialSerNr;
+               end;
+               OutStringID(30,"DblIVVc",tstr,false,IVr.SerNr);
+             end else begin
+               OutLongInt(30,"DblCustPS2",IPrw.InvoiceNr,false);
+             end;
+             OutString(2,0,IPrw.CustCode,false);
+             OutString(3,0,IPrw.CustName,false);
+             if (IPrw.ChequeNr <> -1) then begin
+               if ((IPrw.PayMode<>IPr.PayMode) and (nonblank(IPrw.PayMode))) then begin
+                 tstr = IPrw.PayMode & ", ";
+               end else begin
+                 tstr = "";
+               end;
+               if (HasModCheck) then begin
+                 Checkr.SerNr = IPrw.ChequeNr;
+                 if (ReadFirstMain(Checkr,1,true)) then begin
+                   tstr = tstr & " " & Checkr.CheckNr;
+                   OutString(370,0,tstr,false);
+                 end else begin               
+                   OutString(370,0,tstr & IPrw.ChequeNr,false);
+                 end;
+               end;
+             end;
+             if (IPr.TransDate<>IPrw.PayDate) then begin
+               OutDate(4,0,IPrw.PayDate,true);
+             end;  
+             OutVal(400,0,IPrw.TAX1Sum,M4Val,true);
+             if (RepSpec.flags[6]==1) then begin
+               OutVal(450,0,IPrw.BankVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.BankCurncy,false);
+               end;
+               AddCurncyTotals(acur,av1,curcnt,IPrw.BankCurncy,IPrw.BankVal);             
+             end else begin
+               OutVal(450,0,IPrw.InvVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.InvCurncy,false);
+               end;
+               AddCurncyTotals(acur,av1,curcnt,IPrw.InvCurncy,IPrw.InvVal);
+             end;  
+            EndFormat;
+            
+            if (RepSpec.flags[16]==1) then begin
+              tstr = IPrw.InvoiceOfficialSerNr;
+              if (blank(tstr)) then begin
+                IVr.SerNr = IPrw.InvoiceNr;
+                ReadFirstMain(IVr,1,true);
+                tstr = IVr.OfficialSerNr;
+              end;
+              StartFormat(15);
+               OutStringID(30,"DblIVVc",tstr,false,IVr.SerNr);
+              EndFormat;
+            end;
+        end;
+        if (IPrw.stp==5) then begin
+//            arsum = rs + arsum;
+            Csum = rs + Csum;
+            invbase1 = rs + invbase1;
+            StartFormat(15);
+             OutLongInt(30,"DblCustPS2",IPrw.InvoiceNr,false);
+             OutString(2,0,IPrw.CustCode,false);
+             OutString(3,0,IPrw.CustName,false);
+             OutString(4,0,USetStr(2449),true);
+             if (RepSpec.flags[6]==1) then begin             
+               OutVal(450,0,IPrw.BankVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.BankCurncy,false);
+               end;
+//               AddCurncyTotals(acur,av1,curcnt,IPrw.BankCurncy,IPrw.BankVal);
+             end else begin
+               OutVal(450,0,IPrw.InvVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.InvCurncy,false);
+               end;
+//               AddCurncyTotals(acur,av1,curcnt,IPrw.InvCurncy,IPrw.InvVal);
+             end;  
+            EndFormat;
+        end;
+        if (IPrw.stp==6) then begin
+            arsum = rs + arsum;
+            Rsum = rs + Rsum;
+            invbase1 = rs + invbase1;
+            StartFormat(15);
+             OutLongInt(30,"DblCustPS2",IPrw.InvoiceNr,false);
+             OutString(2,0,IPrw.CustCode,false);
+             OutString(3,0,IPrw.CustName,false);
+             OutString(4,0,USetStr(2451),true);
+             if (RepSpec.flags[6]==1) then begin             
+               OutVal(450,0,IPrw.BankVal,M4Val,true);
+               OutString(455,0,IPrw.BankCurncy,false);
+               AddCurncyTotals(acur,av1,curcnt,IPrw.BankCurncy,IPrw.BankVal);
+             end else begin
+               OutVal(450,0,IPrw.InvVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.InvCurncy,false);
+               end;
+               AddCurncyTotals(acur,av1,curcnt,IPrw.InvCurncy,IPrw.InvVal);
+             end;  
+            EndFormat;
+        end;
+        if (IPrw.stp==7) then begin
+            arsum = -rs + arsum;
+            Fsum = rs + Fsum;
+            invbase1 = rs + invbase1;
+            StartFormat(15);
+             OutLongInt(30,"DblCustPS2",IPrw.InvoiceNr,false);
+             OutString(2,0,IPrw.CustCode,false);
+             OutString(3,0,IPrw.CustName,false);
+             OutString(4,0,USetStr(2454),true);
+             if (RepSpec.flags[6]==1) then begin             
+               OutVal(450,0,IPrw.BankVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.BankCurncy,false);
+               end;
+               AddCurncyTotals(acur,av1,curcnt,IPrw.BankCurncy,-IPrw.BankVal);
+             end else begin
+               OutVal(450,0,IPrw.InvVal,M4Val,true);
+               if (HasMultiCurrency) then begin
+                 OutString(455,0,IPrw.InvCurncy,false);
+               end;
+               AddCurncyTotals(acur,av1,curcnt,IPrw.InvCurncy,-IPrw.InvVal);
+             end;  
+            EndFormat;
+        end;
+        tstr = IPrw.PayMode;
+        if (blank(tstr)) then begin
+          tstr = IPr.PayMode;
+        end;
+        if (IPrw.stp==7) then begin
+          totipsum = totipsum - rs;
+        end else begin
+          totipsum = totipsum + rs;
+        end;  
+        if (nonblank(tstr)) then begin
+          if (IPrw.stp==1) then begin
+            for (j = 0; j<pmrows; j=j+1) begin
+              MatRowGet(PMRec,j,pmrw);
+              MatRowGet(BFr,j,BFrw);
+              if (pmrw.Code==tstr) then begin
+                BFrw.crvval = BFrw.crvval + rs;
+                MatRowPut(BFr,j,BFrw);
+              end;
+            end;
+          end;  
+        end;      
+      end;
+      end;
+      Black_Divider(400,1);
+      if (IPr.CurPayVal<>0) then begin
+        StartFormat(15);
+/*
+        OutString(240,0,IPr.PayCurCode,true);
+        tstr = GetRateAsText(IPr.PayCurCode,IPr.TransDate);
+        OutString(340,0,tstr,true);           
+        OutVal(450,0,IPr.CurPayVal,M4Val,true);
+        OutString(455,0,IPr.PayCurCode,false);
+*/
+        OutVal(450,0,totipsum,M4Val,true);
+        EndFormat;
+      end;
+    end;
+    end;
+  end;
+  StartFormat(10);
+  EndFormat;
+  Black_Divider(0,1);
+  for (i=0; i<pmrows; i=i+1) begin
+    MatRowGet(PMRec,i,pmrw);
+    MatRowGet(BFr,i,BFrw);
+    if (BFrw.crvval<>0) then begin  
+      StartFormat(15);
+      OutString(50,0,pmrw.Code,false);
+      OutString(100,0,pmrw.Comment,false);
+      OutString(4,0,pmrw.AccNr,false);
+      OutVal(1,0,BFrw.crvval,M4Val,true);
+      EndFormat;
+    end;
+  end;  
+
+  if (Csum<>0) then begin
+    StartFormat(15);
+     OutString(100,0,USetStr(2449),false);
+     OutString(4,0,ARAccRec.ERebAcc,false);
+     OutVal(1,0,Csum,M4Val,true);
+    EndFormat;
+  end;
+  if (Rsum<>0) then begin
+    StartFormat(15);
+     OutString(100,0,USetStr(2451),false);
+     if (Rsum>0) then begin
+       wrofacc = ARAccRec.CredAcc;
+     end else begin
+       wrofacc = ARAccRec.WriteOffLossAcc;
+     end;
+     if (blank(wrofacc)) then begin
+       wrofacc = ARAccRec.CredAcc;
+     end;
+     OutString(4,0,wrofacc,true);
+     OutVal(1,0,Rsum,M4Val,true);
+    EndFormat;
+  end;
+  if (Fsum<>0) then begin
+    StartFormat(15);
+     OutString(100,0,USetStr(2454),false);
+     OutString(4,0,ARAccRec.ExtraCostAcc,true);
+     OutVal(1,0,Fsum,M4NegVal,true);
+    EndFormat;
+  end;
+  Gray_Divider(6,1);
+  StartFormat(15);
+   OutString(100,0,USetStr(2429),false); 
+   OutVal(1,0,arsum,M4Val,true);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (HasMultiCurrency) then begin
+    StartFormat(15);
+    OutString(50,0,USetStr(4096),false);
+    EndFormat;
+    PrintCurncyTotals(acur,av1,av2,av3,curcnt,1,-1,-1,4,false,RepSpec.PocketPC);
+  end;
+  EndJob; 
+  RETURN;
+END;

@@ -1,0 +1,92 @@
+external function roundmode DefaultRoundMode();
+external procedure CheckFlush(var Integer,Integer);
+external procedure IPPastePayMode(var record IPVc);
+external function LongInt GetCurUserLastNr(string);
+external procedure IPSumup(var record IPVc);
+
+procedure FillIPRow(record RcVc RepSpec,record IPVc IPp,var val totinvval)
+BEGIN
+  row IPVc IPrw;
+  record IVVc IVr;
+  Boolean ivf;
+  val total;
+  
+  IVr.SerNr = RepSpec.FirstVer;
+  ivf = ReadFirstMain(IVr,1,true);
+  if (ivf==true) then begin
+    if (RepSpec.vals0!=0) then begin
+      total = IVr.Sum4/RepSpec.vals0;
+    end else begin
+      total = IVr.Sum4;
+    end;
+  end else begin
+    goto LFillIPRow;
+  end;
+  ClearRow(IPp,IPrw,1);
+  IPrw.stp = 1;
+  IPrw.ovst = 0;
+  IPrw.InvoiceNr = RepSpec.FirstVer;
+  IPrw.PayDate = RepSpec.d1;  
+  IPrw.CustCode = IVr.CustCode;
+  IPrw.CustName = IVr.Addr0;
+  IPrw.InvOutstand = IVr.Sum4;  
+  if (IVr.Sum4<(totinvval+total)) then begin
+    total = IVr.Sum4 - totinvval;
+  end;
+  IPrw.InvVal = Round(total,DefaultRoundMode);
+  IPrw.RecVal = Round(total,DefaultRoundMode);
+  IPrw.BankVal = Round(total,DefaultRoundMode);
+  IPrw.BankCurncy = IVr.CurncyCode;
+  IPrw.RecCurncy = IVr.CurncyCode;
+  IPrw.InvCurncy = IVr.CurncyCode;
+  IPrw.CUPNr = -1;
+  IPrw.CredManNr = -1;
+  IPrw.ChequeNr = -1;
+  MatRowPut(IPp,0,IPrw);
+  IPp.PayMode = RepSpec.f1;
+  IPPastePayMode(IPp);
+  totinvval = totinvval + IPrw.InvVal;
+LFillIPRow:;
+  RETURN;
+END;
+
+global
+updating procedure MakeInstalMn(record RcVc RepSpec)
+BEGIN
+  record IPVc  IPr;
+  record IVVc IVr;
+  record SRBlock SRRec;
+  LongInt nrofrec;
+  Boolean ivf;
+  Integer i,newnr,cnt,flushcnt;
+  val totinvval;
+  
+  IVr.SerNr = RepSpec.FirstVer;
+  ivf = ReadFirstMain(IVr,1,true);
+  if ((IVr.OKFlag==0) or (ivf==false)) then begin goto LMakeInstalMn; end;
+  nrofrec = RepSpec.vals0;
+  if (nrofrec>99) then begin goto LMakeInstalMn; end;
+  BlockLoad(SRRec);
+  for (i=0;i<nrofrec;i=i+1) begin
+    RecordNew(IPr);
+    if (IPr.SerNr==-1) then begin
+      newnr = GetCurUserLastNr("IPVc");
+      if (newnr==-1) then begin
+        newnr = SRRec.LastPayNr;
+      end;
+      IPr.SerNr = NextSerNr("IPVc",IPr.TransDate,newnr,false,"");
+      if (IPr.SerNr==-1) then begin goto LMakeInstalMn; end;
+    end;
+    IPr.RecNumber = RepSpec.f3;
+    IPr.TransDate = RepSpec.d1;
+    IPr.TransDate = AddDay(IPr.TransDate,RepSpec.long1*cnt);
+    FillIPRow(RepSpec,IPr,totinvval);
+    IPSumup(IPr);
+    if (RecordInsert(IPr,false)) then begin end;
+    CheckFlush(flushcnt,10);
+    cnt = cnt + 1;
+    UserTrace(IPr.SerNr,M4Long);                
+  end;   
+LMakeInstalMn:;
+  RETURN
+END;

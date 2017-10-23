@@ -1,0 +1,396 @@
+external function Integer CountForkLiftsInPickingMode();
+external procedure MoveProductionConveyour(string);
+external procedure MovePurchaseConveyour(string);
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external updating function Integer CheckStockMovRecord(var record StockMovVc,record StockMovVc,LongInt,LongInt,Boolean,
+                                                      var LongInt,var string,var integer,var string,boolean);
+external updating function LongInt StockMovVcRecordUpdateAfter(var record StockMovVc,record StockMovVc,LongInt,LongInt);
+external updating function LongInt StockMovVcRecordUpdate(var record StockMovVc,record StockMovVc,LongInt,LongInt);
+
+global
+updating function Boolean UpdateForkLiftQueue(record StockMovVc StockMovr,Boolean deletef)
+BEGIN
+  Boolean res;
+  record ForkLiftQueVc exisitingForkLiftQuer;
+  record ForkLiftQueVc ForkLiftQuer;
+  row StockMovVc StockMovrw;
+  record INVc INr;
+  record ITVc ITr;
+  Boolean testf;
+  record LocationVc Locr;
+  
+  if (StockMovr.ToForkLiftQue==0) then begin goto LUpdateForkLiftQueue; end;
+  if (StockMovr.ToForkLiftQue==100) then begin goto LUpdateForkLiftQueue; end;//items without pallet don't goto automatic delivery que, they are marked in this way
+  
+  ForkLiftQuer.StockMovNr = StockMovr.SerNr;
+  if (deletef) then begin
+    if (ReadFirstKey("StockMovNr",ForkLiftQuer,1,true)) then begin
+      RecordRemove(ForkLiftQuer);
+    end;
+  end else begin
+    if (MatRowCnt(StockMovr)>0) then begin
+      Locr.Code = StockMovr.ToLocation;
+      ReadFirstMain(Locr,1,true);
+      if (Locr.RequirePos==0) then begin goto LUpdateForkLiftQueue; end;
+    
+      MatRowGet(StockMovr,0,StockMovrw);
+      if (blank(StockMovrw.FrPosCode)) then begin goto LUpdateForkLiftQueue; end;
+      if (blank(StockMovrw.ToPosCode)) then begin goto LUpdateForkLiftQueue; end;
+      ForkLiftQuer.SerNr = NextSerNr("ForkLiftQueVc",CurrentDate,-1,false,"");
+      if (StockMovr.TransNr!=-1) and (StockMovr.FileName=="SHVc") then begin
+        ForkLiftQuer.QueType = 1;
+      end else begin
+        ForkLiftQuer.QueType = 2;
+      end;
+      if (StockMovr.ManualPick!=0) then begin
+        ForkLiftQuer.QueType = 0;
+      end;
+      ForkLiftQuer.Attempts = 0;
+      if ((StockMovrw.FrPosCode==Locr.WHMDefPUPosCode) or (StockMovrw.FrPosCode==Locr.WHMDefProdPosCode)) then begin
+/*if any from conveyour in status 0 then set it to state not ready to send yet*/        
+        testf = false;        
+        exisitingForkLiftQuer.FrLocation = StockMovr.FrLocation;
+        exisitingForkLiftQuer.FrPosCode = StockMovrw.FrPosCode;
+        exisitingForkLiftQuer.QueType = 2;
+        exisitingForkLiftQuer.Status = 0;
+        if (ReadFirstKey("FrPosTypeStatus",exisitingForkLiftQuer,4,true)==false) then begin 
+          exisitingForkLiftQuer.FrLocation = StockMovr.FrLocation;
+          exisitingForkLiftQuer.FrPosCode = StockMovrw.FrPosCode;
+          exisitingForkLiftQuer.QueType = 2;
+          exisitingForkLiftQuer.Status = 1;
+          if (ReadFirstKey("FrPosTypeStatus",exisitingForkLiftQuer,4,true)==false) then begin 
+            exisitingForkLiftQuer.FrLocation = StockMovr.FrLocation;
+            exisitingForkLiftQuer.FrPosCode = StockMovrw.FrPosCode;
+            exisitingForkLiftQuer.QueType = 2;
+            exisitingForkLiftQuer.Status = 2;
+            if (ReadFirstKey("FrPosTypeStatus",exisitingForkLiftQuer,4,true)==false) then begin 
+              testf = true; 
+            end;
+          end;
+        end;        
+        if (testf) then begin
+          ForkLiftQuer.Status = 0;
+        end else begin
+          ForkLiftQuer.Status = 10;
+        end;
+      end else begin        
+        ForkLiftQuer.Status = 0;
+      end;
+      ForkLiftQuer.SHNr = StockMovr.TransNr;
+      ForkLiftQuer.FrLocation = StockMovr.FrLocation;
+      ForkLiftQuer.FrPosCode = StockMovrw.FrPosCode;
+      ForkLiftQuer.ToLocation = StockMovr.ToLocation;
+      ForkLiftQuer.ToPosCode = StockMovrw.ToPosCode;
+      ForkLiftQuer.ArtCode = StockMovrw.ArtCode;
+      ForkLiftQuer.Quant = StockMovrw.Quant;
+      ForkLiftQuer.QuePriority = 1;//1 is default, 5 express delivery
+      if (StockMovr.ToForkLiftQue==3) then begin
+        ForkLiftQuer.QuePriority = 3;
+      end;
+      if (ReadFirstItem(ForkLiftQuer.ArtCode,INr,true,true)) then begin
+        ForkLiftQuer.LocArea = INr.LocArea;
+        if (INr.QtyonPallet>0) then begin
+          if (ForkLiftQuer.Quant>=INr.QtyonPallet) then begin
+            ForkLiftQuer.FullPallet = 1;
+          end;
+        end else begin
+          ITr.Code = INr.Group;
+          if (ReadFirstMain(ITr,1,true)) then begin end;
+          if (ITr.Type!=2) then begin
+            ForkLiftQuer.QueType = 0;
+          end;
+        end;
+      end;
+      if (RecordStore(ForkLiftQuer,false)) then begin end;
+      res = true;
+    end;
+  end;
+LUpdateForkLiftQueue:;  
+  UpdateForkLiftQueue = res;
+  RETURN;
+END;
+
+global
+function Boolean FindNextManualForkLiftQue(var record ForkLiftQueVc resForkLiftQuer,LongInt shnr)
+BEGIN
+  record ForkLiftQueVc ForkLiftQuer;
+  Boolean TrHs,res;
+  Integer keys;
+  
+  RecordNew(resForkLiftQuer);
+  ForkLiftQuer.QueType = 0;//Manual
+  ForkLiftQuer.Status = 0;
+  keys = 2;
+  if (shnr>0) then begin
+    ForkLiftQuer.SHNr = shnr;
+    keys = 3;
+  end;
+  TrHs = true;
+  while (LoopKey("QueTypeStatusSH",ForkLiftQuer,keys,TrHs)) begin
+    if (ForkLiftQuer.Status!=0) then begin TrHs = false; end;
+    if (ForkLiftQuer.QueType!=0) then begin TrHs = false; end;
+    if (shnr>0) then begin
+      if (ForkLiftQuer.SHNr!=shnr) then begin TrHs = false; end;
+    end;
+    if (TrHs) then begin
+      RecordCopy(resForkLiftQuer,ForkLiftQuer);
+      res = true;
+      goto LFindNextManualForkLiftQue;
+    end;
+  end;
+LFindNextManualForkLiftQue:;
+  FindNextManualForkLiftQue = res;
+  RETURN;
+END;
+
+global
+function Boolean FindNextToSendToForkLiftQue_Express(var record ForkLiftQueVc resForkLiftQuer,Boolean pickmodef)
+BEGIN
+  record ForkLiftVc ForkLiftr;
+  record ForkLiftQueVc ForkLiftQuer;
+  record ForkLiftQueVc lastForkLiftQuer;
+  Boolean TrHs,res,testf;
+  
+  RecordNew(resForkLiftQuer);
+  if (pickmodef) then begin
+    ForkLiftQuer.Status = 0;
+    ForkLiftQuer.QueType = 0;//Manual
+    ForkLiftQuer.QuePriority = 3;
+    TrHs = true;
+    while (LoopKey("StatusQueType",ForkLiftQuer,3,TrHs)) begin
+      if (ForkLiftQuer.Status!=0) then begin TrHs = false; end;
+      if (ForkLiftQuer.QueType!=0) then begin TrHs = false; end;    
+      if (TrHs) then begin
+        testf = true;
+        lastForkLiftQuer.SHNr = ForkLiftQuer.SHNr;
+        lastForkLiftQuer.Status = 2;
+        lastForkLiftQuer.QueType = 0;//Manual
+        if (ReadFirstKey("SHNr",lastForkLiftQuer,3,true)) then begin testf = false; end;
+        if (testf) then begin
+          lastForkLiftQuer.SHNr = ForkLiftQuer.SHNr;
+          lastForkLiftQuer.Status = 1;
+          lastForkLiftQuer.QueType = 0;//Manual
+          if (ReadFirstKey("SHNr",lastForkLiftQuer,3,true)) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          lastForkLiftQuer.SHNr = ForkLiftQuer.SHNr;
+          lastForkLiftQuer.Status = 3;
+          lastForkLiftQuer.QueType = 0;//Manual
+          if (ReadFirstKey("SHNr",lastForkLiftQuer,3,true)) then begin testf = false; end;
+        end;        
+        if (testf) then begin
+          RecordCopy(resForkLiftQuer,ForkLiftQuer);
+          res = true;
+          goto LFindNextToSendToForkLiftQue_Express;
+        end;
+      end;
+    end;
+  end;
+
+  ResetLoop(ForkLiftQuer);
+  ForkLiftQuer.Status = 0;
+  ForkLiftQuer.QueType = 1;//deliveries
+  ForkLiftQuer.QuePriority = 3;
+  TrHs = true;
+  while (LoopKey("StatusQueType",ForkLiftQuer,3,TrHs)) begin
+    if (ForkLiftQuer.Status!=0) then begin TrHs = false; end;
+    if (ForkLiftQuer.QueType!=1) then begin TrHs = false; end;
+    if (TrHs) then begin
+      RecordCopy(resForkLiftQuer,ForkLiftQuer);
+      res = true;
+      goto LFindNextToSendToForkLiftQue_Express;
+    end;
+  end;
+LFindNextToSendToForkLiftQue_Express:;  
+  FindNextToSendToForkLiftQue_Express = res;
+  RETURN;
+END;
+
+global
+function Boolean FindNextToSendToForkLiftQue_Others(var record ForkLiftQueVc resForkLiftQuer,Boolean pickmodef)
+BEGIN
+  record ForkLiftVc ForkLiftr;
+  record ForkLiftQueVc ForkLiftQuer;
+  record ForkLiftQueVc lastForkLiftQuer;
+  Boolean TrHs,res,testf;
+  
+  RecordNew(resForkLiftQuer);
+
+  if (pickmodef) then begin
+    ForkLiftQuer.Status = 0;
+    ForkLiftQuer.QueType = 0;//Manual
+    TrHs = true;
+    while (LoopKey("StatusQueType",ForkLiftQuer,2,TrHs)) begin
+      if (ForkLiftQuer.Status!=0) then begin TrHs = false; end;
+      if (ForkLiftQuer.QueType!=0) then begin TrHs = false; end;    
+      if (TrHs) then begin
+        testf = true;
+        lastForkLiftQuer.SHNr = ForkLiftQuer.SHNr;
+        lastForkLiftQuer.Status = 2;
+        lastForkLiftQuer.QueType = 0;//Manual
+        if (ReadFirstKey("SHNr",lastForkLiftQuer,3,true)) then begin testf = false; end;
+        if (testf) then begin
+          lastForkLiftQuer.SHNr = ForkLiftQuer.SHNr;
+          lastForkLiftQuer.Status = 1;
+          lastForkLiftQuer.QueType = 0;//Manual
+          if (ReadFirstKey("SHNr",lastForkLiftQuer,3,true)) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          lastForkLiftQuer.SHNr = ForkLiftQuer.SHNr;
+          lastForkLiftQuer.Status = 3;
+          lastForkLiftQuer.QueType = 0;//Manual
+          if (ReadFirstKey("SHNr",lastForkLiftQuer,3,true)) then begin testf = false; end;
+        end;        
+        if (testf) then begin
+          RecordCopy(resForkLiftQuer,ForkLiftQuer);
+          res = true;
+          goto LFindNextToSendToForkLiftQue_Others;
+        end;
+      end;
+    end;
+  end;
+
+  ResetLoop(ForkLiftQuer);
+  ForkLiftQuer.Status = 0;
+  ForkLiftQuer.QueType = 1;//deliveries
+  TrHs = true;
+  while (LoopKey("StatusQueType",ForkLiftQuer,2,TrHs)) begin
+    if (ForkLiftQuer.Status!=0) then begin TrHs = false; end;
+    if (ForkLiftQuer.QueType!=1) then begin TrHs = false; end;
+    if (TrHs) then begin
+      RecordCopy(resForkLiftQuer,ForkLiftQuer);
+      res = true;
+      goto LFindNextToSendToForkLiftQue_Others;
+    end;
+  end;
+  ResetLoop(ForkLiftQuer);
+  ForkLiftQuer.Status = 0;
+  ForkLiftQuer.QueType = 2;//movements in stock(like GR, Prod, empty pallets)
+  TrHs = true;
+  while (LoopKey("StatusQueType",ForkLiftQuer,2,TrHs)) begin
+    if (ForkLiftQuer.Status!=0) then begin TrHs = false; end;
+    if (ForkLiftQuer.QueType!=2) then begin TrHs = false; end;
+    if (TrHs) then begin
+      RecordCopy(resForkLiftQuer,ForkLiftQuer);
+      res = true;
+      goto LFindNextToSendToForkLiftQue_Others;
+    end;
+  end;
+LFindNextToSendToForkLiftQue_Others:;  
+  FindNextToSendToForkLiftQue_Others = res;
+  RETURN;
+END;
+
+global
+function Boolean FindNextToSendToForkLiftQue(var record ForkLiftQueVc resForkLiftQuer)
+BEGIN
+  Boolean res;
+  record NT7000ConnVc NTCr;
+  LongInt nrofforkliftsinpickmode;
+  Boolean pickmodef;
+  
+  pickmodef = true;
+  NTCr.Location = resForkLiftQuer.FrLocation;
+  ReadFirstMain(NTCr,1,true);
+//  nrofforkliftsinpickmode = RecordsInIndex("ForkLiftVc","ActCode") - RecordsInIndex("ForkLiftVc","ActMode");
+//unfortunately forklift is set too late in pickmode
+  if (NTCr.MaxForkLiftForPickMode>0) then begin
+    if (NTCr.MaxForkLiftForPickMode<=CountForkLiftsInPickingMode) then begin
+      pickmodef = false;
+    end;
+  end;  
+  res = FindNextToSendToForkLiftQue_Express(resForkLiftQuer,pickmodef);
+  if (res==false) then begin
+    res = FindNextToSendToForkLiftQue_Others(resForkLiftQuer,pickmodef);
+  end;
+  FindNextToSendToForkLiftQue = res;
+  RETURN;
+END;
+
+global
+function Boolean FindNextinForkLiftQueWithStatus(var record ForkLiftQueVc resForkLiftQuer,Integer prio,Integer stat)
+BEGIN
+  record ForkLiftQueVc ForkLiftQuer;
+  Boolean TrHs,res;
+  
+  RecordNew(resForkLiftQuer);
+  ForkLiftQuer.Status = stat;
+  ForkLiftQuer.QueType = prio;
+  TrHs = true;
+  while (LoopKey("StatusQueType",ForkLiftQuer,2,TrHs)) begin
+    if (ForkLiftQuer.Status!=stat) then begin TrHs = false; end;
+    if (ForkLiftQuer.QueType!=prio) then begin TrHs = false; end;
+    if (TrHs) then begin
+      RecordCopy(resForkLiftQuer,ForkLiftQuer);
+      res = true;
+      goto LFindNextinForkLiftQueWithStatus;
+    end;
+  end;
+LFindNextinForkLiftQueWithStatus:;  
+  FindNextinForkLiftQueWithStatus = res;
+  RETURN;
+END;
+
+
+global
+updating function Integer ForkLift_OKStockMovement(LongInt stockmovnr)
+BEGIN
+  record StockMovVc oldStockMovr;
+  record StockMovVc StockMovr;
+  Integer res,updatemode;
+  LongInt error;
+  string 255 errorstr,fieldstr;
+  Integer rownr;
+  Boolean UnOKedCheckSerialf;
+    
+  updatemode = 2;
+  StockMovr.SerNr = stockmovnr;
+  if (ReadFirstMain(StockMovr,1,true)) then begin
+    if (StockMovr.OKFlag==0) then begin
+      RecordCopy(oldStockMovr,StockMovr);
+      StockMovr.OKFlag = 1;
+      UnOKedCheckSerialf = false;
+      res = CheckStockMovRecord(StockMovr,oldStockMovr,updatemode,1,false,error,errorstr,rownr,fieldstr,UnOKedCheckSerialf);
+      if (res==0) then begin
+        if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin end;
+      end;
+    end else begin
+      res = 0;
+    end;
+  end;
+  ForkLift_OKStockMovement = res;
+  RETURN;
+END;
+
+global
+updating function Integer ScanPalletBarCodeWClassStockMov(LongInt stmovnr,string filename)
+BEGIN
+  Integer res;
+  record StockMovVc oldStockMovr;
+  record StockMovVc StockMovr;
+  Boolean testf;
+  
+  res = 2292;
+  StockMovr.SerNr = stmovnr;
+  if (ReadFirstMain(StockMovr,1,true)) begin  
+    testf = true;
+    if (StockMovr.OKFlag!=0) then begin testf = false; end;
+    if (StockMovr.ToForkLiftQue!=0) then begin testf = false; end;
+    if (MatRowCnt(StockMovr)<=0) then begin testf = false; end;
+    if (testf) then begin
+      RecordCopy(oldStockMovr,StockMovr);
+      StockMovr.ToForkLiftQue = 1;
+      if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin
+        switch (filename) begin
+          case "PUVc": MovePurchaseConveyour(StockMovr.ToLocation);
+          case "ProdVc": MoveProductionConveyour(StockMovr.ToLocation);
+        end;
+        res = 0;
+      end;
+    end;
+  end;
+  ScanPalletBarCodeWClassStockMov = res;
+  RETURN;
+END;
+

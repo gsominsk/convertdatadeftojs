@@ -1,0 +1,243 @@
+external procedure HT2Per(Date, Date , var string);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure HTInv(string, var string);
+external procedure HTOKF(Integer,Integer, var string);
+external procedure HTInvLTypes(Integer,Integer,var string);
+
+procedure FindFIFOonSH(LongInt OrderNr,LongInt OrdRow,var val FIFO)
+BEGIN
+  record SHVc SHr;
+  row SHVc SHrw;
+  Integer i,rwcnt;
+  
+  SHr.OrderNr = OrderNr;
+  if (ReadFirstKey("OrderKey",SHr,1,true)) then begin
+    rwcnt = MatRowCnt(SHr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SHr,i,SHrw);
+      if (SHrw.OrdRow==OrdRow) then begin
+        FIFO = SHrw.FIFO;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+function
+Boolean DateInTheRange(Date check,Date start,Date enddate)
+BEGIN
+  Boolean res;
+
+  res = true;
+  if (nonblankdate(start)) then begin
+    if (check<start) then begin res = false; end;
+  end;
+  if (nonblankdate(enddate)) then begin
+    if (check>enddate) then begin res = false; end;
+  end;
+  DateInTheRange = res;
+  RETURN;
+END;
+
+global
+procedure  LitDifRn(record RcVc RepSpec)
+BEGIN
+  record IVVc IVr;
+  row IVVc IVrw;
+  Boolean TrHs;
+  string 255 tstr;
+  val ivvatdiffcred,ivvatdiff,diff,vatcost,vatprice,vatdiff;
+  val tmpv,rebval,t1;  
+  val TotSum,TotSumCred;
+  Boolean testf,testf2;
+  Boolean datesort;
+  LongInt afr,ato;
+  string 255 keystr;
+  Integer rw,rwcnt,i;
+  val FIFO,blankv;  
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  datesort = false;
+  rw = 1;
+  afr = FirstInRange(RepSpec.f1,20);
+  ato = LastInRange(RepSpec.f1,20);
+
+  STARTREPORTJOB(USetStr(7680));
+  BEGIN
+    HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+    HTInv(RepSpec.f1,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+    HTOKF(RepSpec.flags[2],RepSpec.flags[1],tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;  
+    HTInvLTypes(RepSpec.flags[3],RepSpec.flags[4],tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;  
+  END;     
+  ENDHEADER;
+  StartFormat(15);
+    OutString(0,0,USetStr(7681),false);
+    OutString(50,0,USetStr(7682),false);
+    OutString(200,0,USetStr(7683),false);
+    OutString(300,0,USetStr(7684),false);
+    OutString(440,0,USetStr(7685),true);
+    //OutString(480,0,USetStr(7686),true);
+  EndFormat;
+     
+  if (blank(RepSpec.f1)) then begin
+    datesort = true;
+  end;  
+  if (datesort) then begin
+    IVr.TransDate = RepSpec.sStartDate;
+    keystr = "TransDate";
+  end else begin
+    IVr.SerNr = afr;
+    keystr = "SerNr";
+  end;
+  Gray_Divider(0,1);
+  TrHs = true;
+  while (LoopKey(keystr,IVr,1,TrHs)) begin
+  
+    if (TrHs) then begin
+      if (datesort==false) then begin
+        if (ato!=-1) then begin
+          if (IVr.SerNr>ato) then begin
+            TrHs = false;
+          end;
+        end;
+      end else begin
+        if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          TrHs = false; 
+        end;
+      end;
+    end;
+    testf = true;
+    testf2 = false;
+    if (TrHs==false) then begin testf = false; end;
+    if (datesort) then begin
+      if (ato!=-1) then begin
+        if (IVr.SerNr>ato) then begin
+          testf = false;
+        end;
+      end;
+    end else begin
+      if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false; 
+      end;
+    end;
+    if (RepSpec.flags[1]==0) then begin
+      if (IVr.OKFlag<>0) then begin testf = false; end;
+    end;  
+    if (RepSpec.flags[2]==0) then begin
+      if (IVr.OKFlag==0) then begin testf = false;  end;
+    end;  
+    if (RepSpec.flags[3]==0) then begin
+      if (IVr.InvType<>kInvoiceTypeCredit and IVr.InvType!=kInvoiceTypeCreditSpecialSales) then begin testf = false; end;
+    end;  
+    if (RepSpec.flags[4]==0) then begin
+      if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin testf = false; end;
+    end;  
+    if (IVr.Invalid<>0) then begin testf = false; end;
+    if (testf) then begin
+      rwcnt = MatRowCnt(IVr);
+      for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if (testf2==false) then begin
+            if (IVrw.OrdRow==-1) then begin
+              FIFO = IVrw.FIFO;
+            end else begin
+              FindFIFOonSH(IVr.OrderNr,IVrw.OrdRow,FIFO);
+            end;              
+            diff = IVrw.Price - FIFO;
+            if (diff<0) then begin
+              testf2 = true;
+              i = rwcnt;
+            end;
+          end;
+      end;   
+      if (testf2) then begin
+        ivvatdiff = blankv;
+        ivvatdiffcred = blankv;
+        rebval = blankv;
+        StartFormat(15);
+        OutLongInt(0,0,IVr.SerNr,false);  
+        if (IVr.InvType==kInvoiceTypeNormal or IVr.InvType==kInvoiceTypeNormalSpecialSales) then begin tstr = USetStr(2361); end;   
+        if (IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin tstr = USetStr(2363); end;   
+        if (IVr.InvType==kInvoiceTypeCash) then begin tstr = USetStr(2363); end;   
+        if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin tstr = USetStr(2362); end;   
+        if (IVr.InvType==kInvoiceTypeInterest) then begin tstr = USetStr(2364); end;   
+        OutString(50,0,tstr,false);  
+        OutString(120,0,USetStr(7686),false); 
+        OutDate(150,0,IVr.TransDate,false);  
+        EndFormat;
+        
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if (IVrw.stp<>4 and IVrw.stp<>5 and IVrw.stp<>6) then begin
+            if (IVrw.OrdRow==-1) then begin
+              FIFO = IVrw.FIFO;
+            end else begin
+              FindFIFOonSH(IVr.OrderNr,IVrw.OrdRow,FIFO);
+            end;  
+            
+            diff = IVrw.Price - FIFO;
+            if (diff<0) then begin
+              CalcSum(IVrw.Quant,FIFO,IVrw.PriceFactor,rebval,tmpv,GenOptRec.UseDiscount);
+              vatcost = FindVAT(IVrw.VATCode,tmpv,0,0);
+              vatprice = FindVAT(IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT);
+              StartFormat(15);
+              if (IVr.InclVAT==0) then begin
+                OutString(120,0, IVrw.ArtCode,false);
+                OutVal(200,0,tmpv,M4Val,false);                 
+              end else begin
+                OutString(120,0, IVrw.ArtCode,false);
+                OutVal(200,0,tmpv,M4Val,false);  
+              end;
+                
+              if (IVr.InclVAT==0) then begin
+                OutVal(300,0,IVrw.Sum,M4Val,false);                
+              end else begin
+                OutVal(300,0,IVrw.Sum-vatprice,M4Val,false);                
+              end;
+              vatdiff = vatcost - vatprice;      
+              if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                TotSumCred = TotSumCred + vatdiff; 
+                ivvatdiffcred = ivvatdiffcred + vatdiff; 
+              //  OutVal(480,0,vatdiff,M4Val,true); 
+              end else begin
+                TotSum = TotSum + vatdiff; 
+                ivvatdiff = ivvatdiff + vatdiff; 
+                OutVal(440,0,vatdiff,M4Val,true); 
+              end;
+              EndFormat;
+            end;  
+          end;
+        end;  
+        StartFormat(15);
+        OutString(365,0,USetStr(5336),false);
+        OutVal(440,0,ivvatdiff,M4Val,true); 
+       // OutVal(480,0,ivvatdiffcred,M4Val,true); 
+        EndFormat;      
+        Gray_Divider(0,1);  
+      end;  
+    end;       
+   end;
+   Gray_Divider(0,1);
+   StartFormat(15);
+   OutString(300,0,USetStr(3560),false);
+   OutVal(440,0,TotSum,M4Val,true); 
+ //  OutVal(480,0,TotSumCred,M4Val,true); 
+   EndFormat;  
+   EndJob;
+  RETURN;
+ END;

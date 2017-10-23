@@ -1,0 +1,81 @@
+external procedure CheckFlush(var Integer,Integer);
+external procedure PasteEventInTransfer(var record TransferVc);
+external procedure PasteInTransferTimes(var record TransferVc);
+external Procedure GetEventData(String,var Integer,var Integer,var Integer);
+
+updating procedure SetupTransport(record ExcursionVc Excur,Boolean Towardsf,var Boolean res,var Integer flushcnt) 
+begin
+  Record TransferVc Transfer;
+  
+  RecordNew(Transfer);
+  Transfer.TransDate = Excur.TransDate;
+  if (Towardsf) then begin
+    Transfer.Direction = 1; 
+  end else begin
+    Transfer.Direction = 0; 
+  end;
+  Transfer.Status = 0; 
+  Transfer.NrEvent   = Excur.SerNr;
+  PasteEventInTransfer(Transfer);
+  if nonblank(Transfer.Route) then begin   // There was a required tramo
+    Transfer.SerNr = NextSerNr("TransferVc",Transfer.TransDate,-1,false,"");
+    if recordstore(Transfer,true) then begin end;
+    CheckFlush(flushcnt,10);
+    res = true;
+  end;  
+  return;
+end;
+
+global
+updating procedure GenTransferMn(record RcVc RepSpec)
+begin
+  Record ExcursionVc Excur;
+  Boolean Skip,TrHs,succes;
+  Date pDate,sDate,eDate;
+  Integer d1,d2,res;
+  Integer flushcnt;
+
+  TrHs = true;
+  Excur.TransDate = RepSpec.sStartDate;
+  while(LoopKey("TransDate",Excur,1,TrHs)) begin
+   
+    Skip = false;
+    if (Excur.TransDate > RepSpec.sEndDate) then begin
+      TrHs = false;
+      skip = true;
+    end;
+    if ((RepSpec.long1<>Excur.SerNr) and (RepSpec.long1<>-1)) then begin
+      skip = true;
+    end;
+    if ((RepSpec.f2<>Excur.ExcurType) and nonblank(RepSpec.f1)) then begin
+      skip = true;
+    end;
+    if (Excur.Status <> 2) then begin
+      skip = true;
+    end;
+    
+    if (not skip) then begin
+      UserTrace(Excur.SerNr,0);
+        
+      GetEventData(Excur.ExcurType,res,d1,d2);
+      
+      succes = false;
+      switch (res) begin
+        case 0 :   
+        case 3 :   SetupTransport(Excur,true,succes,flushcnt);
+        case 4 :   SetupTransport(Excur,false,succes,flushcnt);
+        case 2 :   SetupTransport(Excur,true,succes,flushcnt);
+                   SetupTransport(Excur,false,succes,flushcnt);
+        case 1 :   SetupTransport(Excur,true,succes,flushcnt);   // Lo que no tiene tramo no
+                   SetupTransport(Excur,false,succes,flushcnt);  // se genera
+      end;
+      if (succes) then begin
+        Excur.Status = 3; // para que no se puede generar el viaje de nuevo
+        if recordstore(Excur,true) then begin end;
+        CheckFlush(flushcnt,10);
+      end;
+    end;
+  end;
+  return;
+end;
+

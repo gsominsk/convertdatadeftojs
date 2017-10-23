@@ -1,0 +1,16 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fPPVal: { public: true, type: 'FLOAT' },
+     fPayDate: { public: true, type: 'DATE' },
+     fVECode: { public: true, type: 'TEXT' },
+     fRebDate: { public: true, type: 'DATE' },
+     fVEName: { public: true, type: 'TEXT' },
+     fCurncyCode: { public: true, type: 'TEXT' },
+     fBookRVal: { public: true, type: 'FLOAT' },
+     fVATVal: { public: true, type: 'FLOAT' },
+     fVATCode: { public: true, type: 'TEXT' },
+     fVATBookVal: { public: true, type: 'FLOAT' },
+     fBankCurncy: { public: true, type: 'TEXT' },
+     fOrderNr: { public: true, type: 'INTEGER' } },
+  indexes: { SerNrIndex49: { fields: [ 'fSerNr', 'fVECode' ], indicesType: 'UNIQUE' } } }

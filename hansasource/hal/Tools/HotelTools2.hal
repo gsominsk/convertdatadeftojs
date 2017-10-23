@@ -1,0 +1,504 @@
+external function Boolean IsEnterprise();
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function string 60 AddObjectToObjectList(string,string);
+external procedure GetINObjects(string,var string);
+external procedure ExtractObj(string,var Integer,var string);
+
+global
+procedure GetCustAndBasket(string thestr,var string custcode,var LongInt baskno)
+begin
+  Integer pos;
+  
+  pos = InString(thestr,".");
+  if (pos>0) then begin
+    custcode = Left(thestr,pos-1);
+    baskno = StringToLongInt(right(thestr,len(thestr)-pos));
+  end else begin
+    custcode = thestr;
+    baskno = -1;
+  end;
+  return;
+end;
+
+global
+updating procedure StoreInShopBaskOne2(LongInt Resnro,String InvoiceItem,String Comment,val qty,val Price,Integer BasePriceInclVAT,val BasePrice,String lCustCode,String Objs,val discount,Date thedat,LongInt invnr,Integer valueistip,Integer sortattop,String bookitem,string fromfilename,LongInt fromsernr,string ResUsage,
+                                       string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  record ShopBaskVc Shopbr;
+  LongInt baskno;
+  string 20 CustCode;
+  string 60 objstr,inobjstr;
+  record BaseCurBlock BCb;
+  record AccBlock ARAccb;
+
+  RecordNew(Shopbr);
+  if (blank(curncy)) then begin
+    BlockLoad(BCb);
+    Shopbr.CurncyCode = BCb.BaseCur1;
+    GetFullCurncyRate(Shopbr.CurncyCode,thedat,Shopbr.FrRate,Shopbr.ToRateB1,Shopbr.ToRateB2,Shopbr.BaseRate1,Shopbr.BaseRate2);
+  end else begin
+    Shopbr.CurncyCode = curncy;
+    Shopbr.FrRate = fr;
+    Shopbr.ToRateB1 = tob1;
+    Shopbr.ToRateB2 = tob2;
+    Shopbr.BaseRate1 = br1;
+    Shopbr.BaseRate2 = br2;
+  end;
+  Shopbr.Discount = discount;
+  Shopbr.OwnerSerNr = Resnro;
+  Shopbr.Destination = kShopBaskDestinationInvoice;
+  if (Shopbr.DestinationNr==-1) then begin 
+    Shopbr.DestinationNr = fromsernr; 
+  end; 
+  Shopbr.Owner = kShopBaskOwnerReservation;
+  Shopbr.TransDate = CurrentDate;
+  Shopbr.PeriodStartDate = thedat; // Used for incremental charges to determine the original first date...
+  Shopbr.TransTime = CurrentTime;
+  Shopbr.ItemCode = InvoiceItem;
+  Shopbr.Comment = Comment;
+  Shopbr.BasePrice = BasePrice;
+  Shopbr.PriceInCur = Price;
+  Shopbr.Price = MulRateToBase1(Shopbr.CurncyCode,Shopbr.PriceInCur,Shopbr.FrRate,Shopbr.ToRateB1,Shopbr.ToRateB2,Shopbr.BaseRate1,Shopbr.BaseRate2,DefaultCurRoundOff);
+  
+  Shopbr.Qty = qty;
+  Shopbr.InclVAT = BasePriceInclVAT;
+  switch (Shopbr.InclVAT) begin  
+    case kBasePriceSystemDefault:
+      BlockLoad(ARAccb);
+      Shopbr.InclVAT = ARAccb.BasePriceInclVAT;
+  end;
+  
+  Shopbr.ValueIsTip = valueistip;
+  GetCustAndBasket(lCustCode,CustCode,baskno);
+  Shopbr.CUCode = CustCode;
+  Shopbr.BaskNo = baskno;
+//  Shopbr.CUCode =  CustCode;
+  Shopbr.DownPayIVSerNr =  invnr;
+  Shopbr.SortingAtTop = sortattop;
+  Shopbr.NegateItem = bookitem;
+  Shopbr.FromFileName = fromfilename;
+  Shopbr.FromSerNr = fromsernr;
+  Shopbr.ResUsage = ResUsage;
+
+//  Shopbr.BasePriceInCur = BasePrice;
+//  Shopbr.ExtraValInCur = BasePrice;
+
+  Shopbr.SerNr = NextSerNr("ShopBaskVc",Shopbr.TransDate,-1,false,"");
+/*
+// Bad.. Must not be done here, must be done before calling any of these functions
+  GetINObjects(InvoiceItem,objstr);
+  if (nonblank(objstr)) then begin
+    if (nonblank(Objs)) then begin
+      objstr = objstr & ",";
+      objstr = objstr & Objs;
+    end;
+  end else begin
+    objstr = Objs;
+  end;
+*/
+  objstr = Objs;
+  Shopbr.Objects = objstr;
+  if RecordStore(Shopbr,false) then begin end;
+  return;
+end;
+
+global
+updating procedure StoreInShopBaskOne(LongInt Resnro,String InvoiceItem,String Comment,val qty,val Price,val BasePrice,String lCustCode,String Objs,val discount,Date thedat,LongInt invnr,Integer valueistip,Integer sortattop,String bookitem,string fromfilename,LongInt fromsernr,string ResUsage,
+                                      string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,kBasePriceSystemDefault,BasePrice,lCustCode,Objs,discount,thedat,invnr,valueistip,sortattop,bookitem,fromfilename,fromsernr,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+  return;
+end;
+
+/*
+StorageWay
+0 = Tip
+1 = Regular
+2 = Charges that can be added up if on the same day
+3 = Charging calls etc.
+4 = Additional Items added after the hidden line
+5 = Same as 1, except NO price
+6 = Same as 4, except NO price
+*/
+
+
+global
+updating procedure StoreInShopBask2(Integer StorageWay,LongInt Resnro,string InvoiceItem,string Comment,val qty,val Price,Integer BasePriceInclVAT,
+                                    val BasePrice,string lCustCode,string Objs,LongInt invnr,string bookitem,Boolean addinvitemobjf,string ResUsage,string fromfilename,LongInt fromsernr,
+                                    string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  record ShopBaskVc Shopbr;
+  Boolean Cont,Updated,testf;
+  val bl;
+  string 255 inobjstr,objstr;
+  string 20 CustCode;
+  LongInt baskno;
+
+  GetCustAndBasket(lCustCode,CustCode,baskno);
+  bl = BlankVal;
+  Updated = false;
+  objstr = Objs;
+  if (addinvitemobjf) then begin
+    GetINObjects(InvoiceItem,inobjstr);
+    objstr = AddObjectToObjectList(objstr,inobjstr);
+  end;  
+  if (StorageWay>1) then begin
+    Cont = true;
+    Shopbr.OwnerSerNr = Resnro;
+    while (LoopKey("OwnerSerNr",Shopbr,1,Cont)) begin 
+      if (Shopbr.OwnerSerNr <> Resnro) then begin
+        Cont = false;
+      end else begin      
+        testf = true;
+        if (Shopbr.ItemCode!=InvoiceItem) then begin testf = false; end;
+        if (Shopbr.CUCode!=CustCode) then begin testf = false; end;
+        if (Shopbr.Objects!=objstr) then begin testf = false; end;
+        if (Shopbr.DestinationNr!=-1) then begin testf = false; end;
+        if (Shopbr.BaskNo!=baskno) then begin testf = false; end;
+        if (Shopbr.TransDate!=CurrentDate) then begin testf = false; end;
+        if (Shopbr.ResUsage!=ResUsage) then begin testf = false; end;
+        if (Shopbr.FromFileName!=fromfilename) then begin testf = false; end;
+        if (Shopbr.FromSerNr!=fromsernr) then begin testf = false; end;
+//        if (Shopbr.Price!=Price) then begin testf = false; end;
+        if (Shopbr.BasePrice!=BasePrice) then begin testf = false; end;
+        if (Shopbr.CurncyCode!=curncy) then begin testf = false; end;
+        if (Shopbr.FrRate!=fr) then begin testf = false; end;
+        if (Shopbr.ToRateB1!=tob1) then begin testf = false; end;
+        if (Shopbr.ToRateB2!=tob2) then begin testf = false; end;
+        if (Shopbr.BaseRate1!=br1) then begin testf = false; end;
+        if (Shopbr.BaseRate2!=br2) then begin testf = false; end;
+        if (Shopbr.PriceInCur!=Price) then begin testf = false; end;
+//        if (Shopbr.BasePriceInCur!=BasePriceInCur) then begin testf = false; end;
+                        
+        if (testf) then begin
+          if (StorageWay==2) then begin
+            Shopbr.Qty = Shopbr.Qty + qty;
+            Shopbr.Comment = Comment;
+            if RecordStore(Shopbr,true) then begin end;
+            Updated = true;
+            Cont = false;
+          end;
+          if (StorageWay==4) then begin
+            if (Shopbr.SortingAtTop==2) then begin
+              Shopbr.Qty = Shopbr.Qty + qty;
+              Shopbr.Comment = Comment;
+              if RecordStore(Shopbr,true) then begin end;
+              Updated = true;
+              Cont = false;
+            end;
+          end;
+          if (StorageWay==6) then begin
+            if (Shopbr.SortingAtTop==4) then begin
+              Shopbr.Qty = Shopbr.Qty + qty;
+              Shopbr.Comment = Comment;
+              if RecordStore(Shopbr,true) then begin end;
+              Updated = true;
+              Cont = false;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  if (StorageWay==0) then begin
+    StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,BasePriceInclVAT,BasePrice,lCustCode,objstr,bl,CurrentDate,invnr,1,0,bookitem,fromfilename,fromsernr,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+  end else begin
+    if (Updated==false) then begin
+      switch (StorageWay) begin
+        case 4:   StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,BasePriceInclVAT,BasePrice,lCustCode,objstr,bl,CurrentDate,invnr,0,2,bookitem,fromfilename,fromsernr,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+        case 5:   StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,BasePriceInclVAT,BasePrice,lCustCode,objstr,bl,CurrentDate,invnr,0,3,bookitem,fromfilename,fromsernr,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+        case 6:   StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,BasePriceInclVAT,BasePrice,lCustCode,objstr,bl,CurrentDate,invnr,0,4,bookitem,fromfilename,fromsernr,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+        otherwise StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,BasePriceInclVAT,BasePrice,lCustCode,objstr,bl,CurrentDate,invnr,0,0,bookitem,fromfilename,fromsernr,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure StoreInShopBask(Integer StorageWay,LongInt Resnro,String InvoiceItem,String Comment,Val qty,Val Price,Val BasePrice,String lCustCode,String Objs,
+                                   LongInt invnr,String bookitem,Boolean addinvitemobjf,string ResUsage,string fromfilename,LongInt fromsernr,
+                                   string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin                                  
+  StoreInShopBask2(StorageWay,Resnro,InvoiceItem,Comment,qty,Price,kBasePriceSystemDefault,BasePrice,lCustCode,Objs,
+                   invnr,bookitem,addinvitemobjf,ResUsage,fromfilename,fromsernr,
+                   curncy,fr,tob1,tob2,br1,br2);
+  return;
+end;
+
+global
+updating procedure StoreChargeInShopBask3(LongInt Resnro,String InvoiceItem,var String Comment,val qty,val price,val discount,Integer BasePriceInclVAT,val BasePrice,String lCustCode,String Objs,Date StartPoint,Date EndPoint,Boolean addinvitemobjf,string ResUsage,
+                                          string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  record ShopBaskVc Shopbr;
+  Boolean Cont,Updated,testf;
+  val bl;
+  string 20 CustCode;
+  LongInt baskno;
+  string 255 objstr,inobjstr;
+
+  objstr = Objs;
+  if (addinvitemobjf) then begin
+    GetINObjects(InvoiceItem,inobjstr);
+    objstr = AddObjectToObjectList(objstr,inobjstr);
+  end;  
+  GetCustAndBasket(lCustCode,CustCode,baskno);
+  Updated = false;
+  Cont = true;
+  Shopbr.OwnerSerNr = Resnro;
+  while (LoopKey("OwnerSerNr",Shopbr,1,Cont)) begin 
+    if (Shopbr.OwnerSerNr<>Resnro) then begin
+      Cont = false;
+    end else begin
+      testf = true;
+      if (Shopbr.ItemCode!=InvoiceItem) then begin testf = false; end;
+      if (Shopbr.CUCode!=CustCode) then begin testf = false; end;
+      if (Shopbr.Objects!=objstr) then begin testf = false; end;
+      if (Shopbr.DestinationNr!=-1) then begin testf = false; end;
+      if (Shopbr.BaskNo!=baskno) then begin testf = false; end;
+//      if (Shopbr.Price!=Price) then begin testf = false; end;
+      if (Shopbr.BasePrice!=BasePrice) then begin testf = false; end;
+      if (Shopbr.CurncyCode!=curncy) then begin testf = false; end;
+      if (Shopbr.FrRate!=fr) then begin testf = false; end;
+      if (Shopbr.ToRateB1!=tob1) then begin testf = false; end;
+      if (Shopbr.ToRateB2!=tob2) then begin testf = false; end;
+      if (Shopbr.BaseRate1!=br1) then begin testf = false; end;
+      if (Shopbr.BaseRate2!=br2) then begin testf = false; end;
+
+      if (Shopbr.PriceInCur!=Price) then begin testf = false; end;
+//      if (Shopbr.BasePriceInCur!=BasePriceInCur) then begin testf = false; end;
+      if (Comment==Left(Shopbr.Comment,len(Comment))) then begin testf = false; end;
+                        
+      if (testf) then begin
+        Shopbr.Qty = Shopbr.Qty + qty;
+        if (nonblank(Comment)) then begin
+          Comment = Comment & " ";
+        end;
+        Comment = Comment & Shopbr.PeriodStartDate & " - " & EndPoint;
+        Shopbr.Comment = Comment;
+        if RecordStore(Shopbr,true) then begin end;
+        Updated = true;
+        Cont = false;
+      end;
+    end;
+  end;    
+  if (Updated==false) then begin
+    bl = BlankVal;
+    if (nonblank(Comment)) then begin
+      Comment = Comment & " ";
+    end;
+    Comment = Comment & StartPoint & " - " & EndPoint;
+    StoreInShopBaskOne2(Resnro,InvoiceItem,Comment,qty,Price,BasePriceInclVAT,BasePrice,lCustCode,objstr,discount,StartPoint,-1,0,1,"","",-1,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+  end;
+  return;
+end;
+
+global
+updating procedure StoreChargeInShopBask2(LongInt Resnro,string InvoiceItem,var string Comment,val qty,val Price,Integer BasePriceInclVAT,val BasePrice,String lCustCode,String Objs,Date StartPoint,Date EndPoint,Boolean addinvitemobjf,string ResUsage,
+                                          string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  StoreChargeInShopBask3(Resnro,InvoiceItem,Comment,qty,Price,blankval,BasePriceInclVAT,BasePrice,lCustCode,Objs,StartPoint,EndPoint,addinvitemobjf,ResUsage,curncy,fr,tob1,tob2,br1,br2);
+  return;
+end;
+
+global
+updating procedure StoreChargeInShopBask(LongInt Resnro,String InvoiceItem,var String Comment,Val qty,Val Price,val BasePrice,String lCustCode,String Objs,Date StartPoint,Date EndPoint,Boolean addinvitemobjf,string ResUsage,
+                                         string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  StoreChargeInShopBask2(Resnro,InvoiceItem,Comment,qty,Price,kBasePriceSystemDefault,BasePrice,lCustCode,Objs,StartPoint,EndPoint,addinvitemobjf,ResUsage,curncy,fr,tob1,tob2,br1,br2)
+  return;
+end;
+
+
+global
+updating procedure StoreInShopBaskDestInvoice(string cucode,Integer owner,LongInt ownersernr,string InvoiceItem,string comment,val qty,val price,val discount,
+                                              string objs,Integer valueistip,Integer sortattop,string bookitem,Integer inclvat,string fromfilename,LongInt fromsernr,
+                                              string curncy,val fr,val tob1,val tob2,val br1,val br2)
+begin
+  record ShopBaskVc Shopbr;
+  LongInt baskno;
+  string 20 CustCode;
+
+  RecordNew(Shopbr);
+  Shopbr.CurncyCode = curncy;
+  Shopbr.FrRate = fr;
+  Shopbr.ToRateB1 = tob1;
+  Shopbr.ToRateB2 = tob2;
+  Shopbr.BaseRate1 = br1;
+  Shopbr.BaseRate2 = br2;
+  Shopbr.TransDate = CurrentDate;
+  Shopbr.TransTime = CurrentTime;
+  Shopbr.DestinationNr = -1;
+  Shopbr.Destination = kShopBaskDestinationInvoice;
+
+  Shopbr.CUCode =  cucode;
+  Shopbr.Owner = owner;
+  Shopbr.OwnerSerNr = ownersernr;
+    
+  Shopbr.ItemCode = InvoiceItem;
+  Shopbr.Comment = comment;
+  Shopbr.PriceInCur = Price;
+  Shopbr.Price = MulRateToBase1(Shopbr.CurncyCode,Shopbr.PriceInCur,Shopbr.FrRate,Shopbr.ToRateB1,Shopbr.ToRateB2,Shopbr.BaseRate1,Shopbr.BaseRate2,DefaultCurRoundOff);
+  Shopbr.Qty = qty;
+  Shopbr.Discount   = discount;
+  Shopbr.Objects = objs;
+  Shopbr.ValueIsTip = valueistip;
+  Shopbr.SortingAtTop = sortattop;
+  Shopbr.NegateItem = bookitem;
+  Shopbr.InclVAT = inclvat;
+  Shopbr.FromFileName = fromfilename;
+  Shopbr.FromSerNr = fromsernr;
+  Shopbr.SerNr = NextSerNr("ShopBaskVc",Shopbr.TransDate,-1,false,"");
+  if RecordStore(Shopbr,false) then begin end;
+  return;
+end;
+global
+function integer GetGuestsInJob(record JobVc Jobr)
+begin
+  integer res;
+  
+  if (Jobr.Persons>-1) then begin
+    res = Jobr.Persons;
+  end;
+  if (IsEnterprise) then begin
+    if (Jobr.Children>-1) then begin
+      res = res + Jobr.Children;
+    end;
+  end;  
+
+  GetGuestsInJob = res;  
+  return;
+end;
+
+global
+procedure GetJobClassifications(record JobVc Jobr,var string cclass)
+begin
+  Boolean res;
+  Integer i,rwcnt;
+  row JobVc Jobrw;
+
+  rwcnt = MatRowCnt(Jobr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Jobr,i,Jobrw);
+    if (nonblank(cclass)) then begin
+      if (nonblank(Jobrw.CClass)) then begin
+        cclass = cclass & ",";
+      end;
+    end;
+    cclass = cclass & Jobrw.CClass;
+  end;
+  return;
+end;
+
+global
+procedure GroupJobClassifications(string incclass,boolean doadultf,var array string outcclass,var array integer outcclasscnt,var integer cnt)
+begin
+  record CTypeVc CTyper;
+  record CClassVc CClassr;
+  record HotelBlock Hotelr;
+  integer i,pos;
+  string 255 cclass;
+  boolean ischildf,foundf;
+  
+  cnt = 0;
+  BlockLoad(Hotelr);
+  ExtractObj(incclass,pos,cclass);
+  while nonblank(cclass) begin
+    CClassr.Code = cclass;
+    if ReadFirstMain(CClassr,1,true) then begin
+      ischildf = false;
+      CTyper.Code = CClassr.CType;
+      if ReadFirstMain(CTyper,1,true) then begin
+        ischildf = (Hotelr.CClassDCTypeChild==CTyper.Code);
+      end;
+      if ((doadultf==true) and (ischildf==false)) or ((doadultf==false) and (ischildf==true)) then begin
+        foundf = false;
+        for (i=i;i<cnt;i=i+1) begin
+          if (outcclass[i]==cclass) then begin
+            foundf = true;
+            goto LEntryFound;
+          end;
+        end;
+LEntryFound:;
+        if (foundf==false) then begin
+          outcclass[cnt] = cclass;
+          i = cnt;
+          cnt = cnt+1;
+        end;
+        outcclasscnt[i] = outcclasscnt[i]+1;
+      end;
+    end;
+    ExtractObj(incclass,pos,cclass);
+  end;
+  return;
+end;
+
+global
+procedure GetJobExtras(record JobVc Jobr,var array date adate,var array string aartcode,var array integer aqty,var integer cnt)
+begin
+  record ResUsageVc ResUsager;
+  record JobPriceVc JobPricer;
+  row JobPriceVc JobPricerw;
+  row ResUsageVc ResUsagerw;
+  integer daycnt,itmcnt;
+  longint itm,day;
+  val qtyl;
+  boolean addf;
+  
+  JobPricer.RecType = 0;
+  JobPricer.SerNr = Jobr.SerNr;
+  JobPricer.RowNr = 0;
+  if (ReadFirstMain(JobPricer,3,true)==true) then begin
+    ResUsager.Code = Jobr.ResUsage;
+    if (ReadFirstMain(ResUsager,1,true)==true) then begin  
+      daycnt = MatRowCnt(JobPricer);
+      itmcnt = MatRowCnt(ResUsager);
+      for (day=0;day<daycnt;day=day+1) begin
+        MatRowGet(JobPricer,day,JobPricerw);
+        for (itm=0;itm<itmcnt;itm=itm+1) begin 
+          MatRowGet(ResUsager,itm,ResUsagerw);    
+          if (ResUsagerw.AddPer==0) then begin
+            qtyl = 1;
+          end else begin
+            qtyl = GetGuestsInJob(Jobr);
+          end;
+          switch (ResUsagerw.CodeType) begin
+            case 0: addf = (day==0);
+            case 2: addf = (day==(daycnt-1));
+            otherwise addf = true; 
+          end;
+          if addf then begin
+            adate[cnt] = JobPricerw.StayDay;
+            aartcode[cnt] = ResUsagerw.ArtCode;
+            aqty[cnt] = qtyl;
+            cnt = cnt+1;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure DeleteShopBask(string FileName,LongInt TransNr)
+begin
+  record ShopBaskVc ShopBaskr;
+  Boolean found;
+
+  ShopBaskr.FromFileName = "RestAccVc";
+  ShopBaskr.FromSerNr = TransNr;
+  found = true;
+  while (LoopKey("FromFileName",ShopBaskr,2,found)) begin  
+    if (ShopBaskr.FromFileName!="RestAccVc") then begin found = false; end;
+    if (ShopBaskr.FromSerNr!=TransNr) then begin found = false; end;
+    if (found) then begin
+      if (ShopBaskr.DestinationNr<0) then begin
+         RecordDelete(ShopBaskr);
+         StepBack(ShopBaskr);
+      end;
+    end;
+  end;
+  return;
+end;

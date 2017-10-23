@@ -1,0 +1,913 @@
+external procedure HTArtGroup(string, var string);
+external procedure HTItemClass(string,var string);
+external function Boolean HasItemClassification();
+external function Boolean HasItemGroups();
+external inner function roundmode SetRoundModeD(Integer);
+external function string 60 AddObjectToObjectList(string,string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean IsEnterprise();
+external function Boolean FindICS(string,string,string,string,var record ICSVc);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external procedure HTCusts(string, string, var string);
+external procedure HTArts(string, string, var string);
+external procedure HTCustCat(string,var string);
+external procedure HTSaleMan(string, var string);
+external procedure HT2Per(Date, Date , var string);
+external function Boolean SetInSet2(string,string);
+
+
+function Date FindFirstMonthStart(Date td,Date ed)
+BEGIN
+  Date res;
+  Date blankd;
+
+  if (td.day!=1) then begin
+    res = AddDay(td,DaysInMonth(td.year,td.month));
+    res = AddDay(res,-res.day+1);
+    if (res>ed) then begin
+      res = blankd;
+    end;
+  end else begin
+    res = td;
+  end;
+  FindFirstMonthStart = res;
+  RETURN;
+END;
+
+function Date FindLastMonthEnd(Date sd,Date td)
+BEGIN
+  Date res;
+  Date blankd;
+
+  if (td.day!=DaysInMonth(td.year,td.month)) then begin
+    res = AddMonth(td,-1);
+    res = AddDay(res,-res.day+1);
+    res.day = DaysInMonth(res.year,res.month);
+    if (res<sd) then begin
+      res = blankd;
+    end;
+  end else begin
+    res = td;
+  end;
+  FindLastMonthEnd = res;
+  RETURN;
+END;
+
+global
+procedure FindStatisticsDates(Date sStartDate,Date sEndDate,var Date fmsd,var Date fmed)
+BEGIN
+  Date blankd;
+
+  fmsd = FindFirstMonthStart(sStartDate,sEndDate);
+  fmed = FindLastMonthEnd(sStartDate,sEndDate);
+  if (fmsd>fmed) or (fmed<fmsd) then begin
+    fmed = blankd;
+    fmed = blankd;
+  end;
+  if (blankdate(fmsd)) then begin fmed = blankd; end;
+  if (blankdate(fmed)) then begin fmsd = blankd; end;
+  RETURN;
+END;
+
+function string 255 InvoiceTypeText(Integer InvType)
+begin
+  string 255 tstr;
+  
+  if (InvType==kInvoiceTypeNormal or InvType==kInvoiceTypeNormalSpecialSales) then begin
+    tstr = USetStr(1803);
+  end;
+  if (InvType==kInvoiceTypeCash or InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+    tstr = USetStr(1804);
+  end;
+  if (InvType==kInvoiceTypeCredit or InvType==kInvoiceTypeCreditSpecialSales) then begin
+    tstr = USetStr(1805);
+  end;
+  if (InvType==kInvoiceTypeInterest) then begin
+    tstr = USetStr(1810);
+  end;
+  if (InvType==kInvoiceTypeDebit) then begin
+    tstr = USetStr(23250);
+  end;
+  if (InvType==kInvoiceTypePrepayment) then begin
+    tstr = USetStr(1806);
+  end;
+  if (InvType==kInvoiceTypeDownpayment) then begin
+    tstr = USetStr(1818);
+  end;
+  InvoiceTypeText = tstr;
+  return;
+end;
+
+global
+function val IVGetTurnover2(string custcode,string item,string itemgroup,string itemclass,string branch,string class,string forperson,string colns,Date sd,Date ed,Boolean detailfs)
+BEGIN
+  val res,v;
+  record IVVc IVr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  string 30 ckey;
+  Integer keys;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record RestAccVc RAr;
+  row RestAccVc RArw;
+  record TaxMatrixVc TMr;
+  record INVc INr;
+  record SMVc VATr;
+  Integer vatcnt;
+  val v1,t2,ivsum;
+  string 255 tstr;
+  
+/*could be maybe based on ItemHist*/
+  found = true;
+  if (nonblank(custcode)) then begin
+    IVr.CustCode = custcode;
+    IVr.InvDate = sd;
+    ckey = "CustDate";
+    keys = 2;
+  end else begin
+    IVr.InvDate = sd;
+    ckey = "InvDate";
+    keys = 1;
+  end;
+//TransDateCust  
+  while (LoopKey(ckey,IVr,keys,found)) begin
+    if (nonblank(custcode)) then begin
+      if (IVr.CustCode!=custcode) then begin found = false; end;
+    end;
+    if (IVr.InvDate>ed) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (IVr.OKFlag==0) then begin testf = false; end;
+      if (IVr.Invalid!=0) then begin testf = false; end;
+      if (IVr.InvType==kInvoiceTypeDownpayment) then begin testf = false; end;
+      if (testf) then begin
+        if (blank(item) and blank(itemgroup) and blank(itemclass) and blank(forperson)) then begin
+
+          switch (colns) begin
+            case "quant": 
+              rwcnt = MatRowCnt(IVr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(IVr,i,IVrw);
+                testf = true;
+                if (blank(IVrw.ArtCode)) then begin testf = false; end;
+                if (testf) then begin
+                  v = IVrw.Quant;
+                  if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin v = -v; end;
+                  res = res + v;
+                end;
+              end;          
+            case "grossprofit": v = IVr.TotGP;
+            case "salesexclvat":
+              if (IVr.InvType!=0) then begin
+                v = (IVr.Sum4 - IVr.Sum3);
+              end else begin
+                v =  IVr.Sum1;
+              end;
+              v = MulRateToBase1(IVr.CurncyCode,v,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            case "salesinclvat":
+              v = MulRateToBase1(IVr.CurncyCode,IVr.Sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+/*              
+              switch (basecur) begin
+                case 0:
+                  v = MulRateToBase1(IVr.CurncyCode,v,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                case 1:
+                  v = MulRateToBase2(IVr.CurncyCode,v,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                otherwise
+                  v = v;
+              end;
+*/              
+          end;
+          if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin v = -v; end;
+          res = res + v;
+        end else begin
+          ivsum = blankval;
+          rwcnt = MatRowCnt(IVr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(IVr,i,IVrw);
+            testf = true;
+            if (IVrw.stp!=kInvoiceRowTypeNormal and IVrw.stp!=kInvoiceRowTypeDownpayment and IVrw.stp!=kInvoiceRowTypeCorrection and IVrw.stp!=kInvoiceRowTypeCorrection) then begin
+              testf = false;
+            end;
+            if (nonblank(item)) then begin
+              if (IVrw.ArtCode!=item) then begin testf = false; end;
+            end;
+            if (nonblank(forperson)) then begin
+              if (nonblank(IVrw.Salesmen)) then begin
+                if (SetInSet(forperson,IVrw.Salesmen)==false) then begin testf = false; end;
+              end else begin
+                if (SetInSet(forperson,IVr.SalesMan)==false) then begin testf = false; end;
+              end;
+              if (blank(IVr.SalesMan) and blank(IVrw.Salesmen)) then begin testf = false; end;
+            end;
+            if (testf) then begin
+               if (nonblank(itemgroup) or nonblank(itemclass)) then begin
+                 ReadFirstItem(IVrw.ArtCode,INr,true,false);
+                 if nonblank(itemgroup) then begin 
+                   if (INr.Group!=itemgroup) then begin testf = false; end;
+                 end;  
+                 if (nonblank(itemclass)) then begin 
+                   if (SetInSet(itemclass,INr.DispGroups)==false) then begin 
+                     testf = false;
+                   end;
+                 end;  
+               end;
+            end;
+            if (testf) then begin
+              switch (colns) begin
+                case "quant": v = IVrw.Quant;
+                case "grossprofit": v = IVrw.rowGP;
+                case "salesexclvat":
+                  if (IVr.InclVAT!=0) then begin
+                    MulVATIV(IVrw.VATCode,IVrw.Sum,v1,t2,IVr.InclVAT,IVr.NoTAXonVAT);
+                  end else begin
+                    v1 = 0;
+                  end;
+                  v = MulRateToBase1(IVr.CurncyCode,IVrw.Sum-v1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                case "salesinclvat":
+                  if (IVr.InclVAT==0) then begin
+                    MulVATIV(IVrw.VATCode,IVrw.Sum,v1,t2,IVr.InclVAT,IVr.NoTAXonVAT);
+                  end else begin
+                    v1 = 0;
+                  end;
+                  v = MulRateToBase1(IVr.CurncyCode,IVrw.Sum+v1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+              end;
+              if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin v = -v; end;
+              res = res + v;
+              ivsum = ivsum + v;
+            end;
+          end;
+          if (detailfs and ivsum!=0) then begin
+            StartFormat(15);
+             OutLongInt(0,"DblIVVc",IVr.SerNr,false);
+             OutDate(60,0,IVr.TransDate,false);
+             OutString(120,0,IVr.Addr0,false);
+             OutString(350,0,InvoiceTypeText(IVr.InvType),false);
+             OutVal(1,0,Round(ivsum,SetRoundModeD(0)),M40Val,true);
+            EndFormat;
+          end;
+
+        end;
+      end;
+    end;
+  end;  
+  found = true;
+  ResetLoop(IVCashr);
+  IVCashr.TransDate = sd;
+  if (nonblank(item)) then begin
+    ckey = "ArtCode:" & item;
+    keys = 1;
+  end else begin
+    ckey = "TransDate";
+    keys = 1;
+  end;
+  while (LoopKey(ckey,IVCashr,keys,found)) begin
+    if (IVCashr.TransDate>ed) then begin found = false; end;
+    testf = found;
+    if (testf) then begin
+      if (nonblank(custcode)) then begin
+        if (IVCashr.CustCode!=custcode) then begin testf = false; end;
+      end;
+      if (nonblank(forperson)) then begin
+        if (SetInSet(IVCashr.SalesMan,forperson)==false) then begin testf = false; end;
+        if (blank(IVCashr.SalesMan)) then begin testf = false; end;
+      end;
+      if (nonblank(branch)) then begin
+        if (IVCashr.BranchID!=branch) then begin testf = false; end;
+      end;
+      
+      if (testf) then begin
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          testf = true;
+          if (nonblank(item)) then begin
+            if (IVCashrw.ArtCode!=item) then begin testf = false; end;
+          end;
+          if (IVCashrw.stp!=kInvoiceRowTypeNormal and IVCashrw.stp!=kInvoiceRowTypeDownpayment and IVCashrw.stp!=kInvoiceRowTypeCorrection and IVCashrw.stp!=kInvoiceRowTypeCorrection) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            if (nonblank(itemgroup)) then begin
+              ReadFirstItem(IVCashrw.ArtCode,INr,true,false);
+              if (INr.Group!=itemgroup) then begin testf = false; end;
+            end;
+          end;
+          if (testf) then begin
+            switch (colns) begin
+              case "quant": v = IVCashrw.Quant;
+              case "grossprofit": v = IVCashrw.rowGP;
+              case "salesexclvat":
+                if (IVCashr.InclVAT!=0) then begin
+                  MulVATIV(IVCashrw.VATCode,IVCashrw.Sum,v1,t2,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+                end else begin
+                  v1 = 0;
+                end;
+                v = MulRateToBase1(IVCashr.CurncyCode,IVCashrw.Sum-v1,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+              case "salesinclvat":
+                if (IVCashr.InclVAT==0) then begin
+                  MulVATIV(IVCashrw.VATCode,IVCashrw.Sum,v1,t2,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+                end else begin
+                  v1 = 0;
+                end;
+                v = MulRateToBase1(IVCashr.CurncyCode,IVCashrw.Sum+v1,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+            end;
+            res = res + v;                                        
+          end;
+        end;
+      end;
+    end;
+  end;
+  found = true;
+  ResetLoop(RAr);
+  RAr.ReportingDate = sd;
+  if (nonblank(item)) then begin
+    ckey = "ArtCode:" & item;
+    keys = 1;
+  end else begin
+    if (nonblank(custcode)) then begin
+      ckey = "CUCodeRepDate";
+      keys = 2;
+      RAr.CUCode = custcode;
+    end else begin
+      ckey = "ReportingDate";
+      keys = 1;
+    end;
+  end;
+  while (LoopKey(ckey,RAr,keys,found)) begin
+    if (RAr.ReportingDate>ed) then begin found = false; end;
+    if (ckey=="CUCodeRepDate") then begin
+      if (RAr.CUCode!=custcode) then begin found = false; end;
+    end;
+    testf = found;
+    if (testf) then begin
+      if (nonblank(custcode)) then begin
+        if (RAr.CUCode!=custcode) then begin testf = false; end;
+      end;
+      if (nonblank(forperson)) then begin
+        if (SetInSet(RAr.Cashier,forperson)==false) then begin testf = false; end;
+        if (blank(RAr.Cashier)) then begin testf = false; end;
+      end;
+      if (nonblank(branch)) then begin
+        if (RAr.BranchID!=branch) then begin testf = false; end;
+      end;
+      if (nonblank(class)) then begin
+        if (RAr.Class!=class) then begin testf = false; end;
+      end;
+      
+      if (testf) then begin
+        rwcnt = MatRowCnt(RAr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RAr,i,RArw);
+          testf = true;
+          if (RArw.stp!=kInvoiceRowTypeNormal and RArw.stp!=kInvoiceRowTypeDownpayment and RArw.stp!=kInvoiceRowTypeCorrection and RArw.stp!=kInvoiceRowTypeCorrection) then begin
+            testf = false;
+          end;
+          if (nonblank(item)) then begin
+            if (RArw.ArtCode!=item) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            if (nonblank(itemgroup)) then begin
+              ReadFirstItem(RArw.ArtCode,INr,true,false);
+              if (INr.Group!=itemgroup) then begin testf = false; end;
+            end;
+          end;
+          if (testf) then begin
+            switch (colns) begin
+              case "quant": v = RArw.Quant;
+              case "grossprofit": v = RArw.rowGP;
+              case "salesexclvat":
+                if (RAr.InclVAT!=0) then begin
+                  MulVATIV(RArw.VATCode,RArw.Sum,v1,t2,RAr.InclVAT,0);
+                end else begin
+                  v1 = 0;
+                end;
+                v = MulRateToBase1(RArw.CurncyCode,RArw.Sum-v1,RArw.FrRate,RArw.ToRateB1,RArw.ToRateB2,RArw.BaseRate1,RArw.BaseRate2,DefaultCurRoundOff);
+              case "salesinclvat":
+                if (RAr.InclVAT==0) then begin
+                  MulVATIV(RArw.VATCode,RArw.Sum,v1,t2,RAr.InclVAT,0);
+                end else begin
+                  v1 = 0;
+                end;
+                v = MulRateToBase1(RArw.CurncyCode,RArw.Sum+v1,RArw.FrRate,RArw.ToRateB1,RArw.ToRateB2,RArw.BaseRate1,RArw.BaseRate2,DefaultCurRoundOff);
+            end;
+            res = res + v;                                        
+          end;
+        end;
+      end;
+    end;
+  end;
+  IVGetTurnover2 = res;
+  RETURN;
+END;
+
+global
+function val IVGetTurnover(string custcode,string item,string itemgroup,string itemclass,string branch,string class,string forperson,string colns,Date sd,Date ed)
+BEGIN
+  IVGetTurnover = IVGetTurnover2(custcode,item,itemgroup,itemclass,branch,class,forperson,colns,sd,ed,false);
+  RETURN;
+END;
+
+global
+function val GetCUTurnover(record CUVc CUr,string branch,string class,string colns,Date sStartDate,Date sEndDate,string item,string itemgroup,string itemclass,string forperson)
+BEGIN
+  val res;
+  LongInt d;
+  Date fmsd,fmed;
+  record ICSVc ICSr;
+  
+  if (sStartDate.day!=1) or (sEndDate.day!=DaysInMonth(sEndDate.year,sEndDate.month)) or (nonblank(forperson)) or (nonblank(itemgroup)) then begin
+    FindStatisticsDates(sStartDate,sEndDate,fmsd,fmed);
+    if (nonblankdate(fmsd)) and (nonblankdate(fmed)) then begin
+      if (sStartDate<AddDay(fmsd,-1)) then begin
+        res = IVGetTurnover(CUr.Code,item,itemgroup,itemclass,branch,class,forperson,colns,sStartDate,AddDay(fmsd,-1));
+      end;
+      if (nonblank(forperson) or nonblank(item) or nonblank(itemgroup) or nonblank(itemclass)) then begin
+        res = res + IVGetTurnover(CUr.Code,item,itemgroup,itemclass,branch,class,forperson,colns,fmsd,fmed);
+      end else begin
+        res = res + GetTurnover(CUr,colns,fmsd,fmed);
+      end;
+      if (AddDay(fmed,1)<sEndDate) then begin
+        res = res + IVGetTurnover(CUr.Code,item,itemgroup,itemclass,branch,class,forperson,colns,AddDay(fmed,1),sEndDate);
+      end;
+    end else begin
+      res = IVGetTurnover(CUr.Code,item,itemgroup,itemclass,branch,class,forperson,colns,sStartDate,sEndDate);
+    end;
+  end else begin
+    if (blank(item)) then begin
+      res = GetTurnover(CUr,colns,sStartDate,sEndDate);
+    end else begin
+      if (FindICS(CUr.Code,item,branch,class,ICSr)) then begin
+        res = GetTurnover(ICSr,colns,sStartDate,sEndDate); 
+      end;
+    end;
+  end;    
+  GetCUTurnover = res;
+  RETURN;
+END;
+
+
+procedure StripEndingCharacter(var string res,string character)
+BEGIN
+  Integer i,l,j;
+  string 255 tstr;
+  Boolean L88f;
+  
+  L88f = false;
+  tstr = res;
+  res = "";
+  l = len(tstr);
+  for (i=l; i>=1; i=i-1) begin
+    if (L88f==false) then begin
+      if (CharacterMatch(tstr,character,i)==false) then begin
+        L88f = true;
+        j = i;
+      end;
+    end;  
+  end;
+  res = Left(tstr,j);
+  RETURN;
+END;
+
+procedure ValToHALString(val a,string format,var string res)
+BEGIN
+  string 255 tstr,t2;
+  record SysFormatBlock SysRec;
+  Integer i,l,j;
+  Boolean stripf;
+
+  BlockLoad(SysRec);
+  res = "";
+  tstr = a;
+  l = len(tstr);
+  for (i=l;i>=1;i=i-1) begin  
+    if (CharacterMatch(tstr,SysRec.decimalPt,i)) then begin
+      if (CharacterMatch(format,"0",1)) then begin
+        res = Left(tstr,(i-1));
+        t2 = Right(tstr,(len(tstr)-i));
+        res = res & t2;        
+        res = res & "00";
+        goto L999;
+      end;
+      if (CharacterMatch(format,"1",1)) then begin
+        stripf = true;
+        res = Left(tstr,(i-1));
+        if (res=="0") then begin
+          stripf = false;
+        end;
+        t2 = Right(tstr,(len(tstr)-i));
+        res = res & t2;      
+        if (stripf) then begin  
+          StripEndingCharacter(res,"0");        
+        end else begin
+          res = "0";
+        end;  
+        goto L999;
+      end;      
+      if (CharacterMatch(format,"2",1)) then begin
+        res = Left(tstr,(i-1));      
+        goto L999;
+      end;      
+    end;
+  end;
+  if (blank(res)) then begin res = tstr; end;
+L999:;
+  RETURN;
+END;
+
+procedure MakeMarginString(val t,var string res)
+BEGIN
+  string 255 tstr;
+
+  res = "";
+  ValToHALString(t,"2",tstr);  
+  if (t<0) then begin
+//    res = "-";
+  end else begin
+    res = "+";
+  end;
+  res = res & tstr;
+  res = res & "%";
+  RETURN;
+END;
+
+global
+procedure CustSTRn(record RcVc RepSpec)
+BEGIN
+  record CUVc CUr;
+  record CSVc CSr;
+  record CCatVc CCatR;
+  Boolean TrHs;
+  val s,t;
+  val gpsum,sum1;
+  val gps;
+  val gpcatsum,catsum1;
+  string 255 frcc,tocc;
+  string 5 frcat,tocat;
+  string 255 ckey;
+  Boolean testf;
+  Boolean icsf;
+  Boolean catflag;
+  Boolean catfound;
+  Boolean matchf;
+  Boolean firstf;
+  Boolean testf2;
+  string 255 tstr,tal;
+  Integer rw;
+  val blankv;
+  integer custcnt;
+
+  icsf = false;
+  catflag = false;
+  catfound = false;
+
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc = LastInRange(RepSpec.f1,20);
+  frcat = FirstInRange(RepSpec.f3,20);
+  tocat = LastInRange(RepSpec.f3,20);
+
+  StartReportJob(USetStr(2481));
+  if (RepSpec.PocketPC==0) then begin
+    rw = 1;          
+    HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+    if (nonblank(RepSpec.Stext)) then begin
+      tstr = USetStr(8318);
+      tstr = tstr & ": ";
+      tstr = tstr & RepSpec.Stext;        
+      Header(rw,tstr,0);
+    end;
+    HTCusts(frcc,tocc,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+    if (nonblank(RepSpec.f2)) then begin
+      HTArts(RepSpec.f2,RepSpec.f2,tstr);
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+    HTCustCat(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;  
+    if (ProgramType<>4) then begin
+      HTSaleMan(RepSpec.AccStr,tstr);
+      if (nonblank(tstr)) then begin
+        Header(rw,tstr,1);
+        rw = rw + 1;
+      end;  
+    end;  
+    tal = RepSpec.vals0;
+    if (nonblank(tal)) then begin
+      tstr = USetStr(2498);
+      tstr = tstr & ": ";
+      tstr = tstr & tal;
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+    tal = RepSpec.vals1;
+    if (nonblank(tal)) then begin
+      tstr = USetStr(2499);
+      tstr = tstr & ": ";
+      tstr = tstr & tal;
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+    if (HasItemGroups) then begin
+      HTArtGroup(RepSpec.f4,tstr);
+      if (nonblank(tstr)) then begin
+        Header(rw,tstr,1);
+        rw = rw + 1;
+      end;
+    end;
+    if (HasItemClassification) then begin
+      HTItemClass(RepSpec.f5,tstr);
+      if (nonblank(tstr)) then begin
+        Header(rw,tstr,1);
+        rw = rw + 1;
+      end;
+    end;       
+  end;
+  EndHeader;
+  if (nonblank(tocat)) then begin
+    catflag = true;
+    CCatR.Code = frcat;
+    if (nonblank(CCatR.Code)) then begin
+      matchf = true;
+    end else begin
+      matchf = false;
+    end;  
+    if (LoopMain(CCatR,1,matchf)==false) then begin goto L99; end;
+    if (CCatR.Code>tocat) then begin goto L99; end;
+    firstf = true;    
+  end;
+  if (nonblank(RepSpec.f2)) then begin icsf = true; end;
+  if (RepSpec.PocketPC==0) then begin
+    SetRepCol(2,60);
+    SetRepCol(3,288);
+    SetRepCol(4,384);
+    SetRepCol(5,293);
+    SetRepCol(6,140);
+    SetRepCol(9,221);
+  end else begin
+    SetRepCol(2,90);
+    SetRepCol(3,360);
+    SetRepCol(4,430);
+  end;
+L22:;
+  if (catflag) then begin
+    catsum1 = 0;
+    gpcatsum = 0;
+    if (firstf) then begin firstf = false; StepBack(CCatR); end;
+    catfound = LoopMain(CCatR,1,true);
+    if (catfound==false) then begin goto L88; end;
+    if (CCatR.Code>tocat) then begin goto L88; end;
+    StartFormat(15);
+    OutString(0,0,USetStr(1114),false);
+    OutString(100,0,CCatR.Code,false);
+    OutString(130,0,CCatR.Comment,false);
+    EndFormat;
+    Gray_Divider(0,1);
+    ResetLoop(CUr);
+  end;
+  
+  if (RepSpec.flags[2]==0) then begin
+    if (RepSpec.PocketPC==0) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(2482),false);
+      OutString(2,0,USetStr(2483),false);
+      if (IsEnterprise) then begin
+        OutString(3,0,USetStr(2493),true);
+        OutString(4,0,USetStr(2494),true);
+      end;
+      OutString(1,0,USetStr(2484),true);
+      EndFormat;
+    end else begin
+      StartFormat(15);
+      OutString(0,0,USetStr(2482),false);
+      OutString(2,0,USetStr(2483),false);
+      if (IsEnterprise) then begin
+        OutString(3,0,USetStr(2494),true);
+      end;
+      OutString(1,0,USetStr(2484),true);
+      EndFormat;
+    end;
+  end else begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2482),false);
+    OutString(2,0,USetStr(2483),false);
+    OutString(3,0,USetStr(7025),false);
+    OutString(4,0,USetStr(7026),false);
+    EndFormat;
+  end;  
+  if (RepSpec.flags[1]==1) then begin
+    ckey = "Name";
+  end else begin
+    ckey = "Code";
+  end;
+  CUr.Code = frcc;
+  CUr.Name = "";
+  Gray_Divider(0,1);
+  TrHs = true;
+
+  while (LoopKey(ckey,CUr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (RepSpec.flags[1]==0) then begin
+        if (nonblank(tocc)) then begin
+          if (CUr.Code>tocc) then begin
+            TrHs = false;
+          end;
+        end;   
+      end;
+    end;
+    testf = false;
+    if (TrHs) then begin
+      testf = true;
+      if (catflag) then begin
+        if (CCatR.Code!=CUr.CustCat) then begin testf = false; end;
+      end;  
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (RepSpec.AccStr!=CUr.SalesMan) then begin testf = false; end;
+      end; 
+      if (nonblank(RepSpec.Language)) then begin
+        if (RepSpec.Language!=CUr.SalesGroup) then begin
+          testf = false;
+        end;
+      end; 
+      if (CUr.CUType==0) then begin testf = false; end;
+      if (testf) then begin
+        if (nonblank(RepSpec.Stext)) then begin
+          if (SetInSet2(RepSpec.Stext,CUr.Classification)==false) then begin
+            testf = false;
+          end;  
+        end;
+        if ((nonblank(RepSpec.ObjStr)) and (SetInSet(RepSpec.ObjStr,CUr.Objects)==false))  then begin
+          testf = false;
+        end;
+        if ((nonblank(RepSpec.TransStr)) and (CUr.CountryCode<>RepSpec.TransStr))  then begin
+          testf = false;
+        end;
+        if (RepSpec.flags[1]!=0) then begin
+          if (nonblank(tocc)) then begin
+            if (CUr.Code>tocc) then begin
+              testf = false;
+            end;  
+          end;
+        end;
+      end;
+      if (testf) then begin
+        s = 0;
+        gps = 0;  
+        if (icsf==false) then begin
+          s = GetCUTurnover(CUr,"","","salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate,"",RepSpec.f4,RepSpec.f5,"");
+          gps = GetCUTurnover(CUr,"","","grossprofit",RepSpec.sStartDate,RepSpec.sEndDate,"",RepSpec.f4,RepSpec.f5,"");
+        end else begin
+          s = GetCUTurnover(CUr,"","","salesexclvat",RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.f2,RepSpec.f4,RepSpec.f5,"");
+          gps = GetCUTurnover(CUr,"","","grossprofit",RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.f2,RepSpec.f4,RepSpec.f5,"");            
+        end;
+        testf2 = true;
+        if (nonblank(RepSpec.vals0)) then begin
+          if (s<RepSpec.vals0) then begin testf2 = false; end;
+        end;  
+        if (nonblank(RepSpec.vals1)) then begin
+          if (gps<RepSpec.vals1) then begin testf2 = false; end;
+        end;  
+        if (testf2) then begin
+          if ((RepSpec.vals0==0) and (RepSpec.vals1==0)) then begin
+            if ((gps==0) and (s==0)) then begin
+              testf2 = false;
+            end;
+          end;    
+        end;
+        if (testf2) then begin
+            t = gps * 100;
+            t = t / s;
+            if ((gps<0) or (s<0)) then begin
+//              t = -t; so if gps is minus we turn it to plus?
+            end;            
+            if (RepSpec.flags[2]==0) then begin
+              if (RepSpec.PocketPC==0) then begin
+                StartFormat(15);
+                OutString(0,"DblCUStat",CUr.Code,false);
+                OutString(2,0,CUr.Name,false);
+                if (IsEnterprise) then begin
+                  OutVal(3,0,gps,M4Val,true);
+                  MakeMarginString(t,tstr);
+                  OutString(4,0,tstr,true);                            
+                end;
+                OutVal(1,0,s,M4Val,true);
+                EndFormat;
+              end else begin
+                StartFormat(15);
+                OutString(0,0,CUr.Code,false);
+                OutString(2,0,Left(CUr.Name,15),false);
+                if (IsEnterprise) then begin
+                  MakeMarginString(t,tstr);
+                  OutString(3,0,tstr,true);                            
+                end;
+                OutVal(1,0,s,M4Val,true);
+                EndFormat;
+              end;
+            end else begin
+              StartFormat(15);
+              OutString(0,"DblCUStat",CUr.Code,false);
+              if (RepSpec.PocketPC==0) then begin
+                OutString(2,0,CUr.Name,false);
+              end else begin
+                OutString(2,0,Left(CUr.Name,15),false);
+              end;
+              OutString(300,0,CUr.Phone,false);              
+              OutString(400,0,CUr.Fax,false);              
+              EndFormat;              
+            end;  
+            sum1 = s + sum1;
+            gpsum = gps + gpsum;
+            catsum1 = s + catsum1;
+            gpcatsum = gps + gpcatsum;
+            custcnt = custcnt + 1;
+        end;
+      end;
+    end;
+  end;
+  
+  if (catflag) then begin
+    if (RepSpec.flags[2]==0) then begin
+      Gray_Divider(0,1);
+      t = gpcatsum * 100;
+      t = t/catsum1;
+      if ((gps<0) or (s<0)) then begin
+//      t = -t; so if gps is minus we turn it to plus?
+      end;            
+      if (RepSpec.PocketPC==0) then begin
+        StartFormat(15);
+        if (IsEnterprise) then begin
+          OutVal(3,0,gpcatsum,M4Val,true);
+          MakeMarginString(t,tstr);
+          OutString(4,0,tstr,true);
+        end;
+        OutVal(1,0,catsum1,M4Val,true);
+        EndFormat;
+      end else begin
+        StartFormat(15);
+//      OutVal(3,0,gpcatsum,M4Val,true);
+        if (IsEnterprise) then begin
+          MakeMarginString(t,tstr);
+          OutString(3,0,tstr,true);
+        end;
+        OutVal(1,0,catsum1,M4Val,true);
+        EndFormat;
+      end;
+      StartFormat(15);
+      EndFormat;
+    end;
+    goto L22;
+  end;
+L88:;
+  if (RepSpec.ArtMode<>0) then begin
+    Gray_Divider(0,1);
+    t = gpsum * 100;
+    t = t / sum1;
+    if ((gps<0) or (s<0)) then begin
+//      t = -t; so if gps is minus we turn it to plus?
+    end;            
+    if (RepSpec.PocketPC==0) then begin
+      StartFormat(15);
+//    if (lightFlag==false) then begin
+       if (IsEnterprise) then begin
+         OutVal(3,0,gpsum,M4Val,true);
+         MakeMarginString(t,tstr);
+         OutString(4,0,tstr,true);
+       end;
+//    end;
+       OutVal(1,0,sum1,M4Val,true);
+      EndFormat;
+    end else begin
+      StartFormat(15);
+//       OutVal(3,0,gpsum,M4Val,true);
+       if (IsEnterprise) then begin
+         MakeMarginString(t,tstr);
+         OutString(3,0,tstr,true);
+       end;
+       OutVal(1,0,sum1,M4Val,true);
+      EndFormat;
+    end;
+  end;
+  if (RepSpec.PocketPC==0) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2479),false);
+    OutVal(1,0,custcnt,M40Val,true);
+    EndFormat;
+  end else begin
+    StartFormat(15);
+    OutString(2,0,USetStr(2479),false);
+    OutVal(1,0,custcnt,M40Val,true);
+    EndFormat;
+  end;
+L99:;
+  EndJob;
+  RETURN;
+END;

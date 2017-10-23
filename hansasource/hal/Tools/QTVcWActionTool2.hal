@@ -1,0 +1,538 @@
+external procedure CalcVATBaseVAT2(record SMVc,Integer,Integer,Integer,Boolean,var val,var val);
+external procedure QTVc_PasteCurncyCode(var record QTVc,string);
+external procedure AddPerceptionTaxesRows_QTVc(var record QTVc);
+external procedure GetPriceList(string,Date,Time,var string,var Integer);
+external function roundmode DefaultRoundMode();
+external function Boolean FindRPCUTax(string,Date,var record RPCUTaxVc);
+external function roundmode SetRoundModeD(Integer);
+external procedure RecalcQTSubtotal(var record QTVc);
+external procedure MulM4ProcVal(val,val,var val);
+external function val CalcTax2BaseTax2(Boolean,record SMVc,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddTAX2Base(Boolean,record SMVc,string,val,val,val,Integer,string);
+external function Boolean RPCUTax_TaxedAmount(val,val,string,record RPCUTaxVc);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external function Boolean UseTaxTemplatesforTaxCalc();
+external function val CalculateTotalVATFromTaxMatrix(record TaxMatrixVc,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure AddRowTaxMatrixToSumTaxMatrix(record TaxMatrixVc,var record TaxMatrixVc,Integer);
+external procedure QTGetRate(var record QTVc);
+external function Boolean GetFirstItem(var string,var record INVc);
+external procedure GetPRItemCost(string,string,string,string,Integer,var val);
+external procedure GetProjectPrice(string,string,string,string,string,val,var val,var val,var string,var val,var string);
+external function Boolean GetTimeClassPrice(string,string,var val,var val);
+external function Boolean QTDchrsum(var record QTVc,Integer,Integer);
+forward procedure QTSumup(var record QTVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean INVc_AllowSales(record INVc,var LongInt);
+
+global
+procedure QTVc_PasteTimeClass(var record QTVc QTr,Integer rownr,var Boolean chsum)
+BEGIN
+  row QTVc QTrw;
+  Boolean chrsum;
+  record GeneralOptionBlock GenOptRec;
+  val price,cost;
+
+  BlockLoad(GenOptRec);
+  chrsum = false;
+  MatRowGet(QTr,rownr,QTrw);
+  if (nonblank(QTrw.TimeClass)) then begin
+    price = QTrw.Price;
+    Cost = QTrw.BasePrice;
+    if (GetTimeClassPrice(QTrw.TimeClass,QTrw.ArtCode,price,cost)) then begin
+      QTrw.Price = price;
+      QTrw.BasePrice = Cost;
+      MatRowPut(QTr,rownr,QTrw);
+//      pritemf = false;
+      chrsum = true;
+    end;
+  end;
+  if (chrsum) then begin
+    chsum = QTDchrsum(QTr,rownr,GenOptRec.UseDiscount);
+  end;
+  RETURN;
+END;
+
+global
+procedure QTVc_PasteEMCode(var record QTVc QTr,Integer rownr,var Boolean chsum)
+BEGIN
+  record INVc INr;
+  row QTVc QTrw;
+  Boolean chrsum;
+  val price,vreb,priceincur;
+  string 10 markup,markupincur;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  chsum = false;
+  chrsum = false;
+  MatRowGet(QTr,rownr,QTrw);
+  if (GetFirstItem(QTrw.ArtCode,INr)) then begin  
+    if (blank(INr.CalcPrice)) then begin
+      GetProjectPrice(QTr.PRCode,QTrw.ArtCode,QTrw.EMCode,QTrw.TimeClass,QTr.CurncyCode,QTrw.Quant,price,vreb,markup,priceincur,markupincur);
+      QTrw.Price = priceincur;
+      if (QTrw.Price==0) then begin QTrw.Price = price; end;
+      QTrw.vRebate = vreb;
+      QTrw.Markup = markupincur;
+      if (blank(QTrw.Markup)) then begin QTrw.Markup = markup; end;
+      price = QTrw.BasePrice;
+      GetPRItemCost(QTr.PRCode,QTrw.EMCode,QTrw.ArtCode,QTrw.TimeClass,INr.ItemType,price);
+      QTrw.BasePrice = price;
+      MatRowPut(QTr,rownr,QTrw);
+      chrsum = true;
+    end;
+  end;
+  if (chrsum) then begin
+    chsum = QTDchrsum(QTr,rownr,GenOptRec.UseDiscount);
+    chsum = true;//not only sum must change to recalculate GP
+  end;
+  RETURN;
+END;
+
+procedure QTUpdateTax1Reb(var record QTVc QTp,Date td)
+BEGIN
+  row QTVc QTrw;
+  Integer i,rwcnt;
+  record Tax1RebVc Tax1Rebr;
+  
+  rwcnt = MatRowCnt(QTp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTp,i,QTrw);
+    Tax1Rebr.Code = QTrw.VATCode;
+    Tax1Rebr.CustCode = QTp.CustCode;
+    if (ReadFirstMain(Tax1Rebr,2,true)) then begin end;
+    if (td>=Tax1Rebr.From) then begin
+      QTrw.TAX1Reb = Tax1Rebr.TAX1Reb;
+    end;
+    MatRowPut(QTp,i,QTrw);
+  end;
+  RETURN;
+END;
+
+global
+procedure QTVc_PasteQTDate(var record QTVc QTp)
+begin
+  Time blankt;
+
+  GetPriceList(QTp.CustCat,QTp.QTDate,blankt,QTp.PriceList,QTp.InclVAT);
+  QTVc_PasteCurncyCode(QTp,QTp.CurncyCode);
+  QTUpdateTax1Reb(QTp,QTp.QTDate);
+  QTSumup(QTp);
+  AddPerceptionTaxesRows_QTVc(QTp);
+  return;
+end;
+
+global
+procedure QTVc_PasteRegion(var record QTVc QTp,string oldregion)
+begin
+  if (QTp.Region!=oldregion) then begin
+    AddPerceptionTaxesRows_QTVc(QTp);
+  end;
+  return;
+end;
+
+global
+function Boolean QTVc_AllowSales(record QTVc QTr,var Integer rownr,var LongInt ErrorCode)
+begin
+  Boolean res;
+  row QTVc QTrw;
+  Integer i,rwcnt;
+  record INVc INr;
+  
+  res = true;
+  rwcnt = MatRowCnt(QTr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTr,i,QTrw);
+    switch (QTrw.stp) begin
+      case 1:
+        if (nonblank(QTrw.ArtCode)) then begin
+          if (ReadFirstItem(QTrw.ArtCode,INr,true,false)) then begin
+            if (!INVc_AllowSales(INr,ErrorCode)) then begin
+              res = false; 
+              rownr = i;
+              goto LQTVc_AllowSales;
+            end;
+          end;
+        end;
+    end;
+  end;
+  
+LQTVc_AllowSales:;
+  QTVc_AllowSales = res;
+  return;
+end;
+
+procedure QTSumup_TaxTemplate(var record QTVc QTp)
+begin
+  Integer i,rwcnt;
+  row QTVc QTrw;
+  record TaxMatrixVc TMr;
+  record TaxMatrixVc sumTMr;
+  roundmode roundlines,rndtotal,rndvat;
+  val t;
+
+  QTp.Sum1 = blankval; //Subtotal
+  QTp.Sum3 = blankval; //VAT
+  QTp.Sum4 = blankval; //Total
+  QTp.TotGP = blankval;
+  UnpackFieldMatrix(QTp,"TaxMatrix",sumTMr);
+  RecordClear(sumTMr);
+  rwcnt = MatRowCnt(QTp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTp,i,QTrw);
+    switch (QTrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeInterest:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeRetention:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;      
+        if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(QTrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,QTp.InclVAT);
+        end;
+        QTp.Sum1 = QTp.Sum1 + QTrw.Sum;
+        QTp.TotGP = QTp.TotGP + QTrw.rowGP;
+      case kInvoiceRowTypeCorrection:
+        if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(QTrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,QTp.InclVAT);
+        end;
+        QTp.Sum1 = QTp.Sum1 + QTrw.Sum;
+        QTp.TotGP = QTp.TotGP + QTrw.rowGP;
+      case kInvoiceRowTypeGiftVoucherSold:
+        if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(QTrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,QTp.InclVAT);
+        end;
+        switch (QTp.InclVAT) begin
+          case kBasePriceNotInclVAT:
+            QTp.Sum1 = QTp.Sum1 + QTrw.Sum;
+            if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+              QTp.Sum1 = QTp.Sum1 - CalculateTotalVATFromTaxMatrix(TMr,QTp.InclVAT);
+            end;
+          case kBasePriceInclVAT:
+            QTp.Sum1 = QTp.Sum1 + QTrw.Sum;
+        end;
+      case kInvoiceRowTypeDownpayment:
+        if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(QTrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,QTp.InclVAT);
+        end;
+        QTp.Sum1 = QTp.Sum1 + QTrw.Sum;      
+      
+//  kInvoiceRowTypePrepayment = 6,
+//  kInvoiceRowTypeLoan = 7,
+//  kInvoiceRowTypeLoanInterest = 8,
+
+//  kInvoiceRowTypeGiftVoucherPayment = 14,
+//  kInvoiceRowTypeCashPayment = 15,
+//  kInvoiceRowTypeCreditCardPayment = 16,
+
+//  kInvoiceRowTypePreviousDownpayment = 20,
+//  kInvoiceRowTypeChequePayment = 21,
+
+//  kInvoiceRowTypePerceptionTax = 22, //how to handle Perception Taxes ?
+//  kInvoiceRowTypeWithholdingTax = 24  //how to handle Withholding Taxes ?
+    end;
+  end;
+  if (QTp.FrPrice!=0) then begin
+    if (QTp.InclVAT==0) then begin
+      QTp.Sum1 = QTp.FrPrice + QTp.Sum1;
+/*      
+      if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+        t = FindVAT (QTp.FrVATCode,QTp.FrPrice,QTp.InclVAT,QTp.NoTAXonVAT);
+        if (t==0) then begin
+          s2 = QTp.FrPrice + s2;
+        end;  
+        QTp.Sum3 = t + QTp.Sum3;
+        AddVATBase(SMr,QTp.FrVATCode,QTp.FrPrice,tax1reb,vatcnt,QTp.InclVAT,QTp.NoTAXonVAT);
+      end;
+*/      
+    end else begin
+      if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+        QTp.Sum4 = QTp.FrPrice + QTp.Sum4;
+/*        
+        t = FindVAT (QTp.FrVATCode,QTp.FrPrice,QTp.InclVAT,QTp.NoTAXonVAT);
+        QTp.Sum3 = t + QTp.Sum3;
+        AddVATBase(SMr,QTp.FrVATCode,QTp.FrPrice,tax1reb,vatcnt,QTp.InclVAT,QTp.NoTAXonVAT);
+*/        
+        if (t==0) then begin
+          QTp.Sum2 = QTp.FrPrice + QTp.Sum2;
+        end else begin
+          QTp.Sum1 = QTp.FrPrice + QTp.Sum1;
+        end;  
+      end else begin
+        QTp.Sum4 = QTp.FrPrice + QTp.Sum4;     
+/*         
+        t = FindVAT (QTp.FrVATCode,QTp.FrPrice,QTp.InclVAT,QTp.NoTAXonVAT);
+        QTp.Sum3 = t + QTp.Sum3;
+        AddVATBase(SMr,QTp.FrVATCode,QTp.FrPrice,tax1reb,vatcnt,QTp.InclVAT,QTp.NoTAXonVAT);
+        QTp.Sum4 = QTp.Sum4 - t;
+        if (t==0) then begin
+          QTp.Sum2 = QTp.FrPrice + QTp.Sum2;
+        end else begin
+          QTp.Sum1 = QTp.FrPrice + QTp.Sum1;
+        end;  
+*/        
+      end;
+    end;
+//Freight VAT needs  to be added as well
+  end;
+
+  if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+    QTp.Sum3 = CalculateTotalVATFromTaxMatrix(sumTMr,QTp.InclVAT);
+  end;
+  PackFieldMatrix(QTp,"TaxMatrix",sumTMr);
+  GetCurncyRoundoff(QTp.CurncyCode,QTp.PayDeal,"QTVc",rndtotal,roundlines,rndvat);
+
+/*Rounding should be tested carefully*/
+
+  QTp.Sum3 = Round(QTp.Sum3,rndvat);
+  QTp.Sum1 = Round(QTp.Sum1,rndtotal);
+  switch (QTp.InclVAT) begin
+    case kBasePriceNotInclVAT:
+      QTp.Sum4 = QTp.Sum1 + QTp.Sum3;
+    case kBasePriceInclVATandTAX:
+      QTp.Sum4 = QTp.Sum1;
+    case kBasePriceInclVAT:
+      QTp.Sum4 = QTp.Sum1;
+  end;  
+  QTp.Sum3 = Round(QTp.Sum3,rndvat);
+  QTp.Sum4 = Round(QTp.Sum4,rndtotal);
+  QTp.BaseSum4 = MulRateToBase1(QTp.CurncyCode,QTp.Sum4,QTp.FrRate,QTp.ToRateB1,QTp.ToRateB2,QTp.BaseRate1,QTp.BaseRate2,DefaultCurRoundOff);
+  QTp.TotGP = Round(QTp.TotGP,rndtotal);
+  return;
+end;
+
+function val QTVc_CalcTax2perCustomer(record RPCUTaxVc RPCUTaxr,var record QTVc QTp)
+begin
+  val res;
+  Integer i,rwcnt;
+  row QTVc QTrw;
+  val tax2base,tax2baseb1,tax1reb,tax1sum,t;
+  record INVc INr;
+  record SMVc VATr;
+  Integer vatcnt;
+  
+  SetupVATBase(VATr,vatcnt);
+  rwcnt = MatRowCnt(QTp);
+
+// QT2Sumup should look in item and make another SetupVATBase and SMr
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTp,i,QTrw);
+    switch (QTrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal2;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal2:;
+        if (QTrw.Perceptions!=0) then begin       
+          if ((QTp.ExportFlag==0) or (QTp.ExportFlag==3) or (QTp.ExportFlag==4)) then begin
+            AddVATBase(VATr,QTrw.VATCode,QTrw.Sum,tax1reb,vatcnt,QTp.InclVAT,QTp.NoTAXonVAT);
+            tax2base = tax2base + QTrw.Sum;
+          end;
+        end;
+    end;
+  end;
+  CalcVATBaseVAT(VATr,QTp.InclVAT,QTp.NoTAXonVAT,vatcnt,t,tax1sum);  
+  switch (QTp.InclVAT) begin
+    case 0:
+      switch (QTp.NoTAXonVAT) begin
+        case 2:
+        case 1:
+        otherwise
+          tax2base = tax2base - t;
+      end;
+    otherwise
+      tax2base = tax2base - t;
+  end;
+/*
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTp,i,QTrw);
+    switch (QTrw.stp) begin
+      case kInvoiceRowTypePerceptionTax: ;
+      otherwise
+        if (QTrw.Perceptions!=0) then begin
+          tax2base = tax2base + QTrw.Sum;
+        end;
+    end;
+  end;
+*/
+  tax2baseb1 = MulRateToBase1(QTp.CurncyCode,tax2base,QTp.FrRate,QTp.ToRateB1,QTp.ToRateB2,QTp.BaseRate1,QTp.BaseRate2,DefaultCurRoundOff);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTp,i,QTrw);
+    if (QTrw.stp==kInvoiceRowTypePerceptionTax) then begin
+      if (RPCUTax_TaxedAmount(tax2base,tax2baseb1,QTrw.Region,RPCUTaxr)) then begin
+        QTrw.Sum = (tax2base*QTrw.TAX2Prc)/100.00;
+        res = res + Round(QTrw.Sum,SetRoundModeD(2));
+        MatRowPut(QTp,i,QTrw);
+      end else begin
+        QTrw.Sum = (tax2base*0.00)/100.00;
+        res = res + Round(QTrw.Sum,SetRoundModeD(2));
+        MatRowPut(QTp,i,QTrw);
+      end;
+    end;
+  end;
+  QTVc_CalcTax2perCustomer = res;
+  return;
+end;
+
+global
+procedure QTSumup(var record QTVc QTp)
+BEGIN
+  row QTVc QTrw;
+  val s,s2,ms,ms2,temp;
+  Integer i,rwcnt;
+  roundmode roundlines,rndtotal,roundvat;
+  record SMVc SMr;/*VATBaseRowType*/
+  record SMVc SMTax2r;
+  record SMVc RvrsVATr;
+  Integer vatcnt;  
+  string 255 tstr;  
+  val tt,ot,mt,st,tax1sum,tax2sum;  
+  val subtotv,tax1reb;
+  record Tax1RebVc Tax1Rebr;
+  val tms,ttax1sum;
+  record RPCUTaxVc RPCUTaxr;
+  Boolean calcperceppercuf;
+  record CUVc CUr;
+
+  if (UseTaxTemplatesforTaxCalc) then begin
+    QTSumup_TaxTemplate(QTp);
+    goto LQTSumup;
+  end;
+  CUr.Code = QTp.CustCode;
+  ReadFirstMain(CUr,1,true);
+  calcperceppercuf = FindRPCUTax(QTp.CustCode,QTp.QTDate,RPCUTaxr);
+  SetupVATBase(SMr,vatcnt);
+  SetupVATBase(RvrsVATr,vatcnt);
+  QTp.TotGP = blankval;
+  rwcnt = MatRowCnt(QTp);
+  for (i = 0 ; i<rwcnt ;i=i+1) begin
+    MatRowGet(QTp,i,QTrw);
+    if (QTrw.stp!=9) then begin
+      tax1reb = QTrw.TAX1Reb;
+//      tax1reb = 0;
+//      Tax1Rebr.Code = QTrw.VATCode;
+//      Tax1Rebr.CustCode = QTp.CustCode;
+//      if (ReadFirstMain(Tax1Rebr,2,true)) then begin end;
+//      if (QTp.QTDate>=Tax1Rebr.From) then begin
+//        tax1reb = Tax1Rebr.TAX1Reb;
+//      end;
+      QTp.TotGP = QTp.TotGP + QTrw.rowGP;
+      s = s + QTrw.Sum;
+      s2 = s2 + MulRateToBase1(QTp.CurncyCode,QTrw.Sum,QTp.FrRate,QTp.ToRateB1,QTp.ToRateB2,QTp.BaseRate1,QTp.BaseRate2,DefaultCurRoundOff);
+      if (blank(QTrw.RvrsVATCode)) then begin
+        AddVATBase(SMr,QTrw.VATCode,QTrw.Sum,tax1reb,vatcnt,QTp.InclVAT,QTp.NoTAXonVAT);
+      end else begin
+        AddVATBase(RvrsVATr,QTrw.VATCode,QTrw.Sum,tax1reb,vatcnt,QTp.InclVAT,QTp.NoTAXonVAT);
+      end;
+      AddTAX2Base(calcperceppercuf,SMTax2r,QTrw.TAX2Code,QTrw.TAX2Prc,QTrw.TAX2Reb,QTrw.Sum,QTp.InclVAT,QTrw.VATCode);        
+      switch (QTrw.ItemType) begin
+        case 0: ot = ot + QTrw.Sum;
+        case 1: st = st + QTrw.Sum;
+        case 3: tt = tt + QTrw.Sum;
+        case 5: mt = mt + QTrw.Sum;
+      end;
+      subtotv = subtotv + QTrw.Sum;
+    end else begin
+      if (QTrw.Sum!=subtotv) then begin
+        QTrw.Sum = subtotv;
+        MatRowPut(QTp,i,QTrw);
+      end;
+      subtotv = blankval;
+    end;
+  end;
+  CalcVATBaseVAT(SMr,QTp.InclVAT,QTp.NoTAXonVAT,vatcnt,ms,tax1sum);    
+  CalcVATBaseVAT2(RvrsVATr,QTp.InclVAT,QTp.NoTAXonVAT,vatcnt,CUr.RvrsVAT!=0,QTp.RvrsVAT,tt);  
+  if (calcperceppercuf) then begin
+    tax2sum = QTVc_CalcTax2perCustomer(RPCUTaxr,QTp);  
+  end else begin
+    tax2sum = CalcTax2BaseTax2(false,SMTax2r,QTp.InclVAT);  
+  end;
+  QTp.TAX1Sum = Round(tax1sum,DefaultRoundMode);
+  QTp.TAX2Sum = Round(tax2sum,DefaultRoundMode);  
+  if (QTp.TAX1Sum==0) then begin QTp.TAX1Sum = blankval; end;
+  if (QTp.TAX2Sum==0) then begin QTp.TAX2Sum = blankval; end;
+  if (QTp.NoTax1!=0) then begin QTp.TAX1Sum = blankval; end;
+  if (QTp.NoTax2!=0) then begin QTp.TAX2Sum = blankval; end;
+  GetCurncyRoundoff(QTp.CurncyCode,QTp.PayDeal,"QTVc",rndtotal,roundlines,roundvat);
+  ms = Round(ms,roundvat);
+    
+  if ((QTp.ExportFlag==1) or (QTp.ExportFlag==2)) then begin
+    if (QTp.InclVAT>0) then begin
+      ms2 = s - ms;
+    end else begin
+      ms2 = s;
+    end;  
+    ms = blankval;
+  end else begin
+    if (QTp.InclVAT>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + ms;    
+    end;  
+
+    switch (QTp.InclVAT) begin
+      case 1:
+        switch (QTp.NoTAXonVAT) begin
+          case 1:
+          case 2:
+          otherwise
+        end;
+      case 2:
+        switch (QTp.NoTAXonVAT) begin
+          case 2:
+            if (QTp.TotalwoTAX==0) then begin
+              ms2 = ms2 + tax1sum;
+            end;
+            CalcVATBaseVAT(SMr,QTp.InclVAT,1,vatcnt,tms,ttax1sum);  
+            ms2 = ms2 + ms-tms;
+          otherwise
+            if (QTp.TotalwoTAX==0) then begin
+              ms2 = ms2 + tax1sum;
+            end;
+        end;
+      otherwise
+        switch (QTp.NoTAXonVAT) begin
+          otherwise
+            if (QTp.TotalwoTAX==0) then begin
+              ms2 = ms2 + tax1sum;
+            end;
+        end;
+    end;
+  end;
+  ms2 = ms2 + QTp.TAX2Sum;
+  ms2 = Round(ms2,rndtotal);
+
+  if (QTp.DiscPerc!=blankval) then begin    
+    MulM4ProcVal(QTp.DiscPerc,s,temp);
+    QTp.DiscSum = temp;    
+  end;  
+  QTp.DiscSum = Round(QTp.DiscSum,DefaultRoundMode);
+  QTp.Sum1 = s;
+  QTp.Sum3 = ms;
+  QTp.Sum4 = ms2;
+  if (nonblank(QTp.CurncyCode)) then begin
+    QTp.BaseSum4 = MulRateToBase1(QTp.CurncyCode,QTp.Sum4,QTp.FrRate,QTp.ToRateB1,QTp.ToRateB2,QTp.BaseRate1,QTp.BaseRate2,DefaultCurRoundOff);
+  end;
+  QTp.SumTime = tt;
+  QTp.SumOther = ot;
+  QTp.SumStocked = st;
+  QTp.SumMaterial = mt;    
+  if (QTp.InclVAT==0) then begin
+    temp = QTp.TotGP/s2;
+  end else begin
+    temp = QTp.TotGP/(s2-MulRateToBase1(QTp.CurncyCode,QTp.Sum3,QTp.FrRate,QTp.ToRateB1,QTp.ToRateB2,QTp.BaseRate1,QTp.BaseRate2,DefaultCurRoundOff));
+  end; 
+  QTp.GPProc = temp*100;
+  RecalcQTSubtotal(QTp);
+LQTSumup:;  
+  RETURN;
+END;

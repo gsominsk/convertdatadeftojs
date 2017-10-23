@@ -1,0 +1,363 @@
+external updating function Integer RecordAction_raPasteOrdInInv(var record IVVc,LongInt,Boolean,var Integer);
+external updating function Integer RecordAction_raPasteOrdInShip(var record SHVc,LongInt,var string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean GetItemStatus(string,string,string,Integer,var val,var val,var val,var val,var val,var val,var val);
+external procedure SubAlreadyOrderedItems(record INVc,string,val,var val,var val,var val);
+external function LongInt IsReserved(string,date,time);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+
+/* Following lines for compatibility reasons */
+global
+procedure StartCommandReply(string seqstr,Integer gErrNo)
+begin
+  ExportString(seqstr);
+  NewLine;
+  ExportString(gErrNo);
+  ExportString(""); // gErrNo as string
+  ExportString(0);  // fnr
+  ExportString(0);  // ErrfMoff
+  ExportString(0);  // ErrfRwcnt
+  ExportString(0);  // ErrfRoff
+  NewLine;
+  ExportString(""); // gErrStr
+  NewLine;
+  return;
+end;
+
+global
+function Boolean ExecuteCommandShipableStatus(string seqstr)
+begin
+  val qty,sq;
+  string 255 item;
+  Boolean contf,res;
+  val stock,order,purch,unitcoef,prodord,rsrv,inprice;
+  record INVc INr;
+
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  item = ImportField;
+  while (nonblank(item)) begin
+    qty = StringToVal(ImportField,M4Qty);
+    INr.Code = item;
+    if (ReadFirstMain(INr,1,true)) then begin
+      if (GetItemStatus(item,"",INr.Recepy,0,stock,order,purch,unitcoef,prodord,rsrv,inprice)) then begin
+        SubAlreadyOrderedItems(INr,"",qty,stock,order,sq);
+      end;
+    end;
+    ExportString(item);
+    ExportVal(sq,M4Qty);
+    NewLine;
+    contf = NextImportLine(false);
+    item = ImportField;
+  end;
+  ExecuteCommandShipableStatus = res;
+  return;
+end;
+
+global
+function Boolean ExecuteCommandGetResNumber(string seqstr)
+begin
+  string 255 room;
+  Date td;
+  Time tim;
+  Boolean contf;
+  LongInt resno;
+  Boolean res;
+
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  room = ImportField;
+  while (nonblank(room)) begin
+    td = ImportField;
+    tim = ImportField;
+    resno = IsReserved(room,td,tim);
+    ExportLongInt(resno);
+    NewLine;
+    contf = NextImportLine(false);
+    room = ImportField;
+  end;
+  ExecuteCommandGetResNumber = res;
+  return;
+end;
+
+global
+function Boolean ExecuteCommandItemStatus(string seqstr)
+begin
+  string 255 item,location;
+  val stock,ord,purch,ship,unitcoef,prodord,rsrv,inprice;
+  record INVc INr;
+  Boolean contf;
+  Boolean res;
+
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  item = ImportField;
+  while (nonblank(item)) begin
+    location = ImportField;
+    INr.Code = item;
+    if (ReadFirstMain(INr,1,true)) then begin
+      if (GetItemStatus(INr.Code,location,INr.Recepy,0,stock,ord,purch,unitcoef,prodord,rsrv,inprice)) then begin end;
+      ship = stock - ord;
+      ExportString(INr.Code);
+      ExportString(location);
+      ExportString(INr.Recepy);
+      ExportVal(stock,M4UVal);
+      ExportVal(ord,M4UVal);
+      ExportVal(purch,M4UVal);
+      ExportVal(ship,M4UVal);
+    end else begin
+      ExportString("Unknown Item: " & item);
+    end;
+    NewLine;
+    contf = NextImportLine(false);
+    item = ImportField;
+  end;
+  ExecuteCommandItemStatus = res;
+  return;
+end;
+
+global
+function Boolean ExecuteCommandGetItemPriceDisc(string seqstr)
+begin
+  string 255 item,cust;
+  val qty,fr,to1,to2,br1,br2;
+  record CUVc CUr;
+  record INVc INr;
+  Boolean contf;
+  Boolean res;
+  Boolean cp;
+  string 100 curitemname;
+  string 20 salesacc,vatcode,tax2code,taxtemplatecode;
+  val price,reb,cost,tax2prc;
+  Boolean calcprice;
+  Boolean dummyf;
+  Time blankt;
+
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  item = ImportField;
+  while (nonblank(item)) begin
+    cust = ImportField;
+    qty = StringToVal(ImportField,M4UVal);
+    CUr.Code = cust;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      INr.Code = item;
+      if (ReadFirstMain(INr,1,true)) then begin
+        GetFullCurncyRate(CUr.CurncyCode,CurrentDate,fr,to1,to2,br1,br2);
+        if (GetItemPriceDiscount3(item,qty,INr,CUr.CurncyCode,fr,to1,to2,br1,br2,
+              CUr.LangCode,CUr.CustCat,CUr.PLCode,CUr.RebCode,
+              price,curitemname,reb,vatcode,cost,salesacc,
+              CUr.ExportFlag,calcprice,CurrentDate,blankt,CUr.Code,true,dummyf,CUr.PayDeal,tax2code,tax2prc,"","",taxtemplatecode)) then begin
+          ExportString("1"); // Dummy field, there is no meaning for this...
+          ExportString(item);
+          ExportVal(qty,M4UVal);
+          ExportVal(price,M423Val);
+          ExportVal(BlankVal,M4UVal); // Should be Total Sum
+          ExportVal(reb,M41Val);
+          ExportString(salesacc);
+          ExportVal(BlankVal,M4UVal); // Shipd1
+          ExportVal(BlankVal,M4UVal); // Shipd2
+          ExportVal(BlankVal,M4UVal); // Invd
+          ExportString(""); // Objects
+          ExportVal(cost,M423Val);
+          ExportVal(BlankVal,M4UVal); // rowGP
+          ExportString(curitemname);
+          ExportString(INr.VARList); // not used anymore
+          ExportString(INr.Recepy);
+          ExportString(""); // SerialNo
+          ExportVal(INr.PriceFactor,M45Val);
+          ExportString(""); // VARList
+        end else begin
+          ExportString("Item might be closed: " & item);
+        end;
+      end else begin
+        ExportString("Unknown Item: " & item);
+      end;
+    end else begin
+      ExportString("Unknown Customer: " & cust);
+    end;
+    NewLine;
+    contf = NextImportLine(false);
+    item = ImportField;
+  end;
+  ExecuteCommandGetItemPriceDisc = res;
+  return;
+end;
+
+global
+updating function Boolean ExecuteCommandDeliverOrders(string seqstr)
+begin
+  record SHVc SHr;
+  record SHVc oldSHr;
+  record ORVc ORr;
+  LongInt ordno;
+  Integer okflag;
+  Integer fn;
+  Boolean contf;
+  Boolean res;
+  string 60 warning;
+  
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  ordno = ImportField;
+  while (ordno>0) begin
+    okflag = StringToInt(ImportField);
+    ORr.SerNr = ordno;
+    RecordNew(SHr);
+    if (ReadFirstMain(ORr,1,true)) then begin
+      if (RecordAction_raPasteOrdInShip(SHr,ordno,warning)==0) then begin
+        if (okflag!=0) then begin
+          if (SHr.OKFlag==0) then begin
+            RecordCopy(oldSHr,SHr);
+            SHr.OKFlag = 1;
+            if (RecordUpdate(oldSHr,SHr,true)==0) then begin
+              ExportString("Order Delivered and Accepted");
+            end else begin
+              ExportString("Delivery could not be OK:ed " & SHr.SerNr);
+            end;
+          end else begin
+            ExportString("Delivery already OK:ed " & SHr.SerNr);
+          end;
+        end else begin
+          ExportString("Order Delivered");
+        end;
+      end else begin
+        ExportString("Delivery could not be created from Order " & ordno);
+      end;
+    end else begin
+      ExportString("Order does not exist " & ordno);
+    end;
+    NewLine;
+    contf = NextImportLine(false);
+    ordno = ImportField;
+  end;
+  ExecuteCommandDeliverOrders = res;
+  return;
+end;
+
+global
+updating function Boolean ExecuteCommandInvoiceOrders(string seqstr)
+begin
+  record IVVc IVr;
+  record IVVc oldIVr;
+  record ORVc ORr;
+  LongInt ordno;
+  Integer okflag,errcode;
+  Integer fn;
+  Boolean contf;
+  Boolean res;
+  
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  ordno = ImportField;
+  while (ordno>0) begin
+    okflag = StringToInt(ImportField);
+    ORr.SerNr = ordno;
+    RecordNew(IVr);
+    if (ReadFirstMain(ORr,1,true)) then begin
+      if (RecordAction_raPasteOrdInInv(IVr,ordno,true,errcode)==0) then begin
+        if (okflag!=0) then begin
+          if (IVr.OKFlag==0) then begin
+            RecordCopy(oldIVr,IVr);
+            IVr.OKFlag = 1;
+            if (RecordUpdate(oldIVr,IVr,true)==0) then begin
+              ExportString("Order Invoiced and Accepted");
+            end else begin
+              ExportString("Invoice could not be OK:ed " & IVr.SerNr);
+            end;
+          end else begin
+            ExportString("Invoice already OK:ed " & IVr.SerNr);
+          end;
+        end else begin
+          ExportString("Order Invoiced");
+        end;
+      end else begin
+        ExportString("Invoice could not be created from Order " & ordno);
+      end;
+    end else begin
+      ExportString("Order does not exist " & ordno);
+    end;
+    NewLine;
+    contf = NextImportLine(false);
+    ordno = ImportField;
+  end;
+  ExecuteCommandInvoiceOrders = res;
+  return;
+end;
+
+global
+updating function Boolean ExecuteCommandOKDelivery(string seqstr)
+begin
+  record SHVc SHr;
+  record SHVc oldSHr;
+  LongInt delno;
+  Boolean contf;
+  Boolean res;
+  
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  delno = ImportField;
+  SHr.SerNr = delno;
+  if (ReadFirstMain(SHr,1,true)) then begin
+    if (SHr.OKFlag==0) then begin
+      RecordCopy(oldSHr,SHr);
+      SHr.OKFlag = 1;
+      if (RecordUpdate(oldSHr,SHr,true)==0) then begin
+        ExportString("Done");
+      end else begin
+        ExportString("Delivery could not be OK:ed " & SHr.SerNr);
+      end;
+    end else begin
+      ExportString("Delivery already OK:ed " & SHr.SerNr);
+    end;
+  end else begin
+   ExportString("Delivery does not exist " & delno);
+  end;
+  NewLine;
+  ExecuteCommandOKDelivery = res;
+  return;
+end;
+
+global
+updating function Boolean ExecuteCommandOKInvoice(string seqstr)
+begin
+  record IVVc IVr;
+  record IVVc oldIVr;
+  LongInt invno;
+  Boolean contf;
+  Boolean res;
+  
+  contf = true;
+  res = true;
+  StartCommandReply(seqstr,0);
+  invno = ImportField;
+  IVr.SerNr = invno;
+  if (ReadFirstMain(IVr,1,true)) then begin
+    if (IVr.OKFlag==0) then begin
+      RecordCopy(oldIVr,IVr);
+      IVr.OKFlag = 1;
+      if (RecordUpdate(oldIVr,IVr,true)==0) then begin
+        ExportString("Done");
+      end else begin
+        ExportString("Invoice could not be OK:ed " & IVr.SerNr);
+      end;
+    end else begin
+      ExportString("Invoice already OK:ed " & IVr.SerNr);
+    end;
+  end else begin
+   ExportString("Invoice does not exist " & invno);
+  end;
+  NewLine;
+  ExecuteCommandOKInvoice = res;
+  return;
+end;
+

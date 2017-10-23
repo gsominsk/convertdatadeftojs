@@ -1,0 +1,219 @@
+external procedure GetBaseCurncy(Integer,var string);
+external function Boolean IntSerialNrAvail(string,string,string,val);
+external function LongInt DateDiff(Date,Date);
+external function Boolean CheckDblRentRes(record RentResVc);
+external function Boolean FindClosestRent(record RentResVc,var record RentResVc,Integer,Boolean);
+external procedure HT2Per(Date, Date,var string);
+external procedure AvailList(record RentINVc,var record RentResVc,var LongInt,Date,Time,Time,LongInt,var string,var Boolean,var Boolean,integer,string,string,Integer);
+
+Function Date RentINShouldReturn(record RentResVc RentResr,string item,string serialno)
+begin
+  Date res;
+  record RentResVc closeRentResr;
+  
+  if (FindClosestRent(RentResr,closeRentResr,30,true)) then begin // Setting
+    res = closeRentResr.EndDate;
+  end;
+  RentINShouldReturn = res;
+end;
+
+Function Date RentINWillBeNeeded(record RentResVc RentResr,string item,string serialno)
+begin
+  Date res;
+  record RentResVc closeRentResr;
+  
+  if (FindClosestRent(RentResr,closeRentResr,30,false)) then begin // Setting
+    res = closeRentResr.TransDate;
+  end;
+  RentINWillBeNeeded = res;
+end;
+
+global
+procedure RentResAvail2Rn(record RcVc RepSpec)
+begin
+  record RentResVc RentResr;
+  record RentControlBlock Rentr;
+  record RentQTVc RentQTr;
+  row RentQTVc RentQTrw;
+  record RentINVc RentINr;
+  record INVc INr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  string 20 frgr,togr;
+  Integer rw,rwcnt,j,i,irwcnt;
+  string 255 tstr;
+  Boolean testf,foundf;
+  string 40 lastitem;
+  LongInt quant;
+  Time startofday,endofday;
+  LongInt maxdays;
+  Boolean headerf,header2f;
+  string 20 thelocation;
+  record MainStockBlock MainStockRec;
+  string 20 thecur;
+
+  RentQTr.SerNr = RepSpec.f4;
+  if (ReadFirstMain(RentQTr,1,true)) then begin end;
+  GetBaseCurncy(1,thecur);
+  if (nonblank(RentQTr.CurncyCode)) then begin
+    thecur = RentQTr.CurncyCode;
+  end;
+  rw = 1;
+  quant = 0;
+  BlockLoad(Rentr);
+  endofday = Rentr.NormalIn;
+//  if (nonblanktime(Rentr.EndOfDay)) then begin
+//    endofday = Rentr.EndOfDay;
+//  end;
+  startofday = Rentr.NormalOut;
+//  if (nonblanktime(Rentr.StartNewDay)) then begin
+//    startofday = Rentr.StartNewDay;
+//  end;
+  RecordNew(RentResr);
+  RentResr.AgreementNr = -1;
+  RentResr.TransDate = RepSpec.sStartDate;
+  RentResr.EndDate = RepSpec.sEndDate;
+  RentResr.EndDate = RepSpec.sEndDate;
+  maxdays = DateDiff(RepSpec.sEndDate,RepSpec.sStartDate);
+  thelocation = "";
+  if (nonblank(RepSpec.f1)) then begin
+    thelocation = RepSpec.f1;
+  end;
+  StartReportJob(USetStr(11640));
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  Header(rw,USetStr(11653) & " " & thecur,0);
+  if (nonblank(thelocation)) then begin
+    Header(rw,USetStr(11583) & " " & thelocation,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  SetRepCol(2,110);
+  SetRepCol(3,300);
+  SetRepCol(4,320);
+  SetRepCol(5,65);
+  SetRepCol(6,200);
+  SetRepCol(7,340);
+  SetRepCol(8,410);
+  SetRepCol(9,50);
+  lastitem = "";
+  RentINr.SerialNr = "";
+  rwcnt = MatRowCnt(RentQTr);
+// Non serial items...
+  for (j=0;j<rwcnt;j=j+1) begin
+    MatRowGet(RentQTr,j,RentQTrw);
+    if (blank(RentQTrw.SerialNr)) then begin
+      RentINr.Code = RentQTrw.ArtCode;
+      if (ReadFirstMain(RentINr,1,true)==false) then begin
+        INr.Code = RentQTrw.ArtCode;
+        if (ReadFirstMain(INr,1,true)) then begin
+          RentINr.Code = INr.Code;
+          RentINr.Name = INr.Name;
+          RentINr.Group = INr.Group;
+        end;
+      end;
+      testf = true;
+      if (RentINr.Terminated<>0) then begin
+        testf = false;
+      end;
+      if (nonblank(RentINr.SerialNr)) then begin
+        testf = false;
+      end;
+/* No, they should show, the recepyitem field can/should be used for Extra items, which means this item IS a normal item and the RecepyItem is the additional items
+      if (RentINr.RecepyItem==1) then begin
+        testf = false;
+      end;
+*/
+      if (testf) then begin
+        AvailList(RentINr,RentResr,quant,RepSpec.sStartDate,startofday,endofday,maxdays,lastitem,headerf,header2f,0,thelocation,RepSpec.f5,1);
+      end;
+    end;
+  end;
+// Serial items with selected Serial Number
+  for (j=0;j<rwcnt;j=j+1) begin
+    MatRowGet(RentQTr,j,RentQTrw);
+    if (nonblank(RentQTrw.SerialNr)) then begin
+      RentINr.Code = RentQTrw.ArtCode;
+      RentINr.SerialNr = RentQTrw.SerialNr;
+      if (ReadFirstMain(RentINr,2,true)) begin
+        testf = true;
+        if (RentINr.Terminated<>0) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          AvailList(RentINr,RentResr,quant,RepSpec.sStartDate,startofday,endofday,maxdays,lastitem,headerf,header2f,0,thelocation,RepSpec.f5,1);
+        end;
+      end;
+    end;
+  end;
+// Serial items with NO selected Serial Number
+  lastitem = "";
+  for (j=0;j<rwcnt;j=j+1) begin
+    MatRowGet(RentQTr,j,RentQTrw);
+    if ((blank(RentQTrw.SerialNr)) and (nonblank(RentQTrw.ArtCode))) then begin
+      foundf = true;
+      ResetLoop(RentINr);
+      RentINr.Code = RentQTrw.ArtCode;
+      while (LoopMain(RentINr,1,foundf)) begin
+        if (RentINr.Code!=RentQTrw.ArtCode) then begin
+          foundf = false;
+        end;
+        testf = true;
+        if (foundf==false) then begin
+          testf = false;
+        end;
+        if (RentINr.SerialNr=="") then begin
+          testf = false;
+        end;
+        if (nonblankdate(RentINr.PurchaseDate)) then begin
+          if (RentINr.PurchaseDate>RepSpec.sStartDate) then begin
+            testf = false;
+          end;
+        end;
+        if (RentINr.Terminated<>0) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          AvailList(RentINr,RentResr,quant,RepSpec.sStartDate,startofday,endofday,maxdays,lastitem,headerf,header2f,0,thelocation,RepSpec.f5,1);
+        end;
+      end;
+    end;
+  end;
+// Recepy items, not sure it is needed
+  for (j=0;j<rwcnt;j=j+1) begin
+    MatRowGet(RentQTr,j,RentQTrw);
+    RentINr.Code = RentQTrw.ArtCode;
+    if ReadFirstMain(RentINr,1,true) then begin
+      if (RentINr.RecepyItem==1) then begin
+        Recr.Code = RentINr.IncludeRecepy;
+        if (ReadFirstMain(Recr,1,true)) then begin
+          irwcnt = MatRowCnt(Recr);
+          for (i=0;i<irwcnt;i=i+1) begin
+            MatRowGet(Recr,i,Recrw);
+            RentINr.Code = Recrw.Item;
+            if ReadFirstMain(RentINr,1,true) then begin
+              AvailList(RentINr,RentResr,quant,RepSpec.sStartDate,startofday,endofday,maxdays,lastitem,headerf,header2f,0,thelocation,RepSpec.f5,1);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (blank(thelocation)) then begin
+    BlockLoad(MainStockRec);
+    thelocation = MainStockRec.MainStock;
+  end;
+  Black_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(11649) & ": " & quant,false);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(11652) & ": " & thelocation,false);
+  EndFormat;
+  EndJob;
+  return;
+end;
+

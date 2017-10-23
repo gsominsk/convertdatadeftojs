@@ -1,0 +1,1928 @@
+//std hal
+external function string 255 removenextnode(var string);
+external function string 255 GetNextValue(var string);
+external function string 255 removenextlistitem(var string,string);
+external procedure ResolveMailboxNumber(var row MailVc);
+//translation
+external function string 255 ToolWebNGTranslateText(integer);
+external function string 255 GetTranslatedCompanyName(record WebNGCompCountryVc);
+external function string 255 GetTranslatedGroupDescription(record WebNGCompCountryVc);
+//statistics
+external procedure LogWebNGElementAccess(string,string);
+//webng
+external procedure RedirectToURL(string);
+//forward declaration
+external procedure SetCountryAllowedLanguage(string);
+//std
+external function string 255 ConvertXml(string);
+external function string 255 AddStr(string,string,string);
+
+global
+function boolean LoginState()
+begin
+  LoginState = (WebLoginStatus==3);
+  return;
+end;
+
+//SECTION: LANGUAGE AND COUNTRY TOOLS
+procedure GetOverridingCountry(var string country)
+begin
+  record WebNGCountryVc WCr;
+  
+  if (nonblank(country) and country!="unknown") then begin
+    WCr.Code = country;
+    if (ReadFirstMain(WCr,1,true)) then begin
+      if (nonblank(WCr.OvrCountry)) then begin
+        country = WCr.OvrCountry;
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+global
+procedure UpdateWebProgCountry(string vatlawcountry)
+begin
+  transaction string 20 gVATLawCountry;
+  gVATLawCountry = vatlawcountry;
+  SetDetailedCookie("vatlawcountry",ConvertXml(vatlawcountry),"Application VAT Law Country","","/",15552000); //180days
+  return;
+end;
+
+global
+procedure UpdateWebLanguage(string langcode)
+begin
+  transaction string 20 gLangcode;
+  gLangcode = langcode;
+  SetDetailedCookie("langcode",ConvertXml(langcode),"Language Setting","","/",15552000); //180days
+  return;
+end;
+
+global
+procedure UpdateWebProductCode(string productcode)
+begin
+  transaction string 20 gWebBuildProductCode;
+  gWebBuildProductCode = productcode;
+  SetDetailedCookie("buildproductcode",ConvertXml(productcode),"Product Code","","/",15552000); //180days
+  return;
+end;
+
+global
+procedure UpdateWebLicenseMode(string licensemodestr)
+begin
+  transaction string 20 gWebLicenseMode;
+  gWebLicenseMode = licensemodestr;
+
+  SetDetailedCookie("licensemode",ConvertXml(licensemodestr),"License Mode","","/",15552000); //180days
+  return;
+end;
+
+global
+procedure UpdateWebProgAppName(string appnamestr)
+begin
+  transaction string 20 gWebAppName;
+  gWebAppName = appnamestr;
+
+  SetDetailedCookie("appname",ConvertXml(appnamestr),"App Name","","/",15552000); //180days
+  return;
+end;
+
+global
+procedure UpdateWebProgOperatingSystem(string os)
+begin
+  transaction string 20 gWebAppOS;
+  gWebAppOS = os;
+
+  SetDetailedCookie("os",ConvertXml(os),"OS","","/",15552000); //180days
+  return;
+end;
+
+global
+procedure UpdateWebFreemiumTags(string freemiumtags,string freemiumcnt)
+begin
+  transaction string 20 gWebfreemiumtags,gWebfreemiumcnt;
+  
+  gWebfreemiumtags = freemiumtags;
+  PutSessionString("freemiumtags",freemiumtags);
+  gWebfreemiumcnt = freemiumcnt;
+  PutSessionString("freemiumcnt",freemiumcnt);
+//  SetDetailedCookie("freemiumtags",ConvertXml(freemiumtags),"Freemium Tags","","/",15552000); //180days
+//cookie is one for all customers ?
+  return;
+end;
+
+global
+procedure UpdateWebCountry(string country)
+begin
+  transaction string 60 gCountryCode;
+  string 60 mcountry;
+  
+  mcountry = country;
+  GetOverridingCountry(mcountry);
+  gCountryCode = mcountry;
+  SetDetailedCookie("country",ConvertXml(mcountry),"Country Setting","","/",15552000); //180days
+  SetCountryAllowedLanguage(country);
+  return;
+end;
+
+function string 255 FindCountryByHostname()
+begin
+  record WebNGHostCountryVc WHCr;
+  string 255 res;
+  
+  WHCr.Hostname = WebHost;
+  if (ReadFirstMain(WHCr,1,true)) then begin
+    res = WHCr.Country;
+  end;
+  FindCountryByHostname = res;
+  return;
+end;
+
+global
+function string 255 FindCountryFromHMCompany()
+begin
+  record WebNGCompCountryVc WCCr;
+  string 255 res;
+  
+  WCCr.CompanyNr = CurrentCompany;
+  if (ReadFirstMain(WCCr,1,true)) then begin
+    res = WCCr.Country;
+  end;
+  FindCountryFromHMCompany = res;
+  return;
+end;
+
+global
+function string 10 ToolWebNGGetCountry()
+begin
+  transaction string 60 gCountryCode;
+  string 255 country;
+  string 255 countrycode;
+  record WebNGCountryVc WCr;
+  
+  country = gCountryCode;
+  if (blank(country)) then begin
+    country = GetCookie("country");
+  end;
+  if (blank(country)) then begin
+    country = WebGetArg("cc");
+  end;
+  if (blank(country)) then begin
+    //figure out from logged in customer's enabler country
+    if (LoginState) then begin
+      country = FindCountryFromHMCompany;
+    end;
+    if (blank(country)) then begin
+      country = FindCountryByHostname;
+    end;
+    if (blank(country)) then begin
+      if (GeoLocationForIp(WebRemoteIpAddress,countrycode)) then begin
+        WCr.IsoCode = countrycode;
+        if (ReadFirstKey("IsoCode",WCr,1,true)) then begin
+          country = WCr.Code;
+        end;
+      end;
+    end;
+    if (blank(country)) then begin
+      country = "unknown";
+      country = "global"; //temporary fix - dont show world map to new visitors
+    end;
+    UpdateWebCountry(country);
+  end;
+  
+  if (country=="unknown") then begin
+    country = "";
+  end;
+ 
+  //for testing 
+  if (nonblank(WebGetArg("test"))) then begin
+    country = WebGetArg("cc");
+  end;
+  
+  ToolWebNGGetCountry = country;
+  return;
+end;
+
+global
+function string 10 GetCountryDefaultLanguage()
+begin
+  string 255 country,res;
+  record WebNGCountryVc WCr;
+  
+  country = ToolWebNGGetCountry;
+  if (nonblank(country)) then begin
+    WCr.Code = country;
+    if (ReadFirstMain(WCr,1,true)) then begin
+      res = WCr.DefaultLanguage;
+    end;
+  end;
+  GetCountryDefaultLanguage = res;
+  return;
+end;
+
+function string 255 FindLanguageFromProgLang()
+begin
+  record WebNGLanguageVc WLr;
+  string 255 res;
+  
+  WLr.HMProglang = WebGetArg("prog_lang");
+  if (nonblank(WLr.HMProglang)) then begin
+    if (ReadFirstKey("HMProglang",WLr,1,true)) then begin
+      res = WLr.Code;
+    end;
+  end;
+  FindLanguageFromProgLang = res;
+  return;
+end;
+
+global
+function string 10 CurrentWebLang()
+begin
+  transaction string 20 gLangcode;
+  string 255 langcode;
+
+  langcode = gLangcode;
+  if (blank(langcode)) then begin
+    langcode = GetCookie("langcode");
+  end;
+  if (blank(langcode)) then begin
+    langcode = WebGetArg("lc");
+  end;
+  if (blank(langcode)) then begin
+    //figure out from ProgLang which is passed by HW app when globe is pressed
+    langcode = FindLanguageFromProgLang;
+    if (blank(langcode)) then begin
+      langcode = GetCountryDefaultLanguage;
+    end;
+    
+    if (blank(langcode)) then begin
+      langcode = "en";
+    end else begin
+      UpdateWebLanguage(langcode);
+    end;
+  end;
+
+  //for web apps
+  if (nonblank(WebGetArg("forcelc"))) then begin
+    langcode = WebGetArg("forcelc");
+  end;
+  
+  //for testing 
+  if (nonblank(WebGetArg("test"))) then begin
+    langcode = WebGetArg("lc");
+  end;
+  CurrentWebLang = langcode;
+  return;
+end;
+
+global
+procedure SetCountryAllowedLanguage(string country)
+begin
+  transaction string 20 gLangcode;
+  string 255 curlang,allowedlangs,lang;
+  record WebNGCountryVc WCr;
+  
+  WCr.Code = country;
+  if (nonblank(WCr.Code)) then begin
+    if (ReadFirstMain(WCr,1,true)) then begin
+      //TODO: when switching country, should we switch to default language of that country?
+      //TODO: this is what happens now, because other logic is commented out.
+      /*curlang = CurrentWebLang;
+      if (nonblank(curlang)) then begin
+        allowedlangs = WCr.AllowedLanguages;
+        lang = GetNextValue(allowedlangs);
+        while (nonblank(lang)) begin
+          if (lang==curlang) then begin
+            goto LSetCountryAllowedLanguage;
+          end;
+          lang = GetNextValue(allowedlangs);
+        end;
+      end;*/
+      UpdateWebLanguage(WCr.DefaultLanguage);
+    end;
+  end;
+LSetCountryAllowedLanguage:;
+  return;
+end;
+
+global
+procedure GetListOfCompaniesForCountry(string country,var array integer numberlist,var array string namelist)
+begin
+  record WebNGCompCountryVc WCCr;
+  boolean testf;
+  integer cnt,nextslot;
+  
+  testf = true;
+  WCCr.Country = country;
+  while (LoopKey("Country",WCCr,1,testf)) begin
+    if (WCCr.Country!=country) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      nextslot = numberlist[0]+1;
+      numberlist[nextslot] = WCCr.CompanyNr;
+      namelist[nextslot] = GetTranslatedCompanyName(WCCr);
+      numberlist[0] = nextslot;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure GetListOfGroupsForCountry(string country,var array string grouplist,var array string namelist)
+begin
+  record WebNGCompCountryVc WCCr;
+  boolean testf;
+  integer cnt,nextslot;
+  
+  testf = true;
+  nextslot = 0;
+  WCCr.Country = country;
+  while (LoopKey("Country",WCCr,1,testf)) begin
+    if (WCCr.Country!=country) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      if (nonblank(WCCr.GroupID)) then begin
+        nextslot = nextslot+1;
+        grouplist[nextslot] = WCCr.GroupID;
+        namelist[nextslot] = GetTranslatedGroupDescription(WCCr);
+      end;
+    end;
+  end;
+  grouplist[0] = nextslot;
+  return;
+end;
+
+global
+function boolean CountryCompanyMismatch()
+begin
+  record WebNGCompCountryVc WCCr;
+  boolean res;
+  
+  res = false;
+  WCCr.CompanyNr = CurrentCompany;
+  if (ReadFirstMain(WCCr,1,true)) then begin
+    if (WCCr.Country != ToolWebNGGetCountry) then begin
+      res = true;
+    end;
+  end else begin
+    if (CurrentCompany!=1) then begin
+      res = true;
+    end;
+  end;
+  
+  CountryCompanyMismatch = res;
+  return;
+end;
+
+// Moved to ToolsCommon2.hal
+
+global
+function string 255 CleanPath(string path)
+begin
+  integer i;
+  string 255 res;
+  res = "";
+  for (i=0;i<len(path);i=i+1) begin
+    if (mid(path,i,1)=="&" or mid(path,i,1)=="?") then begin
+      goto LCleanPath;
+    end else begin
+      res = res & mid(path,i,1);
+    end;
+  end;
+LCleanPath:;
+  if (left(res,1)=="/") then begin
+    res = mid(res,1,255);
+  end;
+
+  if (right(res,1)=="/") then begin
+    res = left(res,len(res)-1);
+  end;
+  CleanPath=res;
+  return;
+end;
+
+//SECTION: GET PATH TO STRUCTURE NODES
+global
+procedure RememberRequestURL(string path)
+begin
+  string 255 mpath;
+  
+  mpath = path;
+  if (left(mpath,1)!="/") then begin
+    mpath = "/" & mpath; //mid(path,1,255);
+  end;
+  PutSessionString("requesturl_old3",GetSessionString("requesturl_old2"));
+  PutSessionString("requesturl_old2",GetSessionString("requesturl_old"));
+  PutSessionString("requesturl_old",GetSessionString("requesturl"));
+  PutSessionString("requesturl",mpath);
+  return;
+end;
+
+global
+procedure RollbackOneRequestURL()
+begin
+  PutSessionString("requesturl",GetSessionString("requesturl_old"));
+  PutSessionString("requesturl_old",GetSessionString("requesturl_old2"));
+  PutSessionString("requesturl_old2",GetSessionString("requesturl_old3"));
+  PutSessionString("requesturl_old3","");
+  return;
+end;
+
+global
+procedure GetWebSiteSettings(var string startstruct,var string sitetitle,var string headerelement,var string footerelement,
+                              var string stylesheet,var string analyticsid,var integer prependtitle,var boolean allowlogin,
+                              var string errorpage,var longint loginnode,var longint selectcountry)
+begin
+  record WebNGSitesBlock WSb;
+  row WebNGSitesBlock WSbrw;
+  record WebNGTestBlock WTb;
+  integer i,cnt,line;
+  string 255 ovrwebhost;
+  
+  BlockLoad(WSb);
+  ovrwebhost = WebHost;
+  if (MatRowCnt(WSb)>0) then begin
+    line = 0;
+    cnt = MatRowCnt(WSb);
+    for (i=0;i<cnt;i=i+1) begin
+      MatRowGet(WSb,i,WSbrw);
+      if (WSbrw.Host==ovrwebhost) then begin
+        line = -1;
+        i = cnt;
+      end;
+      if (blank(WSbrw.Host)) then begin
+        line = i;
+      end;
+    end;
+    
+    if (line!=-1) then begin
+      MatRowGet(WSb,line,WSbrw);
+    end;
+    
+    startstruct = WSbrw.StartStruct;
+    sitetitle = WSbrw.SiteTitle;
+    headerelement = WSbrw.HeaderElement;
+    footerelement = WSbrw.FooterElement;
+    stylesheet = WSbrw.StyleSheet;
+    analyticsid = WSbrw.GoogleAnalyticsID;
+    prependtitle = WSbrw.PrependTitle;
+    allowlogin = (WSbrw.AllowLogin==1);
+    errorpage = WSbrw.ErrorPage;
+    loginnode = WSbrw.LoginNode;
+    selectcountry = WSbrw.SelectCountryStruct;
+  end else begin
+    //TODO: defaults?
+  end;
+  return;
+end;
+
+global
+procedure GetLoginAndSelectCountryNodes(var longint loginnode,var longint selectcountry)
+begin
+  string 255 startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,errorpage;
+  integer prependtitle;
+  boolean allowlogin;
+  string 255 res;
+
+  GetWebSiteSettings(startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,prependtitle,allowlogin,errorpage,loginnode,selectcountry);  
+  return;
+end;
+
+global
+function boolean NodeIsApplication(record WebNGStructVc WSr)
+begin
+  boolean res;
+  
+  res = false;
+  if (WSr.Type==kStructTypeHALFunction or 
+      WSr.Type==kStructTypeContentHandlerApp or
+      WSr.Type==kStructTypeForumApp or
+      WSr.Type==kStructTypeItemBrowse or
+      WSr.Type==kStructTypeShoppingBasket or
+      WSr.Type==kStructTypeItemOrder or
+      WSr.Type==kStructTypeUniversityApp or
+      WSr.Type==kStructTypeProductImageApp or
+      WSr.Type==kStructTypeWebshopApp or
+      WSr.Type==kStructTypeASPApp or
+      WSr.Type==15 or
+      WSr.Type==kStructTypeOnlineReservationApp or
+      WSr.Type==kStructTypeMyAccountApp or
+      WSr.Type==kStructTypeSubscriptionsApp or
+      WSr.Type==kStructTypeProductionPlan or
+      WSr.Type==kStructTypeWebVideoApp or
+      WSr.Type==kStructTypeMigrationRegApp or
+      WSr.Type==kStructTypeDownloadProdApp or
+      WSr.Type==kStructTypeMyServerApp or
+      WSr.Type==kStructTypeAvailableApps or
+      WSr.Type==kStructTypeStandardIDApp or
+      WSr.Type==kStructTypePartnerSupportApp
+      ) then begin
+    res = true;
+  end;
+  
+  NodeIsApplication = res;
+  return;
+end;
+
+global
+procedure addnode(var array longint visitednodes,longint node)
+begin
+  longint i,cnt;
+  
+  cnt = visitednodes[0];
+  for (i=1;i<=cnt;i=i+1) begin
+    if (visitednodes[i]==node) then begin
+      goto Laddnode;
+    end;
+  end;
+  visitednodes[0] = visitednodes[0]+1;
+  visitednodes[visitednodes[0]] = node;
+Laddnode:;
+  return;
+end;
+
+global
+function boolean visitedbefore(array longint visitednodes,longint node)
+begin
+  longint i,cnt;
+  boolean res;
+  
+  res = false;
+  cnt = visitednodes[0];
+  for (i=1;i<=cnt;i=i+1) begin
+    if (visitednodes[i]==node) then begin
+      res = true;
+      goto Lvisitedbefore;
+    end;
+  end;
+Lvisitedbefore:;
+  return;
+end;
+
+global
+function boolean StructurePathValid(string path)
+begin
+  boolean res;
+  record WebNGStructVc WSr;
+  record WebNGPageVc WPr;
+  string 255 mpath,node;
+  integer lasttype;
+  integer cnt;
+  string 255 startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,errorpage;
+  longint selectcountry;
+  boolean rootrequested;
+  array longint visitednodes;
+
+  res = false;
+  visitednodes[0] = 0;
+  mpath = path;
+  lasttype = -1;
+  WSr.Mother = 0;
+  if (len(mpath)==0) then begin
+    lasttype = 0; //blank string is ok
+    goto LStructurePathValid;
+  end;
+  if (mpath=="/") then begin
+    rootrequested = true;
+  end else begin
+    WSr.Name = "/";
+    if (ReadFirstKey("Mother",WSr,2,true)) then begin
+      WSr.Mother = WSr.SerNr;
+      addnode(visitednodes,WSr.SerNr);
+    end;
+  end;
+
+  while (len(mpath)>0) begin
+    cnt = cnt+1;
+    if (rootrequested==false) then begin
+      node = removenextnode(mpath);
+    end else begin
+      node = mpath;
+      mpath = "";
+    end;
+    WSr.Name = node;
+    
+    lasttype = -1;
+    if (ReadFirstKey("Mother",WSr,2,true)) then begin
+      if (visitedbefore(visitednodes,WSr.SerNr)) then begin
+        lasttype = -2;
+        goto LStructurePathValid;
+      end;
+
+      lasttype = WSr.Type;
+      WSr.Mother = WSr.SerNr;
+      addnode(visitednodes,WSr.SerNr);
+      if (NodeIsApplication(WSr)) then begin
+        goto LStructurePathValid;
+      end;
+    end;
+  end;
+  
+LStructurePathValid:;
+  if (lasttype>=0) then begin
+    res = true;
+  end;
+  
+  StructurePathValid = res;
+  return;
+end;
+
+global
+function string 255 GetLinkToStruct(LongInt StructSerNr,boolean callfromweb)
+begin
+  record WebNGStructVc WSr;
+  LongInt sernr;
+  string 255 res,tstr,country;
+  boolean firstnode;
+  string 255 appendcountry;
+  record WebNGShopBlock WSbl;
+
+  res = "";
+  appendcountry = "";
+  firstnode = true;
+  sernr = StructSerNr;
+  while (sernr!=-1 and sernr!=0) begin
+    WSr.SerNr = sernr;
+    if (ReadFirstMain(WSr,1,true)) then begin
+      if (blank(WSr.Name)) then begin
+        goto LGetLinkToStruct;
+      end;
+      tstr = WSr.Name;
+      if (right(tstr,1)!="/") then begin
+        tstr = tstr & "/";
+      end;
+      res = tstr & res;
+      if (callfromweb) then begin
+        if (WSr.Type==4 and firstnode) then begin //if redirect to country type link
+          country = ToolWebNGGetCountry;
+          if (nonblank(country)) then begin
+            appendcountry = country;
+          end;
+        end;
+      end;
+      sernr = WSr.Mother;
+      firstnode = false;
+    end else begin
+      sernr = -1;
+      goto LGetLinkToStruct;
+    end;
+  end;
+
+  if (len(res)!=0) then begin
+    if (left(res,1)!="/") then begin
+      res = "/" & res;
+    end;
+  end;
+
+  if (nonblank(appendcountry)) then begin
+    if (StructurePathValid(CleanPath(res & appendcountry & "/"))) then begin
+      res = res & appendcountry & "/";
+    end;
+  end;
+  if (sernr>-1) then begin
+    BlockLoad(WSbl);
+    if (WSbl.ForceLanguage==1) then begin
+      res = "/" & LowerCase(CurrentWebLang) & res;
+    end;
+  end;
+
+LGetLinkToStruct:;
+  GetLinkToStruct = res;
+  return;
+end;
+
+global
+function string 255 GetStartStructLink()
+begin
+  record WebNGStructVc WSr;
+  string 255 startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,errorpage;
+  longint loginnode,selectcountry;
+  integer prependtitle;
+  boolean allowlogin;
+  string 255 res;
+
+  GetWebSiteSettings(startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,prependtitle,allowlogin,errorpage,loginnode,selectcountry);
+  res = GetLinkToStruct(startstruct,true);
+  
+  GetStartStructLink = res;
+  return;
+end;
+
+global
+function string 255 GetCountrySelectStructLink()
+begin
+  record WebNGStructVc WSr;
+  string 255 startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,errorpage;
+  longint loginnode,selectcountry;
+  integer prependtitle;
+  boolean allowlogin;
+
+  GetWebSiteSettings(startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,prependtitle,allowlogin,errorpage,loginnode,selectcountry);
+  GetCountrySelectStructLink = GetLinkToStruct(selectcountry,true);
+  return;
+end;
+
+global
+function string 255 GetLoginPageStructLink()
+begin
+  record WebNGStructVc WSr;
+  string 255 startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,errorpage;
+  longint loginnode,selectcountry;
+  integer prependtitle;
+  boolean allowlogin;
+
+  GetWebSiteSettings(startstruct,sitetitle,headerelement,footerelement,stylesheet,analyticsid,prependtitle,allowlogin,errorpage,loginnode,selectcountry);
+  GetLoginPageStructLink = GetLinkToStruct(loginnode,true);
+  return;
+end;
+
+global
+function string 255 GetLinkToContentItem(longint sernr,boolean callfromweb)
+begin
+  record WebNGContentVc WCr;
+  record WebNGContentStyleVc WCSr;
+  string 255 res;
+  
+  res = "";
+  WCr.SerNr = sernr;
+  if (ReadFirstMain(WCr,1,true)) then begin
+    WCSr.Code = WCr.ContentStyle;
+    if (ReadFirstMain(WCSr,1,true)) then begin
+      if (nonblank(WCSr.HandlerAppNode)) then begin
+        res = GetLinkToStruct(WCSr.HandlerAppNode,callfromweb);
+        if (nonblank(res)) then begin
+          //append country
+          if (false and nonblank(WCr.Country)) then begin
+            res = res & WCr.Country & "/";
+          end;
+          //append sernr
+          res = res & sernr & "/";
+        end;
+      end;
+    end;
+  end;
+  
+  GetLinkToContentItem = res;
+  return;
+end;
+
+global
+function string 255 GetLinkToItemBrowse(boolean callfromweb)
+begin
+  record WebNGShopBlock WSb;
+  string 255 res;
+  
+  res = "";
+  BlockLoad(WSb);
+  res = GetLinkToStruct(WSb.NodeToItemBrowse,callfromweb);
+  
+  GetLinkToItemBrowse = res;
+  return;
+end;
+
+global
+function string 255 GetLinkToItemOrder(boolean callfromweb)
+begin
+  record WebNGShopBlock WSb;
+  string 255 res;
+  
+  res = "";
+  BlockLoad(WSb);
+  res = GetLinkToStruct(WSb.NodeToItemOrder,callfromweb);
+  
+  GetLinkToItemOrder = res;
+  return;
+end;
+
+global
+procedure RequireSessionState()
+begin
+  PutSessionString("SessionStateRequired","1");
+  return;
+end;
+
+function boolean IsSessionStateRequired()
+begin
+  boolean res;
+  
+  if (GetSessionString("SessionStateRequired")=="1") then begin
+    res = true;
+  end else begin
+    res = false;
+  end;
+  IsSessionStateRequired = res;
+  return;
+end;
+
+function string 255 ConvertAmpersands(string args)
+begin
+  string 255 res,c;
+  integer i,cnt;
+  
+  cnt = len(args);
+  for (i=0;i<cnt;i=i+1) begin
+    c = mid(args,i,1);
+    if (false and c=="&") then begin //disconnected because this should only happen when writing urls into tag attributes, not during redirection
+      res = res & "&amp;";
+    end else begin
+      res = res & c;
+    end;
+  end;
+  
+  ConvertAmpersands = res;
+  return;
+end;
+
+procedure AddCountryAndLanguage(var string path)
+begin
+  string 255 node,mpath,country,language,newpath;
+  record WebNGCountryVc WCr;
+  record WebNGLanguageVc WLr;
+  
+  mpath = path;
+  while (Left(mpath,1)=="/") begin
+    mpath = Right(mpath,Len(mpath)-1);
+  end;
+  node = removenextnode(mpath);
+  WCr.Code = node;
+  if (ReadFirstMain(WCr,1,true)) then begin
+    country = WCr.Code;
+    node = removenextnode(mpath);
+  end;
+  if (blank(country)) then begin
+    country = ToolWebNGGetCountry;
+  end;
+  if (country=="global") then begin
+    country = "";
+  end;
+  WLr.Code = node;
+  if (ReadFirstMain(WLr,1,true)) then begin
+    language = LowerCase(WLr.Code);
+    node = "";
+  end;
+  
+  WCr.Code = country;
+  if (ReadFirstMain(WCr,1,true)) then begin
+    newpath = AddStr("",country,"/");
+  end;
+  WLr.Code = language;
+  if (ReadFirstMain(WLr,1,true)) then begin
+    newpath = AddStr(newpath,language,"/");
+  end;
+  newpath = AddStr(newpath,node,"/");
+  newpath = AddStr(newpath,mpath,"/");
+  if (Left(path,1)=="/") then begin
+    newpath = "/" & newpath;
+  end;
+  if (StructurePathValid(CleanPath(newpath))) then begin
+    path = newpath;
+  end;
+  
+  return;
+end;
+
+//SECTION: FORMATTING LINK FOR OUTPUT TO WEB
+global
+function string 255 FormatLink(string path,string args,boolean directlink,boolean callfromweb)
+begin
+  string 255 newpath,newargs;
+  transaction boolean gLoggedOut;
+  boolean nocookies,testmode;
+  
+  newpath = path;
+  if (blank(newpath) and blank(args)) then begin
+    newpath = "#";
+  end else begin
+    if (directlink==false) then begin
+      AddCountryAndLanguage(newpath);
+      if (right(newpath,1)=="/" and len(newpath)>1) then begin
+        newpath = left(newpath,len(newpath) - 1);
+      end;
+    end;
+  end;
+  
+  newargs = args;
+  if (callfromweb) then begin
+    if (blank(GetCookie("HSESSION")) and blank(GetCookie("langcode")) and blank(GetCookie("country"))) then begin
+      nocookies = true;
+    end else begin
+      nocookies = false;
+    end;
+    if (nonblank(WebGetArg("test"))) then begin
+      testmode = true;
+    end else begin
+      testmode = false;
+    end;
+    
+//    if (nocookies or testmode) then begin
+//      if (len(newargs)==0) then begin
+//        newargs = "?";
+//      end else begin
+//        newargs = newargs & "&";
+//      end;
+//      if (nocookies and (IsSessionStateRequired or (WebLoginStatus==3 and gLoggedOut==false))) then begin //if an app requested we maintain session state
+//        newargs = newargs & "HSESSION=" & GetWebSessionUUID & "&";
+//      end;
+//      if (testmode) begin
+//        newargs = newargs & "test=" & WebGetArg("test") & "&";
+//      end;
+//      newargs = newargs & "lc=" & CurrentWebLang;
+//      newargs = newargs & "&cc=" & ToolWebNGGetCountry;
+//      if (nocookies and WebLoginStatus==3 and gLoggedOut==false) then begin
+//        newargs = newargs & "&sessionid=" & WebGetArg("sessionid");
+//      end;
+//    end;
+//    if (nonblank(WebGetArg("forcelc"))) then begin
+//      if (len(newargs)==0) then begin
+//        newargs = "?";
+//      end else begin
+//        newargs = newargs & "&";
+//      end;
+//      newargs = newargs & "forcelc=" & WebGetArg("forcelc");
+//    end;
+  end;
+
+  if (len(newargs)>0) then begin
+    if (left(newargs,1)=="&") then begin
+      newargs = mid(newargs,1,255);
+    end;
+    if (left(newargs,1)!="?") then begin
+      newargs = "?" & newargs;
+    end;
+    newpath = newpath & newargs;
+  end;
+  
+  FormatLink = newpath;
+  return;
+end;
+
+global
+function string 255 FormatSimpleLink(string path,boolean callfromweb)
+begin
+  FormatSimpleLink = FormatLink(path,"",false,callfromweb);
+  return;
+end;
+
+global
+function string 255 FormatSimpleLinkWithArg(string path,string args,boolean callfromweb)
+begin
+  FormatSimpleLinkWithArg = FormatLink(path,args,false,callfromweb);
+  return;
+end;
+
+function Boolean DoToolWebFindTranslation(string code,string lang,Integer filename,var record WebNGTranslateVc WTr)
+begin
+  string 200 ckey;
+  Boolean foundf,testf;
+  Boolean res;
+  
+  res = false;
+  foundf = true;
+  ckey = "ElementLangCode:";
+  switch (filename) begin
+    case 0: ckey = "ElementLangCode:" & code;
+    case 1: ckey = "ContentLangCode:" & code;
+    case 2: ckey = "ProductLangCode:" & code;
+    case 4: ckey = "PageLangCode:" & code;
+  end;
+  RecordNew(WTr);
+  ResetLoop(WTr);
+  if (lang==";;;") then begin
+    WTr.LangCode = "";
+  end else begin
+    WTr.LangCode = lang;
+  end;
+  WTr.Sorting = -1;
+  while (LoopKey(ckey,WTr,2,foundf)) begin
+    if (lang!=";;;" and WTr.LangCode!=lang) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (WTr.FileName!=filename) then begin // Speed improvement possible if FileName is placed in a higher segment of the key 
+      testf = false;
+    end;
+    if (testf) then begin
+      if (SizeTextCnt(WTr)>0) then begin
+        res = true;
+        foundf = false;
+      end;
+    end;
+  end;
+  DoToolWebFindTranslation = res;
+  return;
+end;
+
+function string 255 WebFallbackLanguage(string lang)
+begin
+  string 255 res;
+  
+  switch (lang) begin
+    otherwise res = "EN";
+  end;
+  
+  WebFallbackLanguage = res;
+end;
+
+function Boolean ToolWebFindTranslation(string code,string lang,Integer filename,var record WebNGTranslateVc WTr)
+begin
+  Boolean res;
+  string 255 fallbacklang;
+  
+  res = DoToolWebFindTranslation(code,lang,filename,WTr);
+  if (res==false) then begin
+    fallbacklang = WebFallbackLanguage(lang);
+    if (fallbacklang<>"" and fallbacklang<>lang) then begin
+      res = ToolWebFindTranslation(code,fallbacklang,filename,WTr);
+    end;
+  end;
+  
+  ToolWebFindTranslation = res;
+end;
+
+function Boolean ToolWebOutTranslation(string code,string lang,Integer filename,var Boolean lastwastag,record WebNGContentStyleVc WCSr,Date specdate,Boolean printoverview)
+begin
+//  transaction integer level;
+//  transaction boolean line;
+  record WebNGTranslateVc WebNGTranslater;
+  row WebNGTranslateVc WebNGTranslaterw;
+  Integer i,rwcnt;
+  Boolean res;
+
+  if (ToolWebFindTranslation(code,lang,filename,WebNGTranslater)) then begin
+    if (printoverview) then begin
+      if (WCSr.PrintDateList!=0) then begin
+        if (nonblank(WCSr.ListDateClass)) then begin
+          WebOutString("<div class='" & WCSr.ListDateClass & "'>" & specdate & "</div>");
+        end else begin
+          WebOutString("<div>" & specdate & "</div>");
+        end;
+      end;
+      if (WCSr.CommentListFlag!=0) then begin
+        if (nonblank(WCSr.ListHeadingClass)) then begin
+          WebOutString("<div class='" & WCSr.ListHeadingClass & "'>" & WebNGTranslater.Comment & "</div>");
+        end else begin
+          WebOutString("<div>" & WebNGTranslater.Comment & "</div>");
+        end;
+      end;
+      if (WCSr.ListViewFlag<2) then begin
+        if (nonblank(WCSr.ListTextClass)) then begin
+          WebOutTagOpen("<div class='" & WCSr.ListDateClass & "'>");
+        end else begin
+          WebOutTagOpen("<div>");
+        end;
+        rwcnt = MatRowCnt(WebNGTranslater);
+        if (WCSr.ListViewFlag==0) then begin
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(WebNGTranslater,i,WebNGTranslaterw);
+            WebOutString(WebNGTranslaterw.OverviewText);
+          end;
+        end else begin
+          Randomize;
+          i = Random(0,rwcnt);
+          if (i>=rwcnt) then begin
+            i = 0;
+          end;
+          MatRowGet(WebNGTranslater,i,WebNGTranslaterw);
+          WebOutString(WebNGTranslaterw.OverviewText);
+        end;
+        WebOutTagClose("</div>");
+      end;
+    end else begin
+      if (WCSr.PrintDate!=0) then begin
+        if (nonblank(WCSr.DateClass)) then begin
+          WebOutString("<div class='" & WCSr.DateClass & "'>" & specdate & "</div>");
+        end else begin
+          WebOutString("<div>" & specdate & "</div>");
+        end;
+      end;
+      if (WCSr.CommentFlag!=0) then begin
+        if (nonblank(WCSr.HeadingClass)) then begin
+          WebOutTagOpen("<h1 class=""" & WCSr.HeadingClass & """>");
+        end else begin
+          WebOutTagOpen("<h1>");
+        end;
+        WebOutString(WebNGTranslater.Comment);
+        WebOutTagClose("</h1>");
+      end;
+      if (filename!=0) then begin
+        if (nonblank(WCSr.TextClass)) then begin
+          WebOutTagOpen("<div class='" & WCSr.TextClass & "'>");
+        end else begin
+          WebOutTagOpen("<div>");
+        end;
+      end;
+      WebOutText(WebNGTranslater,WebNGTranslater.HtmlTranslation==1,"");
+      if (filename!=0) then begin
+        WebOutTagClose("</div>");
+      end;
+    end;
+    res = true;
+  end;
+  
+  ToolWebOutTranslation = res;
+  return;
+end;
+
+global
+procedure ToolWebOutElementTextFormat(record WebNGElementVc WEr)
+begin
+  transaction boolean lastwastag;
+  record WebNGContentStyleVc WCSr;
+  
+  RecordNew(WCSr);
+  if (ToolWebOutTranslation(WEr.Code,CurrentWebLang,0,lastwastag,WCSr,CurrentDate,false)==false) then begin
+    if (ToolWebOutTranslation(WEr.Code,WEr.DefLangCode,0,lastwastag,WCSr,CurrentDate,false)==false) then begin
+      if (WEr.LogAccess!=0) then begin LogWebNGElementAccess(WEr.Code,"--"); end;
+// Error page
+    end else begin
+      if (WEr.LogAccess!=0) then begin LogWebNGElementAccess(WEr.Code,WEr.DefLangCode); end;
+    end;
+  end else begin
+    if (WEr.LogAccess!=0) then begin LogWebNGElementAccess(WEr.Code,CurrentWebLang); end;
+  end;
+  return;
+end;
+
+global
+procedure ToolWebOutContentTextFormat(record WebNGContentVc WCr,Boolean printoverview)
+begin
+  transaction boolean lastwastag;
+  string 255 tstr;
+  record WebNGContentStyleVc WCSr;
+
+  WCSr.Code = WCr.ContentStyle;
+  if (ReadFirstMain(WCSr,1,true)) then begin end;
+  if (ToolWebOutTranslation(WCr.SerNr,CurrentWebLang,1,lastwastag,WCSr,WCr.SpecDate,printoverview)==false) then begin
+    if (ToolWebOutTranslation(WCr.SerNr,WCr.DefLangCode,1,lastwastag,WCSr,WCr.SpecDate,printoverview)==false) then begin
+// Error page
+    end;
+  end;
+  lastwastag = false;
+  return;
+end;
+
+global
+function boolean ToolWebOutProductInfoTextFormat(record WebNGProductVc WPr)
+begin
+  transaction boolean lastwastag;
+  string 255 tstr;
+  record WebNGContentStyleVc WCSr;
+  boolean res;
+
+  res = true;
+  RecordNew(WCSr);
+  WCSr.CommentFlag = 1;
+  if (ToolWebOutTranslation(WPr.Code,CurrentWebLang,2,lastwastag,WCSr,CurrentDate,false)==false) then begin
+    if (ToolWebOutTranslation(WPr.Code,WPr.DefLangCode,2,lastwastag,WCSr,CurrentDate,false)==false) then begin
+      res = false;
+    end;
+  end;
+  lastwastag = false;
+  ToolWebOutProductInfoTextFormat = res;
+  return;
+end;
+
+global
+function Boolean FindMatchingContentTranslation(record WebNGContentVc WCr,var record WebNGTranslateVc WTr)
+begin
+  Boolean res;
+  
+  res = false;
+  if (ToolWebFindTranslation(WCr.SerNr,CurrentWebLang,1,WTr)) then begin
+    res = true;
+  end else begin
+    if (ToolWebFindTranslation(WCr.SerNr,WCr.DefLangCode,1,WTr)) then begin
+      res = true;
+    end;
+  end;
+  FindMatchingContentTranslation = res;
+  return;
+end;
+
+global
+function Boolean FindWebPageTranslation(record WebNGPageVc WPr,var record WebNGTranslateVc WTr)
+begin
+  Boolean res;
+  
+  res = false;
+  if (ToolWebFindTranslation(WPr.Code,CurrentWebLang,4,WTr)) then begin
+    res = true;
+  end else begin
+    if (ToolWebFindTranslation(WPr.Code,WPr.DefLangCode,4,WTr)) then begin
+      res = true;
+    end else begin
+      if (ToolWebFindTranslation(WPr.Code,";;;",4,WTr)) then begin //any language
+        RecordNew(WTr);
+        ResetLoop(WTr);
+        res = true;
+      end;
+    end;
+  end;
+  
+  FindWebPageTranslation = res;
+  return;
+end;
+
+//SECTION: REDIRECT TOOLS
+global
+function string 255 GetWebHostAndPort(boolean secure)
+begin
+  record ProgramStatusBlock PSb;
+  string 255 res;
+  longint l;
+  
+  res = "";
+  if (secure==WebSecureMode) then begin
+    res = WebHost;
+  end else begin
+    res = WebHost;
+    l = InString(res,":");
+    if (l!=0) then begin
+      res = left(res,l-1);
+    end;
+    
+    BlockLoad(PSb);
+    if (secure) then begin
+      if (PSb.httpsPort!=443) then begin
+        res = res & ":" & PSb.httpsPort;
+      end;
+    end else begin
+      if (PSb.httpPort!=80) then begin
+        res = res & ":" & PSb.httpPort;
+      end;
+    end;
+  end;
+
+  GetWebHostAndPort = res;
+  return;
+end;
+
+global
+function string 255 GetWebHostAndPort2(boolean secure)
+begin
+  record ProgramStatusBlock PSb;
+  string 255 res;
+  longint l;
+  
+  res = WebHost;
+  l = InString(res,":");
+  if (l!=0) then begin
+    res = left(res,l-1);
+  end;
+  
+  BlockLoad(PSb);
+  if (secure) then begin
+    if (PSb.httpsPort!=443) then begin
+      res = res & ":" & PSb.httpsPort;
+    end;
+  end else begin
+    if (PSb.httpPort!=80) then begin
+      res = res & ":" & PSb.httpPort;
+    end;
+  end;
+
+  GetWebHostAndPort2 = res;
+  return;
+end;
+
+global
+procedure ShowRedirectHtml(string link,boolean secure)
+begin
+  string 255 mlink,hostport;
+  transaction boolean gDontOutputHTMLDoctype;
+
+  if (link!="#") then begin
+    mlink = link;
+  end else begin
+    mlink = "/";
+  end;
+  if (gDontOutputHTMLDoctype==false) then begin
+    WebOutStringFormatNL("<!DOCTYPE html>");
+  end;
+  WebOutTagOpen("<html>");
+  WebOutTagOpen("<head>");
+  WebOutStringFormatNL("<title>302 Redirect</title>");
+  //WebOutStringFormat("<meta http-equiv=""refresh"" content=""0; url=" & mlink & """>");
+  WebOutTagClose("</head>");
+  WebOutTagOpen("<body>");
+  hostport = "";
+  if (InString(mlink,"http:")==0 and InString(mlink,"https:")==0) then begin
+    if (secure) then begin
+      hostport = "https://";
+    end else begin
+      hostport = "http://";
+    end;
+    hostport = hostport & GetWebHostAndPort(secure);
+  end;
+  WebOutStringFormat(ToolWebNGTranslateText(25417) & " "); //If your browser does not automatically redirect you in 5 seconds, please
+  WebOutStringFormat("<a href=""");
+  WebOutStringFormat(hostport);
+  WebOutStringFormat(mlink);
+  if (secure!=WebSecureMode) then begin
+    mlink = hostport & mlink;
+  end;
+  WebOutStringFormat(""">");
+  WebOutStringFormat(ToolWebNGTranslateText(25418)); //Click here
+  WebOutStringFormat("</a>");
+  WebOutTagClose("</body>");
+  WebOutTagClose("</html>");
+  SetHttpRedirect(mlink);
+  return;
+end;
+
+procedure DetectBrowserOS(var string OSName,var string OSVersion)
+begin
+  array string 255 a_os;
+  integer i,alen;
+  string 255 browserstr;
+  
+  OSName = "";
+  OSVersion = "";
+  
+  browserstr = WebAgent;
+
+  a_os[0] = "iPad";
+  a_os[1] = "iPhone";
+  a_os[2] = "iPod";
+  alen = 3;
+  
+  for (i=0;i<alen;i=i+1) begin
+    if (InString(browserstr,a_os[i])>0) then begin
+      OSName = "iOS";
+      goto LRecogniseOS;
+    end;
+  end;
+  
+  a_os[0] = "Android";
+  alen = 1;
+  
+  for (i=0;i<alen;i=i+1) begin
+    if (InString(browserstr,a_os[i])>0) then begin
+      OSName = "Android";
+      if (a_os!="Android") then begin
+        OSVersion = a_os[i];
+      end;
+      goto LRecogniseOS;
+    end;
+  end;  
+
+  a_os[0] = "mac";
+  a_os[1] = "nt";
+  a_os[2] = "win";
+  alen = 3;
+  
+  for (i=0;i<alen;i=i+1) begin
+    if (InString(browserstr,a_os[i])>0 and InString(browserstr,"linux")==0) then begin
+      OSName = a_os[i];
+      switch (a_os[i]) begin
+        case "win":
+          if (InString(browserstr,"95")>0) then begin
+            OSVersion = "95";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"9x 4.9")>0) then begin
+            OSVersion = "me";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"98")>0) then begin
+            OSVersion = "98";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"2000")>0) then begin
+            OSVersion = "5.0";
+            OSName = "nt";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"xp")>0) then begin
+            OSVersion = "5.1";
+            OSName = "nt";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"2003")>0) then begin
+            OSVersion = "5.2";
+            OSName = "nt";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"vista")>0) then begin
+            OSVersion = "6.0";
+            OSName = "nt";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"ce")>0) then begin
+            OSVersion = "CE";
+            goto LRecogniseOS;
+          end;
+        case "nt":
+          if (InString(browserstr,"nt 6.1")>0) then begin
+            OSVersion = "6.1";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"nt 6.0")>0) then begin
+            OSVersion = "6.0";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"nt 5.2")>0) then begin
+            OSVersion = "5.2";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"nt 5.1")>0 or InString(browserstr,"xp")>0) then begin
+            OSVersion = "5.1";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"nt 5")>0 or InString(browserstr,"2000")>0) then begin
+            OSVersion = "5.0";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"nt 4")>0) then begin
+            OSVersion = "4";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"nt 3")>0) then begin
+            OSVersion = "3";
+            goto LRecogniseOS;
+          end;
+        case "mac":
+          if (InString(browserstr,"os x")>0) then begin
+            OSVersion = "10";
+            goto LRecogniseOS;
+          end;
+          if (InString(browserstr,"saf")>0 or InString(browserstr,"cam")>0) then begin
+            OSVersion = "10";
+            goto LRecogniseOS;
+          end;
+      end;
+    end;
+  end;
+  
+  a_os[0] = "FreeBSD";
+  a_os[1] = "OpenBSD";
+  a_os[2] = "NetBSD";
+  a_os[3] = "BSD";
+  a_os[4] = "UnixWare";
+  a_os[5] = "Solaris";
+  a_os[6] = "SUNOS";
+  a_os[7] = "SUN4";
+  a_os[8] = "SUN5";
+  a_os[9] = "SUNi86";
+  a_os[10] = "SUN";
+  a_os[11] = "IRIX5";
+  a_os[12] = "IRIX6";
+  a_os[13] = "IRIX";
+  a_os[14] = "HPUX9";
+  a_os[15] = "HPUX10";
+  a_os[16] = "HPUX11";
+  a_os[17] = "HPUX";
+  a_os[18] = "HP-UX";
+  a_os[19] = "AIX1";
+  a_os[20] = "AIX2";
+  a_os[21] = "AIX3";
+  a_os[22] = "AIX4";
+  a_os[23] = "AIX5";
+  a_os[24] = "AIX";
+  a_os[25] = "SCO";
+  a_os[26] = "UnixWare";
+  a_os[27] = "Mpras";
+  a_os[28] = "Reliant";
+  a_os[29] = "Dec";
+  a_os[30] = "Sinix";
+  a_os[31] = "Unix";  
+  alen = 32;
+  
+  for (i=0;i<alen;i=i+1) begin
+    if (InString(browserstr,a_os[i])>0) then begin
+      OSName = "Unix";
+      if (a_os!="Unix") then begin
+        OSVersion = a_os[i];
+      end;
+      goto LRecogniseOS;
+    end;
+  end;
+
+  a_os[0] = "Ubuntu";
+  a_os[1] = "Kubuntu";
+  a_os[2] = "Xubuntu";
+  a_os[3] = "Mepis";
+  a_os[4] = "Xandros";
+  a_os[5] = "Linspire";
+  a_os[6] = "Winspire";
+  a_os[7] = "Sidux";
+  a_os[8] = "Kanotix";
+  a_os[9] = "Debian";
+  a_os[10] = "OpenSuSE";
+  a_os[11] = "SuSE";
+  a_os[12] = "Fedora";
+  a_os[13] = "Redhat";
+  a_os[14] = "Slackware";
+  a_os[15] = "Slax";
+  a_os[16] = "Mandrake";
+  a_os[17] = "Mandriva";
+  a_os[18] = "Gentoo";
+  a_os[19] = "Sabayon";
+  a_os[20] = "Linux";
+  alen = 21;
+
+  for (i=0;i<alen;i=i+1) begin
+    if (InString(browserstr,a_os[i])>0) then begin
+      OSName = "Linux";
+      if (a_os!="Linux") then begin
+        OSVersion = a_os[i];
+      end;
+      goto LRecogniseOS;
+    end;
+  end;
+  
+LRecogniseOS:;
+  if (OSName=="win") then begin OSName = "Windows"; end;
+  if (OSName=="nt") then begin OSName = "Windows NT"; end;
+  if (OSName=="mac") then begin
+    if (OSVersion=="10") then begin
+      OSName = "MacOSX";
+    end else begin
+      OSName = "Macintosh";
+    end;
+  end;
+  return;
+end;
+
+global
+function string 255 GetBrowserOperatingSystem()
+begin
+  string 255 res,tstr;
+  
+  DetectBrowserOS(res,tstr);
+  
+  GetBrowserOperatingSystem = res;
+  return;
+end;
+
+//SECTION: GENERAL TOOLS
+global
+procedure AddToSortedArray(string str,string str2,var array string arr,var array string arr2,var integer arrlen)
+begin
+  integer i;
+  string 255 c;
+  
+  arr[arrlen] = str;
+  arr2[arrlen] = str2;
+  arrlen = arrlen + 1;
+  i = arrlen-1;
+  while (i!=0) begin
+    if (arr[i]<arr[i-1]) then begin
+      c = arr[i-1];
+      arr[i-1] = arr[i];
+      arr[i] = c;
+
+      c = arr2[i-1];
+      arr2[i-1] = arr2[i];
+      arr2[i] = c;
+      i = i-1;
+    end else begin
+      i = 0;
+    end;
+  end;
+  return;
+end;
+
+// HAL rewrite of the C web-function 'mailsend'
+global
+updating procedure WebMailSend()
+begin
+  Boolean found,Accs;
+  LongInt mailnumber;
+  record MailVc Mailr,Mail2r;
+  row MailVc Mailrw;
+  LongInt sernumber;
+  string 255 tstr,backpage,confcode;
+  
+  Accs = false;
+  found = false;
+  sernumber = WebGetArg("sernr");
+  if (sernumber==-1) then begin sernumber = 0; end;
+  
+  mailnumber = WebGetArg("mailnumber");
+  Mailr.SerNr = mailnumber;
+  
+  if (mailnumber>0) then begin
+    found = true;
+    if (ReadFirstMain(Mailr,1,true)) then begin
+      Accs = true;
+      RecordCopy(Mail2r,Mailr);
+    end;
+  end else begin
+    Accs = true;
+    found = false;
+    RecordNew(Mailr);
+  end;
+  if (Accs) then begin
+    tstr = WebGetArg("from_field");
+    Mailrw.RowTyp = 1;
+    Mailrw.AddrCode = tstr;
+    ResolveMailboxNumber(Mailrw);
+    MatRowPut(Mailr,0,Mailrw);
+
+    tstr = WebGetArg("to_field");
+    Mailrw.RowTyp = 0;
+    Mailrw.AddrCode = tstr;
+    ResolveMailboxNumber(Mailrw);
+    MatRowPut(Mailr,1,Mailrw);
+
+    tstr = WebGetArg("cc_field");
+    if (nonblank(tstr)) then begin
+      Mailrw.RowTyp = 3;
+      Mailrw.AddrCode = tstr;
+      ResolveMailboxNumber(Mailrw);
+      MatRowPut(Mailr,2,Mailrw);
+    end;
+
+    Mailr.Header = WebGetArg("subject_field");
+    Mailr.SendFlag = 1;
+    
+    WebGetText("mail_body",Mailr);
+
+    confcode = WebGetArg("confcode");
+    backpage = WebGetArg("backpage");
+    if (blank(backpage)) then begin
+      backpage = "WebMailView.hal";
+    end;
+    if (InString(backpage,"?")>0) then begin
+      backpage = backpage & "&";
+    end else begin
+      backpage = backpage & "?";
+    end;
+    if (found) then begin
+      if (RecordUpdate(Mail2r,Mailr,false)) then begin end;
+    end else begin
+      if (RecordStore(Mailr,false)) then begin end;
+      mailnumber = Mailr.SerNr;
+    end;
+    
+    if (nonblank(WebGetArg("sessionid"))) then begin
+      backpage = backpage & "sessionid=" & WebGetArg("sessionid");
+    end;
+    backpage = backpage & "&sernr=" & sernumber;
+    backpage = backpage & "&mailnumber=" & mailnumber;
+    backpage = backpage & "&confcode=" & confcode;
+
+    RedirectToURL("/" & backpage);
+  end else begin
+    WebOutString("An error occurred. Please navigate back and try again.");
+  end;
+
+  return;
+end;
+
+//SECTION: FIELDS
+global
+procedure SetWebNGFieldProduct(string code)
+begin
+  transaction string 255 gWebNGFieldProduct;
+  
+  gWebNGFieldProduct = code;
+  return;
+end;
+
+global
+function string 255 GetWebNGFieldProduct()
+begin
+  transaction string 255 gWebNGFieldProduct;
+  
+  GetWebNGFieldProduct = gWebNGFieldProduct;
+  return;
+end;
+
+global
+function string 255 GetWebNGFieldProductName()
+begin
+  transaction string 255 gWebNGFieldProduct;
+  record WebNGProductVc WPr;
+  
+  WPr.Code = gWebNGFieldProduct;
+  if (ReadFirstMAin(WPr,1,true)) then begin
+    GetWebNGFieldProductName = WPr.Comment; //TODO: Get translated name
+  end;
+  return;
+end;
+
+global
+function Integer GetCountryDefaultCompanyNr(string Country)
+begin
+  Integer res,FirstCompanyNr;
+  record WebNGCompCountryVc WCCr;
+  Boolean TrHs;
+  
+  WCCr.Country = Country;
+  TrHs = true;
+  while (LoopKey("Country",WCCr,1,TrHs)) begin
+    if (WCCr.Country!=Country) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      if (FirstCompanyNr==0) then begin
+        FirstCompanyNr = WCCr.CompanyNr;
+      end;
+      if (WCCr.CountryDefault!=0) then begin
+        res = WCCr.CompanyNr;
+        TrHs = false;
+      end;
+    end;
+  end;
+  if (res==0) then begin
+    res = FirstCompanyNr;
+  end;
+  
+  GetCountryDefaultCompanyNr = res;
+  return;
+end;
+
+global
+function string 255 CurrentWebCurrency()
+begin
+  record CUVc CUr;
+  record WebNGCountryVc WCr;
+  string 255 outcurrency;
+  
+  if (LoginState==true) then begin
+    CUr.Code = CurrentCust;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      outcurrency = CUr.CurncyCode;
+    end;
+  end;
+  
+  if(Blank(outcurrency)) then begin
+    WCr.Code = ToolWebNGGetCountry;
+    if(ReadFirstMain(WCr,1,true)) then begin
+      outcurrency = WCr.CurncyCode;
+    end;
+  end;
+  
+  CurrentWebCurrency = outcurrency;
+  return;
+end;
+
+global
+procedure SessionAddToArray(string name,string text)
+begin
+  Integer cnt;
+  
+  cnt = StringToInt(GetSessionString(name & "cnt"));
+  PutSessionString(name & cnt,text);
+  cnt = cnt + 1;
+  PutSessionString(name & "cnt",cnt);
+  
+  return;
+end;
+
+global
+function Boolean SessionGetNextFromArray(string name,var string text,var Integer nr)
+begin
+  Boolean res;
+  Integer cnt;
+  
+  cnt = StringToInt(GetSessionString(name & "cnt"));
+  if (nr<cnt) then begin
+    text = GetSessionString(name & nr);
+    nr = nr + 1;
+    res = true;
+  end;
+  
+  SessionGetNextFromArray = res;
+  return;
+end;
+
+global
+procedure SessionClearArray(string name)
+begin
+  PutSessionString(name & "cnt","");
+  
+  return;
+end;
+
+global
+procedure FillArrayWithCClass(string ctype,var array string texts,var array string codes,var integer arrlen)
+begin
+  record CClassVc CClassr;
+  Boolean TrHs;
+  
+  arrlen = 0;
+  CClassr.CType = ctype;
+  TrHs = true;
+  while (LoopKey("CType",CClassr,1,TrHs)) begin
+    if (CClassr.CType!=ctype) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      texts[arrlen] = CClassr.Comment;
+      codes[arrlen] = CClassr.Code;
+      arrlen = arrlen + 1;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure FillArrayWithCustCat(var array string texts,var array string codes,var integer arrlen)
+begin
+  record CCatVc CCatr;
+  
+  arrlen = 0;
+  while (LoopMain(CCatr,1,true)) begin
+    texts[arrlen] = CCatr.Comment;
+    codes[arrlen] = CCatr.Code;
+    arrlen = arrlen + 1;
+  end;
+  return;
+end;
+
+global
+procedure FillArrayWithCountry(var array string texts,var array string codes,var integer arrlen)
+begin
+  record CountryVc Countryr;
+  row CountryVc Countryrw;
+  Integer i,cnt;
+  string 255 langcode,text,code;
+  
+  langcode = CurrentWebLang;
+  arrlen = 0;
+  while (LoopMain(Countryr,1,true)) begin
+    if (Countryr.ShowOnWeb!=0) then begin
+      text = Countryr.Comment;
+      code = Countryr.Code;
+      cnt = MatRowCnt(Countryr);
+      for (i=0;i<cnt;i=i+1) begin
+        MatRowGet(Countryr,i,Countryrw);
+        if (Countryrw.LangCode==langcode) then begin
+          text = Countryrw.Text;
+          i = cnt;
+        end;
+      end;
+      AddToSortedArray(text,code,texts,codes,arrlen);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure WebOutSubmit(string id,string class,string name,string value)
+begin
+  string 255 tstr;
+  
+  tstr = "<input type=""submit""";
+  if (nonblank(id)) then begin
+    tstr = tstr & " id=""" & id & """";
+  end;
+  if (nonblank(class)) then begin
+    tstr = tstr & " class=""" & class & """";
+  end;
+  if (nonblank(name)) then begin
+    tstr = tstr & " name=""" & name & """";
+  end;
+  if (nonblank(value)) then begin
+    tstr = tstr & " value=""" & value & """";
+  end;
+  tstr = tstr & " />";
+  WebOutStringFormatNL(tstr);
+  
+  return;
+end;
+
+global
+procedure ShowRedirectHtmlFromArea(area alink,boolean secure)
+begin
+  string 255 mlink,hostport;
+  transaction boolean gDontOutputHTMLDoctype;
+  area apre,amlink;
+
+  InsertAreaBeforeArea(alink,amlink);
+  if (FindStringInArea("http:",amlink)<0 and FindStringInArea("https:",amlink)<0) then begin
+    if (secure) then begin
+      AddTextToArea("https://",apre);
+    end else begin
+      AddTextToArea("http://",apre);
+    end;
+    AddTextToArea(GetWebHostAndPort(secure),apre);
+    InsertAreaBeforeArea(apre,amlink);
+  end;
+
+  if (gDontOutputHTMLDoctype==false) then begin
+    WebOutStringFormatNL("<!DOCTYPE html>");
+  end;
+  WebOutTagOpen("<html>");
+  WebOutTagOpen("<head>");
+  WebOutStringFormatNL("<title>302 Redirect</title>");
+  WebOutTagClose("</head>");
+  WebOutTagOpen("<body>");
+
+  WebOutStringFormat(ToolWebNGTranslateText(25417) & " "); //If your browser does not automatically redirect you in 5 seconds, please
+  WebOutStringFormat("<a href=""");
+  WebOutArea(amlink);
+  WebOutStringFormat(""">");
+  WebOutStringFormat(ToolWebNGTranslateText(25418)); //Click here
+  WebOutStringFormat("</a>");
+  WebOutTagClose("</body>");
+  WebOutTagClose("</html>");
+  SetHttpRedirectFromArea(amlink);
+  return;
+end;

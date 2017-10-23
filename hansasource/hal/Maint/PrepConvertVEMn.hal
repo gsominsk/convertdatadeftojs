@@ -1,0 +1,169 @@
+external procedure NextM4Number(string,var string);
+external function Boolean GetNextCustNr(var string);
+
+function Boolean CustomerExists(string cucode)
+BEGIN
+  Boolean res;
+  record CUVc CUr;
+  
+  CUr.Code = cucode;
+  res = ReadFirstMain(CUr,1,true);
+  CustomerExists = res;
+  RETURN;
+END;
+
+function Boolean ApplyGeneralRules(Integer flags0,string f2,record ConvVendBlock ConvVendRec,
+                                   string vecode,var string lastcunr,var Integer rownr)
+BEGIN
+  Boolean res;
+  row ConvVendBlock ConvVendrw;
+  string 20 temp
+
+  switch (flags0) begin
+    case 0: 
+      ConvVendrw.OldCode = vecode;
+      ConvVendrw.NewCode = lastcunr;
+      NextM4Number(lastcunr,temp);
+      lastcunr = temp;
+    case 1: 
+      ConvVendrw.OldCode = vecode;
+      ConvVendrw.NewCode = lastcunr;
+      NextM4Number(lastcunr,temp);
+      lastcunr = temp;
+    case 2: 
+      ConvVendrw.OldCode = vecode;
+      ConvVendrw.NewCode = f2 & vecode;      
+  end;
+  res = !CustomerExists(ConvVendrw.NewCode);
+  if (res) then begin
+    MatRowPut(ConvVendRec,rownr,ConvVendrw);
+    rownr = rownr + 1;
+  end;
+  ApplyGeneralRules = res;
+  RETURN;
+END;
+
+updating procedure CheckIfConvertAllowed(record RcVc RepSpec)//if changing this, You might want change ConvertVEMn as well
+BEGIN
+  record VEVc VEr;
+  record CUVc CUr;
+  Boolean TrHs,remainingf;
+  string 20 lastcunr;
+  record ConvVendBlock ConvVendRec;
+  row ConvVendBlock ConvVendrw;
+  Integer i,rwcnt,rownr;
+  string 1 lastch;
+  record SRBlock SRRec;
+
+  BlockLoad(SRRec);  
+  switch (RepSpec.flags[0]) begin//general rule
+    case 0: 
+      if (GetNextCustNr(lastcunr)) then begin end;
+    case 1: 
+      lastcunr = RepSpec.f1;
+      NextM4Number(RepSpec.f1,lastcunr);
+      if (blank(lastcunr)) then begin
+        goto LCheckIfConvertAllowed;
+      end;
+    case 2:
+      if (blank(RepSpec.f2)) then begin
+        goto LCheckIfConvertAllowed;
+      end; 
+  end;
+  BlockLoad(ConvVendRec);
+  rwcnt = MatRowCnt(ConvVendRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+//    MatRowDelete(ConvVendRec,i);
+//    i = 0;
+//    rwcnt = MatRowCnt(ConvVendRec);
+  end;
+  
+  TrHs = true;
+  while (LoopMain(VEr,1,TrHs)) begin
+    if (TrHs) then begin
+      remainingf = false;
+      CUr.Code = VEr.Code;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        if (CUr.VATNr!=VEr.VATNr) or blank(CUr.VATNr) or blank(VEr.VATNr) then begin
+          if (nonblank(VEr.VATNr)) then begin
+            CUr.VATNr = VEr.VATNr;
+            if (ReadFirstKey("VATNr",CUr,1,true)) then begin
+              goto LVEtoCU;
+            end;
+          end;
+          if (ApplyGeneralRules(RepSpec.flags[0],RepSpec.f2,ConvVendRec,VEr.Code,lastcunr,rownr)==false) then begin
+            goto LCheckIfConvertAllowed;
+          end;
+          remainingf = true;
+        end;
+        if ((CUr.VATNr==CUr.VATNr) and nonblank(CUr.VATNr) and nonblank(VEr.VATNr)) then begin
+          switch (RepSpec.flags[2]) begin
+            case 0:
+              ;//skip
+            case 1:
+              if (ApplyGeneralRules(RepSpec.flags[0],RepSpec.f2,ConvVendRec,VEr.Code,lastcunr,rownr)==false) then begin
+                goto LCheckIfConvertAllowed;
+              end;
+          end;
+          remainingf = true;          
+        end;
+      end else begin
+LVEtoCU:;      
+        if (nonblank(VEr.VATNr)) then begin
+          CUr.VATNr = VEr.VATNr;
+          if (ReadFirstKey("VATNr",CUr,1,true)) then begin
+            if (CUr.Code!=VEr.Code) then begin//just in case
+              switch (RepSpec.flags[1]) begin
+                case 0:              
+                  ConvVendrw.OldCode = VEr.Code;
+                  ConvVendrw.NewCode = CUr.Code;
+                  if (CustomerExists(ConvVendrw.NewCode)==false) then begin
+                    goto LCheckIfConvertAllowed;
+                  end else begin
+                    MatRowPut(ConvVendRec,rownr,ConvVendrw);
+                    rownr = rownr + 1;
+                  end;
+                case 1:
+                  if (ApplyGeneralRules(RepSpec.flags[0],RepSpec.f2,ConvVendRec,VEr.Code,lastcunr,rownr)==false) then begin
+                    goto LCheckIfConvertAllowed;
+                  end;                
+              end;
+              remainingf = true;
+            end;
+          end;
+        end;
+      end;
+      if (remainingf==false) then begin
+        if (RepSpec.flags[4]!=0) then begin
+          if (ApplyGeneralRules(RepSpec.flags[0],RepSpec.f2,ConvVendRec,VEr.Code,lastcunr,rownr)==false) then begin
+            goto LCheckIfConvertAllowed;
+          end;
+          remainingf = true;
+        end;
+      end;
+// I don't have the f3 field in my selection window.
+      if (remainingf==false) then begin
+        if (nonblank(RepSpec.f3)) then begin
+          ConvVendrw.OldCode = VEr.Code;
+          ConvVendrw.NewCode = RepSpec.f3 & VEr.Code;
+          if (CustomerExists(ConvVendrw.NewCode)==false) then begin
+//            goto LCheckIfConvertAllowed;
+          end else begin
+            MatRowPut(ConvVendRec,rownr,ConvVendrw);
+            rownr = rownr + 1;
+          end;
+        end;
+      end;
+    end;
+  end;
+  BlockStore(ConvVendRec);
+LCheckIfConvertAllowed:;  
+  RETURN;
+END;
+
+global
+updating procedure PrepConvertVEMn(record RcVc RepSpec)
+BEGIN
+  CheckIfConvertAllowed(RepSpec);
+  RETURN;
+END;

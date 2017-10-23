@@ -1,0 +1,1577 @@
+external function val CalculateDiscountPercentage2(val,val,val,Boolean);
+external function Integer InString2(string,string);
+external function val ValFromString(string,string,string);
+external function roundmode SetRoundModeD(Integer);
+remote function Boolean IVCashVc_PasteQuant(var record IVCashVc,Integer);
+remote procedure IVSumup(var record IVVc,Boolean);
+external procedure IVDClass_RefreshStringList(Integer,record IVVc);
+external procedure DisplayIVCashChange(record IVCashVc);
+external procedure SetPOSWindowDisplayAmount(string,val);
+remote procedure RestAccSumup(var record RestAccVc,string);
+external procedure RestAccDClass_RefreshStringList(Integer,record RestAccVc);
+external updating procedure ProceedAmendLineNPTSSClassExecute(Integer);
+remote procedure IVCashSumup(var record IVCashVc,Boolean);
+external procedure IVCashDClass_RefreshStringList(Integer,record IVCashVc);
+external procedure CalcPrice(val,val,val,var val,Integer);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure RoundRowSum(string,string,string,var val);
+remote procedure NPTSPaymentTClassSumup(Date,Array string,Array Integer,Array string,Array val,Integer,var val,var val);
+remote procedure CntNPTSPaymentCurrenciesRemote(string,var Array string,var Array string,var Array Integer,var Array string,var Integer);
+remote procedure NPTSCashPaymentonOpenTool(string,val,val,var Array string,var Array val,var Array val,var Integer);
+remote procedure RecalculateNPTSCashPaymentTool(record RcVc,Array string,
+                                        var Array val,var Array val,var Array val,var Array val,
+                                        Integer,
+                                        var val,var val,var val,var val);
+remote procedure CntPOSCurrencies(var Array string,var Array Boolean,var Integer);
+
+procedure RecalculateNPTSCashPayment(Integer wn,record RcVc RepSpec)
+begin
+  Array string 255 acrncy;
+  Array val acashreceived;
+  Array val achangegiven;
+  Array val aamountdue;
+  Array val achangedue;
+  Integer i,acrncnt;
+  val totb1changedue,totb1changegiven;
+  val totb1amountdue,totb1cashreceived;
+  Array Boolean achangecrncyf;
+  record SysFormatBlock SFb;
+
+  BlockLoad(SFb);
+  CntPOSCurrencies(acrncy,achangecrncyf,acrncnt);
+  for (i=0;i<acrncnt;i=i+1) begin
+    aamountdue[i] = StringToVal(GetWindowString(wn,"NPTSCashPaymentCashAmountDue" & i),M4Val);
+    acashreceived[i] = StringToVal(GetWindowString(wn,"NPTSCashPaymentCashReceived" & i),M4Val);
+        
+    achangedue[i] = StringToVal(GetWindowString(wn,"NPTSCashPaymentChangeDue" & i),M4Val);
+    achangegiven[i] = StringToVal(GetWindowString(wn,"NPTSCashPaymentChangeGiven" & i),M4Val);
+  end;
+
+  RecalculateNPTSCashPaymentTool(RepSpec,acrncy,acashreceived,achangegiven,aamountdue,achangedue,acrncnt,
+                                 totb1changedue,totb1changegiven,totb1amountdue,totb1cashreceived);
+
+  for (i=0;i<acrncnt;i=i+1) begin
+    PutWindowString(wn,"NPTSCashPaymentCashReceived" & i,ValToString(acashreceived[i],M4Val,ThousandSeparator,DecimalSeparator,0));
+    PutWindowString(wn,"NPTSCashPaymentChangeGiven" & i,ValToString(achangegiven[i],M4Val,ThousandSeparator,DecimalSeparator,0));
+
+    PutWindowString(wn,"NPTSCashPaymentCashAmountDue" & i,ValToString(aamountdue[i],M4Val,ThousandSeparator,DecimalSeparator,0));
+    PutWindowString(wn,"NPTSCashPaymentChangeDue" & i,ValToString(achangedue[i],M4Val,ThousandSeparator,DecimalSeparator,0));
+  end;
+  
+  
+  PutWindowString(wn,"NPTSCashPaymentChangeDueTotal",totb1changedue);
+  PutWindowString(wn,"NPTSCashPaymentChangeGivenTotal",totb1changegiven);
+
+  PutWindowString(wn,"NPTSCashPaymentCashAmountDueTotal",totb1amountdue);
+  PutWindowString(wn,"NPTSCashPaymentCashReceivedTotal",totb1cashreceived);
+  return;
+end;
+
+global
+function Boolean NPTSCashPaymentTClassAfterEditField(Integer wn,string fieldname,Integer fn,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  
+  res = false;
+
+  if (Left(fieldname,len("NPTSCashPaymentChangeGiven"))=="NPTSCashPaymentChangeGiven") then begin
+    GetWindowRecord(wn,RepSpec);
+    RecalculateNPTSCashPayment(wn,RepSpec);
+    PutWindowRecord(wn,RepSpec);
+    res = true;
+  end;
+  if (Left(fieldname,len("NPTSCashPaymentCashReceived"))=="NPTSCashPaymentCashReceived") then begin
+    GetWindowRecord(wn,RepSpec);
+    RecalculateNPTSCashPayment(wn,RepSpec);
+    PutWindowRecord(wn,RepSpec);
+    res = true;
+  end;
+  NPTSCashPaymentTClassAfterEditField = res;
+  return;
+end;
+
+global
+function Boolean NPTSCashPaymentTClassOnEnterKey(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  Integer nr;
+  Array Boolean achangecrncyf;
+  Array string 255 acrncy;
+  Integer acrncnt;
+  val amountduetotal,changedue;
+
+  if (Left(fieldname,len("NPTSCashPaymentChangeGiven"))=="NPTSCashPaymentChangeGiven") then begin
+    CntPOSCurrencies(acrncy,achangecrncyf,acrncnt);
+    nr = StringToInt(Right(fieldname,len(fieldname)-len("NPTSCashPaymentChangeGiven")));
+    nr = nr + 1;
+    GetWindowRecord(wn,RepSpec);
+    if (nr<acrncnt) then begin
+      WindowFieldGoto(wn,RepSpec,-1,"NPTSCashPaymentChangeGiven" & nr,true);
+    end;
+    amountduetotal = StringToVal(GetWindowString(wn,"NPTSCashPaymentCashAmountDueTotal"),M4Val);
+    changedue = StringToVal(GetWindowString(wn,"NPTSCashPaymentChangeDueTotal"),M4Val);
+
+    if (RepSpec.vals1>=0) then begin
+      if (amountduetotal<=0) and (changedue<=0) then begin
+        SelectButton(wn,"ProceedNPTSCashPaymentTClass");
+      end;
+    end else begin
+      if (amountduetotal>=0) and (changedue>=0) then begin
+        SelectButton(wn,"ProceedNPTSCashPaymentTClass");
+      end;
+    end;
+    res = false;
+  end;
+  if (Left(fieldname,len("NPTSCashPaymentCashReceived"))=="NPTSCashPaymentCashReceived") then begin
+    CntPOSCurrencies(acrncy,achangecrncyf,acrncnt);
+    nr = StringToInt(Right(fieldname,len(fieldname)-len("NPTSCashPaymentCashReceived")));
+    nr = nr + 1;
+    GetWindowRecord(wn,RepSpec);
+    if (nr<acrncnt) then begin
+      WindowFieldGoto(wn,RepSpec,-1,"NPTSCashPaymentCashReceived" & nr,true);
+    end else begin
+      WindowFieldGoto(wn,RepSpec,-1,"NPTSCashPaymentChangeGiven" & 0,true);
+    end;
+    amountduetotal = StringToVal(GetWindowString(wn,"NPTSCashPaymentCashAmountDueTotal"),M4Val);
+    changedue = StringToVal(GetWindowString(wn,"NPTSCashPaymentChangeDueTotal"),M4Val);
+    if (RepSpec.vals1>=0) then begin
+      if (amountduetotal<=0) and (changedue<=0) then begin
+        SelectButton(wn,"ProceedNPTSCashPaymentTClass");
+      end;
+    end else begin
+      if (amountduetotal>=0) and (changedue>=0) then begin
+        SelectButton(wn,"ProceedNPTSCashPaymentTClass");
+      end;
+    end;
+    res = false;
+  end;
+  NPTSCashPaymentTClassOnEnterKey = res;
+  return;
+end;
+
+global
+function Boolean NPTSCashPaymentTClassOnOpenWindow(integer wn)
+begin
+  record RcVc RepSpec;
+  Array string 255 acrncy;
+  Array val acrncyval;
+  Array val acrncytotaldue;
+  Integer i,acrncnt,rwcnt;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+  Integer mwn;
+  vector val vcrncyamount;
+  val Sum4;
+  record IVVc IVr;
+  row IVVc IVrw;
+
+  GetWindowRecord(wn, RepSpec);
+   
+  mwn  = MotherWindow(wn);
+  if (mwn>0) then begin
+    switch (GetWindowFileName(mwn)) begin
+      case "IVCashVc":
+        GetWindowRecord(mwn,IVCashr);
+        RepSpec.vals1 = IVCashr.Sum4;
+        RepSpec.CurncyCode = IVCashr.CurncyCode;
+        NPTSCashPaymentonOpenTool(IVCashr.CurncyCode,IVCashr.Sum4,RepSpec.vals0,acrncy,acrncytotaldue,acrncyval,acrncnt);
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          switch (IVCashrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+//              vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+//              vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+//              vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+//              vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+          end;
+        end;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          switch (IVCashrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+/*            
+              MatRowDelete(IVCashr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVCashr);
+*/              
+            case kInvoiceRowTypeCashPayment:
+              MatRowDelete(IVCashr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVCashr);
+/*
+pls dont change this when merging              
+            case kInvoiceRowTypeCreditCardPayment:
+              if (blank(IVCashrw.AuthorizationCode)) then begin
+                MatRowDelete(IVCashr,i);
+                i = i - 1;
+                rwcnt = MatRowCnt(IVCashr);
+              end;
+            case kInvoiceRowTypeChequePayment:
+              MatRowDelete(IVCashr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVCashr);
+            case kInvoiceRowTypeGiftVoucherPayment:
+              if (IVCashrw.GCNr<=0) then begin
+                MatRowDelete(IVCashr,i);
+                i = i - 1;
+                rwcnt = MatRowCnt(IVCashr);
+              end;
+*/          
+          end;
+        end;
+        if (mwn>0) then begin
+          IVCashSumup(IVCashr,true);
+          PutWindowRecord(mwn,IVCashr);
+          IVCashDClass_RefreshStringList(mwn,IVCashr);
+          DisplayIVCashChange(IVCashr);
+          SetPOSWindowDisplayAmount(USetStr(27350),IVCashr.Sum4);
+          Sum4 = IVCashr.Sum4;
+        end;
+      case "IVVc":
+        GetWindowRecord(mwn,IVr);
+        RepSpec.vals1 = IVr.Sum4;
+
+        NPTSCashPaymentonOpenTool(IVr.CurncyCode,IVr.Sum4,RepSpec.vals0,acrncy,acrncytotaldue,acrncyval,acrncnt);
+        rwcnt = MatRowCnt(IVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          switch (IVrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+//              vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+//              vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+//              vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+//              vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+          end;
+        end;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          switch (IVrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+/*            
+              MatRowDelete(IVr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVr);
+*/              
+            case kInvoiceRowTypeCashPayment:
+              MatRowDelete(IVr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVr);
+/*
+pls dont change this when merging              
+            case kInvoiceRowTypeCreditCardPayment:
+              if (blank(IVrw.AuthorizationCode)) then begin
+                MatRowDelete(IVr,i);
+                i = i - 1;
+                rwcnt = MatRowCnt(IVr);
+              end;
+            case kInvoiceRowTypeChequePayment:
+              MatRowDelete(IVr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVr);
+            case kInvoiceRowTypeGiftVoucherPayment:
+              if (IVrw.GCNr<=0) then begin
+                MatRowDelete(IVr,i);
+                i = i - 1;
+                rwcnt = MatRowCnt(IVr);
+              end;
+*/          
+          end;
+        end;
+        if (mwn>0) then begin
+          IVSumup(IVr,true);
+          PutWindowRecord(mwn,IVr);
+          IVDClass_RefreshStringList(mwn,IVr);
+//          DisplayIVCashChange(IVr);
+          SetPOSWindowDisplayAmount(USetStr(27350),IVr.Sum4);
+          Sum4 = IVr.Sum4;
+        end;
+      case "RestAccVc":
+        GetWindowRecord(mwn,RestAccr);
+        RepSpec.vals1 = RestAccr.Sum4;
+        NPTSCashPaymentonOpenTool("",RestAccr.Sum4,RepSpec.vals0,acrncy,acrncytotaldue,acrncyval,acrncnt);
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          switch (RestAccrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+//              vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+//              vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+//              vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+//              vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+          end;
+        end;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          switch (RestAccrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              MatRowDelete(RestAccr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(RestAccr);
+            case kInvoiceRowTypeCashPayment:
+              MatRowDelete(RestAccr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(RestAccr);
+            case kInvoiceRowTypeCreditCardPayment:
+              MatRowDelete(RestAccr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(RestAccr);
+            case kInvoiceRowTypeChequePayment:
+              MatRowDelete(RestAccr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(RestAccr);
+            case kInvoiceRowTypeGiftVoucherPayment:
+              MatRowDelete(RestAccr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(RestAccr);
+          end;
+        end;
+        if (mwn>0) then begin
+          RestAccSumup(RestAccr,"");
+          PutWindowRecord(mwn,RestAccr);
+          RestAccDClass_RefreshStringList(mwn,RestAccr);
+//          DisplayRestAccChange(RestAccr);
+          SetPOSWindowDisplayAmount(USetStr(27350),RestAccr.Sum4);
+          Sum4 = RestAccr.Sum4;
+        end;
+    end;
+  end;
+  
+/* same as above  
+  switch (GetWindowFileName(mwn)) begin
+    case "IVCashVc":
+      RepSpec.vals1 = IVCashr.Sum4;
+      
+      rwcnt = MatRowCnt(IVCashr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVCashr,i,IVCashrw);
+        switch (IVCashrw.stp) begin
+          case kInvoiceRowTypeLoyaltyPointsPayment:
+    //        vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+          case kInvoiceRowTypeCashPayment:
+            vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+          case kInvoiceRowTypeCreditCardPayment:
+    //        vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+          case kInvoiceRowTypeChequePayment:
+    //        vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+          case kInvoiceRowTypeGiftVoucherPayment:
+    //        vcrncyamount[IVCashrw.CurncyCode] = vcrncyamount[IVCashrw.CurncyCode] + IVCashrw.Sum;
+        end;
+      end;
+      
+      // why do you delete all payment rows? customer can pay partially with gift voucher and rest with cash
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVCashr,i,IVCashrw);
+        switch (IVCashrw.stp) begin
+          case kInvoiceRowTypeLoyaltyPointsPayment:
+    //        MatRowDelete(IVCashr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(IVCashr);
+          case kInvoiceRowTypeCashPayment:
+            MatRowDelete(IVCashr,i);
+            i = i - 1;
+            rwcnt = MatRowCnt(IVCashr);
+          case kInvoiceRowTypeChequePayment:
+    //        MatRowDelete(IVCashr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(IVCashr);
+          case kInvoiceRowTypeGiftVoucherPayment:
+    //        MatRowDelete(IVCashr,i);
+    //        i = i - 1;
+     //       rwcnt = MatRowCnt(IVCashr);
+    //      case kInvoiceRowTypeCreditCardPayment:
+    //        MatRowDelete(IVCashr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(IVCashr);
+        end;
+      end;
+      if (mwn>0) then begin
+        IVCashSumup(IVCashr,true);
+        PutWindowRecord(mwn,IVCashr);
+        IVCashDClass_RefreshStringList(mwn,IVCashr);
+        SetPOSWindowDisplayAmount(USetStr(27350),IVCashr.Sum4);
+      end;
+      Sum4 = IVCashr.Sum4;
+    case "IVVc":
+      RepSpec.vals1 = IVr.Sum4;
+      
+      rwcnt = MatRowCnt(IVr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        switch (IVrw.stp) begin
+          case kInvoiceRowTypeLoyaltyPointsPayment:
+    //        vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+          case kInvoiceRowTypeCashPayment:
+            vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+          case kInvoiceRowTypeCreditCardPayment:
+    //        vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+          case kInvoiceRowTypeChequePayment:
+    //        vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+          case kInvoiceRowTypeGiftVoucherPayment:
+    //        vcrncyamount[IVrw.CurncyCode] = vcrncyamount[IVrw.CurncyCode] + IVrw.Sum;
+        end;
+      end;
+      
+      // why do you delete all payment rows? customer can pay partially with gift voucher and rest with cash
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        switch (IVrw.stp) begin
+          case kInvoiceRowTypeLoyaltyPointsPayment:
+    //        MatRowDelete(IVr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(IVr);
+          case kInvoiceRowTypeCashPayment:
+            MatRowDelete(IVr,i);
+            i = i - 1;
+            rwcnt = MatRowCnt(IVr);
+          case kInvoiceRowTypeChequePayment:
+    //        MatRowDelete(IVr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(IVr);
+          case kInvoiceRowTypeGiftVoucherPayment:
+    //        MatRowDelete(IVr,i);
+    //        i = i - 1;
+     //       rwcnt = MatRowCnt(IVr);
+    //      case kInvoiceRowTypeCreditCardPayment:
+    //        MatRowDelete(IVr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(IVr);
+        end;
+      end;
+      if (mwn>0) then begin
+        IVSumup(IVr,true);
+        PutWindowRecord(mwn,IVr);
+        IVDClass_RefreshStringList(mwn,IVr);
+        SetPOSWindowDisplayAmount(USetStr(27350),IVr.Sum4);
+      end;
+      Sum4 = IVr.Sum4;
+    case "RestAccVc":
+      RepSpec.vals1 = RestAccr.Sum4;
+      
+      rwcnt = MatRowCnt(RestAccr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(RestAccr,i,RestAccrw);
+        switch (RestAccrw.stp) begin
+          case kInvoiceRowTypeLoyaltyPointsPayment:
+    //        vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+          case kInvoiceRowTypeCashPayment:
+            vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+          case kInvoiceRowTypeCreditCardPayment:
+    //        vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+          case kInvoiceRowTypeChequePayment:
+    //        vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+          case kInvoiceRowTypeGiftVoucherPayment:
+    //        vcrncyamount[RestAccrw.CurncyCode] = vcrncyamount[RestAccrw.CurncyCode] + RestAccrw.Sum;
+        end;
+      end;
+      
+      // why do you delete all payment rows? customer can pay partially with gift voucher and rest with cash
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(RestAccr,i,RestAccrw);
+        switch (RestAccrw.stp) begin
+          case kInvoiceRowTypeLoyaltyPointsPayment:
+    //        MatRowDelete(RestAccr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(RestAccr);
+          case kInvoiceRowTypeCashPayment:
+            MatRowDelete(RestAccr,i);
+            i = i - 1;
+            rwcnt = MatRowCnt(RestAccr);
+          case kInvoiceRowTypeChequePayment:
+    //        MatRowDelete(RestAccr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(RestAccr);
+          case kInvoiceRowTypeGiftVoucherPayment:
+    //        MatRowDelete(RestAccr,i);
+    //        i = i - 1;
+     //       rwcnt = MatRowCnt(RestAccr);
+    //      case kInvoiceRowTypeCreditCardPayment:
+    //        MatRowDelete(RestAccr,i);
+    //        i = i - 1;
+    //        rwcnt = MatRowCnt(RestAccr);
+        end;
+      end;
+      if (mwn>0) then begin
+        RestAccSumup(RestAccr,true);
+        PutWindowRecord(mwn,RestAccr);
+        RestAccDClass_RefreshStringList(mwn,RestAccr);
+        SetPOSWindowDisplayAmount(USetStr(27350),RestAccr.Sum4);
+      end;
+      Sum4 = RestAccr.Sum4;
+  end;
+*/
+
+  for (i=0;i<acrncnt;i=i+1) begin
+    PutWindowString(wn,"NPTSCashPaymentCurrency" & i,acrncy[i]);
+    PutWindowString(wn,"NPTSCashPaymentTotalDue" & i,acrncytotaldue[i]);
+    PutWindowString(wn,"NPTSCashPaymentCashReceived" & i,vcrncyamount[acrncy[i]]);
+    PutWindowString(wn,"NPTSCashPaymentCashAmountDue" & i,acrncyval[i]);
+    if (acrncyval[i]>0) then begin
+      PutWindowString(wn,"NPTSCashPaymentChangeDue" & i,0.00);
+    end else begin
+      PutWindowString(wn,"NPTSCashPaymentChangeDue" & i,-acrncyval[i]);
+    end;
+  end;  
+  if (Sum4>0) then begin
+    if (RepSpec.vals0<0) then begin
+      PutWindowString(wn,"NPTSCashPaymentChangeDueTotal",0.00);
+    end else begin
+      PutWindowString(wn,"NPTSCashPaymentChangeDueTotal",RepSpec.vals0);
+    end;
+    PutWindowString(wn,"NPTSCashPaymentCashAmountDueTotal",-RepSpec.vals0);
+  end else begin
+    if (RepSpec.vals0>0) then begin
+      PutWindowString(wn,"NPTSCashPaymentChangeDueTotal",0.00);
+    end else begin
+      PutWindowString(wn,"NPTSCashPaymentChangeDueTotal",RepSpec.vals0);
+    end;
+    PutWindowString(wn,"NPTSCashPaymentCashAmountDueTotal",RepSpec.vals0);
+  end;
+  PutWindowRecord(wn, RepSpec);
+//  WindowFieldGoto(wn,RepSpec,-1,"NPTSCashPaymentChangeGiven0",false); 
+  NPTSCashPaymentTClassOnOpenWindow = true;
+  return;
+end;
+
+global
+function Boolean NPTSPaymentTClassOnOpenWindow(integer wn)
+begin
+  record RcVc RepSpec;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record IVVc IVr;
+  row IVVc IVrw;
+  Integer mwn;
+  record LocalMachineBlock LMb;
+  Integer i,rwcnt;
+  Array string 255 acrncy,alabel,apaymentmode;
+  Array Integer apaymenttype;
+  Integer acrncnt;
+  vector string 255 vpaymodeamountauth;
+  vector val vpaymodeamount;
+  val received;
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+
+  BlockLoad(LMb);
+  mwn  = MotherWindow(wn);
+  if (mwn>0) then begin
+    switch (GetWindowFileName(mwn)) begin
+      case "IVCashVc":
+        GetWindowRecord(mwn,IVCashr);
+        CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          switch (IVCashrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              vpaymodeamount[IVCashrw.PayMode] = vpaymodeamount[IVCashrw.PayMode] + IVCashrw.Sum;
+              received = received + IVCashrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vpaymodeamount[IVCashrw.PayMode] = vpaymodeamount[IVCashrw.PayMode] + IVCashrw.Sum;
+              received = received + IVCashrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+              vpaymodeamount[IVCashrw.PayMode] = vpaymodeamount[IVCashrw.PayMode] + IVCashrw.Sum;
+              vpaymodeamountauth[IVCashrw.PayMode] = IVCashrw.AuthorizationCode;
+              received = received + IVCashrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+              vpaymodeamount[IVCashrw.PayMode] = vpaymodeamount[IVCashrw.PayMode] + IVCashrw.Sum;
+              received = received + IVCashrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+              vpaymodeamount[IVCashrw.PayMode] = vpaymodeamount[IVCashrw.PayMode] + IVCashrw.Sum;
+              received = received + IVCashrw.Sum;
+          end;
+        end;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          switch (IVCashrw.stp) begin
+//            case kInvoiceRowTypeLoyaltyPointsPayment:
+//              MatRowDelete(IVCashr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVCashr);
+            case kInvoiceRowTypeCashPayment:
+              MatRowDelete(IVCashr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVCashr);
+//            case kInvoiceRowTypeCreditCardPayment:
+//              MatRowDelete(IVCashr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVCashr);
+//            case kInvoiceRowTypeChequePayment:
+//              MatRowDelete(IVCashr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVCashr);
+//            case kInvoiceRowTypeGiftVoucherPayment:
+//              MatRowDelete(IVCashr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVCashr);
+          end;
+        end;
+        IVCashSumup(IVCashr,true);
+        PutWindowRecord(mwn,IVCashr);
+        IVCashDClass_RefreshStringList(mwn,IVCashr);
+        SetPOSWindowDisplayAmount(USetStr(27350),IVCashr.Sum4);
+      case "IVVc":
+        GetWindowRecord(mwn,IVr);
+        CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+
+        rwcnt = MatRowCnt(IVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          switch (IVrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              vpaymodeamount[IVrw.PayMode] = vpaymodeamount[IVrw.PayMode] + IVrw.Sum;
+              received = received + IVrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vpaymodeamount[IVrw.PayMode] = vpaymodeamount[IVrw.PayMode] + IVrw.Sum;
+              received = received + IVrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+              vpaymodeamount[IVrw.PayMode] = vpaymodeamount[IVrw.PayMode] + IVrw.Sum;
+              vpaymodeamountauth[IVrw.PayMode] = IVrw.AuthorizationCode;
+              received = received + IVrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+              vpaymodeamount[IVrw.PayMode] = vpaymodeamount[IVrw.PayMode] + IVrw.Sum;
+              received = received + IVrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+              vpaymodeamount[IVrw.PayMode] = vpaymodeamount[IVrw.PayMode] + IVrw.Sum;
+              received = received + IVrw.Sum;
+          end;
+        end;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          switch (IVrw.stp) begin
+//            case kInvoiceRowTypeLoyaltyPointsPayment:
+//              MatRowDelete(IVr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVr);
+            case kInvoiceRowTypeCashPayment:
+              MatRowDelete(IVr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(IVr);
+//            case kInvoiceRowTypeCreditCardPayment:
+//              MatRowDelete(IVr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVr);
+//            case kInvoiceRowTypeChequePayment:
+//              MatRowDelete(IVr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVr);
+//            case kInvoiceRowTypeGiftVoucherPayment:
+//              MatRowDelete(IVr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(IVr);
+          end;
+        end;
+        IVSumup(IVr,true);
+        PutWindowRecord(mwn,IVr);
+        IVDClass_RefreshStringList(mwn,IVr);
+        SetPOSWindowDisplayAmount(USetStr(27350),IVr.Sum4);
+      case "RestAccVc":
+        GetWindowRecord(mwn,RestAccr);
+        CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          switch (RestAccrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              vpaymodeamount[RestAccrw.PayMode] = vpaymodeamount[RestAccrw.PayMode] + RestAccrw.Sum;
+              received = received + RestAccrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vpaymodeamount[RestAccrw.PayMode] = vpaymodeamount[RestAccrw.PayMode] + RestAccrw.Sum;
+              received = received + RestAccrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+              vpaymodeamount[RestAccrw.PayMode] = vpaymodeamount[RestAccrw.PayMode] + RestAccrw.Sum;
+              received = received + RestAccrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+              vpaymodeamount[RestAccrw.PayMode] = vpaymodeamount[RestAccrw.PayMode] + RestAccrw.Sum;
+              received = received + RestAccrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+              vpaymodeamount[RestAccrw.PayMode] = vpaymodeamount[RestAccrw.PayMode] + RestAccrw.Sum;
+              received = received + RestAccrw.Sum;
+          end;
+        end;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          switch (RestAccrw.stp) begin
+//            case kInvoiceRowTypeLoyaltyPointsPayment:
+//              MatRowDelete(RestAccr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(RestAccr);
+            case kInvoiceRowTypeCashPayment:
+              MatRowDelete(RestAccr,i);
+              i = i - 1;
+              rwcnt = MatRowCnt(RestAccr);
+//            case kInvoiceRowTypeCreditCardPayment:
+//              MatRowDelete(RestAccr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(RestAccr);
+//            case kInvoiceRowTypeChequePayment:
+//              MatRowDelete(RestAccr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(RestAccr);
+//            case kInvoiceRowTypeGiftVoucherPayment:
+//              MatRowDelete(RestAccr,i);
+//              i = i - 1;
+//              rwcnt = MatRowCnt(RestAccr);
+          end;
+        end;
+        RestAccSumup(RestAccr,"");
+        PutWindowRecord(mwn,RestAccr);
+        RestAccDClass_RefreshStringList(mwn,RestAccr);
+        SetPOSWindowDisplayAmount(USetStr(27350),RestAccr.Sum4);
+    end;
+  end;
+  GetWindowRecord(wn,RepSpec);  
+  PutWindowString(wn,"NPTSPaymentTClassTotalDue",RepSpec.vals1);
+  for (i=0;i<acrncnt;i=i+1) begin
+    switch (apaymenttype[i]) begin
+      case kInvoiceRowTypeChequePayment:
+        PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+        PutWindowString(wn,"NPTSPaymentTClassPaymentType" & apaymentmode[i],apaymenttype[i]);
+      case kInvoiceRowTypeGiftVoucherPayment:
+        PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+      otherwise
+        PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+        PutWindowString(wn,"NPTSPaymentTClassPaymentType" & apaymentmode[i],apaymenttype[i]);
+        PutWindowString(wn,"NPTSPaymentTClassAuthorizationCode" & apaymentmode[i],vpaymodeamountauth[apaymentmode[i]]);
+    end;
+  end;
+  PutWindowRecord(wn, RepSpec);
+  PutWindowString(wn,"NPTSPaymentTClassBase1ReceivedAmount",received);
+  PutWindowString(wn,"NPTSPaymentTClassAmountDue",RepSpec.vals1-received);
+  if (RepSpec.vals0<0) then begin
+    RepSpec.vals0 = 0;
+  end;
+  PutWindowString(wn,"NPTSPaymentTClassBase1ChangeAmount",RepSpec.vals0);
+  NPTSPaymentTClassOnOpenWindow = true;
+  return;
+end;
+
+global
+function Boolean NPTSPaymentTClassAfterEditField(Integer wn,string fieldname,Integer fn,Integer rownr,Integer changed)
+begin
+  Boolean res,testf;
+  record RcVc RepSpec;
+  Array string 255 acrncy,alabel,apaymentmode;
+  Array Integer apaymenttype;
+  Array val apaymentv;
+  Integer i,acrncnt;
+  record LocalMachineBlock LMb;
+  record IVCashVc IVCashr;
+  record IVVc IVr;
+  record RestAccVc RestAccr;
+  val received,v;
+  string 255 tstr;
+  val fr,to1,to2,br1,br2;
+  Date td;
+  Integer mwn;
+  val receivedcash,amountdue;
+  string 255 thsep;
+
+  res = false;
+//  if (changed!=0) then begin // Ugly fix, but changed is sometimes 0, even when it should be 1 - HRO
+    BlockLoad(LMb);
+    CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+    if ((Left(fieldname,len("NPTSPaymentTClassAmount"))=="NPTSPaymentTClassAmount") or
+        (Left(fieldname,len("NPTSPaymentTClassChequeAmount"))=="NPTSPaymentTClassChequeAmount") or
+        (Left(fieldname,len("NPTSPaymentTClassGVPAmount"))=="NPTSPaymentTClassGVPAmount")) then begin
+      GetWindowRecord(wn,RepSpec);
+      mwn = MotherWindow(wn);
+      if (mwn>0) then begin
+        switch (GetWindowFileName(mwn)) begin
+          case "IVCashVc":
+            GetWindowRecord(mwn,IVCashr);
+            td = IVCashr.TransDate;
+          case "IVVc":
+            GetWindowRecord(mwn,IVr);
+            td = IVr.TransDate;
+          case "RestAccVc":
+            GetWindowRecord(mwn,RestAccr);
+            td = RestAccr.TransDate;
+        end;
+      end;
+      if (blankdate(td)) begin
+        td = CurrentDate;
+      end;
+      for (i=0;i<acrncnt;i=i+1) begin
+        switch (apaymenttype[i]) begin
+          case kInvoiceRowTypeChequePayment:
+            tstr = GetWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i]);
+          case kInvoiceRowTypeGiftVoucherPayment:
+            tstr = GetWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i]);
+          otherwise
+            tstr = GetWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i]);
+        end;
+//        thsep = ThousandSeparator;
+//        if (InString2(tstr,thsep)==0) then begin
+//          thsep = "";
+//        end;
+        thsep = "";        
+        apaymentv[i] = ValFromString(tstr,DecimalSeparator,thsep);
+        switch (apaymenttype[i]) begin
+          case kInvoiceRowTypeChequePayment:
+            PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],ValToString(apaymentv[i],M4Val,thsep,DecimalSeparator,0));
+          case kInvoiceRowTypeGiftVoucherPayment:
+            PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],ValToString(apaymentv[i],M4Val,thsep,DecimalSeparator,0));
+          otherwise
+            if (GuiType==kGuiAndroid) then begin
+              PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],tstr);
+            end else begin
+              PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],ValToString(apaymentv[i],M4Val,thsep,DecimalSeparator,0));
+            end;
+        end;
+      end;
+      NPTSPaymentTClassSumup(td,acrncy,apaymenttype,apaymentmode,apaymentv,acrncnt,received,receivedcash);        
+            
+      testf = false;
+      if (RepSpec.vals1>=0) then begin
+        if ((received-receivedcash)>RepSpec.vals1) then begin testf = true; end;
+      end else begin
+        if ((received-receivedcash)<RepSpec.vals1) then begin testf = true; end;
+      end;
+      if (testf) then begin
+        for (i=0;i<acrncnt;i=i+1) begin
+          switch (apaymenttype[i]) begin
+            case kInvoiceRowTypeCashPayment:
+            otherwise
+              PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],ValToString(blankval,M4Val,thsep,DecimalSeparator,0));
+              PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],ValToString(blankval,M4Val,thsep,DecimalSeparator,0));
+              PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],ValToString(blankval,M4Val,thsep,DecimalSeparator,0));
+              MessageBox(24184,"");
+              goto LNPTSPaymentTClassAfterEditField;
+          end;
+        end;
+      end;
+
+      amountdue = RepSpec.vals1 - received;
+      if (amountdue<0) then begin amountdue = 0.00; end;
+      PutWindowString(wn,"NPTSPaymentTClassBase1ReceivedAmount",ValToString(received,M4Val,thsep,DecimalSeparator,0));
+      PutWindowString(wn,"NPTSPaymentTClassAmountDue",ValToString(amountdue,M4Val,thsep,DecimalSeparator,0));
+      switch (GetWindowFileName(mwn)) begin
+        case "IVCashVc":
+//          RepSpec.vals0 = IVCashr.RetValue + received;
+          RepSpec.vals0 = received - RepSpec.vals1;
+        case "IVVc":
+//          RepSpec.vals0 = IVr.RetValue + received;
+          RepSpec.vals0 = received - RepSpec.vals1;
+        case "RestAccVc":
+//          RepSpec.vals0 = RestAccr.RetValue + received;
+          RepSpec.vals0 = received - RepSpec.vals1;
+      end;
+      if (RepSpec.vals1>=0) then begin
+        if (RepSpec.vals0<0) then begin
+          RepSpec.vals0 = 0;
+        end;
+      end;
+      PutWindowString(wn,"NPTSPaymentTClassBase1ChangeAmount",RepSpec.vals0);
+      PutWindowRecord(wn,RepSpec);
+      res = true;
+    end;
+//  end;
+LNPTSPaymentTClassAfterEditField:;  
+  NPTSPaymentTClassAfterEditField = res;
+  return;
+end;
+
+global
+function Boolean NPTSPaymentTClassOnEnterKey(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res,selectbuttonf;
+  record RcVc RepSpec;
+  val received;
+  string 255 paymode,paytype;
+  record LocalMachineBlock LMb;
+
+  res = true;
+  GetWindowRecord(wn,RepSpec);
+  received = StringToVal(GetWindowString(wn,"NPTSPaymentTClassBase1ReceivedAmount"),M4Val);
+  selectbuttonf = true;  
+  if (Left(fieldname,len("NPTSPaymentTClassChequeAmount"))=="NPTSPaymentTClassChequeAmount") then begin
+    paymode = Right(fieldname,len(fieldname)-len("NPTSPaymentTClassChequeAmount"));
+    WindowFieldGoto(wn,RepSpec,-1,"NPTSPaymentTClassChequeNr" & paymode,true);
+    selectbuttonf = false;  
+  end;
+  if (Left(fieldname,len("NPTSPaymentTClassAmount"))=="NPTSPaymentTClassAmount") then begin
+    BlockLoad(LMb);
+    if (LMb.CCRequireAuthCode!=0) then begin
+      paymode = Right(fieldname,len(fieldname)-len("NPTSPaymentTClassAmount"));
+      paytype = GetWindowString(wn,"NPTSPaymentTClassPaymentType" & paymode);
+      switch (paytype) begin
+        case kInvoiceRowTypeCreditCardPayment:
+          WindowFieldGoto(wn,RepSpec,-1,"NPTSPaymentTClassAuthorizationCode" & paymode,true);
+          selectbuttonf = false;  
+      end;
+    end;
+  end;
+  if (RepSpec.vals1>=0) then begin
+    if (received<RepSpec.vals1) then begin selectbuttonf = false; end;
+  end else begin
+    if (received<RepSpec.vals1) then begin selectbuttonf = false; end;
+  end;
+  if (selectbuttonf) then begin
+    SelectButton(wn,"ProceedNPTSPaymentTClass");
+    res = false;
+  end;
+  NPTSPaymentTClassOnEnterKey = res;
+  return;
+end;
+
+global
+function Boolean NPTSPaymentBLayoutTClassAfterEditField(Integer wn,string fieldname,Integer fn,Integer rownr,Integer changed)
+begin
+  Boolean res,testf;
+  record RcVc RepSpec;
+  Array string 255 acrncy,alabel,apaymentmode;
+  Array Integer apaymenttype;
+  Array val apaymentv;
+  Integer i,acrncnt;
+  record LocalMachineBlock LMb;
+  record IVCashVc IVCashr;
+  record IVVc IVr;
+  record RestAccVc RestAccr;
+  val received,v;
+  string 255 tstr;
+  val fr,to1,to2,br1,br2;
+  Date td;
+  Integer mwn;
+  val receivedcash,amountdue;
+  string 255 thsep;
+  
+  BlockLoad(LMb);
+  CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+  if ((Left(fieldname,len("NPTSPaymentTClassAmount"))=="NPTSPaymentTClassAmount") or
+      (Left(fieldname,len("NPTSPaymentTClassChequeAmount"))=="NPTSPaymentTClassChequeAmount") or
+      (Left(fieldname,len("NPTSPaymentTClassGVPAmount"))=="NPTSPaymentTClassGVPAmount")) then begin
+    GetWindowRecord(wn,RepSpec);
+    mwn = MotherWindow(wn);
+    if (mwn>0) then begin
+      switch (GetWindowFileName(mwn)) begin
+        case "IVCashVc":
+          GetWindowRecord(mwn,IVCashr);
+          td = IVCashr.TransDate;
+        case "IVVc":
+          GetWindowRecord(mwn,IVr);
+          td = IVr.TransDate;
+        case "RestAccVc":
+          GetWindowRecord(mwn,RestAccr);
+          td = RestAccr.TransDate;
+      end;
+    end;
+    if (blankdate(td)) begin
+      td = CurrentDate;
+    end;
+    for (i=0;i<acrncnt;i=i+1) begin
+      switch (apaymenttype[i]) begin
+        case kInvoiceRowTypeChequePayment:
+          tstr = GetWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i]);
+        case kInvoiceRowTypeGiftVoucherPayment:
+          tstr = GetWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i]);
+        otherwise
+          tstr = GetWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i]);
+      end;
+//        thsep = ThousandSeparator;
+//        if (InString2(tstr,thsep)==0) then begin
+//          thsep = "";
+//        end;
+      thsep = "";        
+      apaymentv[i] = ValFromString(tstr,DecimalSeparator,thsep);
+      switch (apaymenttype[i]) begin
+        case kInvoiceRowTypeChequePayment:
+          PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],ValToString(apaymentv[i],M4Val,thsep,DecimalSeparator,0));
+        case kInvoiceRowTypeGiftVoucherPayment:
+          PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],ValToString(apaymentv[i],M4Val,thsep,DecimalSeparator,0));
+        otherwise
+          PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],ValToString(apaymentv[i],M4Val,thsep,DecimalSeparator,0));
+      end;
+    end;
+    NPTSPaymentTClassSumup(td,acrncy,apaymenttype,apaymentmode,apaymentv,acrncnt,received,receivedcash);        
+    
+    testf = false;
+    if (RepSpec.vals1>=0) then begin
+      if ((received-receivedcash)>RepSpec.vals1) then begin testf = true; end;
+    end else begin
+      if ((received-receivedcash)<RepSpec.vals1) then begin testf = true; end;
+    end;
+    if (testf) then begin
+      for (i=0;i<acrncnt;i=i+1) begin
+        switch (apaymenttype[i]) begin
+          case kInvoiceRowTypeCashPayment:
+          otherwise
+            PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],ValToString(blankval,M4Val,thsep,DecimalSeparator,0));
+            PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],ValToString(blankval,M4Val,thsep,DecimalSeparator,0));
+            PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],ValToString(blankval,M4Val,thsep,DecimalSeparator,0));
+            MessageBox(24184,"");
+            goto LNPTSPaymentBLayoutTClassAfterEditField;
+        end;
+      end;
+    end;
+    amountdue = RepSpec.vals1 - received;
+    if (amountdue<0) then begin amountdue = 0.00; end;
+    PutWindowString(wn,"NPTSPaymentTClassBase1ReceivedAmount",ValToString(received,M4Val,thsep,DecimalSeparator,0));
+    PutWindowString(wn,"NPTSPaymentTClassAmountDue",ValToString(amountdue,M4Val,thsep,DecimalSeparator,0));
+
+
+    switch (GetWindowFileName(mwn)) begin
+      case "IVCashVc":
+//          RepSpec.vals0 = IVCashr.RetValue + received;
+        RepSpec.vals0 = received - RepSpec.vals1;
+      case "IVVc":
+//          RepSpec.vals0 = IVr.RetValue + received;
+        RepSpec.vals0 = received - RepSpec.vals1;
+      case "RestAccVc":
+//          RepSpec.vals0 = RestAccr.RetValue + received;
+        RepSpec.vals0 = received - RepSpec.vals1;
+    end;
+    RepSpec.vals2 = RepSpec.vals1 - received;
+    if (RepSpec.vals1>=0) then begin
+      if (RepSpec.vals0<0) then begin
+        RepSpec.vals0 = 0;
+      end;
+      if (RepSpec.vals2<0) then begin
+        RepSpec.vals2 = 0;
+      end;
+    end else begin
+      if (RepSpec.vals0>0) then begin
+        RepSpec.vals0 = 0;
+      end;
+      if (RepSpec.vals2>0) then begin
+        RepSpec.vals2 = 0;
+      end;
+    end;
+    PutWindowString(wn,"NPTSPaymentTClassTotalDue",RepSpec.vals2);
+    PutWindowString(wn,"NPTSPaymentTClassBase1ChangeAmount",RepSpec.vals0);
+    PutWindowRecord(wn,RepSpec);
+    res = true;
+  end;
+LNPTSPaymentBLayoutTClassAfterEditField:;  
+  NPTSPaymentBLayoutTClassAfterEditField = res;
+  return;
+end;
+
+global
+function Boolean NPTSPaymentOneModeTClassAfterEditField(Integer wn,string fieldname,Integer fn,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  string 255 tstr;
+  val tendered,received;
+  Integer mwn;
+  record IVCashVc IVCr;
+  row IVCashVc IVCrw;
+  Integer i,rwcnt;
+  
+//  NPTSPaymentOneModeTClassAfterEditField = NPTSPaymentBLayoutTClassAfterEditField(wn,fieldname,fn,rownr,changed);
+  switch (fieldname) begin
+    case "NPTSPaymentTClassAmount":
+      GetWindowRecord(wn,RepSpec);
+      mwn  = MotherWindow(wn);
+      if (mwn>0) then begin
+        switch (GetWindowFileName(mwn)) begin
+          case "IVCashVc":
+            GetWindowRecord(mwn,IVCr);
+            rwcnt = MatRowCnt(IVCr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(IVCr,i,IVCrw);
+              switch (IVCrw.stp) begin
+                case kInvoiceRowTypeLoyaltyPointsPayment:
+                  received = received + IVCrw.Sum;
+                case kInvoiceRowTypeCashPayment:
+                  received = received + IVCrw.Sum;
+                case kInvoiceRowTypeCreditCardPayment:
+                  received = received + IVCrw.Sum;
+                case kInvoiceRowTypeChequePayment:
+                  received = received + IVCrw.Sum;
+                case kInvoiceRowTypeGiftVoucherPayment:
+                  received = received + IVCrw.Sum;
+              end;
+            end;
+        end;
+      end;
+
+
+
+      tstr = GetWindowString(wn,"NPTSPaymentTClassAmount");
+      tendered = ValFromString(tstr,DecimalSeparator,"");
+
+      RepSpec.vals2 = RepSpec.vals1 - tendered - received;
+      RepSpec.vals0 = (received + tendered) - RepSpec.vals1;
+
+
+      if (RepSpec.vals1>=0) then begin
+        if (RepSpec.vals0<0) then begin
+          RepSpec.vals0 = 0;
+        end;
+        if (RepSpec.vals2<0) then begin
+          RepSpec.vals2 = 0;
+        end;
+      end else begin
+        if (RepSpec.vals0>0) then begin
+          RepSpec.vals0 = 0;
+        end;
+        if (RepSpec.vals2>0) then begin
+          RepSpec.vals2 = 0;
+        end;
+      end;      
+
+      PutWindowString(wn,"NPTSPaymentTClassTotalDue",RepSpec.vals2);
+      PutWindowString(wn,"NPTSPaymentTClassBase1ChangeAmount",RepSpec.vals0);
+      PutWindowRecord(wn,RepSpec);
+  end;
+  NPTSPaymentOneModeTClassAfterEditField = res;
+  return;
+end;
+
+global
+procedure NPTSPaymentBLayout()
+begin
+  Integer wn;
+  record RcVc RepSpec;
+  string 255 tag;
+  
+  wn = CurWindow;
+  tag = PushButtonTag;
+  PutWindowString(wn,"NPTSPaymentBLayout",tag);
+  DeselectWindow(wn,true);
+  ReRunWindowDef(wn);
+  SelectWindow(wn);
+  return;
+end;
+
+global
+function Boolean NPTSPaymentBLayoutTClassOnOpenWindow(Integer wn)
+begin
+  record RcVc RepSpec;
+  record IVCashVc IVCr;
+  row IVCashVc IVCrw;
+  Integer mwn;
+  record LocalMachineBlock LMb;
+  Integer i,rwcnt;
+  Array string 255 acrncy,alabel,apaymentmode;
+  Array Integer apaymenttype;
+  Integer acrncnt;
+  vector string 255 vpaymodeamountauth;
+  vector val vpaymodeamount;
+  val received;
+
+  BlockLoad(LMb);
+  GetWindowRecord(wn,RepSpec);  
+  mwn  = MotherWindow(wn);
+  if (mwn>0) then begin
+    switch (GetWindowFileName(mwn)) begin
+      case "IVCashVc":
+        GetWindowRecord(mwn,IVCr);
+        RepSpec.vals1 = IVCr.Sum4;
+        CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+
+        rwcnt = MatRowCnt(IVCr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCr,i,IVCrw);
+          switch (IVCrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              vpaymodeamountauth[IVCrw.PayMode] = IVCrw.AuthorizationCode;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+          end;
+        end;
+        IVCashDClass_RefreshStringList(mwn,IVCr);
+        SetPOSWindowDisplayAmount(USetStr(27350),IVCr.Sum4);
+    end;
+  end;
+  RepSpec.vals1 = RepSpec.vals1 - received;
+  RepSpec.vals2 = RepSpec.vals1;
+  PutWindowString(wn,"NPTSPaymentTClassTotalDue",RepSpec.vals2);
+  if (RepSpec.vals0<0) then begin
+    RepSpec.vals0 = 0;
+  end;
+
+  PutWindowString(wn,"NPTSPaymentTClassBase1ChangeAmount",RepSpec.vals1);
+
+  for (i=0;i<acrncnt;i=i+1) begin
+    switch (apaymenttype[i]) begin
+      case kInvoiceRowTypeChequePayment:
+        PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+        PutWindowString(wn,"NPTSPaymentTClassPaymentType" & apaymentmode[i],apaymenttype[i]);
+      case kInvoiceRowTypeGiftVoucherPayment:
+        PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+      otherwise
+        PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+        PutWindowString(wn,"NPTSPaymentTClassPaymentType" & apaymentmode[i],apaymenttype[i]);
+        PutWindowString(wn,"NPTSPaymentTClassAuthorizationCode" & apaymentmode[i],vpaymodeamountauth[apaymentmode[i]]);
+    end;
+  end;
+  PutWindowRecord(wn,RepSpec);
+
+  PutWindowString(wn,"NPTSPaymentBLayout",apaymentmode[0] & "," & apaymenttype[0]);
+  NPTSPaymentBLayoutTClassOnOpenWindow = true;
+  return;
+end;
+
+global
+function Boolean NPTSPaymentOneModeTClassOnOpenWindow(Integer wn)
+begin
+  record RcVc RepSpec;
+  record IVCashVc IVCr;
+  row IVCashVc IVCrw;
+  Integer mwn;
+  record LocalMachineBlock LMb;
+  Integer i,rwcnt;
+  Array string 255 acrncy,alabel,apaymentmode;
+  Array Integer apaymenttype;
+  Integer acrncnt;
+  vector string 255 vpaymodeamountauth;
+  vector val vpaymodeamount;
+  val received;
+
+  BlockLoad(LMb);
+  GetWindowRecord(wn,RepSpec);  
+  mwn  = MotherWindow(wn);
+  if (mwn>0) then begin
+    switch (GetWindowFileName(mwn)) begin
+      case "IVCashVc":
+        GetWindowRecord(mwn,IVCr);
+        RepSpec.vals1 = IVCr.Sum4;
+        CntNPTSPaymentCurrenciesRemote(LMb.LocalMachineCode,alabel,acrncy,apaymenttype,apaymentmode,acrncnt);
+        rwcnt = MatRowCnt(IVCr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCr,i,IVCrw);
+          switch (IVCrw.stp) begin
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeCashPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeCreditCardPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              vpaymodeamountauth[IVCrw.PayMode] = IVCrw.AuthorizationCode;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeChequePayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+            case kInvoiceRowTypeGiftVoucherPayment:
+              vpaymodeamount[IVCrw.PayMode] = vpaymodeamount[IVCrw.PayMode] + IVCrw.Sum;
+              received = received + IVCrw.Sum;
+          end;
+        end;
+        IVCashDClass_RefreshStringList(mwn,IVCr);
+        SetPOSWindowDisplayAmount(USetStr(27350),IVCr.Sum4);
+    end;
+  end;
+  RepSpec.vals1 = RepSpec.vals1 - received;
+//  if (RepSpec.vals1<0) then begin RepSpec.vals1 = 0; end;
+  RepSpec.vals2 = RepSpec.vals1;
+  if (IVCr.Sum4>=0) then begin
+    if (RepSpec.vals2<0) then begin
+      RepSpec.vals2 = 0;
+    end;
+    if (RepSpec.vals0<=0) then begin
+      RepSpec.vals0 = 0;
+    end;
+  end else begin
+    if (RepSpec.vals2>0) then begin
+      RepSpec.vals2 = 0;
+    end;
+    if (RepSpec.vals0>0) then begin
+      RepSpec.vals0 = 0;
+    end;
+  end;
+  PutWindowString(wn,"NPTSPaymentTClassTotalDue",RepSpec.vals2);
+  PutWindowString(wn,"NPTSPaymentTClassBase1ChangeAmount",RepSpec.vals1);
+
+  for (i=0;i<acrncnt;i=i+1) begin
+    switch (apaymenttype[i]) begin
+      case kInvoiceRowTypeChequePayment:
+        PutWindowString(wn,"NPTSPaymentTClassChequeAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+        PutWindowString(wn,"NPTSPaymentTClassPaymentType" & apaymentmode[i],apaymenttype[i]);
+      case kInvoiceRowTypeGiftVoucherPayment:
+        PutWindowString(wn,"NPTSPaymentTClassGVPAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+      otherwise
+        PutWindowString(wn,"NPTSPaymentTClassAmount" & apaymentmode[i],vpaymodeamount[apaymentmode[i]]);
+        PutWindowString(wn,"NPTSPaymentTClassPaymentType" & apaymentmode[i],apaymenttype[i]);
+        PutWindowString(wn,"NPTSPaymentTClassAuthorizationCode" & apaymentmode[i],vpaymodeamountauth[apaymentmode[i]]);
+    end;
+  end;
+  
+  PutWindowRecord(wn,RepSpec);
+
+  PutWindowString(wn,"NPTSPaymentOneMode",apaymentmode[0] & "," & apaymenttype[0]);
+  NPTSPaymentOneModeTClassOnOpenWindow = true;
+  return;
+end;
+
+procedure AmendLineNPTSSClassSumup(Integer wn,record RcVc RepSpec)
+begin
+  val price,qty,sum,reb,pricefactor,baseprice;
+  val p,s;
+  record GeneralOptionBlock GOb;
+  Integer mwn;
+
+  mwn = MotherWindow(wn);
+  qty = RepSpec.vals0;
+  price = RepSpec.vals1;
+  reb = RepSpec.vals2;
+  sum = RepSpec.vals3;
+  pricefactor = RepSpec.vals4;
+  baseprice = StringToVal(GetWindowString(wn,"BasePrice"),M4Val);
+  BlockLoad(GOb);  
+  p = price; 
+  if (p==0 and qty!=0) then begin
+    p = sum/qty;
+  end;
+  CalcPrice(baseprice,pricefactor,reb,p,GOb.UseDiscount);
+  price = p;  
+  switch (RepSpec.long2) begin
+    case kInvoiceRowTypeDownpayment:
+    otherwise
+      CalcSum(qty,price,pricefactor,reb,sum,GOb.UseDiscount);  
+  end;
+  switch (GetWindowFileName(mwn)) begin
+    case "IVCashVc":
+      RoundRowSum(RepSpec.CurncyCode,RepSpec.FirstAcc,"IVCashVc",sum);
+    case "RestAccVc":
+      RoundRowSum(RepSpec.CurncyCode,RepSpec.FirstAcc,"RestAccVc",sum);
+  end;
+  RepSpec.vals3 = sum;
+  return;
+end;
+
+function Boolean AmendLineNPTSSClassSumEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  Integer mwn;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  val s,t;
+  val price,qty,sum,reb,pricefactor,baseprice;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,RepSpec);
+    switch (RepSpec.long2) begin
+      case kInvoiceRowTypeDownpayment:
+        sum = RepSpec.vals3;
+      otherwise
+        qty = RepSpec.vals0;
+        price = RepSpec.vals1;
+        reb = RepSpec.vals2;
+        sum = RepSpec.vals3;
+        pricefactor = RepSpec.vals4;
+
+        reb = qty*price - sum;
+        reb = reb/(qty*price);
+        reb = Round(reb*100,SetRoundModeD(1));
+        RepSpec.vals2 = reb;
+    end;
+    PutWindowRecord(wn,RepSpec);
+    GetWindowRecord(wn,RepSpec);
+    AmendLineNPTSSClassSumup(wn,RepSpec);
+    PutWindowRecord(wn,RepSpec);
+    res = true;
+  end;
+  AmendLineNPTSSClassSumEFAfter = res;
+  return;
+end;
+
+function Boolean AmendLineNPTSSClassPriceEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,RepSpec);
+    AmendLineNPTSSClassSumup(wn,RepSpec);
+    PutWindowRecord(wn,RepSpec);
+    res = true;
+  end;
+  AmendLineNPTSSClassPriceEFAfter = res;
+  return;
+end;
+
+function Boolean AmendLineNPTSSClassvRebateEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,RepSpec);
+    AmendLineNPTSSClassSumup(wn,RepSpec);
+    PutWindowRecord(wn,RepSpec);
+    res = true;
+  end;
+  AmendLineNPTSSClassvRebateEFAfter = res;
+  return;
+end;
+
+function Boolean AmendLineNPTSSClassQuantEFAfter(Integer wn,Boolean changedf)
+begin
+  Boolean res;
+  record RcVc RepSpec;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  Integer rownr,mwn;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,RepSpec);
+    mwn = MotherWindow(wn);
+    if (mwn!=0) then begin
+      switch (GetWindowFileName(mwn)) begin
+        case "IVCashVc":
+          rownr = RepSpec.long1;
+          DeselectWindow(mwn,false);
+          GetWindowRecord(mwn,IVCashr);
+          MatRowGet(IVCashr,rownr,IVCashrw);
+          IVCashrw.Quant = RepSpec.vals0;
+          MatRowPut(IVCashr,rownr,IVCashrw);
+          if (IVCashVc_PasteQuant(IVCashr,rownr)) then begin    
+          end;
+          MatRowGet(IVCashr,rownr,IVCashrw);
+          RepSpec.vals1 = IVCashrw.Price;
+          RepSpec.vals2 = CalculateDiscountPercentage2(IVCashrw.Quant,IVCashrw.Price,IVCashrw.Sum,true);
+          RepSpec.vals3 = IVCashrw.Sum;
+      end;
+      AmendLineNPTSSClassSumup(wn,RepSpec);
+      PutWindowRecord(wn,RepSpec);
+      res = true;
+    end;
+  end;
+  AmendLineNPTSSClassQuantEFAfter = res;
+  return;
+end;
+
+global
+function Boolean AmendLineNPTSSClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+begin
+  Boolean res;
+
+  switch (fieldname) begin
+    case "vals0": res = AmendLineNPTSSClassQuantEFAfter(wn,changed!=0);
+    case "vals1": res = AmendLineNPTSSClassPriceEFAfter(wn,rownr,changed!=0);
+    case "vals2": res = AmendLineNPTSSClassvRebateEFAfter(wn,rownr,changed!=0);
+    case "vals3": res = AmendLineNPTSSClassSumEFAfter(wn,rownr,changed!=0);
+  end;
+  AmendLineNPTSSClassAfterEditField = res;
+  return;
+end;
+
+global
+function Boolean AmendLineNPTSSClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  Integer mwn;
+  record RcVc RepSpec;
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+
+  res = true;
+  GetWindowRecord(wn,RepSpec);
+  switch (fieldname) begin
+    case "vals1":
+      res = UserCanAction("AmendLineChangePrice",true) and RepSpec.long2!=kInvoiceRowTypeDownpayment;
+    case "vals3":
+//      res = false;
+    case "f1":
+      res = false;
+      if (RepSpec.long1>=0) then begin
+        res = true;
+        mwn = MotherWindow(wn);
+        switch (GetWindowFileName(mwn)) begin
+          case "RestAccVc":
+            GetWindowRecord(mwn,RestAccr);
+            MatRowGet(RestAccr,RepSpec.long1,RestAccrw);
+            if (RestAccrw.AlreadyPrinted!=0) or (RestAccrw.AlreadyPrintedToKitchen!=0) then begin
+              res = false;
+            end;
+        end;
+      end;
+    otherwise
+      res = RepSpec.long2!=kInvoiceRowTypeDownpayment;
+  end;
+  
+  AmendLineNPTSSClassActiveEditField = res;
+  return;
+end;
+
+global
+updating function boolean AmendLineNPTSSClassOnOKWindow(integer wn)
+begin
+  ProceedAmendLineNPTSSClassExecute(wn);
+  return;
+end;
+
+global
+function Boolean AmendLineNPTSSClassOnEnterKey(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  
+  res = true;
+  switch (fieldname) begin
+    case "vals2":
+      SelectButton(wn,"ProceedAmendLineNPTSSClass");
+      res = false;
+  end;
+  AmendLineNPTSSClassOnEnterKey = res;
+  return;
+end;
+
+global
+function Boolean LoyalCardNPTSSClassOnEnterKey(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  
+  res = true;
+  switch (fieldname) begin
+    case "vals2":
+      SelectButton(wn,"ProceedLoyalCardNPTSSClass");
+      res = false;
+  end;
+  LoyalCardNPTSSClassOnEnterKey = res;
+  return;
+end;
+
+global
+function Boolean SCDiscountCardNPTSSClassOnEnterKey(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  
+  res = true;
+  switch (fieldname) begin
+    case "vals0":
+      SelectButton(wn,"ProceedSCDiscountCardNPTSSClass");
+      res = false;
+  end;
+  SCDiscountCardNPTSSClassOnEnterKey = res;
+  return;
+end;

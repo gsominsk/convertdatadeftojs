@@ -1,0 +1,442 @@
+external procedure HTObj(string,var string);
+external function Boolean GetInventoryNrWrofSoldQuant(string,Date,Date,var val,var val,var val,var Date);
+external procedure FindAssetRespPerson(record AT2UnitVc,var string);
+external procedure FindAssetDepartment(record AT2UnitVc,var string);
+external procedure HT2Per(Date, Date , var string);
+external function Boolean CheckifAT2UnitSold(string,Date);
+external function Boolean CheckDepAndDate(record AT2UnitVc,string,Date);
+external procedure HTInventoryNrs(string,string,var string);
+external procedure HTDetailLevel(Integer, var string);
+external procedure HTDepartment(string,var string);
+external procedure HTCategories(string,string,var string);
+external function Boolean GetLastDprStartVal(Integer,string,val,var val,var val);
+external procedure Base1ToBase2(var val,Date,var val);
+external function Boolean CheckAssetCatMatch(string,string,string);
+external procedure HTClasses(string,string,var string);
+
+procedure LastDpr(string InventoryNr,Date dat,Integer basecurncy,var val resv) 
+BEGIN
+  record AT2DprVc Dpr;
+  Boolean TrHs;
+  record InvrsVc Invrsr;
+  
+  TrHs = true;
+  Invrsr.InventoryNr = InventoryNr;
+  Invrsr.FileName = "AT2DprVc";
+  Invrsr.TransDate = dat;
+  while (LoopBackKey("FileName",Invrsr,3,TrHs)) begin
+    if (Invrsr.InventoryNr!=InventoryNr) then begin TrHs = false; end;
+    if (Invrsr.FileName!="AT2DprVc") then begin TrHs = false; end;
+    if (Invrsr.TransDate>dat) then begin TrHs = false; end;
+    if (TrHs) then begin
+      Dpr.SerNr = Invrsr.TransNr;
+      if (ReadFirstMain(Dpr,1,true)) then begin
+        if (basecurncy==0) then begin
+          resv = Dpr.StartVal;
+        end else begin
+          Base1ToBase2(Dpr.StartVal,CurrentDate,resv);
+        end;
+        TrHs = false;
+      end;
+    end;    
+  end;
+  RETURN;      
+END;      
+
+/*
+function Boolean FindDprInPeriod(string InventoryNr,Date sd,Date ed,Integer basecurncy,var val resv)
+BEGIN
+  record AT2DprVc AT2Dpr;
+  Boolean res;
+
+  resv = blankval;
+  AT2Dpr.InventoryNr = InventoryNr;
+  AT2Dpr.TransDate = ed;
+  if (ReadLastKey("DateInventoryNr",AT2Dpr,2,false)) then begin
+    if (AT2Dpr.InventoryNr==InventoryNr) then begin
+//StopAlert("AT2Dpr.TransDate " & AT2Dpr.TransDate);        
+      if (DateInRange(AT2Dpr.TransDate,sd,ed)) then begin
+        if (basecurncy==0) then begin
+          resv = AT2Dpr.StartVal;
+        end else begin
+          Base1ToBase2(AT2Dpr.StartVal,CurrentDate,resv);
+        end;
+        res = true;
+      end;
+    end;
+  end;
+  FindDprInPeriod = res;
+  RETURN;
+END;
+*/
+
+procedure PrintDepreciationData(string dmcode,string dmcode2,Date sd1,Date sd2,val StartVal,val StartVal2,var Boolean firstf)
+BEGIN
+  if (firstf) then begin
+    StartFormat(15);
+    OutString(50,0,USetStr(5475) & " 1",false);
+    OutString(120,0,USetStr(5475)& " 2",false);
+    OutString(220,0,USetStr(5476),false);
+    OutString(300,0,USetStr(5477),false);
+    OutString(420,0,USetStr(5478),true);
+    OutString(480,0,USetStr(5481),true);
+    EndFormat;
+    Gray_Divider(50,480)  
+    firstf = false;
+  end;
+  StartFormat(15);
+  OutDate(50,0,sd1,false);
+  OutDate(120,0,sd2,false);
+  OutString(220,0,dmcode,false);
+  OutString(300,0,dmcode2,false);
+  OutString(420,0,StartVal,true);
+  OutString(480,0,StartVal2,true);
+  EndFormat;  
+  RETURN;
+END;
+
+procedure PrintDprModels(record RcVc RepSpec,record AT2UnitVc ATUnitr,val qty) 
+BEGIN
+  record AT2DprVc ATDprr;
+  Boolean firstf,TrHs;
+  
+  firstf = true;
+  PrintDepreciationData(ATUnitr.Model1,ATUnitr.Model2,ATUnitr.StartingDate1,ATUnitr.StartingDate2,qty*ATUnitr.PurchVal,qty*ATUnitr.PurchVal,firstf);
+  ATDprr.InventoryNr = ATUnitr.InventoryNr;
+  TrHs = true;
+  while (LoopKey("InventoryNr",ATDprr,1,TrHs)) begin
+    if (ATDprr.InventoryNr!=ATUnitr.InventoryNr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      PrintDepreciationData(ATDprr.Model1,ATDprr.Model2,ATDprr.StartingDate1,ATDprr.StartingDate2,qty*ATDprr.StartVal,qty*ATDprr.StartVal2,firstf);
+    end;    
+  end;
+  Gray_Divider(50,480)  
+  RETURN;      
+END;      
+
+procedure PrintAT2ListHeader(record RcVc RepSpec,string frinv,string toinv)
+BEGIN
+  Integer rw;
+  string 255 tstr;
+  
+  rw = 1;
+  HTDetailLevel(RepSpec.ArtMode,tstr);
+  Header(rw, tstr, 1);
+  rw = rw + 1;
+  HTInventoryNrs(frinv,toinv,tstr);
+  Header(rw, tstr, 0);
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw, tstr, 1);
+  rw = rw + 1;
+  HTDepartment(RepSpec.AccStr,tstr);
+  Header(rw, tstr, 0);
+  HTCategories(RepSpec.f2,RepSpec.f2,tstr);
+  Header(rw, tstr, 1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.f3)) then begin
+    HTClasses(RepSpec.f3,RepSpec.f3,tstr);
+    Header(rw, tstr, 1);
+    rw = rw + 1;
+  end;  
+  if (nonblank(RepSpec.f4)) then begin
+    HTClasses(RepSpec.f4,RepSpec.f4,tstr);
+    Header(rw, tstr, 1);
+    rw = rw + 1;
+  end;  
+  if (nonblank(RepSpec.TransStr)) then begin
+    tstr = USetStr(9201);
+    tstr = tstr & " ";
+    tstr = tstr & RepSpec.TransStr;
+    Header(rw, tstr, 1);
+    rw = rw + 1;
+  end;    
+  if (nonblank(RepSpec.ObjStr)) then begin
+    HTObj(RepSpec.ObjStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;    
+  RETURN;      
+END;
+
+function val AT2ListRnFunc(record RcVc RepSpec,string frinv,string toinv,string frcat,string tocat)
+begin
+  val res;
+  record AT2UnitVc ATUnitr;
+  Boolean TrHs,testf;
+  val curval,t2;  
+  Date blankd,curdate,wrofd;
+  val qty,wq,sq,wrofdprsum;
+  record ConsolidationBlock consr;
+  string 255 tstr;
+
+  BlockLoad(consr);
+  curdate = CurrentDate;
+  res = 0;
+  ATUnitr.InventoryNr = frinv;
+  TrHs = true;
+  while (LoopMain(ATUnitr,1,TrHs)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (ATUnitr.InventoryNr>toinv) then begin
+        TrHs = false; 
+      end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (CheckDepAndDate(ATUnitr,RepSpec.AccStr,curdate)==false) then begin
+//        if (ATUnitr.DepCode<>RepSpec.AccStr) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        FindAssetRespPerson(ATUnitr,tstr);
+        if (tstr!=RepSpec.TransStr) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.ObjStr)) then begin
+        if (SetInSet(RepSpec.ObjStr,ATUnitr.Objects)==false) then begin
+          testf = false;
+        end;
+      end;
+      if (RepSpec.flags[4]==0) then begin
+        if (ATUnitr.Activef == 1) then begin
+           testf= false;
+        end;
+      end; 
+      if (nonblank(RepSpec.f2)) then begin
+        if (ATUnitr.AT2Code<frcat) then begin
+          testf = false;
+        end;
+        if (ATUnitr.AT2Code>tocat) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.f3)) then begin
+        if (CheckAssetCatMatch(ATUnitr.AT2Code,ATUnitr.AT2Class,RepSpec.f3)==false) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f4)) then begin
+        if (SetInSet(RepSpec.f4,ATUnitr.Classification)==false) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[5]==0) then begin
+        if (nonblankdate(ATUnitr.PurchaseDate)) then begin
+          if (DateInRange(ATUnitr.PurchaseDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            testf = false;       
+          end;
+        end;  
+      end;     
+/*       
+      if (RepSpec.flags[6]==0) then begin
+        if (testf) then begin
+          if (CheckifAT2UnitSold(ATUnitr.InventoryNr,blankd)) then begin
+            testf = false;
+          end;
+        end;  
+      end;
+*/      
+      if (RepSpec.flags[6]==0) then begin
+        if (testf) then begin
+          if (GetInventoryNrWrofSoldQuant(ATUnitr.InventoryNr,AddYear(RepSpec.sStartDate,-28),RepSpec.sEndDate,wq,sq,wrofdprsum,wrofd)) then begin
+            wq = wq + sq;
+            if (wq>=ATUnitr.Quantity) then begin testf = false; end;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        curval = blankval;
+        qty = ATUnitr.Quantity - wq;
+        if (qty==0) then begin qty = 1; end;
+        LastDpr(ATUnitr.InventoryNr,RepSpec.sEndDate,consr.ConsCrncy,curval);
+//        if (FindDprInPeriod(ATUnitr.InventoryNr,RepSpec.sStartDate,RepSpec.sEndDate,consr.ConsCrncy,curval)) then begin end;
+        curval = qty*curval;
+        if (curval==0) then begin
+          if (consr.ConsCrncy==0) then begin
+            curval = qty*ATUnitr.PurchVal;
+          end else begin
+            t2 = qty*ATUnitr.PurchVal;
+            Base1ToBase2(t2,CurrentDate,curval);
+          end;
+        end;
+        if (RepSpec.ArtMode==0) then begin
+          StartFormat(15);
+          OutString(0,"DblAT2UnitVc",ATUnitr.InventoryNr,false);
+          OutString(100,0,ATUnitr.Description,false);
+          FindAssetRespPerson(ATUnitr,tstr); 
+          OutString(330,0,tstr,false);
+          OutString(420,0,curval,true);
+          OutDate(1,0,ATUnitr.PurchaseDate,true);
+          EndFormat;
+          if (RepSpec.flags[7]!=0) then begin
+            if (nonblank(ATUnitr.SerialNr)) then begin
+              StartFormat(15);
+               OutString(100,0,USetStr(8802) & ": "ATUnitr.SerialNr,false);
+              EndFormat;
+            end;
+          end;
+          res = res + curval;
+        end;
+        if (RepSpec.ArtMode==1) then begin
+          StartFormat(15);
+          OutString(0,"DblAT2UnitVc",ATUnitr.InventoryNr,false);
+          OutString(100,0,ATUnitr.Description,false);
+          OutString(400,0,ATUnitr.AT2Code,false);
+          EndFormat;
+
+          if (nonblank(ATUnitr.VECode)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5465),true);
+            OutString(220,0,ATUnitr.VECode,false);
+            OutString(300,0,ATUnitr.VEName,false);
+            EndFormat;
+          end;
+          FindAssetDepartment(ATUnitr,tstr); 
+          if (nonblank(tstr)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5466),true);
+            OutString(220,0,tstr,false);
+            EndFormat;
+          end;
+          if (nonblank(ATUnitr.SerialNr)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5467),true);
+            OutString(220,0,ATUnitr.SerialNr,false);
+            EndFormat;
+          end;
+          FindAssetRespPerson(ATUnitr,tstr); 
+          if (nonblank(tstr)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5468),true);
+            OutString(220,0,tstr,false);
+            EndFormat;
+          end;
+          if ((nonblankdate(ATUnitr.PurchaseDate)) or (curval<>0)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5469),true);
+            OutDate(220,0,ATUnitr.PurchaseDate,false);
+            OutString(300,0,curval,false);
+            EndFormat;
+          end;
+          res = res + curval;
+          if (nonblankdate(ATUnitr.EndDate)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5470),true);
+            OutDate(220,0,ATUnitr.EndDate,false);
+            EndFormat;
+          end;
+          if (nonblank(ATUnitr.Objects)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5480),true);
+            OutString(220,0,ATUnitr.Objects,false);
+            EndFormat;
+          end;
+          if (nonblank(ATUnitr.Quantity)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5471),true);
+            OutString(220,0,ATUnitr.Quantity,false);
+            EndFormat;
+          end;
+          if (nonblank(ATUnitr.InsuranceVal)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5473),true);
+            OutVal(220,0,ATUnitr.InsuranceVal,M4UVal,false);
+            EndFormat;
+          end;
+          if (nonblank(ATUnitr.Comment)) then begin
+            StartFormat(15);
+            OutString(200,0,USetStr(5474),true);
+            OutString(220,0,ATUnitr.Comment,false);
+            EndFormat;
+          end;
+          StartFormat(5);
+          EndFormat;
+          PrintDprModels(RepSpec,ATUnitr,qty);
+          StartFormat(15);
+          EndFormat;
+          Gray_Divider(0,1);
+        end;  
+      end;
+    end;
+  end;
+  AT2ListRnFunc = res;
+  return;
+end;
+
+function val AT2ListRnFuncCons(record RcVc RepSpec,string frinv,string toinv,string frcat,string tocat)
+begin
+  record DaughterCompBlock DaughterCompRec;
+  row DaughterCompBlock DaughterComprw;
+  Integer i,rwcnt;
+  Integer oldcomp;
+  val res;
+
+  res = 0;
+  oldcomp = CurrentCompany;  
+  BlockLoad(DaughterCompRec);
+  rwcnt = MatRowCnt(DaughterCompRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(DaughterCompRec,i,DaughterComprw);
+    if (SetCompanyCode(DaughterComprw.CompCode,false)) then begin
+      StartFormat(15);
+      EndFormat;
+      Gray_Divider(0,1);
+      StartFormat(15);
+       OutString(0,0,DaughterComprw.CompName,false);
+      EndFormat;
+      Gray_Divider(0,1);
+      res = res + AT2ListRnFunc(RepSpec,frinv,toinv,frcat,tocat);
+    end;  
+  end;
+  ResetCompany(oldcomp);
+  AT2ListRnFuncCons = res;
+  return;
+end;
+
+global
+procedure AT2ListRn(record RcVc RepSpec)
+BEGIN
+  string 20 frinv,toinv;
+  string 20 frcat,tocat;
+  val totval;
+  
+  frinv = FirstInRange(RepSpec.f1,20);
+  toinv = LastInRange(RepSpec.f1,20);
+  frcat = FirstInRange(RepSpec.f2,20);
+  tocat = LastInRange(RepSpec.f2,20);
+  StartReportJob(USetStr(9000));
+  PrintAT2ListHeader(RepSpec,frinv,toinv);
+  EndHeader;
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(9001),false);
+    OutString(100,0,USetStr(9002),false);
+    OutString(330,0,USetStr(5468),false);
+    OutString(430,0,USetStr(8780),true);
+    OutString(1,0,USetStr(8776),true);
+    EndFormat;  
+  end else begin
+    StartFormat(15);
+    OutString(0,0,USetStr(9001),false);
+    OutString(100,0,USetStr(9002),false);
+    EndFormat;  
+  end;  
+  Gray_Divider(0,480);
+  totval = AT2ListRnFunc(RepSpec,frinv,toinv,frcat,tocat);
+  if (RepSpec.IncDaughter!=0) then begin
+    totval = totval + AT2ListRnFuncCons(RepSpec,frinv,toinv,frcat,tocat);
+  end;
+  if (RepSpec.ArtMode==0) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(200,0,USetStr(8784),false);
+    OutString(420,0,totval,true);
+    EndFormat;  
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    OutString(250,0,USetStr(8784),false);
+    OutString(390,0,totval,false);
+    EndFormat;  
+  end;
+  EndJob;
+  RETURN;
+END;

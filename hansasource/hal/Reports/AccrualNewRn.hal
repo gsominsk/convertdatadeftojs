@@ -1,0 +1,782 @@
+external procedure HT2Per(Date, Date , var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure YcToStr(Integer,var string);
+external procedure ToStrTRCode(var string,Integer,LongInt);
+external procedure GetAccDCBalance(string,string,Date,record ObjBalVc,Integer,Integer,Integer,string,var val,var val,Integer);
+
+procedure PrintTheTotals(val totfwdbal,val pertotdeb,val pertotcred,val totdeb,val totcred)
+begin
+  Gray_Divider(0,1);
+  if (pertotdeb!=0 or pertotcred!=0) then begin
+    StartFormat(15);
+    OutString(5,0,USetStr(13563),false);
+    OutVal(7,0,pertotdeb,M4Val,true);
+    OutVal(8,0,pertotcred,M4Val,true);
+    OutVal(1,0,totfwdbal + pertotdeb - pertotcred,M4Val,true);
+    EndFormat;
+  end;
+  if (pertotdeb!=totdeb or pertotcred!=totcred or (totdeb-totcred)!=(totfwdbal + pertotdeb - pertotcred)) then begin
+    StartFormat(15);
+    OutString(5,0,USetStr(13569),false);
+    OutVal(7,0,totdeb,M4Val,true);
+    OutVal(8,0,totcred,M4Val,true);
+    OutVal(1,0,totdeb-totcred,M4Val,true);
+    EndFormat;
+    StartFormat(15);
+    EndFormat;
+  end;
+  return;
+end;
+
+function Boolean AccountAlreadyReported(string AccNumber,Array string aaccnr,var Integer acnt)
+BEGIN
+  Boolean res;
+  Integer i;
+  
+  for (i=0;i<acnt;i=i+1) begin
+    if (aaccnr[i]==AccNumber) then begin
+      res = true;
+      goto LAccountAlreadyReported;
+    end;
+  end;
+  aaccnr[acnt] = AccNumber;
+  acnt = acnt + 1;
+LAccountAlreadyReported:;
+  AccountAlreadyReported = res;
+  RETURN;
+END;
+
+procedure SMRowAddToArray(record SMVc SMr,row SMVc SMrw,Array Integer atrintyc,Array LongInt asernr,
+                       Array val adebval,Array val acredval,Array Date atransdate,Array Date arowtransdate,Array Integer ainvalid,
+                       var Integer acnt,var val totdeb,var val totcred,Date repstartdate,Date rependdate,var val fwdbal)
+BEGIN
+  if (SMrw.RowSimStat!=1) then begin                  
+    atrintyc[acnt] = -1;
+    asernr[acnt] = SMr.SerNr;
+    adebval[acnt] = SMrw.DebVal;
+    acredval[acnt] = SMrw.CredVal;
+    atransdate[acnt] = SMr.TransDate;
+    arowtransdate[acnt] = SMrw.TransDate;
+    ainvalid[acnt] = 0;
+    acnt = acnt + 1;      
+    if (nonblankdate(SMrw.TransDate)) then begin
+      if (SMrw.TransDate<repstartdate) then begin
+        fwdbal = fwdbal + (SMrw.DebVal - SMrw.CredVal);
+      end;
+      if (SMrw.TransDate>rependdate) then begin
+      end else begin
+        totdeb = totdeb + SMrw.DebVal;
+        totcred = totcred + SMrw.CredVal;
+      end;
+    end else begin
+      if (SMr.TransDate<repstartdate) then begin
+        fwdbal = fwdbal + (SMrw.DebVal - SMrw.CredVal);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure TRRowAddToArray(record TRVc TRr,row TRVc TRrw,string cuname,Array Integer atrintyc,Array LongInt asernr,
+                       Array val adebval,Array val acredval,Array Date atransdate,Array Date arowtransdate,Array Integer ainvalid,Array string acuname,
+                       var Integer acnt,var val totdeb,var val totcred,Date repstartdate,Date rependdate,var val fwdbal)
+BEGIN
+  atrintyc[acnt] = TRr.IntYc;
+  asernr[acnt] = TRr.Number;
+  adebval[acnt] = TRrw.DebVal;
+  acredval[acnt] = TRrw.CredVal;
+  atransdate[acnt] = TRr.TransDate;
+  arowtransdate[acnt] = TRr.TransDate;
+  ainvalid[acnt] = TRrw.ovst;
+  acuname[acnt] = cuname;
+  acnt = acnt + 1;    
+  if (TRrw.ovst==0) then begin
+    if (TRr.TransDate<=rependdate) then begin
+      totdeb = totdeb + TRrw.DebVal;
+      totcred = totcred + TRrw.CredVal;
+    end;
+    if (TRr.TransDate<repstartdate) then begin
+      fwdbal = fwdbal + (TRrw.DebVal - TRrw.CredVal);
+    end;
+  end;
+  RETURN;
+END;
+
+procedure PrintTheArray(record RcVc RepSpec,Integer invtype,Array Integer atrintyc,Array LongInt asernr,Array val adebval,Array val acredval,Array Date atransdate,
+                        Array Date arowtransdate,Array Integer ainvalid,Array string acuname,Integer acnt,var val td,var val tc,var val balafteredd,var val balafteredc,val fwdbal)
+BEGIN
+  Integer i;
+  Boolean testf;
+  string 255 tstr;
+  
+  for (i=0;i<acnt;i=i+1) begin
+    if (RepSpec.flags[3]==0) then begin
+      testf = true;
+    end else begin
+      testf = false;
+      if (nonblankdate(arowtransdate[i])) then begin
+        if (DateInRange(arowtransdate[i],RepSpec.sStartDate,RepSpec.sEndDate)) then begin
+          testf = true;
+        end;
+      end else begin
+        if (DateInRange(atransdate[i],RepSpec.sStartDate,RepSpec.sEndDate)) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      StartFormat(15);
+      if (atrintyc[i]==-1) then begin
+        OutString(0,"DblLiquid",USetStr(1154) & ":" & asernr[i],false);     
+      end else begin
+        YcToStr(atrintyc[i],tstr);     
+        OutString(0,"DblTrans",tstr & "." & asernr[i],false);
+      end;
+      OutDate(5,0,arowtransdate[i],false);
+      OutString(6,0,Left(acuname[i],35),false);
+      if (arowtransdate[i]<=RepSpec.sEndDate) then begin
+        OutValOvst(7,0,adebval[i],M4Val,true,ainvalid[i]);
+        OutValOvst(8,0,acredval[i],M4Val,true,ainvalid[i]);
+        if (ainvalid[i]==0) then begin
+          td = td + adebval[i];
+          tc = tc + acredval[i];
+        end;
+      end else begin
+        OutValOvst(1,0,adebval[i]-acredval[i],M4Val,true,ainvalid[i]);
+        balafteredd = balafteredd + adebval[i];
+        balafteredc = balafteredc + acredval[i];
+      end;
+      EndFormat;
+    end else begin
+      if (i==0) then begin
+        StartFormat(15);
+        if (atrintyc[i]==-1) then begin
+          OutString(0,"DblLiquid",USetStr(1154) & ":" & asernr[i],false);     
+        end else begin
+          YcToStr(atrintyc[i],tstr);     
+          OutString(0,"DblTrans",tstr & "." & asernr[i],false);
+        end;
+        OutString(5,0,USetStr(13561),false);
+        OutVal(1,0,fwdbal,M4Val,true);
+        EndFormat;    
+        Gray_Divider(5,1);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+function Boolean AddToIVAccrual(record RcVc RepSpec,record IVVc IVr,string accnumber,Array Integer atrintyc,Array LongInt asernr,
+                       Array val adebval,Array val acredval,Array Date atransdate,Array Date arowtransdate,Array Integer ainvalid,Array string acuname,
+                       var Integer acnt,var val totdeb,var val totcred,var val fwdbal)
+BEGIN
+  Boolean TrHsSM,TrHsTR,accmatchf,testf;
+  record SMVc SMr;
+  row SMVc SMrw;
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  val t;
+  
+  TRr.IntYc = IVYc;
+  TRr.Number = IVr.SerNr;
+  if (ReadFirstMain(TRr,2,true)) then begin
+    rwcnt = MatRowCnt(TRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+      if (TRrw.AccNumber==accnumber) then begin
+        accmatchf = true;
+        TRRowAddToArray(TRr,TRrw,IVr.Addr0,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,totdeb,totcred,RepSpec.sStartDate,RepSpec.sEndDate,fwdbal);
+      end;
+    end;
+  end;
+  TrHsSM = true;
+  SMr.FileName = "IVVc";
+  SMr.TransNr = IVr.SerNr;
+  while (LoopKey("FileName",SMr,2,TrHsSM)) begin
+    if (SMr.FileName!="IVVc") then begin TrHsSM = false; end;
+    if (SMr.TransNr!=IVr.SerNr) then begin TrHsSM = false; end;
+    if (TrHsSM) then begin
+      ResetLoop(TRr);
+      TrHsTR = true;
+      TRr.FileName = "SMVc";
+      TRr.TransNr = SMr.SerNr;
+      while (LoopKey("FileName",TRr,2,TrHsTR)) begin
+        if (TRr.FileName!="SMVc") then begin TrHsTR = false; end;
+        if (TRr.TransNr!=SMr.SerNr) then begin TrHsTR = false; end;
+        if (TrHsTR) then begin
+          rwcnt = MatRowCnt(TRr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(TRr,i,TRrw);
+            if (TRrw.AccNumber==accnumber) then begin
+              accmatchf = true;
+              TRRowAddToArray(TRr,TRrw,"",atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,totdeb,totcred,RepSpec.sStartDate,RepSpec.sEndDate,fwdbal);
+            end;
+          end;
+        end;
+      end;
+      rwcnt = MatRowCnt(SMr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SMr,i,SMrw);
+        if (SMrw.AccNumber==accnumber) then begin
+          testf = true;
+          if (testf) then begin
+            accmatchf = true;
+            SMRowAddToArray(SMr,SMrw,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acnt,totdeb,totcred,RepSpec.sStartDate,RepSpec.sEndDate,fwdbal);
+          end;
+        end;
+      end;
+    end;
+  end;
+  AddToIVAccrual = accmatchf;
+  RETURN;
+END;
+
+procedure ProcessIV(record RcVc RepSpec,record IVVc IVr,var val totfwdbal,var val pertotdebtot,var val pertotcredtot,var val totdebtot,var val totcredtot)
+BEGIN  
+  row IVVc IVrw;
+  Boolean testf,accmatchf;
+  string 255 tstr;
+  Integer i,rwcnt;
+  val t,totdeb,totcred,td,tc;
+  string 10 fracc,toacc;
+  Array Integer atrintyc;
+  Array LongInt asernr;
+  Array val adebval;
+  Array val acredval;
+  Array Date atransdate,arowtransdate;  
+  Array Integer ainvalid;
+  Array string 255 acuname;
+  Integer acnt;
+  Array string 10 aaccnr;
+  Integer aacnt;
+  record AutSimPerVc AutSimPerr;
+  val fwdbal,balafteredd,balafteredc;
+
+  fracc = FirstInRange(RepSpec.f1,20);
+  toacc = LastInRange(RepSpec.f1,20);  
+  if (blank(RepSpec.f1)) then begin
+    accmatchf = true;
+  end;    
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    testf = true;
+    if (blank(IVrw.PeriodCode)) then begin testf = false; end;
+    AutSimPerr.Code = IVrw.PeriodCode;
+    if (ReadFirstMain(AutSimPerr,1,true)==false) then begin testf = false; end;
+    if (blank(AutSimPerr.PrelAcc)) then begin testf = false; end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (AutSimPerr.PrelAcc<fracc) then begin testf = false; end;
+      if (AutSimPerr.PrelAcc>toacc) then begin testf = false; end;
+    end;
+    if (AccountAlreadyReported(AutSimPerr.PrelAcc,aaccnr,aacnt)) then begin testf = false; end;    
+    if (testf) then begin
+      accmatchf = AddToIVAccrual(RepSpec,IVr,AutSimPerr.PrelAcc,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,totdeb,totcred,fwdbal);
+      if (blank(RepSpec.f1)) then begin
+        accmatchf = true;
+      end;
+    end;
+  end;
+  testf = totdeb!=0 or totcred!=0 or fwdbal!=0;
+  if (RepSpec.flags[2]!=0) then begin
+    if (totdeb==totcred and fwdbal==0) then begin
+      testf = false;
+    end;
+  end;
+  if (testf and accmatchf) then begin
+    Gray_Divider(0,1);
+    PrintTheArray(RepSpec,IVr.InvType,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,td,tc,balafteredd,balafteredc,fwdbal);
+    if (td!=0 or tc!=0) then begin
+      Gray_Divider(5,1);
+      StartFormat(15);
+      OutString(5,0,USetStr(13563),false);
+      OutVal(7,0,td,M4Val,true);
+      OutVal(8,0,tc,M4Val,true);
+      OutVal(1,0,fwdbal + td - tc + balafteredd - balafteredc,M4Val,true);
+      EndFormat;
+    end;
+    if (td!=totdeb or tc!=totcred or (totdeb-totcred)!=(fwdbal + td - tc + balafteredd - balafteredc)) then begin
+      StartFormat(15);
+      YcToStr(IVYc,tstr);     
+      OutStringID(5,"DblAccrualDetail",USetStr(13569),false,"" & tstr & "." & IVr.SerNr);
+      OutVal(7,0,totdeb+balafteredd,M4Val,true);
+      OutVal(8,0,totcred+balafteredc,M4Val,true);
+      OutVal(1,0,totdeb-totcred + balafteredd-balafteredc,M4Val,true);
+      EndFormat;
+    end;
+    totdebtot = totdebtot + totdeb;
+    totcredtot = totcredtot + totcred;
+    pertotdebtot = pertotdebtot + td;
+    pertotcredtot = pertotcredtot + tc;
+    totfwdbal = totfwdbal + fwdbal;
+    StartFormat(15);
+    EndFormat;
+  end;
+  return;
+end;
+      
+procedure PrintSLAccruals(record RcVc RepSpec)
+begin
+  record IVVc IVr;
+  record SMVc SMr;
+  Boolean foundf,testf;
+  val totdeb,totcred;
+  val pertotdeb,pertotcred;
+  val totfwdbal;
+
+  StartFormat(15);
+  OutString(0,0,USetStr(13564),false);
+  EndFormat
+  StartFormat(15);
+  OutString(0,0,USetStr(13565),false);  
+  OutString(7,0,USetStr(13566),true);    
+  OutString(8,0,USetStr(13567),true);    
+  OutString(1,0,USetStr(13562),true);    
+  EndFormat
+  foundf = true;
+  if (RepSpec.flags[3]==0) then begin
+    IVr.TransDate = RepSpec.sStartDate;
+    while (LoopKey("TransDate",IVr,1,foundf)) begin
+      if (IVr.TransDate>RepSpec.sEndDate) then begin
+        foundf = false;
+      end;
+      if (foundf) then begin
+        ProcessIV(RepSpec,IVr,totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+      end;
+    end;
+  end else begin
+    while (LoopKey("TransDate",SMr,1,foundf)) begin
+      testf = foundf;
+      if (SMr.FileName!="IVVc") then begin
+        testf = false;
+      end;
+      if (SMr.TransNr<=0) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        IVr.SerNr = SMr.TransNr;
+        if (ReadFirstMain(IVr,1,true)) then begin
+          if (IVr.TransDate>RepSpec.sEndDate) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            ProcessIV(RepSpec,IVr,totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+          end;
+        end;
+      end;
+    end;
+  end;
+  PrintTheTotals(totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+  return;
+end;
+
+function Boolean AddToVIAccrual(record RcVc RepSpec,record VIVc VIr,string accnumber,Array Integer atrintyc,Array LongInt asernr,
+                       Array val adebval,Array val acredval,Array Date atransdate,Array Date arowtransdate,Array Integer ainvalid,Array string acuname,
+                       var Integer acnt,var val totdeb,var val totcred,var val fwdbal)
+BEGIN
+  Boolean TrHsSM,TrHsTR,accmatchf,testf;
+  record SMVc SMr;
+  row SMVc SMrw;
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  val t;
+ 
+  TRr.IntYc = VIYc;
+  TRr.Number = VIr.SerNr;
+  if (ReadFirstMain(TRr,2,true)) then begin
+    rwcnt = MatRowCnt(TRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+      if (TRrw.AccNumber==accnumber) then begin
+        accmatchf = true;
+        TRRowAddToArray(TRr,TRrw,VIr.VEName,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,totdeb,totcred,RepSpec.sStartDate,RepSpec.sEndDate,fwdbal);
+      end;
+    end;
+  end;
+  TrHsSM = true;
+  SMr.FileName = "VIVc";
+  SMr.TransNr = VIr.SerNr;
+  while (LoopKey("FileName",SMr,2,TrHsSM)) begin
+    if (SMr.FileName!="VIVc") then begin TrHsSM = false; end;
+    if (SMr.TransNr!=VIr.SerNr) then begin TrHsSM = false; end;
+    if (TrHsSM) then begin
+      ResetLoop(TRr);
+      TrHsTR = true;
+      TRr.FileName = "SMVc";
+      TRr.TransNr = SMr.SerNr;
+      while (LoopKey("FileName",TRr,2,TrHsTR)) begin
+        if (TRr.FileName!="SMVc") then begin TrHsTR = false; end;
+        if (TRr.TransNr!=SMr.SerNr) then begin TrHsTR = false; end;
+        if (TrHsTR) then begin
+          rwcnt = MatRowCnt(TRr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(TRr,i,TRrw);
+            if (TRrw.AccNumber==accnumber) then begin
+              accmatchf = true;
+              TRRowAddToArray(TRr,TRrw,"",atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,totdeb,totcred,RepSpec.sStartDate,RepSpec.sEndDate,fwdbal);
+            end;
+          end;
+        end;
+      end;
+      rwcnt = MatRowCnt(SMr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SMr,i,SMrw);
+        if (SMrw.AccNumber==accnumber) then begin
+          testf = true;
+          if (testf) then begin
+            accmatchf = true;
+            SMRowAddToArray(SMr,SMrw,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acnt,totdeb,totcred,RepSpec.sStartDate,RepSpec.sEndDate,fwdbal);
+          end;
+        end;
+      end;
+    end;
+  end;
+  AddToVIAccrual = accmatchf;
+  RETURN;
+END;
+
+procedure ProcessVI(record RcVc RepSpec,record VIVc VIr,var val totfwdbal,var val pertotdebtot,var val pertotcredtot,var val totdebtot,var val totcredtot)
+BEGIN  
+  row VIVc VIrw;
+  Boolean testf,accmatchf;
+  string 255 tstr;
+  Integer i,rwcnt;
+  val t,totdeb,totcred,td,tc;
+  string 10 fracc,toacc;
+  Array Integer atrintyc;
+  Array LongInt asernr;
+  Array val adebval;
+  Array val acredval;
+  Array Date atransdate,arowtransdate;  
+  Array Integer ainvalid;
+  Array string 255 acuname;
+  Integer acnt;
+  Array string 10 aaccnr;
+  Integer aacnt;
+  record AutSimPerVc AutSimPerr;
+  val fwdbal,balafteredd,balafteredc;
+
+  fracc = FirstInRange(RepSpec.f1,20);
+  toacc = LastInRange(RepSpec.f1,20);  
+  if (blank(RepSpec.f1)) then begin
+    accmatchf = true;
+  end;    
+  rwcnt = MatRowCnt(VIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIr,i,VIrw);
+    testf = true;
+    if (blank(VIrw.PeriodCode)) then begin testf = false; end;
+    AutSimPerr.Code = VIrw.PeriodCode;
+    if (ReadFirstMain(AutSimPerr,1,true)==false) then begin testf = false; end;
+    if (blank(AutSimPerr.PrelAcc)) then begin testf = false; end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (AutSimPerr.PrelAcc<fracc) then begin testf = false; end;
+      if (AutSimPerr.PrelAcc>toacc) then begin testf = false; end;
+    end;
+    if (AccountAlreadyReported(AutSimPerr.PrelAcc,aaccnr,aacnt)) then begin testf = false; end;
+    if (testf) then begin
+      accmatchf = AddToVIAccrual(RepSpec,VIr,AutSimPerr.PrelAcc,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,totdeb,totcred,fwdbal);
+      if (blank(RepSpec.f1)) then begin
+        accmatchf = true;
+      end;
+    end;
+  end;
+  testf = totdeb!=0 or totcred!=0 or fwdbal!=0;
+  if (RepSpec.flags[2]!=0) then begin
+    if (totdeb==totcred and fwdbal==0) then begin
+      testf = false;
+    end;
+  end;
+  if (testf and accmatchf) then begin
+    Gray_Divider(0,1);
+    PrintTheArray(RepSpec,VIr.InvType,atrintyc,asernr,adebval,acredval,atransdate,arowtransdate,ainvalid,acuname,acnt,td,tc,balafteredd,balafteredc,fwdbal);
+    if (td!=0 or tc!=0 or balafteredd!=0 or balafteredc!=0) then begin
+      Gray_Divider(5,1);
+      StartFormat(15);
+      OutString(5,0,USetStr(13563),false);
+      OutVal(7,0,td,M4Val,true);
+      OutVal(8,0,tc,M4Val,true);
+      OutVal(1,0,fwdbal + td - tc,M4Val,true);
+      EndFormat;
+    end;
+    if (td!=totdeb or tc!=totcred or (totdeb-totcred)!=(fwdbal + td - tc + balafteredd - balafteredc)) then begin
+      StartFormat(15);
+      YcToStr(VIYc,tstr);     
+      OutStringID(5,"DblAccrualDetail",USetStr(13569),false,"" & tstr & "." & VIr.SerNr);
+      OutVal(7,0,totdeb+balafteredd,M4Val,true);
+      OutVal(8,0,totcred+balafteredc,M4Val,true);
+      OutVal(1,0,totdeb-totcred+balafteredd-balafteredc,M4Val,true);
+      EndFormat;
+    end;
+    totdebtot = totdebtot + totdeb;
+    totcredtot = totcredtot + totcred;
+    pertotdebtot = pertotdebtot + td;
+    pertotcredtot = pertotcredtot + tc;
+    totfwdbal = totfwdbal + fwdbal;
+    StartFormat(15);
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure PrintPLAccruals(record RcVc RepSpec)
+begin
+  record VIVc VIr;
+  record SMVc SMr;
+  Boolean foundf,testf;
+  val totdeb,totcred;
+  val pertotdeb,pertotcred;
+  val totfwdbal;
+
+  StartFormat(15);
+  OutString(0,0,USetStr(13568),false);
+  EndFormat
+  StartFormat(15);
+  OutString(0,0,USetStr(13565),false);  
+  OutString(7,0,USetStr(13566),true);    
+  OutString(8,0,USetStr(13567),true);    
+  OutString(1,0,USetStr(13562),true);    
+  EndFormat
+  foundf = true;
+  if (RepSpec.flags[3]==0) then begin
+    VIr.TransDate = RepSpec.sStartDate;
+    while (LoopKey("TransDate",VIr,1,foundf)) begin
+      if (VIr.TransDate>RepSpec.sEndDate) then begin
+        foundf = false;
+      end;
+      if (foundf) then begin
+        ProcessVI(RepSpec,VIr,totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+      end;
+    end;
+  end else begin
+    while (LoopKey("TransDate",SMr,1,foundf)) begin
+      testf = foundf;
+      if (SMr.FileName!="VIVc") then begin
+        testf = false;
+      end;
+      if (SMr.TransNr<=0) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        VIr.SerNr = SMr.TransNr;
+        if (ReadFirstMain(VIr,1,true)) then begin
+          if (VIr.TransDate>RepSpec.sEndDate) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            ProcessVI(RepSpec,VIr,totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+          end;
+        end;
+      end;
+    end;
+  end;
+  PrintTheTotals(totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+  return;
+end;
+
+// This code is not doing anything useful I would say...
+/*
+procedure PrintTransactions(record RcVc RepSpec,record AccVc Accr,var val acctotd,var val acctotc)
+begin
+  record MainVc mainr;
+  record TRVc TRr;
+  row TRVc TRrw;
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  Boolean TrHs,accprntdf;
+  val t;
+
+
+  TrHs = true;
+  mainr.AccNumber = Accr.AccNumber;
+  mainr.TransDate = RepSpec.sStartDate;
+  while (LoopMain(mainr,2,TrHs)) begin  
+    if (TrHs) then begin
+      if (mainr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      if (mainr.AccNumber!=Accr.AccNumber) then begin
+        TrHs = false;
+      end;
+    end;    
+    if (TrHs) then begin
+//StartFormat(15);
+//OutString(0,0,"XXXX" & mainr.FileName,false);
+//EndFormat;
+      if (mainr.FileName=="TRVc") then begin
+        TRr.Number = mainr.TransNr;
+        TRr.IntYc = mainr.IntYc;
+        if (ReadFirstMain(TRr,2,true)) then begin
+          if (nonblank(TRr.FileName)) then begin goto LSKIPTR; end;
+          if (TRr.TransNr<=0) then begin goto LSKIPTR; end;
+            // if date has been changed 
+          if (mainr.TransDate==TRr.TransDate) then begin
+            rwcnt = MatRowCnt(TRr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(TRr,i,TRrw);
+              if (TRrw.AccNumber==Accr.AccNumber) then begin
+                if (accprntdf==false) then begin
+                  StartFormat(15);
+                  OutString(12,0,Accr.AccNumber,false);
+                  OutString(80,0,Accr.Comment,false);
+                  EndFormat;
+                  accprntdf = true;
+                end;
+                ToStrTRCode(tstr,TRr.IntYc,TRr.Number);
+                StartFormat(15);
+                OutString(250,0,tstr,false);
+                t = TRrw.DebVal - TRrw.CredVal;
+                if (t>0) then begin
+                  OutVal(400,0,t,M4DVal,true);       
+                end else begin
+                  OutVal(460,0,t,M4CVal,true);       
+                end;
+                EndFormat;
+                acctotd = acctotd + TRrw.DebVal;
+                acctotc = acctotc - TRrw.CredVal;
+              end;
+            end;
+          end;
+LSKIPTR:;          
+        end;
+      end;
+      if (mainr.FileName=="SMVc") then begin
+        SMr.SerNr = mainr.TransNr;
+        if (ReadFirstMain(SMr,1,true)) then begin
+          if (nonblank(SMr.FileName)) then begin goto LSKIPSM; end;
+          if (SMr.SerNr<=0) then begin goto LSKIPSM; end;
+            rwcnt = MatRowCnt(SMr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(SMr,i,SMrw);
+              if (SMrw.AccNumber==Accr.AccNumber) and (SMrw.RowSimStat!=1) then begin
+              if ((mainr.TransDate==SMr.TransDate) or (mainr.TransDate==SMrw.TransDate)) then begin// or dtp!=SMrw.TransDate
+                if (accprntdf==false) then begin
+                  StartFormat(15);
+                  OutString(12,0,Accr.AccNumber,false);
+                  OutString(80,0,Accr.Comment,false);
+                  EndFormat;
+                  accprntdf = true;
+                end;
+                StartFormat(15);
+                OutString(250,"DblLiquid",USetStr(1154) & ":" & SMr.SerNr,false);
+                t = SMrw.DebVal - SMrw.CredVal;
+                if (t>0) then begin
+                  OutVal(400,0,t,M4DVal,true);       
+                end else begin
+                  OutVal(460,0,t,M4CVal,true);       
+                end;
+                EndFormat;
+                acctotd = acctotd + SMrw.DebVal;
+                acctotc = acctotc - SMrw.CredVal;              
+              end;
+              end;
+            end;
+          end;
+LSKIPSM:;          
+      end;
+    end;
+  end;
+  return;
+end;
+*/
+global
+procedure AccrualNewRn(record RcVc RepSpec)
+begin
+  record AccVc Accr;
+  Boolean found;
+  val fwddv,fwdcv,totdsum,totcsum,acctotd,acctotc,t;
+  string 20 fracc,toacc;
+  Integer rw;
+  string 255 tstr;
+
+  StartReportJob(USetStr(13560));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  EndHeader;
+  SetRepCol(5,80);
+  SetRepCol(6,130);
+  SetRepCol(7,320);
+  SetRepCol(8,400);
+  
+  fracc = FirstInRange(RepSpec.f1,20);
+  toacc = LastInRange(RepSpec.f1,20);
+  if (RepSpec.flags[0]!=0) then begin
+    PrintSLAccruals(RepSpec);
+  end;
+  if (RepSpec.flags[0]!=0 and RepSpec.flags[1]!=0) then begin
+    Black_Divider(0,1);
+  end;
+  if (RepSpec.flags[1]!=0) then begin
+    PrintPLAccruals(RepSpec);
+  end;
+  EndJob;
+  return;
+end;
+
+global
+procedure AccrualNewDetailRn(record RcVc RepSpec)
+begin
+  record IVVc IVr;
+  record VIVc VIr;
+  record TRVc TRr;
+  val totdeb,totcred;
+  val pertotdeb,pertotcred;
+  val totfwdbal;
+  
+  StartReportJob(USetStr(13560));
+  EndHeader;
+  SetRepCol(5,80);
+  SetRepCol(7,320);
+  SetRepCol(8,400);
+  
+  TRr.Number = RepSpec.long1;
+  TRr.IntYc = RepSpec.ArtMode;
+  if (ReadFirstMain(TRr,2,true)) then begin
+    if (TRr.IntYc==IVYc) then begin
+      IVr.SerNr = TRr.Number;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        RepSpec.sStartDate = TRr.TransDate;
+        RepSpec.sEndDate = TRr.TransDate;
+        StartFormat(15);
+        OutString(0,0,USetStr(13564),false);
+        EndFormat
+        StartFormat(15);
+        OutString(12,0,USetStr(13565),false);  
+        OutString(7,0,USetStr(13566),true);    
+        OutString(8,0,USetStr(13567),true);    
+        OutString(1,0,USetStr(13562),true);    
+        EndFormat
+        ProcessIV(RepSpec,IVr,totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+        PrintTheTotals(totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+      end;
+    end;
+    if (TRr.IntYc==VIYc) then begin
+      VIr.SerNr = TRr.Number;
+      if (ReadFirstMain(VIr,1,true)) then begin
+        RepSpec.sStartDate = TRr.TransDate;
+        RepSpec.sEndDate = TRr.TransDate;
+        StartFormat(15);
+        OutString(0,0,USetStr(13568),false);
+        EndFormat
+        StartFormat(15);
+        OutString(12,0,USetStr(13565),false);  
+        OutString(7,0,USetStr(13566),true);    
+        OutString(8,0,USetStr(13567),true);    
+        OutString(1,0,USetStr(13562),true);    
+        EndFormat
+        ProcessVI(RepSpec,VIr,totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+        PrintTheTotals(totfwdbal,pertotdeb,pertotcred,totdeb,totcred);
+      end;
+    end;
+  end;
+  EndJob;
+  return;
+end;

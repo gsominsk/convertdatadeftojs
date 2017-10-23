@@ -1,0 +1,1709 @@
+external procedure FindTempStockRow(LongInt,string,Boolean,record TempStockVc,var row TempStockVc);
+forward function Integer GetFIFOPerSerialNr(record INVc,record ITVc,record CostAccBlock);
+forward function Integer FIFOPerLocation(record INVc,record ITVc,record CostAccBlock);
+external function string 255 NextSerialNumber(string,string,record SerNrTrackBlock);
+external function val DisassembledProdFIFORowVal(record INVc,record ProdVc,record ProdVc,row ProdVc);
+external function roundmode GetCostRoundMode(record RoundBlock);
+external function roundmode SetRoundModeD(Integer);
+external function val DisassembledProdFIFORowVal_fromSource(record INVc,record ProdVc,record ProdVc,row ProdVc);
+external function Boolean ConsigmentStock(string,string,Date);
+external function Boolean TREOStock(string,string,Date);
+external function Integer WAPerLocation(record INVc,record ITVc,record CostAccBlock);
+external function val GetStockQty(string,string,Date,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure GetCostModel(record INVc,record CostAccBlock,var record ITVc,var Integer,var Integer,Boolean);
+external function val CalculateQty2(val,val);
+external function val FindCostPrice(string,string,string,val,val,Boolean);
+external function Boolean TestArtCode(string,string,record INVc);
+external function val FindCostPriceWA(Integer,record INVc,string);
+external function val FindCostPriceBasePrice(record CostAccBlock,record INVc,record ITVc);
+external updating procedure StoreItemHistory_Out(record MainStockBlock,string,string,string,string,Date,val,val,val,LongInt,Integer,Integer,string,record TempStockVc,Boolean);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function val CreditedInvoiceRowFIFORowVal_Queued(Integer,Integer,Integer,LongInt,LongInt,string,var val);
+
+updating procedure StoreItemHistory_Out_WithSource(record MainStockBlock MSb,string artcode,string serialnr,string location,string filename,Date td,val qty,val coeff,val totalcost,LongInt transnr,Integer rownr,Integer stockaffectf,LongInt source,string position,record TempStockVc TSr,Boolean usetmpstkf)
+begin
+  record ItemHistVc IHr;
+  record INVc INr;
+  record ITVc ITr;
+  record CostAccBlock CAb;
+  Integer primary,queuecostmodel;
+  Date blankd;
+  row TempStockVc TSrw;
+
+  if (blank(artcode)) then begin 
+    goto LStoreItemHistory_Out_WithSource;
+  end;
+  BlockLoad(CAb);
+  RecordNew(IHr);
+  IHr.ArtCode = artcode;
+  IHr.Variety = "";
+  IHr.StockAffectf = stockaffectf;
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    if (artcode!=INr.Code) then begin
+      IHr.Variety = right(artcode,len(artcode)-len(INr.Code));
+      IHr.ArtCode = INr.Code;
+    end;
+    switch (INr.ItemType) begin
+      case 0:
+        switch (filename) begin
+          case "SHVc": ;
+          otherwise IHr.StockAffectf = 0;
+        end;
+      case 1: ;
+      case 2:
+        if (nonblank(INr.Recepy)) then begin
+          IHr.StockAffectf = 0;
+        end;
+      case 3: IHr.StockAffectf = 0;
+    end;
+  end;
+  IHr.SerialNr = serialnr;
+  IHr.Location = location;
+  IHr.FileName = filename;
+  IHr.TransDate = td;
+  IHr.FIFODate = td;
+  IHr.Qty = -qty;
+  IHr.Qty2 = CalculateQty2(IHr.Qty,coeff);
+  IHr.TransNr = transnr;
+  IHr.Row = rownr;
+  IHr.RemQty = BlankVal;
+  IHr.TotCostPrice = totalcost;  
+  IHr.Source = source;
+  if (ConsigmentStock(IHr.ArtCode,IHr.SerialNr,blankd)) then begin
+    IHr.ConsigStock = 1;
+  end;
+  if (TREOStock(IHr.ArtCode,IHr.SerialNr,blankd)) then begin
+    IHr.TREOStock = 1;
+  end;
+  ITr.Code = INr.Group;
+  if (ReadFirstMain(ITr,1,true)) then begin
+  end;
+  if (usetmpstkf) then begin
+    FindTempStockRow(IHr.Row,IHr.ArtCode,true,TSr,TSrw);    
+    IHr.PrimaryCostModel = TSrw.PrimaryCostModel;
+    IHr.QueuedCostModel = TSrw.QueuedCostModel;
+    IHr.ItemType = TSrw.ItemType;
+    IHr.FIFOPerSerialNr = TSrw.FIFOPerSerialNr;
+    IHr.FIFOPerLocation = TSrw.FIFOPerLocation;
+    IHr.NoNLCostOnShip = TSrw.NoNLCostOnShip;
+    IHr.WAPerLocation = TSrw.WAPerLocation;
+    IHr.WABase2 = TSrw.WABase2;
+    IHr.UpdWeightAvFromRet = TSrw.UpdWeightAvFromRet;
+    IHr.UpdWeightAvFromRetPU = TSrw.UpdWeightAvFromRetPU;
+    IHr.StockAffectf = TSrw.StockAffectf;    
+  end else begin
+    GetCostModel(INr,CAb,ITr,primary,queuecostmodel,false);
+    IHr.PrimaryCostModel = primary;
+    IHr.QueuedCostModel = queuecostmodel;
+    IHr.ItemType = INr.ItemType;
+    IHr.FIFOPerSerialNr = GetFIFOPerSerialNr(INr,ITr,CAb);
+    IHr.FIFOPerLocation = FIFOPerLocation(INr,ITr,CAb);
+    IHr.NoNLCostOnShip = CAb.NoNLCostOnShip;
+    IHr.WAPerLocation = WAPerLocation(INr,ITr,CAb);
+    IHr.WABase2 = CAb.WABase2;
+    IHr.UpdWeightAvFromRet = CAb.UpdWeightAvFromRet;
+    IHr.UpdWeightAvFromRetPU = CAb.UpdWeightAvFromRetPU;
+  end;
+  IHr.WATotCost = -IHr.Qty*INr.WeighedAvPrice;
+  IHr.WATotCostPerLoc = -IHr.Qty*FindCostPriceWA(1,INr,location);
+  IHr.CPTotCost = -IHr.Qty*INr.InPrice;
+//  IHr.CPTotCostPerLoc = -IHr.Qty*;
+  IHr.BPTotCost = -IHr.Qty*FindCostPriceBasePrice(CAb,INr,ITr);
+//  IHr.BPTotCostPerLoc = -IHr.Qty*;
+/*
+  switch (primary) begin
+    case 1:
+      IHr.CPTotCost = (totalcost/qty)*(-IHr.Qty);
+//      IHr.CPTotCostPerLoc = (totalcost/qty)*(-IHr.Qty);
+    case 2:
+      IHr.BPTotCost = (totalcost/qty)*(-IHr.Qty);
+//      IHr.BPTotCostPerLoc = (totalcost/qty)*(-IHr.Qty);
+    case 3:
+     IHr.WATotCost = (totalcost/qty)*(-IHr.Qty);
+     IHr.WATotCostPerLoc = (totalcost/qty)*(-IHr.Qty);
+  end;
+*/  
+  IHr.Position = position;
+  
+  IHr.SerNr = NextSerNr("ItemHistVc",IHr.TransDate,-1,false,"");
+  if (RecordStore(IHr,false)) then begin end;
+LStoreItemHistory_Out_WithSource:;  
+  return;
+end;
+
+global
+updating procedure RetPUStoreItemHistory_Out(record MainStockBlock MSb,record CostAccBlock CAb,record RetPUVc RetPUp,row RetPUVc RetPUrw,Integer rownr,Integer stockaffectf,record TempStockVc TSr,Boolean usetmpstkf)
+begin
+  record ItemHistVc oldsourceIHr;
+  record ItemHistVc sourceIHr;
+  record ItemHistVc sourceRetIHr;
+  Boolean foundf,foundretf;
+  string 255 location;
+  val takenq,takencostprice;
+  val sourceq,sourcecostprice;
+  Boolean testf,storedf;
+  record SerNrTrackBlock SNrb;
+  string 255 serialnr;
+  val qty,sum;
+  record INVc INr;
+
+  BlockLoad(SNrb);
+  location = RetPUrw.Location;
+  if (blank(location)) then begin
+    location = RetPUp.Location;
+  end;
+  if (blank(location)) then begin
+    location = MSb.MainStock;
+  end;
+
+  ReadFirstItem(RetPUrw.ArtCode,INr,true,false);
+  if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+    sum = RetPUrw.FIFORowVal/RetPUrw.Quant;
+    qty = blankval;
+    serialnr = FirstInRange(RetPUrw.SerialNr,60);
+    while (nonblank(serialnr)) begin
+      StoreItemHistory_Out(MSb,RetPUrw.ArtCode,serialnr,location,"RetPUVc",RetPUp.TransDate,1.00,RetPUrw.Coefficient,sum,RetPUp.SerNr,rownr,1,RetPUrw.PosCode,TSr,usetmpstkf);
+      qty = qty + 1;
+      serialnr = NextSerialNumber(RetPUrw.ArtCode,serialnr,SNrb);
+      if (qty>=RetPUrw.Quant) then begin serialnr = ""; end;
+    end;
+  end else begin          
+    StoreItemHistory_Out(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,RetPUrw.Quant,RetPUrw.Coefficient,RetPUrw.FIFORowVal,RetPUp.SerNr,rownr,1,RetPUrw.PosCode,TSr,usetmpstkf);
+  end;
+/*
+  switch (CAb.RetPUCostPriceNotFromPU) begin
+    case 0: 
+      StoreItemHistory_Out(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,RetPUrw.Quant,RetPUrw.Coefficient,RetPUrw.FIFORowVal,RetPUp.SerNr,rownr,1,RetPUrw.PosCode,TSr,usetmpstkf);
+    case 1:
+      if (RetPUp.PUNr<=0) then begin
+        StoreItemHistory_Out(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,RetPUrw.Quant,RetPUrw.Coefficient,RetPUrw.FIFORowVal,RetPUp.SerNr,rownr,1,RetPUrw.PosCode,TSr,usetmpstkf);
+      end else begin
+        foundf = true;
+        sourceIHr.FileName = "PUVc";
+        sourceIHr.TransNr = RetPUp.PUNr;
+        sourceIHr.Row = RetPUrw.PURow;
+        while (LoopKey("FNTransNr",sourceIHr,3,foundf)) begin
+          if (sourceIHr.FileName!="PUVc") then begin foundf = false; end;
+          if (sourceIHr.TransNr!=RetPUp.PUNr) then begin foundf = false; end;
+          if (sourceIHr.Row!=RetPUrw.PURow) then begin foundf = false; end;
+          testf = true;
+          if (sourceIHr.Invalid!=0) then begin testf = false; end;
+          if (foundf and testf) then begin
+            if (RetPUrw.Quant>sourceIHr.RemQty) then begin
+              takenq = 0;
+              takencostprice = 0;
+
+              if (sourceIHr.RemQty>0) then begin
+                takenq = sourceIHr.RemQty;
+                takencostprice = sourceIHr.RemCostPrice;
+                RecordCopy(oldsourceIHr,sourceIHr);
+                sourceIHr.RemQty = 0;
+                sourceIHr.RemCostPrice = 0;
+                if (RecordUpdate(oldsourceIHr,sourceIHr,false)==0) then begin end;
+                StoreItemHistory_Out_WithSource(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,takenq,RetPUrw.Coefficient,takencostprice,RetPUp.SerNr,rownr,1,sourceIHr.SerNr,RetPUrw.PosCode);
+                storedf = true;
+              end;
+
+              ResetLoop(sourceRetIHr);
+              foundretf = true;
+              sourceRetIHr.Source = sourceIHr.SerNr;
+              while (LoopKey("Source",sourceRetIHr,1,foundretf)) begin
+                if (sourceRetIHr.Source!=sourceIHr.SerNr) then begin foundretf = false; end;
+                testf = true;
+                if (sourceRetIHr.Invalid!=0) then begin testf = false; end;
+                if (foundretf and testf) then begin
+                  if (sourceRetIHr.RemQty>0) then begin
+                    RecordCopy(oldsourceIHr,sourceRetIHr);
+                    if ((RetPUrw.Quant-takenq)>sourceRetIHr.RemQty) then begin
+                      sourceq = sourceRetIHr.RemQty;
+                      sourcecostprice = sourceRetIHr.RemCostPrice;
+                    end else begin
+                      sourceq = RetPUrw.Quant - takenq;
+                      sourcecostprice = RetPUrw.FIFORowVal - takencostprice;
+                    end;                                 
+                    takenq = takenq + sourceq;
+                    takencostprice = takencostprice + sourcecostprice;
+                    sourceRetIHr.RemQty = sourceRetIHr.RemQty - sourceq;
+                    sourceRetIHr.RemCostPrice = sourceRetIHr.RemCostPrice - sourcecostprice;
+                    if (RecordUpdate(oldsourceIHr,sourceRetIHr,false)==0) then begin end;
+                    StoreItemHistory_Out_WithSource(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,sourceq,RetPUrw.Coefficient,sourcecostprice,RetPUp.SerNr,rownr,1,sourceRetIHr.SerNr,RetPUrw.PosCode);
+                    storedf = true;
+                    if (takenq>=RetPUrw.Quant) then begin
+                      foundretf = false;
+                    end;
+                  end;
+                end;
+              end;
+            end else begin
+              RecordCopy(oldsourceIHr,sourceIHr);
+              sourceIHr.RemQty = sourceIHr.RemQty - RetPUrw.Quant;
+              sourceIHr.RemCostPrice = sourceIHr.RemCostPrice - RetPUrw.FIFORowVal;
+              if (RecordUpdate(oldsourceIHr,sourceIHr,false)==0) then begin end;
+              StoreItemHistory_Out_WithSource(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,RetPUrw.Quant,RetPUrw.Coefficient,RetPUrw.FIFORowVal,RetPUp.SerNr,rownr,1,sourceIHr.SerNr,RetPUrw.PosCode);
+              storedf = true;
+              takenq = RetPUrw.Quant;
+            end;
+          end;
+        end;
+        if (takenq<RetPUrw.Quant) then begin
+          StoreItemHistory_Out(MSb,RetPUrw.ArtCode,RetPUrw.SerialNr,location,"RetPUVc",RetPUp.TransDate,RetPUrw.Quant-takenq,RetPUrw.Coefficient,(RetPUrw.FIFORowVal*(RetPUrw.Quant-takenq))/RetPUrw.Quant,RetPUp.SerNr,rownr,1,RetPUrw.PosCode,TSr,usetmpstkf);
+        end;
+      end;
+  end;
+*/  
+  return;
+end;
+
+procedure CalculateSDRowFIFO(record CostAccBlock CostAccRec,string location,record SDVc SDp,row SDVc SDrw,Integer currow)
+BEGIN
+  val adjstockv;
+  row SDVc SD2rw;
+  Integer j;
+  string 10 loc1,loc2;
+  record INVc INr;
+  record SerNrTrackBlock SNrb;
+  string 255 serialnr;
+  val qty,sum;
+  
+  BlockLoad(SNrb);
+  if (nonblank(SDrw.Location)) then begin
+    loc1 = SDrw.Location;
+  end else begin
+    loc1 = location;
+  end;
+  if (ReadFirstItem(SDrw.ArtCode,INr,true,false)) then begin end;
+  adjstockv = 0;
+  for (j=0;j<currow;j=j+1) begin  
+    MatRowGet(SDp,j,SD2rw);
+    if (nonblank(SD2rw.Location)) then begin
+      loc2 = SD2rw.Location;
+    end else begin
+      loc2 = location;
+    end;
+    if (TestArtCode(SD2rw.ArtCode,SDrw.ArtCode,INr)) and (loc1==loc2) then begin
+      adjstockv = adjstockv + SD2rw.Qty;
+    end;
+  end;
+  if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+    SDrw.FIFORowVal = blankval;
+    qty = blankval;
+    serialnr = FirstInRange(SDrw.SerialNr,60);
+    while (nonblank(serialnr)) begin
+      SDrw.FIFORowVal = SDrw.FIFORowVal + FindCostPrice(SDrw.ArtCode,location,serialnr,1.00,adjstockv,false);
+      qty = qty + 1;
+      adjstockv = adjstockv + 1;
+      serialnr = NextSerialNumber(SDrw.ArtCode,serialnr,SNrb);
+      if (qty>=SDrw.Qty) then begin serialnr = ""; end;
+    end;
+  end else begin
+    SDrw.FIFORowVal = FindCostPrice(SDrw.ArtCode,location,SDrw.SerialNr,SDrw.Qty,adjstockv,false);
+  end;
+  SDrw.FIFORowVal = Round(SDrw.FIFORowVal,SetRoundModeD(5));
+  SDrw.FIFO = SDrw.FIFORowVal/SDrw.Qty;
+  RETURN;
+END;
+
+global
+procedure UpdateSDFIFO(record SDVc SDp)
+BEGIN
+  record MainStockBlock MainStockRec;
+  record CostAccBlock CAb;
+  row SDVc SDrw;
+  row SDVc SD2rw;
+  Integer i,rwcnt,j;
+  val t,adjstockv;
+  string 10 location;
+  string 10 loc2;
+  
+  BlockLoad(MainStockRec);
+  BlockLoad(CAb);
+  location = SDp.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SDp,i,SDrw);
+    if (nonblank(SDrw.Location)) then begin
+      loc2 = SDrw.Location;
+    end else begin
+      loc2 = location;
+    end;
+    if (nonblank(SDrw.ArtCode)) then begin//INRS strcuture
+      CalculateSDRowFIFO(CAb,loc2,SDp,SDrw,i);
+      MatRowPut(SDp,i,SDrw);
+    end;
+  end;
+  RETURN;
+END;
+
+procedure CalculateSRRowFIFO(record CostAccBlock CostAccRec,string location,record SRVc SRp,row SRVc SRrw,Integer currow)
+begin
+  val adjstockv;
+  row SRVc SR2rw;
+  Integer j;
+  string 10 loc1,loc2;
+  record INVc INr;
+  
+  if (nonblank(SRrw.Location)) then begin
+    loc1 = SRrw.Location;
+  end else begin
+    loc1 = location;
+  end;
+  if (ReadFirstItem(SRrw.ArtCode,INr,true,false)) then begin end;
+  adjstockv = 0;
+  for (j=0;j<currow;j=j+1) begin  
+    MatRowGet(SRp,j,SR2rw);
+    loc2 = SR2rw.Location;
+    if (blank(loc2)) then begin
+      loc2 = location;
+    end;
+    if (TestArtCode(SR2rw.ArtCode,SRrw.ArtCode,INr)) and (loc1==loc2) then begin
+      adjstockv = adjstockv + SR2rw.Qty;
+    end;
+  end;
+  SRrw.FIFORowVal = FindCostPrice(SRrw.ArtCode,location,SRrw.SerialNr,SRrw.Qty,adjstockv,false);
+  SRrw.FIFORowVal = Round(SRrw.FIFORowVal,SetRoundModeD(5));
+  SRrw.FIFO = SRrw.FIFORowVal/SRrw.Qty;
+  SRrw.DiffFIFO = SRrw.NewFIFO - SRrw.FIFO;
+  SRrw.DiffFIFORowVal = SRrw.NewFIFORowVal - SRrw.FIFORowVal;
+  return;
+end;
+
+global
+procedure UpdateSRFIFO(record SRVc SRp)
+begin
+  record MainStockBlock MainStockRec;
+  record CostAccBlock CAb;
+  row SRVc SRrw;
+  row SRVc SR2rw;
+  Integer i,rwcnt,j;
+  val t,adjstockv;
+  string 10 location;
+  string 10 loc2;
+  
+  BlockLoad(MainStockRec);
+  BlockLoad(CAb);
+  location = SRp.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(SRp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SRp,i,SRrw);
+    loc2 = SRrw.Location;
+    if (blank(loc2)) then begin
+      loc2 = location;
+    end;
+    if (nonblank(SRrw.ArtCode)) then begin
+      CalculateSRRowFIFO(CAb,loc2,SRp,SRrw,i);
+      MatRowPut(SRp,i,SRrw);
+    end;
+  end;
+  return;
+end;
+
+procedure CalculateStockTakeRowFIFO(record CostAccBlock CostAccRec,string location,record StockTakeVc StockTakep,row StockTakeVc StockTakerw,Integer currow,Boolean setnew)
+BEGIN
+  val adjstockv,t;
+  row StockTakeVc StockTake2rw;
+  Integer j;
+  record INVc INr;
+  record SerNrTrackBlock SNrb;
+  string 255 serialnr;
+  val qty,sum;
+  
+  BlockLoad(SNrb);
+  if (ReadFirstItem(StockTakerw.ArtCode,INr,true,false)) then begin end;
+  adjstockv = 0;
+  for (j=0;j<currow;j=j+1) begin  
+    MatRowGet(StockTakep,j,StockTake2rw);
+    if TestArtCode(StockTake2rw.ArtCode,StockTakerw.ArtCode,INr) then begin
+      adjstockv = adjstockv + StockTake2rw.Qty;
+    end;
+  end;
+  if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+    StockTakerw.FIFORowVal = blankval;
+    qty = blankval;
+    serialnr = FirstInRange(StockTakerw.SerialNr,60);
+    while (nonblank(serialnr)) begin
+      StockTakerw.oldFIFORowVal = StockTakerw.FIFORowVal + FindCostPrice(StockTakerw.ArtCode,"",serialnr,1.00,adjstockv,false);
+      qty = qty + 1;
+      adjstockv = adjstockv + 1;
+      serialnr = NextSerialNumber(StockTakerw.ArtCode,serialnr,SNrb);
+      if (qty>=StockTakerw.Qty) then begin serialnr = ""; end;
+    end;
+  end else begin
+    StockTakerw.oldFIFORowVal = FindCostPrice(StockTakerw.ArtCode,"",StockTakerw.SerialNr,StockTakerw.Qty,adjstockv,false);
+  end;
+  StockTakerw.oldFIFORowVal = Round(StockTakerw.oldFIFORowVal,SetRoundModeD(5));
+  StockTakerw.oldFIFO = StockTakerw.oldFIFORowVal/StockTakerw.Qty;
+  if (setnew) then begin
+    StockTakerw.FIFO = StockTakerw.oldFIFO;
+  end;
+  RETURN;
+END;
+
+global
+procedure UpdateStockTakeFIFO(var record StockTakeVc StockTakep,Boolean setnew)
+BEGIN
+  record MainStockBlock MainStockRec;
+  record CostAccBlock CostAccRec;
+  row StockTakeVc StockTakerw;
+  row StockTakeVc StockTake2rw;
+  Integer i,rwcnt,j;
+  val t,adjstockv;
+  string 10 location;
+  string 10 loc2;
+  
+  BlockLoad(MainStockRec);
+  BlockLoad(CostAccRec);
+  location = StockTakep.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(StockTakep);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(StockTakep,i,StockTakerw);
+    if (nonblank(StockTakerw.Location)) then begin
+      loc2 = StockTakerw.Location;
+    end else begin
+      loc2 = location;
+    end;
+    if (nonblank(StockTakerw.ArtCode)) then begin
+      if (StockTakerw.Qty!=0) then begin
+        if ((StockTakerw.Qty!=0) and (StockTakerw.FIFO==0)) then begin          
+          CalculateStockTakeRowFIFO(CostAccRec,loc2,StockTakep,StockTakerw,i,setnew);
+          if (setnew) then begin
+            StockTakerw.FIFORowVal = StockTakerw.oldFIFORowVal;
+          end;
+        end else begin
+          StockTakerw.oldFIFORowVal = StockTakerw.Qty*StockTakerw.FIFO;
+          StockTakerw.oldFIFORowVal = Round(StockTakerw.oldFIFORowVal,SetRoundModeD(5));
+          if (setnew) then begin
+            StockTakerw.FIFORowVal = StockTakerw.oldFIFORowVal;
+          end;
+        end;
+        MatRowPut(StockTakep,i,StockTakerw);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Integer FIFOPerLocation(record INVc INr,record ITVc ITr,record CostAccBlock CAb)
+begin
+  Integer res;
+  
+  switch (INr.FIFOPerLocation) begin
+    case 0:
+      if (CAb.ItemGroupCostModel!=0) then begin
+        switch (ITr.FIFOPerLocation) begin
+          case 0: ;
+          otherwise
+            res = ITr.FIFOPerLocation;
+        end;
+      end;
+    otherwise
+      res = INr.FIFOPerLocation;
+  end;
+  if (res==0) then begin
+    res = CAb.FIFOPerLocation;
+  end else begin
+    res = res - 1;
+  end;
+  FIFOPerLocation = res;
+  return;
+end;
+
+global
+function Integer ArtCodeWAPerLocation(string artcode)
+begin
+  Integer res;
+  record INVc INr;
+  record ITVc ITr;
+  record CostAccBlock CAb;
+  
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    BlockLoad(CAb);
+    switch (INr.WAPerLocation) begin
+      case 0:
+        if (CAb.ItemGroupCostModel!=0) then begin
+          ITr.Code = INr.Group;
+          if (ReadFirstMain(ITr,1,true)) then begin end;
+          switch (ITr.WAPerLocation) begin
+            case 0: ;
+            otherwise
+              res = ITr.WAPerLocation;
+          end;
+        end;
+      otherwise
+        res = INr.WAPerLocation;
+    end;  
+    if (res==0) then begin
+      res = CAb.WAPerLocation;
+    end else begin
+      res = res - 1;
+    end;
+  end;
+  ArtCodeWAPerLocation = res;
+  return;
+end;
+
+global
+function Integer CostPricePerLocation(record INVc INr,record ITVc ITr,record CostAccBlock CAb)
+begin
+  Integer res;
+  
+  switch (INr.CostPricePerLocation) begin
+    case 0:
+      if (CAb.ItemGroupCostModel!=0) then begin
+        switch (ITr.CostPricePerLocation) begin
+          case 0: ;
+          otherwise
+            res = ITr.CostPricePerLocation;
+        end;
+      end;
+    otherwise
+      res = INr.CostPricePerLocation;
+  end;  
+  if (res==0) then begin
+    res = CAb.CostPricePerLocation;
+  end else begin
+    res = res - 1;
+  end;
+  CostPricePerLocation = res;
+  return;
+end;
+
+global
+function Integer ArtCodeCostPricePerLocation(string artcode)
+begin
+  Integer res;
+  record INVc INr;
+  record ITVc ITr;
+  record CostAccBlock CAb;
+  
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    BlockLoad(CAb);
+    switch (INr.CostPricePerLocation) begin
+      case 0:
+        if (CAb.ItemGroupCostModel!=0) then begin
+          ITr.Code = INr.Group;
+          if (ReadFirstMain(ITr,1,true)) then begin end;
+          switch (ITr.CostPricePerLocation) begin
+            case 0: ;
+            otherwise
+              res = ITr.CostPricePerLocation;
+          end;
+        end;
+      otherwise
+        res = INr.CostPricePerLocation;
+    end;  
+    if (res==0) then begin
+      res = CAb.CostPricePerLocation;
+    end else begin
+      res = res - 1;
+    end;
+  end;
+  ArtCodeCostPricePerLocation = res;
+  return;
+end;
+
+global
+function Integer FIFOPerSerialNr(record INVc INr,record CostAccBlock CAb)
+begin
+  Integer res;
+  record ITVc ITr;
+  
+  switch (INr.FIFOPerSerialNr) begin
+    case 0:
+      if (CAb.ItemGroupCostModel!=0) then begin
+        ITr.Code = INr.Group;
+        if (ReadFirstMain(ITr,1,true)) then begin end;
+        switch (ITr.FIFOPerSerialNr) begin
+          case 0: ;
+          otherwise
+            res = ITr.FIFOPerSerialNr;
+        end;
+      end;
+    otherwise
+      res = INr.FIFOPerSerialNr;
+  end;  
+  if (res==0) then begin
+    res = CAb.FIFOPerSerialNr;
+  end;
+  FIFOPerSerialNr = res;
+  return;
+end;
+
+global
+function Integer GetFIFOPerSerialNr(record INVc INr,record ITVc ITr,record CostAccBlock CAb)
+begin
+  Integer res;
+  
+  switch (INr.FIFOPerSerialNr) begin
+    case 0:
+      if (CAb.ItemGroupCostModel!=0) then begin
+        switch (ITr.FIFOPerSerialNr) begin
+          case 0: ;
+          otherwise
+            res = ITr.FIFOPerSerialNr;
+        end;
+      end;
+    otherwise
+      res = INr.FIFOPerSerialNr;
+  end;  
+  if (res==0) then begin
+    res = CAb.FIFOPerSerialNr;
+  end;
+  GetFIFOPerSerialNr = res;
+  return;
+end;
+
+global
+function Integer ArtCodeFIFOPerSerialNr(string artcode)
+begin
+  Integer res;
+  record INVc INr;
+  record ITVc ITr;
+  record CostAccBlock CAb;
+
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    BlockLoad(CAb);
+    switch (INr.FIFOPerSerialNr) begin
+      case 0:
+        if (CAb.ItemGroupCostModel!=0) then begin        
+          ITr.Code = INr.Group;
+          if (ReadFirstMain(ITr,1,true)) then begin end;
+          switch (ITr.FIFOPerSerialNr) begin
+            case 0: ;
+            otherwise
+              res = ITr.FIFOPerSerialNr;
+          end;
+        end;
+      otherwise
+        res = INr.FIFOPerSerialNr;
+    end;  
+    if (res==0) then begin
+      res = CAb.FIFOPerSerialNr;
+    end else begin
+      res = res - 1;
+    end;
+  end;
+  ArtCodeFIFOPerSerialNr = res;
+  return;
+end;
+
+global
+function Integer ItemCostPerLocation(record INVc INr)
+begin
+  Integer res;
+  record CostAccBlock CAb;
+  record ITVc ITr;
+  Integer primary,queuecostmodel;
+  
+  res = 0;
+  BlockLoad(CAb);
+  GetCostModel(INr,CAb,ITr,primary,queuecostmodel,false);
+  switch (primary) begin
+    case 1: res = CostPricePerLocation(INr,ITr,CAb);
+    case 2: res = 0;
+    case 3: res = WAPerLocation(INr,ITr,CAb);
+    case 4: res = FIFOPerLocation(INr,ITr,CAb);
+  end;
+  ItemCostPerLocation = res;
+  return;
+end;
+
+global
+function Integer ArtCodeCostPerLocation(string artcode)
+begin
+  Integer res;
+  record CostAccBlock CAb;
+  record ITVc ITr;
+  Integer primary,queuecostmodel;
+  record INVc INr;
+  
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    BlockLoad(CAb);
+    GetCostModel(INr,CAb,ITr,primary,queuecostmodel,false);
+    switch (primary) begin
+      case 1: res = CostPricePerLocation(INr,ITr,CAb);
+      case 2: res = 0;
+      case 3: res = WAPerLocation(INr,ITr,CAb);
+      case 4: res = FIFOPerLocation(INr,ITr,CAb);
+    end;
+  end;
+  ArtCodeCostPerLocation = res;
+  return;
+end;
+
+global
+function Integer ArtCodePrimaryCostModel(string artcode)
+begin
+  record CostAccBlock CAb;
+  record ITVc ITr;
+  Integer primary,queuecostmodel;
+  record INVc INr;
+  
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    BlockLoad(CAb);
+    GetCostModel(INr,CAb,ITr,primary,queuecostmodel,false);
+  end;
+  ArtCodePrimaryCostModel = primary;
+  return;
+end;
+
+global
+function Integer ItemPrimaryCostModel(record INVc INr,var Integer queuecostmodel)
+begin
+  record CostAccBlock CAb;
+  record ITVc ITr;
+  Integer primary;
+  
+  BlockLoad(CAb);
+  GetCostModel(INr,CAb,ITr,primary,queuecostmodel,false);
+  ItemPrimaryCostModel = primary;
+  return;
+end;
+
+global
+function val FindPUBaseRate2forSerialNr(string item,string serialnr)
+begin
+  record ItemHistVc IHr;
+  record PUVc PUr;
+  val res;
+
+  IHr.ArtCode = item;
+  IHr.SerialNr = serialnr;
+  IHr.FileName = "PUVc";
+  if (ReadFirstKey("ArtCodeSerialNr",IHr,3,true)) then begin
+    PUr.SerNr = IHr.TransNr;
+    if (ReadFirstMain(PUr,1,true)) then begin
+      res = PUr.BaseRate2;
+    end;
+  end;
+  FindPUBaseRate2forSerialNr = res;
+  return;
+end;
+
+global
+procedure GetCostsFromRecords(record ItemHistVc IHr,var val remcostprice,var val totcostprice,Boolean ondayratef,Date rated)
+BEGIN
+  record PUVc PUr;
+  row PUVc PUrw;
+  record RetVc Retr;
+  row RetVc Retrw;
+  record ProdVc Prodr;
+  row ProdVc Prodrw;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  record IVVc IVr;
+  row IVVc IVrw;
+  record SDVc SDr;
+  row SDVc SDrw;
+  record SHVc SHr;
+  row SHVc SHrw;
+  record WSVc WSr;
+  row WSVc WSrw;
+  record RetPUVc RetPUr;
+  row RetPUVc RetPUrw;
+  val fr,to1,to2,br1,br2,t,costprice;
+
+  switch (IHr.FileName) begin
+    case "IVVc":
+      IVr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(IVr)) then begin
+          MatRowGet(IVr,IHr.Row,IVrw);
+          remcostprice = (IVrw.FIFORowVal/IVrw.Quant)*IHr.RemQty;
+          totcostprice = IVrw.FIFORowVal;
+        end;
+      end;
+    case "PUVc":
+      PUr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(PUr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(PUr)) then begin
+          MatRowGet(PUr,IHr.Row,PUrw);
+          if (ondayratef) then begin
+            GetFullCurncyRate(PUr.CurncyCode,rated,fr,to1,to2,br1,br2);
+            t = DivRateToBase1(PUr.CurncyCode,PUrw.CostPrice,PUr.FrRate,PUr.ToRateB1,PUr.ToRateB2,PUr.BaseRate1,PUr.BaseRate2,DefaultCurRoundOff);
+            costprice = MulRateToBase1(PUr.CurncyCode,t,fr,to1,to2,br1,br2,DefaultCurRoundOff);            
+            remcostprice = costprice*IHr.RemQty;
+            totcostprice = IHr.Qty*costprice;
+          end else begin
+            remcostprice = (PUrw.Sum/PUrw.Quant)*IHr.RemQty;
+            totcostprice = PUrw.Sum;
+          end;
+        end;
+      end;
+    case "RetPUVc":
+      RetPUr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(RetPUr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(RetPUr)) then begin
+          MatRowGet(RetPUr,IHr.Row,RetPUrw);
+          remcostprice = (RetPUrw.FIFORowVal/RetPUrw.Quant)*IHr.RemQty;
+          totcostprice = RetPUrw.FIFORowVal;
+        end;
+      end;
+    case "RetVc":
+      Retr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(Retr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(Retr)) then begin
+          MatRowGet(Retr,IHr.Row,Retrw);
+          if (ondayratef) then begin
+            GetFullCurncyRate(Retr.CurncyCode,rated,fr,to1,to2,br1,br2);
+            t = DivRateToBase1(Retr.CurncyCode,Retrw.CostPrice,Retr.FrRate,Retr.ToRateB1,Retr.ToRateB2,Retr.BaseRate1,Retr.BaseRate2,DefaultCurRoundOff);
+            costprice = MulRateToBase1(Retr.CurncyCode,t,fr,to1,to2,br1,br2,DefaultCurRoundOff);            
+            remcostprice = costprice*IHr.RemQty;
+            totcostprice = IHr.Qty*costprice;
+          end else begin
+            remcostprice = Retrw.CostPrice*IHr.RemQty;
+            totcostprice = Retrw.Quant*Retrw.CostPrice;
+          end;
+        end;
+      end;
+    case "ProdVc":
+      Prodr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(Prodr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(Prodr)) then begin
+          MatRowGet(Prodr,IHr.Row,Prodrw);
+          remcostprice = (Prodrw.FIFORowVal/Prodrw.InQty)*IHr.RemQty;
+          totcostprice = Prodrw.FIFORowVal;
+        end;
+      end;
+    case "SDVc":
+      SDr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(SDr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(SDr)) then begin
+          MatRowGet(SDr,IHr.Row,SDrw);
+          remcostprice = (SDrw.FIFORowVal/SDrw.Qty)*IHr.RemQty;
+          totcostprice = SDrw.FIFORowVal;
+        end;
+      end;
+    case "SHVc":
+      SHr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(SHr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(SHr)) then begin
+          MatRowGet(SHr,IHr.Row,SHrw);
+          remcostprice = (SHrw.FIFORowVal/SHrw.Ship)*IHr.RemQty;
+          totcostprice = SHrw.FIFORowVal;
+        end;
+      end;
+    case "StockMovVc":
+      StockMovr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(StockMovr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(StockMovr)) then begin
+          MatRowGet(StockMovr,IHr.Row,StockMovrw);
+          if (IHr.Location==StockMovr.FrLocation) then begin
+            if (ondayratef) then begin
+              GetFullCurncyRate(StockMovr.CurncyCode,rated,fr,to1,to2,br1,br2);
+              t = DivRateToBase1(StockMovr.CurncyCode,(StockMovrw.FIFORowVal/StockMovrw.Quant),StockMovr.FrRate,StockMovr.ToRateB1,StockMovr.ToRateB2,StockMovr.BaseRate1,StockMovr.BaseRate2,DefaultCurRoundOff);
+              costprice = MulRateToBase1(StockMovr.CurncyCode,t,fr,to1,to2,br1,br2,DefaultCurRoundOff);            
+              remcostprice = costprice*IHr.RemQty;
+              totcostprice = IHr.Qty*costprice;
+            end else begin
+              remcostprice = (StockMovrw.FIFORowVal/StockMovrw.Quant)*IHr.RemQty;
+              totcostprice = StockMovrw.FIFORowVal;
+            end;
+          end;
+          if (IHr.Location==StockMovr.ThrouLocation) then begin
+            if (ondayratef) then begin
+              GetFullCurncyRate(StockMovr.CurncyCode,rated,fr,to1,to2,br1,br2);
+              t = DivRateToBase1(StockMovr.CurncyCode,(StockMovrw.SentFIFORowVal/StockMovrw.SentQuant),StockMovr.FrRate,StockMovr.ToRateB1,StockMovr.ToRateB2,StockMovr.BaseRate1,StockMovr.BaseRate2,DefaultCurRoundOff);
+              costprice = MulRateToBase1(StockMovr.CurncyCode,t,fr,to1,to2,br1,br2,DefaultCurRoundOff);            
+              remcostprice = costprice*IHr.RemQty;
+              totcostprice = IHr.Qty*costprice;
+            end else begin
+              remcostprice = (StockMovrw.SentFIFORowVal/StockMovrw.SentQuant)*IHr.RemQty;
+              totcostprice = StockMovrw.SentFIFORowVal;
+            end;
+          end;
+        end;
+      end;
+    case "WSVc":
+      WSr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(WSr,1,true)) then begin
+        if (IHr.Row<=MatRowCnt(WSr)) then begin
+          MatRowGet(WSr,IHr.Row,WSrw);
+          remcostprice = (WSrw.FIFORowVal/WSrw.Quant)*IHr.RemQty;
+          totcostprice = WSrw.FIFORowVal;
+        end;
+      end;
+  end;
+  return;
+end;
+
+global
+function val CreditedInvoiceRowFIFORowVal(record INVc INr,string location,Integer InvType,LongInt CreditedInv,string serialnr,LongInt CreditedRow,string artcode,val creditedqty,Integer stp,val adjstockv)
+begin
+  val res;
+  record ItemHistVc IHr;
+  record ItemHistVc sourceIHr;
+  Boolean foundf,testf;
+  record CostAccBlock CAb;
+  record ITVc ITr;
+  Integer primary,queuecostmodel;
+  val qty,remqty,sq,instock,t;  
+  record WeigAvVc war;  
+  
+  remqty = creditedqty;  
+  BlockLoad(CAb);
+  GetCostModel(INr,CAb,ITr,primary,queuecostmodel,true);
+
+  if (CreditedRow>=0) then begin
+    if (stp==kInvoiceRowTypeCorrection) then begin
+      if (CAb.RetCostPriceFromSH==0) then begin
+        instock = GetStockQty(INr.Code,location,CurrentDate,false);
+        if (remqty>instock) then begin          
+          qty = instock;
+        end else begin
+          qty = remqty;
+        end;
+        res = res + FindCostPrice(INr.Code,location,serialnr,qty,adjstockv,false);
+        remqty = remqty - qty;
+      end;
+    end;
+    switch (primary) begin
+      case 0:
+        if (CAb.RetCostPriceFromSH==0) then begin
+          qty = remqty;
+          res = res + INr.InPrice*qty;
+          remqty = remqty - qty;
+        end;
+      case 9:
+        if (CAb.RetCostPriceFromSH==0) then begin
+          qty = remqty;
+          res = res + INr.InPrice*qty;
+          remqty = remqty - qty;
+        end;
+      case 1:
+        qty = remqty;
+        if (CAb.RetCostPriceFromSH==0) then begin
+          res = res + INr.InPrice*qty;
+        end else begin
+          res = CreditedInvoiceRowFIFORowVal_Queued(InvType,primary,queuecostmodel,CreditedInv,CreditedRow,artcode,remqty);          
+        end;
+        remqty = remqty - qty;
+      case 2:
+        qty = remqty;
+        if (CAb.RetCostPriceFromSH==0) then begin
+          if (CAb.CostAccForNonStocked==0) then begin
+            res = res + INr.InPrice*qty;
+          end else begin
+            res = res + qty*FindCostPriceBasePrice(CAb,INr,ITr);
+          end;
+        end else begin
+          t = INr.CostPerc;
+          if (t==0) then begin
+            t = ITr.CostPerc;
+          end;
+          if (t==0) then begin
+            t = CAb.CostPerc;
+          end;
+          res = res + ((INr.UPrice1*t)/100)*qty;
+        end;
+        remqty = remqty - qty;
+      case 3:
+        qty = remqty;
+        if (CAb.RetCostPriceFromSH==0) then begin
+          res = res + INr.InPrice*qty;
+        end else begin
+          res = CreditedInvoiceRowFIFORowVal_Queued(InvType,primary,queuecostmodel,CreditedInv,CreditedRow,artcode,remqty);          
+        end;
+        remqty = remqty - qty;
+      case 4:
+        if (CAb.RetCostPriceFromSH==0) then begin
+          qty = remqty;
+          res = res + INr.InPrice*qty;
+          remqty = remqty - qty;          
+        end else begin
+          res = CreditedInvoiceRowFIFORowVal_Queued(InvType,primary,queuecostmodel,CreditedInv,CreditedRow,artcode,remqty);
+        end;
+      case 20:
+        IHr.FileName = "IVVc";
+        IHr.TransNr = CreditedInv;
+        IHr.Row = CreditedRow;
+        foundf = true;
+        while (LoopKey("FNTransNr",IHr,3,foundf)) begin
+          if (IHr.FileName!="IVVc") then begin foundf = false; end;
+          if (IHr.TransNr!=CreditedInv) then begin foundf = false; end;
+          if (IHr.Row!=CreditedRow) then begin foundf = false; end;
+          if (remqty<=0) then begin foundf = false; end;
+          testf = true;
+          if (IHr.Invalid!=0) then begin testf = false; end;
+          if (foundf and testf) then begin
+            if (IHr.ArtCode==artcode) then begin
+              sourceIHr.SerNr = IHr.Source;
+              if (ReadFIrstMain(sourceIHr,1,true)) then begin
+                sq = sourceIHr.Qty - sourceIHr.RemQty;
+                if (sourceIHr.Qty>remqty) then begin          
+                  qty = remqty;
+                end else begin
+                  qty = sq;
+                end;
+                res = res + ((sourceIHr.TotCostPrice-sourceIHr.RemCostPrice)/sq)*qty;
+                remqty = remqty - qty;            
+              end;
+            end;
+          end;
+        end;
+    end;
+  end;
+  if (CAb.RetCostPriceFromSH!=0) and (remqty>0) then begin
+    switch (primary) begin
+      case 1: 
+        res = res + remqty*INr.InPrice;
+        remqty = 0;
+      case 2: 
+        t = INr.CostPerc;
+        if (t==0) then begin
+          t = ITr.CostPerc;
+        end;
+        if (t==0) then begin
+          t = CAb.CostPerc;
+        end;
+        res = res + ((INr.UPrice1*t)/100)*remqty;
+        remqty = 0;
+      case 3: 
+        res = res + remqty*INr.WeighedAvPrice;
+        remqty = 0;        
+      otherwise
+        instock = GetStockQty(INr.Code,location,CurrentDate,false);
+        if (remqty>instock) then begin          
+          qty = instock;
+        end else begin
+          qty = remqty;
+        end;
+        res = res + FindCostPrice(INr.Code,location,serialnr,qty,0,false);
+        remqty = remqty - qty;
+        res = res + remqty*INr.InPrice;
+    end;
+  end;  
+  if (remqty>0) then begin
+    res = res + remqty*INr.InPrice;
+    remqty = 0;
+  end;
+  CreditedInvoiceRowFIFORowVal = res;
+  return;
+end;
+
+function Boolean SourceUsed(record ItemHistVc curIHr)
+begin
+  Boolean res;
+/*
+  record ItemHistVc IHr;
+  Boolean foundf;
+  
+  foundf = true;
+  IHr.Source = curIHr.Source;
+  while (LoopKey("Source",IHr,3,foundf)) begin
+    if (IHr.FileName!="IVVc") then begin foundf = false; end;
+    if (foundf) then begin
+    end;
+  end;
+*/  
+  SourceUsed = res;
+  return;
+end;
+
+global
+updating procedure StoreItemHistory_In_RetGoods_InQue(record MainStockBlock MSb,string artcode,string serialnr,string location,string filename,Date td,Date fifod,val qty,val coeff,val totalcost,LongInt transnr,Integer rownr,Integer stockaffectf,string position,
+                                                      LongInt source,Boolean setremqtyf,record TempStockVc TSr,Boolean usetmpstkf)
+begin
+  record ItemHistVc IHr;
+  record INVc INr;
+  record ITVc ITr;
+  record CostAccBlock CAb;
+  val t;
+  Integer primary,queuecostmodel;
+  Date blankd;
+  row TempStockVc TSrw;
+
+  if (blank(artcode)) then begin 
+    goto LStoreItemHistory_In_RetGoods_InQue;
+  end;
+  BlockLoad(CAb);  
+  RecordNew(IHr);
+  IHr.ArtCode = artcode;
+  IHr.Variety = "";
+  IHr.StockAffectf = stockaffectf;
+  if (ReadFirstItem(artcode,INr,false,false)) then begin
+    if (artcode!=INr.Code) then begin
+      IHr.Variety = right(artcode,len(artcode)-len(INr.Code));
+      IHr.ArtCode = INr.Code;
+    end;
+    switch (INr.ItemType) begin
+      case 0:
+        switch (filename) begin
+          case "SHVc": ;
+          otherwise IHr.StockAffectf = 0;
+        end;
+      case 1: ;
+      case 2:
+        if (nonblank(INr.Recepy)) then begin
+          IHr.StockAffectf = 0;
+        end;
+      case 3: IHr.StockAffectf = 0;
+    end;
+  end;
+  IHr.SerialNr = serialnr;
+  IHr.Location = location;
+  IHr.FileName = filename;
+  IHr.TransDate = td;
+  IHr.FIFODate = fifod;
+  IHr.Qty = qty;
+  IHr.Qty2 = CalculateQty2(IHr.Qty,coeff);
+  IHr.TransNr = transnr;
+  IHr.Row = rownr;
+  if (setremqtyf) then begin
+    IHr.RemQty = qty;
+    IHr.RemCostPrice = totalcost; 
+  end else begin
+    IHr.RemQty = blankval;
+    IHr.RemCostPrice = blankval; 
+  end;
+  IHr.Source = source;
+  IHr.TotCostPrice = totalcost;
+  if (ConsigmentStock(IHr.ArtCode,IHr.SerialNr,blankd)) then begin
+    IHr.ConsigStock = 1;
+  end;
+  if (TREOStock(IHr.ArtCode,IHr.SerialNr,blankd)) then begin
+    IHr.TREOStock = 1;
+  end;
+  ITr.Code = INr.Group;
+  if (ReadFirstMain(ITr,1,true)) then begin
+  end;
+  if (usetmpstkf) then begin
+    FindTempStockRow(IHr.Row,IHr.ArtCode,true,TSr,TSrw);  
+    IHr.PrimaryCostModel = TSrw.PrimaryCostModel;
+    IHr.QueuedCostModel = TSrw.QueuedCostModel;
+    IHr.ItemType = TSrw.ItemType;
+    IHr.FIFOPerSerialNr = TSrw.FIFOPerSerialNr;
+    IHr.FIFOPerLocation = TSrw.FIFOPerLocation;
+    IHr.NoNLCostOnShip = TSrw.NoNLCostOnShip;
+    IHr.WAPerLocation = TSrw.WAPerLocation;
+    IHr.WABase2 = TSrw.WABase2;
+    IHr.UpdWeightAvFromRet = TSrw.UpdWeightAvFromRet;
+    IHr.UpdWeightAvFromRetPU = TSrw.UpdWeightAvFromRetPU;
+    IHr.StockAffectf = TSrw.StockAffectf;
+  end else begin
+    GetCostModel(INr,CAb,ITr,primary,queuecostmodel,false);
+    IHr.PrimaryCostModel = primary;
+    IHr.QueuedCostModel = queuecostmodel;
+    IHr.ItemType = INr.ItemType;
+    IHr.FIFOPerSerialNr = GetFIFOPerSerialNr(INr,ITr,CAb);
+    IHr.FIFOPerLocation = FIFOPerLocation(INr,ITr,CAb);
+    IHr.NoNLCostOnShip = CAb.NoNLCostOnShip;
+    IHr.WAPerLocation = WAPerLocation(INr,ITr,CAb);
+    IHr.WABase2 = CAb.WABase2;
+    IHr.UpdWeightAvFromRet = CAb.UpdWeightAvFromRet;
+    IHr.UpdWeightAvFromRetPU = CAb.UpdWeightAvFromRetPU;
+  end;
+
+  IHr.WATotCost = IHr.Qty*INr.WeighedAvPrice;
+  IHr.WATotCostPerLoc = IHr.Qty*FindCostPriceWA(1,INr,location);
+  IHr.CPTotCost = IHr.Qty*INr.InPrice;
+//  IHr.CPTotCostPerLoc = IHr.Qty*;
+  IHr.BPTotCost = IHr.Qty*FindCostPriceBasePrice(CAb,INr,ITr);
+//  IHr.BPTotCostPerLoc = IHr.Qty*;
+  IHr.Position = position;
+/*
+  switch (primary) begin
+    case 1:
+      IHr.CPTotCost = totalcost;
+//      IHr.CPTotCostPerLoc = totalcost;
+    case 2:
+      IHr.BPTotCost = totalcost;
+//      IHr.BPTotCostPerLoc = totalcost;
+    case 3:
+      IHr.WATotCost = totalcost;
+      IHr.WATotCostPerLoc = totalcost;
+  end;
+*/  
+  IHr.SerNr = NextSerNr("ItemHistVc",IHr.TransDate,-1,false,"");
+  if (RecordStore(IHr,false)) then begin end;
+LStoreItemHistory_In_RetGoods_InQue:;
+  return;
+end;
+
+global
+updating procedure StoreItemHistory_In_CreditInvoice(Integer primary,record CostAccBlock CAb,record MainStockBlock MSb,record IVVc IVp,row IVVc IVrw,Integer rownr,record INVc INr,record TempStockVc TSr,Boolean usetmpstkf)
+begin
+  record ItemHistVc IHr;
+  record ItemHistVc sourceIHr;
+  record ItemHistVc oldsourceIHr;
+  Boolean foundf,testf;
+  Date fifod;
+  string 255 location;
+  val Coefficient;
+  val remqty,qty,cost;
+  record SerNrTrackBlock SNrb;
+
+  BlockLoad(SNrb);
+  remqty = IVrw.Quant;
+  location = IVrw.Location;
+  if (blank(location)) then begin
+    location = IVp.Location;
+  end;
+  if (blank(location)) then begin
+    location = MSb.MainStock;
+  end;
+  foundf = true;
+  IHr.FileName = "IVVc";
+  IHr.TransNr = IVp.CredInv;
+  IHr.Row = IVrw.CreditedRow;
+  while (LoopKey("FNTransNr",IHr,3,foundf)) begin
+    if (IHr.FileName!="IVVc") then begin foundf = false; end;
+    if (IHr.TransNr!=IVp.CredInv) then begin foundf = false; end;
+    if (IVrw.CreditedRow>-1) then begin
+      if (IHr.Row!=IVrw.CreditedRow) then begin foundf = false; end;
+    end;
+    if (remqty<=0) then begin foundf = false; end;
+    testf = foundf;
+    if (IVrw.CreditedRow<0) then begin
+      if (IHr.ArtCode!=IVrw.ArtCode) then begin testf = false; end;
+    end;
+    if (IHr.Invalid!=0) then begin testf = false; end;
+    if (testf) then begin
+      if (IHr.Source>0) then begin
+        sourceIHr.SerNr = IHr.Source;
+        if (ReadFirstMain(sourceIHr,1,true)) then begin
+          if (remqty>sourceIHr.Qty) then begin
+            qty = sourceIHr.Qty;
+          end else begin
+            qty = remqty;
+          end;
+          switch (primary) begin
+            case kCostModelWA:
+              if (remqty>(-IHr.Qty)) then begin
+                qty = -IHr.Qty;
+              end else begin
+                qty = remqty;
+              end;
+              cost = -(IHr.WATotCost/IHr.Qty)*qty;
+            otherwise
+              cost = (sourceIHr.TotCostPrice/sourceIHr.Qty)*qty;
+          end;
+          if (ArtCodeCostPerLocation(IVrw.ArtCode)!=0) then begin
+            if (CAb.RetFIFOQue!=0) then begin 
+              RecordCopy(oldsourceIHr,sourceIHr);
+              sourceIHr.RemQty = sourceIHr.RemQty + qty;
+              sourceIHr.RemCostPrice = sourceIHr.RemCostPrice + cost;
+              if (RecordUpdate(oldsourceIHr,sourceIHr,false)) then begin end;
+              if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,sourceIHr.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,false,TSr,usetmpstkf);
+              end else begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,IVrw.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,false,TSr,usetmpstkf);
+              end;
+            end else begin
+              if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,sourceIHr.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,true,TSr,usetmpstkf);
+              end else begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,IVrw.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,true,TSr,usetmpstkf);
+              end;
+            end;
+          end else begin
+            if (CAb.RetFIFOQue!=0) then begin 
+              RecordCopy(oldsourceIHr,sourceIHr);
+              sourceIHr.RemQty = sourceIHr.RemQty + qty;
+              sourceIHr.RemCostPrice = sourceIHr.RemCostPrice + cost;
+              if (RecordUpdate(oldsourceIHr,sourceIHr,false)) then begin end;
+              if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,sourceIHr.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,false,TSr,usetmpstkf);
+              end else begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,IVrw.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,false,TSr,usetmpstkf);
+              end;
+            end else begin
+              if (SNrb.BulkSerialNos!=0) and (INr.SerNrf==1) then begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,sourceIHr.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,true,TSr,usetmpstkf);
+              end else begin
+                StoreItemHistory_In_RetGoods_InQue(MSb,IVrw.ArtCode,IVrw.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,qty,IVrw.Coefficient,cost,IVp.SerNr,rownr,IVp.UpdStockFlag,IVrw.PosCode,IHr.SerNr,true,TSr,usetmpstkf);
+              end;
+            end;
+          end;
+          remqty = remqty - qty;
+//          StepForward(IHr,1);
+        end;
+      end;
+    end;
+  end;
+//  if (takenq!=IVrw.Quant) then begin
+//    StoreItemHistory_In(MSb,IVrw.ArtCode,IVrw.SerialNr,location,"IVVc",IVp.TransDate,IVp.TransDate,IVrw.Quant-takenq,IVrw.Coefficient,IVrw.FIFORowVal,IVp.SerNr,rownr,1,IVrw.PosCode,"");
+//  end;
+  return;
+end;
+
+global
+function val WeightedAvargeVal(val qty,record INVc INr)
+BEGIN
+  val res;
+  
+  res = qty*INr.WeighedAvPrice;
+  if (INr.PriceFactor!=0) then begin
+    res = res/INr.PriceFactor;
+  end;  
+  WeightedAvargeVal = res;
+  RETURN;
+END;
+
+global
+function val CostPriceVal(val qty,record INVc INr)
+BEGIN
+  val res;
+  
+  res = qty*INr.InPrice;
+  if (INr.PriceFactor!=0) then begin
+    res = res/INr.PriceFactor;
+  end;
+  CostPriceVal = res;
+  RETURN;
+END;
+
+global
+function val BasePricePrcVal(val qty,record INVc INr,val costprc)
+BEGIN
+  val res;
+  
+  res = qty*INr.UPrice1;
+  if (INr.PriceFactor!=0) then begin
+    res = res/INr.PriceFactor;
+  end;
+  res = res * costprc;
+  res = res/100;
+  BasePricePrcVal = res;
+  RETURN;
+END;
+
+global
+procedure ProdFillFIFO(record ProdVc Prodp,Boolean overwriteval)
+BEGIN
+  record INVc INr;
+  row ProdVc ProdRowr;
+  row ProdVc ProdRow2r;
+  Integer i,j,rwcnt,outrows;
+  val t,valv,extra;
+  val totrelprices,fifoshare,totfifo,actqty,t2,totdisfifo;
+  Boolean instockf,outstockf;
+  record ProdSettingsBlock PSb;
+  record CostAccBlock CAb;
+  val adjstockv,q;
+  record ProdVc orgProdr;
+  record RoundBlock Rb;
+  roundmode rndfifo;
+  
+  BlockLoad(Rb);
+  outrows = 0;
+  i = -1;
+  rwcnt = MatRowCnt(Prodp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodp,i,ProdRowr);
+    if (ProdRowr.OutQty!=0) then begin
+      outrows = outrows + 1;
+      t2 = ProdRowr.OutQty*ProdRowr.RelVal;      
+      totrelprices = totrelprices + t2;     
+    end;
+  end;
+  BlockLoad(CAb);
+  BlockLoad(PSb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodp,i,ProdRowr);
+    if (ReadFirstItem(ProdRowr.Item,INr,true,true)) then begin
+    end;
+// This shouldn't be done on nonstocked items 
+//   Allow service and plain    
+    switch (Prodp.RowsHoldActualQty) begin
+      case 1: t = ProdRowr.InQty;
+      otherwise t = ProdRowr.InQty*Prodp.Qty;
+    end;      
+    if (Prodp.Disassemble!=0) then begin
+      orgProdr.SerNr = Prodp.OrgProdNr;
+      ReadFirstMain(orgProdr,1,true);
+      if (ProdRowr.InQty!=0) then begin
+        ProdRowr.FIFORowVal = blankval;
+        ProdRowr.OrgProdFIFORowVal = DisassembledProdFIFORowVal_fromSource(INr,orgProdr,Prodp,ProdRowr);
+        totdisfifo = totdisfifo + ProdRowr.OrgProdFIFORowVal;
+      end;
+      if (ProdRowr.OutQty!=0) then begin
+        ProdRowr.FIFORowVal = DisassembledProdFIFORowVal(INr,orgProdr,Prodp,ProdRowr);
+        switch (Prodp.RowsHoldActualQty) begin
+          case 0: 
+            ProdRowr.OrgProdFIFORowVal = ProdRowr.FIFORowVal/Prodp.Qty;
+            ProdRowr.ItemCost = (ProdRowr.FIFORowVal/ProdRowr.OutQty)/Prodp.Qty;
+          case 1: 
+            ProdRowr.OrgProdFIFORowVal = ProdRowr.FIFORowVal;
+            ProdRowr.ItemCost = ProdRowr.FIFORowVal/ProdRowr.OutQty;
+        end;
+        outrows = outrows + 1;
+      end;
+      MatRowPut(Prodp,i,ProdRowr);
+    end;
+     
+    if (INr.ItemType<2) then begin // Don't do this for Service, the costs are variable and shouldn't change when OK:ing it.
+      if (ProdRowr.InQty!=0) then begin
+//JJCHECK         
+        switch (INr.ItemType) begin
+          case 1:
+            adjstockv = 0;
+            for (j=0;j<i;j=j+1) begin  
+              MatRowGet(Prodp,j,ProdRow2r);
+              if (ProdRowr.Item==ProdRow2r.Item) and (ProdRow2r.InQty!=0)then begin                
+                switch (Prodp.RowsHoldActualQty) begin
+                  case 1: adjstockv = adjstockv + ProdRow2r.InQty;
+                  otherwise adjstockv = adjstockv + Prodp.Qty*ProdRow2r.InQty;
+                end;      
+              end;
+            end;
+            switch (Prodp.RowsHoldActualQty) begin
+              case 1: q = ProdRowr.InQty;
+              otherwise q = Prodp.Qty*ProdRowr.InQty;
+            end;      
+            ProdRowr.FIFORowVal = FindCostPrice(ProdRowr.Item,Prodp.Location,ProdRowr.SerialNr,q,adjstockv,false);
+            ProdRowr.ItemCost = ProdRowr.FIFORowVal;
+          otherwise
+            if (ProdRowr.Item!=PSb.MachineCostItem) then begin
+              ProdRowr.ItemCost = t*INr.InPrice;
+              ProdRowr.FIFORowVal = ProdRowr.ItemCost;
+            end;
+        end;
+        totfifo = totfifo + ProdRowr.ItemCost;
+        valv = valv + ProdRowr.ItemCost;        
+        switch (Prodp.RowsHoldActualQty) begin
+          case 1: ;
+          otherwise valv = valv/Prodp.Qty;
+        end;      
+        if (ProdRowr.Item!=PSb.MachineCostItem) then begin
+          ProdRowr.ItemCost = ProdRowr.ItemCost/t;// done in ProdCalcItemCost for som reason
+        end;
+        switch (Prodp.RowsHoldActualQty) begin
+          case 1: t = Prodp.Qty*ProdRowr.ExtraCost;;
+          otherwise t = Prodp.Qty*ProdRowr.ExtraCost;
+        end;              
+        extra = extra + t;
+        rndfifo = GetCostRoundMode(Rb);
+// 6.1         ProdRowr.ItemCost = Round(ProdRowr.ItemCost,rndfifo);
+//          ProdRowr.FIFORowVal = Round(ProdRowr.FIFORowVal,rndfifo);
+        ProdRowr.ItemCost = Round(ProdRowr.ItemCost,SetRoundModeD(5));
+        ProdRowr.FIFORowVal = Round(ProdRowr.FIFORowVal,SetRoundModeD(5));
+        MatRowPut(Prodp,i,ProdRowr);
+      end;
+    end else begin
+      totfifo = totfifo + (ProdRowr.ItemCost*t);
+    end;
+  end;
+  
+  if (Prodp.Disassemble!=0) then begin
+/*  
+    if (outrows>0) then begin
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Prodp,i,ProdRowr);
+        if (ProdRowr.OutQty!=0) then begin
+          ProdRowr.RelVal = ProdRowr.OrgProdFIFORowVal/totdisfifo;
+          MatRowPut(Prodp,i,ProdRowr);
+        end;
+      end;
+    end;
+*/    
+  end else begin
+    totfifo = totfifo + extra;
+    if (outrows>0) then begin
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Prodp,i,ProdRowr);
+        if (ProdRowr.OutQty!=0) then begin
+          t2 = ProdRowr.OutQty*ProdRowr.RelVal;   
+          if (t2!=0) then begin   
+            fifoshare = t2/totrelprices;
+            t2 = fifoshare*totfifo;
+          end else begin
+            if (totrelprices!=0) then begin
+              ProdRowr.ItemCost = 0;
+              MatRowPut(Prodp,i,ProdRowr);
+              goto L66ProdFillFIFO;
+            end else begin
+              t2 = totfifo;
+            end;
+          end;          
+          switch (Prodp.RowsHoldActualQty) begin
+            case 1: actqty = ProdRowr.OutQty;
+            otherwise actqty = ProdRowr.OutQty*Prodp.Qty;
+          end;              
+          t = t2/actqty;
+          ProdRowr.ItemCost = Round(t,SetRoundModeD(5));
+          ProdRowr.FIFORowVal = Round(ProdRowr.FIFORowVal,SetRoundModeD(5));
+          MatRowPut(Prodp,i,ProdRowr);
+        end;
+  L66ProdFillFIFO:;  
+      end;
+    end;
+  end;
+  return;
+end;
+
+/*
+global
+procedure ProdFillFIFO(record ProdVc Prodp,Boolean overwriteval)
+BEGIN
+  record INVc INr;
+  row ProdVc ProdRowr;
+  row ProdVc ProdRow2r;
+  Integer i,j,rwcnt,outrows;
+  val t,valv,extra;
+  val totrelprices,fifoshare,totfifo,actqty,t2;
+  Boolean instockf,outstockf;
+  record ProdSettingsBlock PSb;
+  record CostAccBlock CAb;
+  val adjstockv,q;
+  record ProdVc orgProdr;
+  record RoundBlock Rb;
+  roundmode rndfifo;
+  
+  BlockLoad(Rb);
+  outrows = 0;
+  i = -1;
+  rwcnt = MatRowCnt(Prodp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodp,i,ProdRowr);
+    if (ProdRowr.OutQty!=0) then begin
+      outrows = outrows + 1;
+      t2 = ProdRowr.OutQty*ProdRowr.RelVal;      
+      totrelprices = totrelprices + t2;     
+    end;
+  end;
+  BlockLoad(CAb);
+  BlockLoad(PSb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodp,i,ProdRowr);
+    if (ReadFirstItem(ProdRowr.Item,INr,true,true)) then begin
+    end;
+// This shouldn't be done on nonstocked items 
+//   Allow service and plain    
+    switch (Prodp.RowsHoldActualQty) begin
+      case 1: t = ProdRowr.InQty;
+      otherwise t = ProdRowr.InQty*Prodp.Qty;
+    end;      
+    if (Prodp.Disassemble!=0) and (CAb.DisProdCostPriceFromProd!=0) then begin
+      orgProdr.SerNr = Prodp.OrgProdNr;
+      ReadFirstMain(orgProdr,1,true);
+      ProdRowr.FIFORowVal = DisassembledProdFIFORowVal_fromSource(INr,orgProdr,Prodp,ProdRowr);
+      if (ProdRowr.InQty!=0) then begin
+        ProdRowr.ItemCost = ProdRowr.FIFORowVal/ProdRowr.InQty;
+      end;
+      if (ProdRowr.OutQty!=0) then begin
+        ProdRowr.ItemCost = ProdRowr.FIFORowVal/ProdRowr.OutQty;
+      end;
+      MatRowPut(Prodp,i,ProdRowr);
+    end else begin
+      if (INr.ItemType<2) then begin // Don't do this for Service, the costs are variable and shouldn't change when OK:ing it.
+        if (ProdRowr.InQty!=0) then begin
+//JJCHECK         
+          switch (INr.ItemType) begin
+            case 1:
+              adjstockv = 0;
+              for (j=0;j<i;j=j+1) begin  
+                MatRowGet(Prodp,j,ProdRow2r);
+                if (ProdRowr.Item==ProdRow2r.Item) and (ProdRow2r.InQty!=0)then begin                
+                  switch (Prodp.RowsHoldActualQty) begin
+                    case 1: adjstockv = adjstockv + ProdRow2r.InQty;
+                    otherwise adjstockv = adjstockv + Prodp.Qty*ProdRow2r.InQty;
+                  end;      
+                end;
+              end;
+              switch (Prodp.RowsHoldActualQty) begin
+                case 1: q = ProdRowr.InQty;
+                otherwise q = Prodp.Qty*ProdRowr.InQty;
+              end;      
+              ProdRowr.FIFORowVal = FindCostPrice(ProdRowr.Item,Prodp.Location,ProdRowr.SerialNr,q,adjstockv,false);
+              ProdRowr.ItemCost = ProdRowr.FIFORowVal;
+            otherwise
+              if (ProdRowr.Item!=PSb.MachineCostItem) then begin
+                ProdRowr.ItemCost = t*INr.InPrice;
+                ProdRowr.FIFORowVal = ProdRowr.ItemCost;
+              end;
+          end;
+          totfifo = totfifo + ProdRowr.ItemCost;
+          valv = valv + ProdRowr.ItemCost;        
+          switch (Prodp.RowsHoldActualQty) begin
+            case 1: ;
+            otherwise valv = valv/Prodp.Qty;
+          end;      
+          ProdRowr.ItemCost = ProdRowr.ItemCost/t;
+          switch (Prodp.RowsHoldActualQty) begin
+            case 1: t = ProdRowr.ExtraCost;;
+            otherwise t = Prodp.Qty*ProdRowr.ExtraCost;
+          end;              
+          extra = extra + t;
+          rndfifo = GetCostRoundMode(Rb);
+// 6.1         ProdRowr.ItemCost = Round(ProdRowr.ItemCost,rndfifo);
+//          ProdRowr.FIFORowVal = Round(ProdRowr.FIFORowVal,rndfifo);
+
+          ProdRowr.ItemCost = Round(ProdRowr.ItemCost,SetRoundModeD(5));
+          ProdRowr.FIFORowVal = Round(ProdRowr.FIFORowVal,SetRoundModeD(5));
+          MatRowPut(Prodp,i,ProdRowr);
+        end;
+      end else begin
+        totfifo = totfifo + (ProdRowr.ItemCost*t);
+      end;
+    end;
+  end;
+  if (Prodp.Disassemble!=0) and (CAb.DisProdCostPriceFromProd!=0) then begin
+  end else begin
+    totfifo = totfifo + extra;
+    if (outrows>0) then begin
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Prodp,i,ProdRowr);
+        if (ProdRowr.OutQty!=0) then begin
+          t2 = ProdRowr.OutQty*ProdRowr.RelVal;   
+          if (t2!=0) then begin   
+            fifoshare = t2/totrelprices;
+            t2 = fifoshare*totfifo;
+          end else begin
+            if (totrelprices!=0) then begin
+              ProdRowr.ItemCost = 0;
+              MatRowPut(Prodp,i,ProdRowr);
+              goto L66ProdFillFIFO;
+            end else begin
+              t2 = totfifo;
+            end;
+          end;          
+          switch (Prodp.RowsHoldActualQty) begin
+            case 1: actqty = ProdRowr.OutQty;
+            otherwise actqty = ProdRowr.OutQty*Prodp.Qty;
+          end;              
+          t = t2/actqty;
+          ProdRowr.ItemCost = Round(t,SetRoundModeD(5));
+          ProdRowr.FIFORowVal = Round(ProdRowr.FIFORowVal,SetRoundModeD(5));
+          MatRowPut(Prodp,i,ProdRowr);
+        end;
+L66ProdFillFIFO:;  
+      end;
+    end;
+  end;
+  return;
+end;
+*/
+
+global
+function Boolean LocationRequiresPositions(string location)
+begin
+  Boolean res;
+  record LocationVc Locationr;
+
+  if (blank(location)) then begin 
+    goto LLocationRequiresPositions;
+  end;
+  
+  Locationr.Code = location;
+  if (ReadFirstMain(Locationr,1,true)) then begin
+    if (Locationr.RequirePos!=0) then begin 
+      res = true;
+    end;
+  end;
+LLocationRequiresPositions:;  
+  LocationRequiresPositions = res;
+  return;
+end;

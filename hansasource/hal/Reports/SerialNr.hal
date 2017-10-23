@@ -1,0 +1,838 @@
+external function Boolean ItemInItemGroupOrClass(string,string,string);
+external function Boolean HasItemClassification();
+external procedure HTItemClass(string,var string);
+external function val FindSerialNrBalance(string,string,string,Date);
+external function val GetStockQty(string,string,Date,Boolean);
+external procedure HTArtSel(string, string, var string);
+external procedure HT2Per(Date, Date , var string);
+
+procedure PrintSerNrRow(Date td,Integer sid,LongInt TransNr,string cust,string loc,Integer showpos,string position,string sernr,var val quant,val totinq,string dblclkproc)
+begin
+  StartFormat(15);
+  OutDate(0,0,td,false);
+  OutString(70,0,USetStr(sid),false);
+  OutLongInt(135,dblclkproc,TransNr,false);
+  if (showpos!=0) then begin
+    OutString(190,0,position,false);
+  end else begin
+    if (nonblank(cust)) then begin
+      OutString(190,0,Left(cust,24),false);
+    end;
+  end;
+  OutString(280,0,loc,false);
+  OutString(320,0,sernr,false);
+  OutVal(440,0,quant,M4UVal,true);
+  OutVal(480,0,totinq,M4UVal,true);
+  EndFormat;
+  return;
+end;
+
+procedure PrintItemDimensions(record INVc INr,string serialnr)
+BEGIN
+  record BatchTextVc BatchTextr;
+  val UnitXval,UnitYval,UnitZval;
+
+  UnitXval = INr.Width;
+  UnitYval = INr.Height;
+  UnitZval = INr.Height;
+  BatchTextr.ArtCode = INr.Code;
+  BatchTextr.SerialNr = serialnr;
+  if (ReadFirstMain(BatchTextr,2,true)) then begin    
+    UnitXval = BatchTextr.UnitXval;
+    UnitYval = BatchTextr.UnitYval;
+    UnitZval = BatchTextr.UnitZval;
+  end;
+  OutVal(360,0,UnitXval,M4Qty,true);
+  OutVal(420,0,UnitYval,M4Qty,true);
+  OutVal(480,0,UnitZval,M4Qty,true);
+  RETURN;
+END;
+
+procedure SerialNrHistHead(Integer showpos)
+begin
+  StartFormat(15);
+  OutString(0,0,USetStr(5007),false);
+  OutString(60,0,USetStr(5006),false);
+  OutString(135,0,USetStr(5008),false);
+  if (showpos!=0) then begin
+    OutString(190,0,USetStr(4998),false);
+  end else begin
+    OutString(190,0,USetStr(5034),false); //4944
+  end;
+  OutString(280,0,USetStr(5010),false);
+  OutString(320,0,USetStr(5018),false);
+  OutString(480,0,USetStr(5009),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  return;
+end;
+
+function Boolean SignEqual(val Qty1,val Qty2)
+begin
+  Boolean res;
+  
+  res = false;
+  if (Qty1<0) then begin
+    if (Qty2<0) then begin
+      res = true;
+    end;
+  end else begin
+    if (Qty2>=0) then begin
+      res = true;
+    end;
+  end;
+  SignEqual = res;
+  return;
+end;
+
+
+/*
+procedure SerialNrHistIntRn(string artcode,record RcVc RepSpec)
+begin
+  record IntSerBalVc IntSerBalr;
+  Boolean found,testf;
+  
+  found = true;
+  IntSerBalr.Item = artcode;
+  while (LoopKey("MainKey",IntSerBalr,1,found)) begin
+    if (IntSerBalr.Item!=artcode) then begin
+      found = false;
+    end;
+    if (found) then begin
+      if (nonblank(RepSpec.TransStr)) then begin
+         if (RepSpec.TransStr<>IntSerBalr.Location) then begin testf = false; end;
+      end;   
+      if (nonblank(RepSpec.f2)) then begin
+         if (RepSpec.f2<>IntSerBalr.Serial) then begin testf = false; end;
+      end;   
+      if (testf) then begin
+        PrintSerNrRow(IHr.TransDate,5012,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,StockMovrw.SerialNr,t,"DblStockMov");
+      end;
+    end;          
+  end;
+  return;
+end;
+*/
+
+procedure AddItemHistRecord(record ItemHistVc IHr,record ItemHistVc sumIHr)
+begin
+  sumIHr.SerialNr = IHr.SerialNr;
+  sumIHr.Qty = sumIHr.Qty + IHr.Qty;
+  sumIHr.Qty2 = sumIHr.Qty2 + IHr.Qty2;
+  sumIHr.TotCostPrice = sumIHr.TotCostPrice + IHr.TotCostPrice;
+  sumIHr.WATotCost = sumIHr.WATotCost + IHr.WATotCost;
+  sumIHr.CPTotCost = sumIHr.CPTotCost + IHr.CPTotCost;
+  sumIHr.BPTotCost = sumIHr.BPTotCost + IHr.BPTotCost;
+
+  sumIHr.WATotCostPerLoc = sumIHr.WATotCostPerLoc + IHr.WATotCostPerLoc;
+  sumIHr.CPTotCostPerLoc = sumIHr.CPTotCostPerLoc + IHr.CPTotCostPerLoc;
+  sumIHr.BPTotCostPerLoc = sumIHr.BPTotCostPerLoc + IHr.BPTotCostPerLoc;
+  return;
+end;
+
+global
+procedure SerialNrHistRn(record RcVc RepSpec)
+begin
+  record ItemHistVc IHr;
+  record ItemHistVc rIHr;
+  record ItemHistVc lastIHr;
+  record INVc INr;
+  record SHVc SHr;
+  record PUVc PUr;
+  record RetVc Retr;
+  record RetPUVc RetPUr;
+  record SDVc SDr;
+  record OffHireVc OffHirer;
+  record INTransferVc INTransferr;
+  record DispatchVc Dispatchr;
+  record QualConVc QualConr;
+  record ProdVc Prodr;
+  record StockMovVc SMr;
+  record InternMovVc IMr;
+  record IVVc IVr;
+  record IVCashVc IVCashr;
+  record CUVc CUr;
+  record WSVc WSr;
+  record EasyRentVc EasyRentr;
+  Boolean fnd1,fnd2,testf;
+  Integer i,rwcnt;
+  row SHVc SHrw;
+  row PUVc PUrw;
+  row RetVc Retrw;
+  row RetPUVc RetPUrw;
+  row StockMovVc StockMovrw;
+  row InternMovVc InternMovrw;
+  row ProdVc Prodrw;
+  row IVVc IVrw;
+  row IVCashVc IVCashrw;
+  row SDVc SDrw;
+  row OffHireVc OffHirerw;
+  row INTransferVc INTransferrw;
+  row DispatchVc Dispatchrw;
+  row WSVc WSrw;
+  row EasyRentVc EasyRentrw;
+  val v,t;
+  val q;
+  string 255 fromart,toart;
+  string 255 ckey;
+  Integer keys,sid;
+  string 20 custname,dblstr;
+  Boolean printf,inprintf,foundf,printtotalf,ihtestf;
+  val totinq,totq,fwdqty;
+
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart =  LastInRange(RepSpec.f1,20);
+  SerialNrHistHead(RepSpec.flags[0]);
+  if (nonblank(RepSpec.f3)) then begin
+    INr.Group = RepSpec.f3;
+    INr.Code = fromart;
+    ckey = "Group";
+    keys = 2;
+  end else begin
+    INr.Code = fromart;
+    ckey = "Code";
+    keys = 1;
+  end;
+  printf = true;
+  fnd1 = true;
+  while (LoopKey(ckey,INr,keys,fnd1)) begin
+    if (fnd1) then begin
+      if (INr.SerNrf<>0) then begin 
+        if (nonblank(toart)) then begin
+          if (INr.Code>toart) then begin
+            fnd1 = false;
+          end;
+        end;    
+        if (fnd1) then begin
+          if (nonblank(RepSpec.f3)) then begin
+            if (INr.Group<>RepSpec.f3) then begin
+              fnd1 = false;
+            end;  
+          end;
+        end;
+        testf = true;
+        if (nonblank(RepSpec.AccStr)) then begin
+          if (INr.Department<>RepSpec.AccStr) then begin
+            testf = false;
+          end;
+        end;
+        if (testf and fnd1) then begin
+          testf = ItemInItemGroupOrClass(INr.Code,"",RepSpec.f4);
+        end;        
+        if (fnd1 and testf) then begin
+          RecordClear(lastIHr);
+          RecordClear(IHr);
+          if (nonblank(RepSpec.f2)) then begin
+            fwdqty = FindSerialNrBalance(INr.Code,RepSpec.f2,RepSpec.TransStr,AddDay(RepSpec.sStartDate,-1));
+          end else begin
+            fwdqty = GetStockQty(INr.Code,RepSpec.TransStr,AddDay(RepSpec.sStartDate,-1),false);
+          end;
+          totinq = fwdqty;
+          printf = true;
+          ResetLoop(rIHr);
+          rIHr.ArtCode = INr.Code;
+          rIHr.TransDate = RepSpec.sStartDate;
+          fnd2 = true;
+          printtotalf = false;
+          while (LoopKey("ArtCode",rIHr,2,fnd2)) begin
+            if (rIHr.ArtCode!=INr.Code) then begin fnd2 = false; end;             
+            if (rIHr.TransDate>RepSpec.sEndDate) then begin fnd2 = false; end;
+            testf = true;
+            if (nonblank(RepSpec.TransStr)) then begin
+              if (RepSpec.TransStr<>rIHr.Location) then begin testf = false; end;
+            end;   
+            if (nonblank(RepSpec.f2)) then begin
+              if (RepSpec.f2<>rIHr.SerialNr) then begin testf = false; end;
+            end;         
+/*            
+            if (lastIHr.FileName==rIHr.FileName) and (lastIHr.TransNr==rIHr.TransNr) and (lastIHr.Row==rIHr.Row) and (SignEqual(lastIHr.Qty,rIHr.Qty)) then begin
+//              if (lastIHr.SerialNr==IHr.SerialNr) then begin
+//cannot be , we can have several sources for same delivery row, so either sumup ih records or print them all
+              if (lastIHr.SerialNr==rIHr.SerialNr and lastIHr.Source==rIHr.Source) then begin
+                testf = false;
+              end;
+            end;
+*/            
+            if (rIHr.Invalid!=0) then begin testf = false; end;
+            if (RepSpec.flags[29]==0 and RepSpec.flags[3]==0) then begin
+              if (rIHr.StockAffectf==0) then begin testf = false; end;
+//              if (rIHr.ItemType!=kItemTypeStocked) then begin testf = false; end;
+            end;
+            if (testf) then begin 
+              if (RepSpec.flags[3]==0) then begin
+                if (rIHr.FileName=="INTransferVc") then begin testf = false;  end;
+              end else begin
+                testf = (left(rIHr.FileName,3)!="Fut");
+              end;
+            end;
+            if (testf) then begin
+              if (RepSpec.flags[1]!=0) then begin
+                if (rIHr.FileName=="IVCashVc") then begin
+                  IVCashr.SerNr = rIHr.TransNr;
+                  if (ReadFirstMain(IVCashr,1,true)) then begin
+                    testf = IVCashr.SDNr<0;
+                  end;
+                end;
+                if (rIHr.FileName=="SDVc") then begin
+                  IVCashr.SDNr = rIHr.TransNr;
+                  testf = !ReadFirstKey("SDNr",IVCashr,1,true);
+                end;
+              end;
+            end;
+            if (testf) then begin
+              if (lastIHr.SerNr<=0) then begin            
+                RecordCopy(IHr,rIHr);
+                ihtestf = false;
+              end else begin
+                ihtestf = true;
+                if (lastIHr.FileName==rIHr.FileName) and (lastIHr.SerialNr==rIHr.SerialNr) and (lastIHr.TransNr==rIHr.TransNr) and (lastIHr.Row==rIHr.Row) and (SignEqual(lastIHr.Qty,rIHr.Qty)) then begin
+                  ihtestf = false;
+                end;
+              end;
+            end;
+            
+            if (fnd2 and testf) then begin
+              if (ihtestf) then begin
+                switch (IHr.FileName) begin
+                  case "StockMovVc": sid = 5012; dblstr = "DblStockMov";
+                  case "ProdVc": sid = 5016; dblstr = "DblProd";
+                  case "PUVc": sid = 5002; dblstr = "DblPU";
+                  case "RetVc": sid = 5029; dblstr = "DblRet";
+                  case "RetPUVc": sid = 4996; dblstr = "DblRetPU";
+                  case "IVVc": sid = 5004; dblstr = "DblCustPS2";
+                  case "IVCashVc": sid = 23455; dblstr = "DblIVCash";
+                  case "SHVc": sid = 5003; dblstr = "IVInfoSH";
+                  case "SDVc": sid = 5020; dblstr = "DblSD";
+                  case "OffHireVc": sid = 5033; dblstr = "DblOffHire";
+                  case "InternMovVc": sid = 11528; dblstr = "DblInternMov";
+                  case "INTransferAVcStock": sid = 5040; dblstr = "DblINTransfer";
+                  case "DispatchVc": sid = 5039; dblstr = "DblDispatch";
+                  case "EasyRentDispVc": sid = 24042; dblstr = "DblEasyRent";
+                  case "QualConVc": sid = 11527; dblstr = "DblInspection";
+                  case "WSVc": sid = 7650; dblstr = "DblWS";
+                  case "INTransferVc": sid = 7993; dblstr = "DblINTransferVc";
+                end;
+                switch (IHr.FileName) begin
+                  case "DispatchVc":
+                    totinq = totinq - IHr.Qty;
+                  case "IVCashVc": ;
+                    if (RepSpec.flags[1]!=0) then begin
+                      totinq = totinq + IHr.Qty;
+                    end;
+  //                case "SHVc":;  //?
+  //                case "IVVc":;  credit notes ? 
+                  otherwise
+                    totinq = totinq + IHr.Qty;
+                end;
+                if (printf) then begin
+                  if (inprintf) then begin
+                    if (INr.SerNrf<>0) then begin 
+                      Gray_Divider(0,1);
+                      StartFormat(15);
+                      EndFormat;
+                    end; 
+                  end;
+                  StartFormat(15);
+                  OutString(0,"DblINVc",INr.Code,false);
+                  OutString(120,0,INr.Name,false);
+                  if (nonblank(RepSpec.f1) and nonblank(RepSpec.f2)) then begin
+                    PrintItemDimensions(INr,RepSpec.f2);
+                  end;
+                  OutVal(480,0,fwdqty,M4UVal,true);
+                  EndFormat;
+  //                   Gray_Divider(0,1);
+                  printf = false;
+                  inprintf = true;
+                  printtotalf = true;
+                end;
+                custname = "";
+                if (IHr.FileName=="StockMovVc") then begin
+                  if (IHr.Qty>0) then begin
+                    SMr.SerNr = IHr.TransNr;
+                    if (ReadFirstMain(SMr,1,true)) then begin
+                      rwcnt = MatRowCnt(SMr);
+                      for (i=0;i<rwcnt;i=i+1) begin
+                        MatRowGet(SMr,i,StockMovrw);
+                        if (Left(StockMovrw.ArtCode,len(INr.Code))==INr.Code) then begin
+  //                        if (StockMovrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin//we have bulksernr now
+                          if (IHr.Row==i) then begin
+                            PrintSerNrRow(IHr.TransDate,5012,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"DblStockMov");
+                          end;
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="StockMovVc") then begin  // stockMov out 
+                  if (IHr.Qty<0) then begin
+                    SMr.SerNr = IHr.TransNr;
+                    if (ReadFirstMain(SMr,1,true)) then begin
+                      rwcnt = MatRowCnt(SMr);
+                      for (i=0;i<rwcnt;i=i+1) begin
+                        MatRowGet(SMr,i,StockMovrw);
+                        if (Left(StockMovrw.ArtCode,len(INr.Code))==INr.Code) then begin
+                          if (IHr.Row==i) then begin
+                             t = 0 - StockMovrw.Quant;
+                             PrintSerNrRow(IHr.TransDate,5012,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"DblStockMov");
+                          end;
+                        end;
+                      end;
+                    end;
+                  end;
+                end;               
+                if (IHr.FileName=="ProdVc") then begin
+                   Prodr.SerNr = IHr.TransNr;
+                   if (ReadFirstMain(Prodr,1,true)) then begin
+                     rwcnt = MatRowCnt(Prodr);
+                     for (i=0;i<rwcnt;i=i+1) begin
+                       MatRowGet(Prodr,i,Prodrw);
+                       if (Left(Prodrw.Item,len(INr.Code))==INr.Code) then begin
+                         if (Prodrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                           if (Prodrw.OutQty<>0) then begin                               
+                              switch (Prodr.RowsHoldActualQty) begin
+                                case 1: q = Prodrw.OutQty;
+                                otherwise q = Prodrw.OutQty * Prodr.Qty;
+                              end;      
+                              PrintSerNrRow(IHr.TransDate,5016,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,Prodrw.SerialNr,q,totinq,"DblProd");
+                           end;
+                           if (Prodrw.InQty<>0) then begin
+                              t = 0 - Prodrw.InQty;
+                              switch (Prodr.RowsHoldActualQty) begin
+                                case 1: q = t;
+                                otherwise q = t * Prodr.Qty;
+                              end;                                     
+                              PrintSerNrRow(IHr.TransDate,5016,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,Prodrw.SerialNr,q,totinq,"DblProd");
+                           end;
+                         end;
+                       end;    
+                     end;
+                   end;
+                end; 
+                if (IHr.FileName=="PUVc") then begin
+                  PUr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(PUr,1,true)) then begin
+                    rwcnt = MatRowCnt(PUr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(PUr,i,PUrw);
+                      if (Left(PUrw.ArtCode,len(INr.Code))==INr.Code) then begin
+  //                      if (PUrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin//we have bulksernr now
+                        if (IHr.Row==i) then begin
+                          custname = PUr.VECode;
+                          custname = custname & ", ";
+                          custname = custname & PUr.VEName;
+                          PrintSerNrRow(IHr.TransDate,5002,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"DblPU");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;  
+                if (IHr.FileName=="RetVc") then begin
+                  Retr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(Retr,1,true)) then begin
+                    rwcnt = MatRowCnt(Retr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(Retr,i,Retrw);
+                      if (Left(Retrw.ArtCode,len(INr.Code))==INr.Code) then begin
+                        if (IHr.Row==i) then begin
+                          custname = Retr.CustCode;
+                          custname = custname & ", ";
+                          custname = custname & Retr.CustName;
+                          PrintSerNrRow(IHr.TransDate,5029,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"DblRet");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;  
+                if (IHr.FileName=="RetPUVc") then begin
+                  RetPUr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(RetPUr,1,true)) then begin
+                    rwcnt = MatRowCnt(RetPUr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(RetPUr,i,RetPUrw);
+                      if (Left(RetPUrw.ArtCode,len(INr.Code))==INr.Code) then begin
+                        if (IHr.Row==i) then begin
+                          custname = RetPUr.VECode;
+                          custname = custname & ", ";
+                          custname = custname & RetPUr.VEName;
+                          PrintSerNrRow(IHr.TransDate,4996,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"DblRetPU");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;  
+                if (IHr.FileName=="IVVc") then begin
+                  IVr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(IVr,1,true)) then begin
+                    if (IVr.Invalid==0) then begin
+                      rwcnt = MatRowCnt(IVr);
+                      for (i=0;i<rwcnt;i=i+1) begin
+                        MatRowGet(IVr,i,IVrw);
+                        if (Left(IVrw.ArtCode,len(INr.Code))==INr.Code) then begin
+  //                        if (IVrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          if (IHr.Row==i) then begin
+                             v = 0 + IHr.Qty;
+                             if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                               v = IHr.Qty;
+                             end;  
+                             custname = IVr.CustCode;
+                             custname = custname & ", ";
+                             custname = custname & IVr.Addr0;
+                             PrintSerNrRow(IHr.TransDate,5004,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,v,totinq,"DblCustPS2");
+                          end;
+                        end;
+                      end;
+                    end;
+                  end;
+                end;    
+                if (IHr.FileName=="IVCashVc") then begin
+                  IVCashr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(IVCashr,1,true)) then begin
+                    if (IVr.Invalid==0) then begin
+                      rwcnt = MatRowCnt(IVCashr);
+                      for (i=0;i<rwcnt;i=i+1) begin
+                        MatRowGet(IVCashr,i,IVCashrw);
+                        if (Left(IVCashrw.ArtCode,len(INr.Code))==INr.Code) then begin
+                          if (IVCashrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                             v = 0 - IVCashrw.Quant;
+                             custname = IVCashr.CustCode;
+                             custname = custname & ", ";
+                             custname = custname & IVCashr.Addr0;
+                             PrintSerNrRow(IHr.TransDate,23455,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IVCashrw.SerialNr,v,totinq,"DblIVCash");
+                          end;
+                        end;
+                      end;
+                    end;
+                  end;
+                end;    
+                if (IHr.FileName=="SHVc") then begin
+                  SHr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(SHr,1,true)) then begin
+                    rwcnt = MatRowCnt(SHr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(SHr,i,SHrw);
+                      if (Left(SHrw.ArtCode,len(INr.Code))==INr.Code) then begin
+                        if (IHr.Row==i) then begin
+                           v = 0 - SHrw.Ship;
+                           custname = SHr.CustCode;
+                           PrintSerNrRow(IHr.TransDate,5003,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"IVInfoSH");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="SDVc") then begin
+                  SDr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(SDr,1,true)) then begin
+                    rwcnt = MatRowCnt(SDr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(SDr,i,SDrw);
+                      if (Left(SDrw.ArtCode,len(INr.Code))==INr.Code) then begin
+  //                      if (SDrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin//we have bulksernr now
+                        if (IHr.Row==i) then begin
+                           v = 0 - SDrw.Qty;
+                           PrintSerNrRow(IHr.TransDate,5020,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,"DblSD");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="OffHireVc") then begin
+                  OffHirer.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(OffHirer,1,true)) then begin
+                    rwcnt = MatRowCnt(OffHirer);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(OffHirer,i,OffHirerw);
+                      if (OffHirerw.ArtCode==INr.Code) then begin
+                        if (OffHirerw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          if (blank(custname)) then begin
+                            switch (OffHirerw.Status) begin
+                              case 0:
+                                custname = USetStr(11520);
+                              case 1:
+                                custname = USetStr(11521);
+                              case 2:
+                                custname = USetStr(11522);
+                              case 3:
+                                custname = USetStr(11523);
+                              case 4:
+                                custname = USetStr(11524);
+                              case 5:
+                                custname = USetStr(11525);
+                              case 6:
+                                custname = USetStr(11529);
+                            end;
+                          end;
+                          v = OffHirerw.Quant;
+                          PrintSerNrRow(IHr.TransDate,5033,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,OffHirerw.SerialNr,v,totinq,"DblOffHire");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="InternMovVc") then begin
+                  IMr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(IMr,1,true)) then begin
+                    rwcnt = MatRowCnt(IMr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(IMr,i,InternMovrw);
+                      if (InternMovrw.ArtCode==INr.Code) then begin
+                        if (InternMovrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          PrintSerNrRow(IHr.TransDate,11528,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,InternMovrw.SerialNr,InternMovrw.Quant,totinq,"DblInternMov");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="InternMovAVc") then begin
+                  IMr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(IMr,1,true)) then begin
+                     rwcnt = MatRowCnt(IMr);
+                     for (i=0;i<rwcnt;i=i+1) begin
+                        MatRowGet(IMr,i,InternMovrw);
+                        if (InternMovrw.ArtCode==INr.Code) then begin
+                          if (InternMovrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                            t = 0 - InternMovrw.Quant;
+                            PrintSerNrRow(IHr.TransDate,11528,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,InternMovrw.SerialNr,t,totinq,"DblInternMov");
+                          end;
+                        end;
+                     end;
+                  end;
+                end;               
+                if (IHr.FileName=="INTransferAVcStock") then begin
+                  INTransferr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(INTransferr,1,true)) then begin
+                    rwcnt = MatRowCnt(INTransferr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(INTransferr,i,INTransferrw);
+                      if (INTransferrw.ArtCode==INr.Code) then begin
+                        if (INTransferrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          switch (INTransferrw.Status) begin
+                            case 0:
+                              custname = USetStr(11526);
+                            case 1:
+                              custname = USetStr(11524);
+                          end;
+                          v = 0 - INTransferrw.Quant;
+                          PrintSerNrRow(IHr.TransDate,5040,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,INTransferrw.SerialNr,v,totinq,"DblINTransfer");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="INTransferVc") then begin
+                  INTransferr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(INTransferr,1,true)) then begin
+                    rwcnt = MatRowCnt(INTransferr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(INTransferr,i,INTransferrw);
+                      if (INTransferrw.ArtCode==INr.Code) then begin
+                        if (INTransferrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          if (blank(custname)) then begin
+                            switch (INTransferrw.Status) begin
+                              case 0:
+                                custname = USetStr(11525);
+                              case 1:
+                                custname = USetStr(11524);
+                            end;
+                          end;
+  //                           v = INTransferrw.Quant;
+                          PrintSerNrRow(IHr.TransDate,5040,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,INTransferrw.SerialNr,IHr.Qty,totinq,"DblINTransfer");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="DispatchVc") then begin
+                  Dispatchr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(Dispatchr,1,true)) then begin
+                    rwcnt = MatRowCnt(Dispatchr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(Dispatchr,i,Dispatchrw);
+                      if (Dispatchrw.ArtCode==INr.Code) then begin
+                        if (Dispatchrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          custname = Dispatchr.CustCode;
+                          custname = custname & ", ";
+                          custname = custname & Dispatchr.Addr0;
+                          v = -Dispatchrw.Quant;
+                          PrintSerNrRow(IHr.TransDate,5039,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,Dispatchrw.SerialNr,v,totinq,"DblDispatch");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="EasyRentDispVc") then begin
+                  EasyRentr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(EasyRentr,1,true)) then begin
+                    rwcnt = MatRowCnt(EasyRentr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(EasyRentr,i,EasyRentrw);
+                      if (EasyRentrw.ArtCode==INr.Code) then begin
+                        if (EasyRentrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          custname = EasyRentr.CustCode;
+                          custname = custname & ", ";
+                          custname = custname & EasyRentr.CustName;
+                          v = -1;
+                          PrintSerNrRow(IHr.TransDate,24042,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,EasyRentrw.SerialNr,v,totinq,"DblEasyRent");
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+                if (IHr.FileName=="QualConVc") then begin
+                  QualConr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(QualConr,1,true)) then begin
+                    if (nonblank(QualConr.Comment)) then begin
+                      custname = QualConr.Comment;
+                      custname = custname & ": ";
+                    end;
+                    custname = custname & QualConr.StatusCode;
+                    v = BlankVal;
+                    PrintSerNrRow(IHr.TransDate,11527,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,QualConr.SerialNr,v,totinq,"DblInspection");
+                  end;
+                end;
+                if (IHr.FileName=="WSVc") then begin
+                  WSr.SerNr = IHr.TransNr;
+                  if (ReadFirstMain(WSr,1,true)) then begin
+                    rwcnt = MatRowCnt(WSr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(WSr,i,WSrw);
+                      if (Left(WSrw.ArtCode,len(INr.Code))==INr.Code) then begin
+                        if (WSrw.SerialNr==IHr.SerialNr) and (IHr.Row==i) then begin
+                          v = 0 - WSrw.Quant;
+                          PrintSerNrRow(IHr.TransDate,7650,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,WSrw.SerialNr,v,totinq,"DblWS");
+                        end;
+                      end;
+                    end;
+                  end;
+                end; 
+                RecordCopy(IHr,rIHr);
+              end else begin
+                if (lastIHr.SerNr>0) then begin
+                  AddItemHistRecord(rIHr,IHr);
+                end;
+              end;            
+              RecordCopy(lastIHr,rIHr);
+            end;
+          end;
+          if (IHr.Qty!=0) then begin
+            switch (IHr.FileName) begin
+              case "StockMovVc": sid = 5012; dblstr = "DblStockMov";
+              case "ProdVc": sid = 5016; dblstr = "DblProd";
+              case "PUVc": sid = 5002; dblstr = "DblPU";
+              case "RetVc": sid = 5029; dblstr = "DblRet";
+              case "RetPUVc": sid = 4996; dblstr = "DblRetPU";
+              case "IVVc": sid = 5004; dblstr = "DblCustPS2";
+              case "IVCashVc": sid = 23455; dblstr = "DblIVCash";
+              case "SHVc": sid = 5003; dblstr = "IVInfoSH";
+              case "SDVc": sid = 5020; dblstr = "DblSD";
+              case "OffHireVc": sid = 5033; dblstr = "DblOffHire";
+              case "InternMovVc": sid = 11528; dblstr = "DblInternMov";
+              case "INTransferAVcStock": sid = 5040; dblstr = "DblINTransfer";
+              case "DispatchVc": sid = 5039; dblstr = "DblDispatch";
+              case "EasyRentDispVc": sid = 24042; dblstr = "DblEasyRent";
+              case "QualConVc": sid = 11527; dblstr = "DblInspection";
+              case "WSVc": sid = 7650; dblstr = "DblWS";
+              case "INTransferVc": sid = 7993; dblstr = "DblINTransferVc";
+            end;
+            switch (IHr.FileName) begin
+              case "DispatchVc":
+                totinq = totinq - IHr.Qty;
+              case "IVCashVc": ;
+                if (RepSpec.flags[1]!=0) then begin
+                  totinq = totinq + IHr.Qty;
+                end;
+//                case "SHVc":;  //?
+//                case "IVVc":;  credit notes ? 
+              otherwise
+                totinq = totinq + IHr.Qty;
+            end;
+            PrintSerNrRow(IHr.TransDate,sid,IHr.TransNr,custname,IHr.Location,RepSpec.flags[0],IHr.Position,IHr.SerialNr,IHr.Qty,totinq,dblstr);
+          end;
+          if (fwdqty==0) then begin printf = false; end;
+          if (printf) then begin          
+            if (inprintf) then begin
+              if (INr.SerNrf<>0) then begin 
+                Gray_Divider(0,1);
+                StartFormat(15);
+                EndFormat;
+              end; 
+            end;
+            StartFormat(15);
+            OutString(0,"DblINVc",INr.Code,false);
+            OutString(120,0,INr.Name,false);
+            if (nonblank(RepSpec.f1) and nonblank(RepSpec.f2)) then begin
+              PrintItemDimensions(INr,RepSpec.f2);
+            end;
+            OutVal(480,0,fwdqty,M4UVal,true);
+            EndFormat;
+//                   Gray_Divider(0,1);
+            printf = false;
+            inprintf = true;
+            printtotalf = true;
+          end;
+          if (RepSpec.flags[29]!=0) then begin
+//               SerialNrHistIntRn(INr.Code,RepSpec);               
+          end;
+        end;
+        if (printtotalf) then begin
+          Gray_Divider(420,1);
+          StartFormat(15);
+          OutVal(1,0,totinq,M4Val,true);
+          EndFormat;
+          totq = totq + totinq;
+          totinq = blankval;
+        end;
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutVal(1,0,totq,M4Val,true);
+  EndFormat;
+  return;
+end;
+
+global 
+procedure SerialNrRn(record RcVc RepSpec)
+begin
+  Integer rw;
+  String 255 tstr;
+    
+  rw = 1;
+  StartReportJob(USetStr(5017));
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw +1;
+  HTArtSel(RepSpec.f1,RepSpec.f3,tstr);
+  Header(rw,tstr,1);
+  rw = rw +1;
+  if (nonblank(RepSpec.f2)) then begin
+    tstr = USetStr(6657);
+    tstr = tstr & " " & RepSpec.f2;
+    Header(rw,tstr,1);
+    rw = rw +1;
+  end;
+  if (nonblank(RepSpec.AccStr)) then begin
+    tstr = USetStr(1156);
+    tstr = tstr & RepSpec.AccStr;
+    Header(rw,tstr,1);
+    rw=rw+1;
+  end;
+  if (nonblank(RepSpec.TransStr)) then begin
+    tstr = USetStr(5010);
+    tstr = tstr & ": ";
+    tstr = tstr & RepSpec.TransStr;
+    Header(rw,tstr,1);
+  end;
+  if (HasItemClassification) then begin
+    HTItemClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;  
+  EndHeader;
+  SerialNrHistRn(RepSpec);
+  EndJob;
+  return;
+end;

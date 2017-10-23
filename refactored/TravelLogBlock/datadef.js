@@ -1,0 +1,15 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fDeductDesc0: { public: true, type: 'TEXT' },
+     fDeductPerc0: { public: true, type: 'FLOAT' },
+     fDeductDesc1: { public: true, type: 'TEXT' },
+     fDeductPerc1: { public: true, type: 'FLOAT' },
+     fDeductDesc2: { public: true, type: 'TEXT' },
+     fDeductPerc2: { public: true, type: 'FLOAT' },
+     fDeductDesc3: { public: true, type: 'TEXT' },
+     fDeductPerc3: { public: true, type: 'FLOAT' },
+     fDeductDesc4: { public: true, type: 'TEXT' },
+     fDeductPerc4: { public: true, type: 'FLOAT' },
+     fLastTravelLogNr: { public: true, type: 'INTEGER' },
+     fLastTravelLogDate: { public: true, type: 'DATE' },
+     fLastCountry: { public: true, type: 'TEXT' } } }

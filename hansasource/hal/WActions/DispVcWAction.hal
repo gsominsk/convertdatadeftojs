@@ -1,0 +1,302 @@
+remote function Boolean DispatchVc_PasteSerial(var record DispatchVc,Integer);
+external function roundmode DefaultRoundMode();
+remote function val FindCostPrice(string,string,string,val,val,Boolean);
+external procedure WarnFutureDate(Boolean,Date);
+remote procedure DispatchVc_PasteSite(var record DispatchVc);
+external function string 40 SerialNrSClassSpecPName(string);
+external function string 40 DelAddrSClassSpecPName(string);
+remote function Boolean PasteCust2InDispatch(var record DispatchVc,Boolean,var string);
+remote function Boolean DispatchVc_PasteArtCode(var record DispatchVc,Integer,var string);
+remote procedure NewRentalCharge(Integer,var record RentChrgVc,Date,LongInt,LongInt,var string,string);
+
+global
+procedure DispatchSumup(var record DispatchVc Dispr)
+begin
+  row DispatchVc DIrw;
+  Integer i,rwcnt;
+  
+  Dispr.SumQuant = BlankVal;
+  rwcnt = MatRowCnt(Dispr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Dispr,i,DIrw);
+    Dispr.SumQuant = Dispr.SumQuant + DIrw.Quant;
+  end;
+  return;
+end;
+
+global 
+function Boolean DispatchDClassArtCodeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record DispatchVc Dispr;
+  row DispatchVc Disprw;
+  string 255 inwarning;
+ 
+  GetWindowRecord(wn,Dispr);
+  MatRowGet(Dispr,rownr,Disprw);
+  if ((changedf!=0) or ((blank(Disprw.Spec)) and (nonblank(Disprw.ArtCode)))) then begin
+    GetWindowRecord(wn,Dispr);
+    DeselectWindow(wn,false);
+    if (DispatchVc_PasteArtCode(Dispr,rownr,inwarning)) then begin
+      PutWindowRecord(wn,Dispr);
+      if (nonblank(inwarning)) then begin
+          MessageBox(0,inwarning);
+      end;
+    end else begin
+      Beep;
+    end;
+  end;
+  DispatchDClassArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean DispatchDClassCustCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record DispatchVc Dispr;
+  string 255 warning;
+
+  GetWindowRecord(wn,Dispr);    
+  if ((changed!=0) or ((blank(Dispr.Addr0)) and (nonblank(Dispr.CustCode)))) then begin
+    GetWindowRecord(wn,Dispr);    
+    DeselectWindow(wn,false);
+    if (PasteCust2InDispatch(Dispr,true,warning)) then begin
+      PutWindowRecord(wn,Dispr);
+      if (nonblank(warning)) then begin
+        MessageBox(0,warning);
+      end;
+    end else begin
+      Beep;
+    end;
+  end;
+  DispatchDClassCustCodeEFAfter = true;
+  return;
+end;
+
+function Boolean DispatchDClassSiteEFAfter(Integer wn,Integer changed)
+begin  
+  record DispatchVc Dispr;
+  val t;
+
+  if (changed!=0) then begin  
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,Dispr);
+    DispatchVc_PasteSite(Dispr);
+    PutWindowRecord(wn,Dispr);
+  end;  
+  DispatchDClassSiteEFAfter = true;
+  return;
+end;
+
+function Boolean DispatchDClassTransDateEFAfter(Integer wn,Boolean changedf)
+begin  
+  record DispatchVc Dispr;
+  val t;
+
+  if (changedf) then begin  
+    GetWindowRecord(wn,Dispr);
+    WarnFutureDate(true,Dispr.TransDate);
+    PutWindowRecord(wn,Dispr);
+  end;  
+  DispatchDClassTransDateEFAfter = true;
+  return;
+end;
+
+function Boolean DispatchDClassSerialNrEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+begin  
+  record DispatchVc Dispr;
+  row DispatchVc Disprw;
+  val t;
+  if (changed) then begin  
+    GetWindowRecord(wn,Dispr);
+    if (DispatchVc_PasteSerial(Dispr,rownr)) then begin
+      PutWindowRecord(wn,Dispr);
+    end;
+  end;  
+  DispatchDClassSerialNrEFAfter = true;
+  return;
+end;
+
+global
+function Boolean DispatchDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "ArtCode": res = DispatchDClassArtCodeEFAfter(wn,fn,rownr,changed);
+    case "CustCode": res = DispatchDClassCustCodeEFAfter(wn,fn,rownr,changed);
+    case "Site": res = DispatchDClassSiteEFAfter(wn,changed);
+    case "TransDate": res = DispatchDClassTransDateEFAfter(wn,changed!=0);
+    case "SerialNr": res = DispatchDClassSerialNrEFAfter(wn,fn,rownr,changed);
+  end;
+  DispatchDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+procedure DispatchChargeDsm()
+BEGIN
+  record DispatchVc Dispatchr;
+  record RentChrgVc RentChrgr;
+  string 255 warn;
+  Integer wn;
+  Integer nwn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Dispatchr);
+  if (Dispatchr.AgreementNr>0) then begin
+    NewRentalCharge(4,RentChrgr,CurrentDate,Dispatchr.SerNr,Dispatchr.AgreementNr,warn,Dispatchr.Site);
+    nwn = OpenWindow("RentChrgDClass",1,0,"","",RentChrgr);
+  end;
+  RETURN;
+END;
+
+function Boolean DispatchVcEFActiveCheck(string fieldname,Integer wn,Integer wnst,Integer rownr)
+BEGIN
+  Boolean res;
+  record DispatchVc Dispatchr;
+  record DispatchVc Dispatch2r;
+  Integer updatemode;
+
+  res = true;
+  if (wnst==Rs_update) then begin
+    GetPrevWindowRecord(wn,Dispatch2r);
+    GetWindowRecord(wn,Dispatchr);
+    if (Dispatch2r.OKFlag==1) then begin
+      res = false;
+    end;
+    if (rownr<0) then begin
+      switch (fieldname) begin
+        case "Comment":
+          res = true;
+        case "LangCode":
+          res = true;
+        case "ClientContact":
+          res = true;
+      end;
+    end;
+  end;
+  if (rownr>=0) then begin
+    switch (fieldname) begin
+      case "RentResSerNo":
+        res = false;
+      case "RentResRow":
+        res = false;
+    end;
+  end;
+  DispatchVcEFActiveCheck = res;
+  RETURN;
+END;
+
+global
+function Boolean DispatchDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer ef)
+BEGIN
+  Boolean res;
+  
+  res = DispatchVcEFActiveCheck(fieldname,wn,wnst,rownr);
+  DispatchDClassActiveEditField = res;
+  return;
+end;
+
+global
+function Boolean DispatchDClassOKFlagButtonAfter(Integer wn,Boolean changedf)
+begin        
+  record DispatchVc Dispr;  
+  row DispatchVc Disprw;  
+  record RentResVc RentResr;  
+  integer rwcnt,i;
+  Boolean res;
+  longint LastRes;
+
+  LastRes = -1;
+  DeselectWindow(wn,false);
+  if (WindowState(wn)==Rs_insert) then begin goto LDISPDClassButtonAfter; end;
+  GetWindowRecord(wn,Dispr);
+  rwcnt = MatRowCnt(Dispr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Dispr,i,Disprw);
+    if (Disprw.RentResSerNo<>LastRes) then begin
+      RentResr.SerNr = Disprw.RentResSerNo;
+      if (ReadFirstMain(RentResr,1,true)) then begin
+        if (Dispr.TransDate<>RentResr.TransDate) then begin
+          MessageBox(20567,"");
+          goto LDISPDClassButtonAfter;
+        end;
+      end;
+      LastRes = Disprw.RentResSerNo;
+    end;
+  end;
+LDISPDClassButtonAfter:;
+  DispatchDClassOKFlagButtonAfter = res;  
+  return;
+end;
+
+function Boolean DispatchButtonAction(string fieldname,Integer wn,Integer wnst,Integer value)
+begin
+  Boolean res;
+  record DispatchVc Dispatchr;
+ 
+  res = true;
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,Dispatchr);
+    if (Dispatchr.OKFlag>=1) then begin
+      switch (fieldname) begin
+        case "OKFlag":
+          if (value==0 or value==2) then begin
+            res = false;
+          end;
+/*          
+          if (UserCanAction("UnOKAll",false)) then begin
+            res = true;
+            res = false;
+          end;
+not possible to un OK sock records          
+*/          
+        otherwise
+          res = false;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,Dispatchr);
+    if (Dispatchr.OKFlag==1) then begin
+      switch (fieldname) begin
+        otherwise
+          res = false;
+      end;
+    end;
+  end;
+  DispatchButtonAction = res;
+  return;
+end;
+
+global
+function Boolean DispatchDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+
+  res = DispatchButtonAction("OKFlag",wn,WindowState(wn),value);
+  DispatchDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function string 40 DispatchDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "DelAddrCode": psname = DelAddrSClassSpecPName(defpsname);
+    case "SerialNr": psname = SerialNrSClassSpecPName(defpsname);
+  end;
+  DispatchDClassSpecPasteName = psname;
+  return;
+end;
+
+global
+procedure OpenDispatch(record DispatchVc Dispatchp)
+begin
+  Integer nwn;
+  
+  nwn = OpenWindow("DispatchDClass",1,0,"","",Dispatchp);
+  return;
+end;

@@ -1,0 +1,495 @@
+external procedure SubAPPrePayments(record VIVc,var val,var val);
+//external function Integer DefaultCurRoundOff();
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function LongInt DateDiff(Date,Date);
+external procedure APGetOnAccBalance(record RcVc,record CUVc,Boolean,var val,var val,var val,var val,var val,var val,var val,
+                   Array string,Array val,var Integer,Array string,Array val,var Integer);
+external procedure APSrList(record RcVc,record CUVc,val,val,val,val,val,val,val,val,val,val,val,val,
+                   Array Integer,Array LongInt,Array string,Array LongInt,Array LongInt,
+                   Array Date,Array Date,Array val,Array val ,Array val,Array val,
+                   Array string,Array string,Integer,Array string,Array val,Integer);
+external procedure CalcInt2(Boolean,val,LongInt,val,var val);
+external function Integer GetIntYc(Date);
+external procedure PrintAPSForm(record RcVc,record CUVc,
+                                val,val,val,val,val,val,val,val,val,
+                                Integer,Integer,
+                                val,val,val,val,val,val,val,val,
+                                Array Integer,Array LongInt,Array LongInt,Array LongInt,
+                                Array Date,Array Date,Array val,Array val,Array val,Array val,Array val,
+                                Array string,Array string,Integer);
+external procedure VendAged(record CUVc,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetBaseCurncy(Integer,var string);
+
+global
+procedure AddAPSInvoiceRow(Array Integer aRwtype,Array LongInt aInvoiceNr,Array LongInt alatedays,Array LongInt aRemndr,
+                    Array Date aInvDate,Array Date aDueDate,Array val aIntVal,Array val aRVal,Array val aRVAT,Array val aSum4,
+                    Array string aVEInvNo,Array string aCurncyCode,var Integer acnt,
+                    record RcVc RepSpec,record CUVc VEp,LongInt maxintdays,val openval,record VIVc VIp,var val intvp)
+BEGIN
+  LongInt intdays;
+  record IIBlock IIRec;
+  Date blankd;
+  val t;
+  
+  BlockLoad(IIRec);
+  aRwtype[acnt] = VIp.InvType;
+  aInvoiceNr[acnt] = VIp.SerNr;
+  aVEInvNo[acnt] = VIp.InvoiceNr;
+  aInvDate[acnt] = VIp.InvDate;
+  aDueDate[acnt] = VIp.DueDate;
+  aRVal[acnt] = openval;
+  if (nonblank(VIp.VATVal)) then begin // Yes, should be Full VAT value
+    aRVAT[acnt] = VIp.VATVal;
+  end else begin
+    aRVAT[acnt] = VIp.CalcVATVal;
+  end;
+  aSum4[acnt] = VIp.PayVal;
+  if (openval<0) then begin
+    alatedays[acnt] = 0;
+  end else begin
+    alatedays[acnt] = DateDiff(VIp.DueDate,RepSpec.d1);
+  end;
+  aIntVal[acnt] = blankval;
+  aCurncyCode[acnt] = VIp.CurncyCode;
+  if (HasLocalization("DEN")) then begin
+    if (maxintdays!=-1) then begin
+      intdays = -alatedays[acnt];
+      if (intdays>maxintdays) then begin intdays = maxintdays; end;
+      if (intdays>0) then begin
+        CalcInt2(false,aRVal[acnt],intdays,IIRec.IntRate,t);
+        aIntVal[acnt] = t;
+      end;
+    end;
+  end else begin
+    intdays = -alatedays[acnt];
+    if (intdays>0) then begin
+      if ((VIp.InvType!=kInvoiceTypeCredit and VIp.InvType!=kInvoiceTypeCreditSpecialSales) and (VIp.InvType!=kInvoiceTypeInterest)) then begin
+        t = MulRateToBase1(VIp.CurncyCode,aRVal[acnt],VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+        CalcInt2(false,t,intdays,IIRec.IntRate,t);
+        aIntVal[acnt] = t;
+      end;
+    end;
+  end;
+  if (VIp.CurncyCode==VEp.VECurncyCode) then begin
+   intvp = aIntVal[acnt];
+  end else begin
+    if (blank(VEp.VECurncyCode)) then begin
+      intvp = MulRateToBase1(VIp.CurncyCode,aIntVal[acnt],VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    end else begin
+      intvp = DivRateToBase1(VEp.VECurncyCode,aIntVal[acnt],VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    end;
+  end;
+  acnt = acnt + 1;
+  RETURN;
+END;
+
+function Boolean CheckIfVIOpen(Date d1,record VIVc VIp,var val opensum,record RcVc RepSpec)
+BEGIN
+  Boolean res;
+  record OPrsVc OPrsr;
+  record VIVc VIr;
+  row VIVc VIrw;
+  record OPVc OPr;
+  row OPVc OPrw;
+  record PurgeTRVc PurgeTRr;
+  record TRVc TRr;
+  row TRVc TRrw;
+  record CLOutVc CLOutr;
+  row CLOutVc CLOutrw;
+  record CLInVc CLInr;
+  row CLInVc CLInrw;
+  Integer i,rwcnt;
+  Boolean found;
+  val bal,balb1,opensumb1;
+
+  if (VIp.InvType==kInvoiceTypeCredit or VIp.InvType==kInvoiceTypeCreditSpecialSales) and (VIp.CredInv>0) then begin
+//    VIr.SerNr = VIp.CredInv;
+//    if (ReadFirstMain(VIr,1,true)) then begin
+//      bal = bal + (VIr.PayVal - VIr.WithHoldingTax);
+//    end;
+  end else begin
+    
+  rwcnt = MatRowCnt(VIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    if (VIrw.stp==6) then begin
+      bal = bal + VIrw.PrepayAmount;
+      balb1 = balb1 + MulRateToBase1(VIp.CurncyCode,VIrw.PrepayAmount,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    end;
+  end;
+  found = true;
+  OPrsr.VINr = VIp.SerNr;
+  while (LoopKey("VIKey",OPrsr,1,found)) begin
+    if (OPrsr.VINr!=VIp.SerNr) then begin found = false; end;
+    if (found) then begin
+      if (OPrsr.TransDate<=d1) then begin
+        switch (OPrsr.TransType) begin
+          case kOPrsTransTypeInvoice:
+            if (OPrsr.TransNr!=VIp.SerNr) then begin
+              VIr.SerNr = OPrsr.TransNr;
+              if (ReadFirstMain(VIr,1,true)) then begin
+                if (VIr.Invalid==0) then begin
+                  if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                    bal = bal + (VIr.PayVal-VIr.WithHoldingTax);
+                    balb1 = balb1 + MulRateToBase1(VIr.CurncyCode,VIr.PayVal-VIr.WithHoldingTax,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+                  end;
+                end;
+              end;;
+            end;          
+          case kOPrsTransTypePayment:
+            OPr.SerNr = OPrsr.TransNr;
+            if (ReadFirstMain(OPr,1,true)) then begin
+              if (OPr.Invalid==0) then begin
+                if ((OPr.OrderedFlag!=0) and (OPr.RejectedFlag==0)) then begin
+                  if (OPr.Invalid==0) then begin
+                    rwcnt = MatRowCnt(OPr);
+                    for (i=0;i<rwcnt;i=i+1) begin
+                      MatRowGet(OPr,i,OPrw);
+                      if ((OPrw.ovst==0)) then begin
+                        if (OPrw.VISerNr==OPrsr.VINr) then begin
+                          if ((OPrw.stp==1) or (OPrw.stp==5) or (OPrw.stp==6)) then begin
+                            bal = bal + OPrw.PInvVal;
+                            balb1 = balb1 + MulWithRateToBase1(OPrw.PInvCurncy,OPr.TransDate,OPrw.PInvVal,DefaultCurRoundOff);
+                          end;
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+              end;
+            end;    
+          case kOPrsTransTypePurgeNLTransaction:
+            PurgeTRr.Number = OPrsr.TransNr;
+            PurgeTRr.IntYc = GetIntYc(OPrsr.TransDate);
+            PurgeTRr.TransRow = OPrsr.TransRow;
+            if (ReadFirstMain(PurgeTRr,3,true)) then begin
+              if ((PurgeTRr.Typ==2) and (PurgeTRr.SerNr==OPrsr.VINr)) then begin
+                if (PurgeTRr.CompCode==OPrsr.VECode) then begin
+                  if (PurgeTRr.DebVal!=0) then begin
+                    if (PurgeTRr.CurDebVal!=0) then begin
+                      bal = bal + PurgeTRr.CurDebVal;
+                    end else begin
+                      bal = bal + PurgeTRr.DebVal;
+                    end;
+                    balb1 = balb1 + PurgeTRr.DebVal;
+                  end;
+                  if (PurgeTRr.CurCredVal!=0) then begin
+                    bal = bal - PurgeTRr.CurCredVal;
+                  end else begin
+                    bal = bal - PurgeTRr.CredVal;
+                  end;
+                  balb1 = balb1 - PurgeTRr.CredVal;
+                end;
+              end;
+            end;                      
+          case kOPrsTransTypeNLTransaction:
+            TRr.Number = OPrsr.TransNr;
+            TRr.IntYc = GetIntYc(OPrsr.TransDate);
+            if (ReadFirstMain(TRr,2,true)) then begin
+              rwcnt = MatRowCnt(TRr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(TRr,i,TRrw);
+                if ((TRrw.Typ==2) and (TRrw.SerNr==OPrsr.VINr)) then begin
+                  if (TRrw.CompCode==OPrsr.VECode) then begin
+                    if (TRrw.DebVal!=0) then begin
+                      if (TRrw.CurDebVal!=0) then begin
+                        bal = bal + TRrw.CurDebVal;
+                      end else begin
+                        bal = bal + TRrw.DebVal;
+                      end;
+                      balb1 = balb1 + TRrw.DebVal;
+                    end;
+                    if (TRrw.CurCredVal!=0) then begin
+                      bal = bal - TRrw.CurCredVal;
+                    end else begin
+                      bal = bal - TRrw.CredVal;
+                    end;
+                    balb1 = balb1 - TRrw.CredVal;
+                  end;
+                end;
+              end;
+            end;                      
+          case kOPrsTransTypeCashOut:
+            CLOutr.SerNr = OPrsr.TransNr;
+            if (ReadFirstMain(CLOutr,1,true)) then begin
+              if (CLOutr.Invalid==0) then begin
+                rwcnt = MatRowCnt(CLOutr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(CLOutr,i,CLOutrw);
+                  if ((CLOutrw.Type==2) and (CLOutrw.TransNr==OPrsr.VINr)) then begin
+                    if (CLOutrw.Company==OPrsr.VECode) then begin
+                      bal = bal + CLOutrw.Sum;
+                      balb1 = balb1 + MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+                    end;
+                  end;
+                end;
+              end;
+            end;                      
+          case kOPrsTransTypeCashIn:
+            CLInr.SerNr = OPrsr.TransNr;
+            if (ReadFirstMain(CLInr,1,true)) then begin
+              if (CLInr.Invalid==0) then begin
+                rwcnt = MatRowCnt(CLInr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(CLInr,i,CLInrw);
+                  if ((CLInrw.Type==2) and (CLInrw.TransNr==OPrsr.VINr)) then begin
+                    if (CLInrw.Company==OPrsr.VECode) then begin
+                      bal = bal - CLInrw.Sum;
+                      balb1 = balb1 - MulRateToBase1(CLInr.CurncyCode,CLInrw.Sum,CLInr.FrRate,CLInr.ToRateB1,CLInr.ToRateB2,CLInr.BaseRate1,CLInr.BaseRate2,DefaultCurRoundOff);
+                    end;
+                  end;
+                end;
+              end;
+            end;                      
+        end;
+      end;
+    end;
+  end;
+  if (VIp.InvType==kInvoiceTypeCredit or VIp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    opensum = -(VIp.PayVal-VIp.WithHoldingTax) - bal;
+    opensumb1 = MulRateToBase1(VIp.CurncyCode,(VIp.PayVal-VIp.WithHoldingTax),VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    opensumb1 = -opensumb1 - balb1;
+  end else begin
+    opensum = (VIp.PayVal - VIp.WithHoldingTax) - bal;
+    opensumb1 = MulRateToBase1(VIp.CurncyCode,(VIp.PayVal-VIp.WithHoldingTax),VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    opensumb1 = opensumb1 - balb1;
+  end;  
+  if (VIp.PayVal!=bal) then begin
+    res = true;
+    if (RepSpec.flags[5]!=0) then begin
+      opensum = opensum - VIp.HoldSum;
+      if (VIp.Closed!=0) then begin
+        opensum = 0;
+      end;
+    end;
+    if (opensum<0) and (bal!=0) then begin
+//      opensum = 0;// why ZERO when it is NOT ZERO , means invoices were overpaid
+    end;
+    if (RepSpec.flags[4]==0) then begin
+//      opensum = MulRateToBase1(VIp.CurncyCode,opensum,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+      opensum = opensumb1;
+    end;
+  end;
+  end;
+  if (opensum==0) then begin res = false; end;
+  CheckIfVIOpen = res;
+  RETURN;
+END;
+
+global
+updating procedure OneAPSFormOpenOnDate(record RcVc RepSpec,record CUVc VEp,Integer reportmode,var val balp,var val balpb1,var val vatp)
+BEGIN
+  record OPrsVc OPrsr;
+  record VIVc VIr;
+  Boolean TrHs;
+  val ARSSum;
+  val ARSIntSum;
+  val ARSSumNotLate;
+  val ARSSumLate;
+  Integer ARSLateCount;
+  Integer ARSNotLateCount;
+  val ARSARSum;
+  val ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151;
+  val ARSStartBal,ARSOnAccBalb1;
+  val ARSOnAccBal;
+  val ARSSumb1;
+  val intv;
+  LongInt latedays,maxintdays;
+  Boolean testf;
+  val rval,rval2;
+  val fr,to1,to2,br1,br2;
+  Boolean onaccf;
+  record SMVc CurTotalsr;
+  val sumbooked,sumnow,sumcurncy,sumdiff;
+  Integer remlev;
+  Array Integer aRwtype;
+  Array LongInt aInvoiceNr;
+  Array LongInt alatedays;
+  Array LongInt aRemndr;
+  Array Date aInvDate;
+  Array Date aDueDate;
+  Array val aIntVal;
+  Array val aRVal;
+  Array val aRVAT;
+  Array val aSum4;
+  Array val aDebVal;
+  Array string 20 aVEInvNo;
+  Array string 5 aCurncyCode;
+  Array string 255 aRecNr;
+  Integer acnt;
+  string 10 basecur1;
+  val opensum,t,vatbc,ts,tsb1;
+  Array string 10 credaccs;
+  Array val credbal;
+  Integer credcnt;
+  array val av1;
+  array string 20 acur;
+  Integer curcnt;
+  
+  GetBaseCurncy(1,basecur1);
+  if (blank(VEp.VECurncyCode)) then begin
+    VEp.VECurncyCode = basecur1;
+  end;
+  if (nonblankdate(RepSpec.d1)) then begin
+    maxintdays = DateDiff(CurrentDate,RepSpec.d1);
+  end else begin
+    maxintdays = -1;
+  end;
+  GetFullCurncyRate(VEp.VECurncyCode,RepSpec.d1,fr,to1,to2,br1,br2);
+  APGetOnAccBalance(RepSpec,VEp,true,ARSOnAccBalb1,rval2,ARSOnAccBal,sumbooked,sumnow,sumcurncy,sumdiff,credaccs,credbal,credcnt,acur,av1,curcnt);//ObjStr
+  TrHs = true;
+  OPrsr.VECode = VEp.Code;
+//  OPrsr.TransDate = RepSpec.d1;either this or...
+//  while (LoopBackKey("MainKey",OPrsr,2,TrHs)) begin
+//this
+
+  OPrsr.TransDate = AddYear(OPrsr.TransDate,1980);
+  OPrsr.TransDate = AddMonth(OPrsr.TransDate,1);
+  OPrsr.TransDate = AddDay(OPrsr.TransDate,1);
+  while (LoopKey("MainKey",OPrsr,2,TrHs)) begin
+    if (TrHs) then begin
+      if (OPrsr.VECode!=VEp.Code) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      if (OPrsr.TransDate>RepSpec.d1) then begin TrHs = false; end;
+    end;
+    if (TrHs) then begin
+      switch (OPrsr.TransType) begin
+        case kOPrsTransTypeInvoice:
+          VIr.SerNr = OPrsr.TransNr;
+          if (ReadFirstMain(VIr,1,true)==false) then begin goto L20OneAPSFormOpenOnDate; end;        
+          if (VIr.OKFlag==0) then begin goto L20OneAPSFormOpenOnDate; end;
+          if (VIr.Invalid!=0) then begin goto L20OneAPSFormOpenOnDate; end;
+          if (VIr.InvType==kInvoiceTypeEmployee or VIr.InvType==kInvoiceTypeCash or VIr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+            goto L20OneAPSFormOpenOnDate;
+          end;
+          if (reportmode==0) then begin
+            if ((VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) and (RepSpec.flags[9]==0)) then begin
+              goto L20OneAPSFormOpenOnDate;
+            end;
+          end;
+          if (reportmode==1) then begin
+            if (nonblank(RepSpec.ObjStr)) then begin
+              if (SetInSet(RepSpec.ObjStr,VIr.Objects)==false) then begin
+                goto L20OneAPSFormOpenOnDate;
+              end;
+            end;
+          end; 
+          latedays = DateDiff(VIr.DueDate,RepSpec.d1);
+          if (reportmode==0) then begin
+            if (RepSpec.Comparison!=0) then begin
+              if ((-latedays)<RepSpec.Comparison) then begin goto L20OneAPSFormOpenOnDate; end;
+            end;
+          end;
+          if (CheckIfVIOpen(RepSpec.d1,VIr,opensum,RepSpec)==false) then begin goto L20OneAPSFormOpenOnDate; end;
+          if (RepSpec.flags[4]==0) then begin
+//            opensum = MulRateToBase1(VIr.CurncyCode,opensum,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+//done in CheckIfVIOpen
+          end;        
+          if (nonblank(VIr.VATVal)) then begin
+            vatbc = MulRateToBase1(VIr.CurncyCode,VIr.VATVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+          end else begin
+            vatbc = MulRateToBase1(VIr.CurncyCode,VIr.CalcVATVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+          end;
+          if (RepSpec.flags[4]==0) then begin
+            VIr.VATVal = vatbc;
+          end;
+          if ((RepSpec.flags[0]==0) or (latedays<0)) then begin
+            if (VIr.CurncyCode==VEp.VECurncyCode) then begin
+              rval = opensum;
+            end else begin
+              if (blank(VEp.VECurncyCode)) or (VEp.VECurncyCode==basecur1) then begin
+                rval = opensum;
+              end else begin
+                rval = DivRateToBase1(VEp.VECurncyCode,opensum,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+              end;
+            end;
+            ARSARSum = ARSARSum + rval;
+            switch (RepSpec.flags[0]) begin
+              case 0:
+                ARSSum = ARSSum + rval;
+                if (VIr.CurncyCode==VEp.VECurncyCode) and (RepSpec.flags[4]==0) then begin
+                  tsb1 = tsb1 + rval;
+                end else begin
+                  tsb1 = tsb1 + MulRateToBase1(VIr.CurncyCode,rval,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+                end;
+                if (RepSpec.flags[4]!=0) then begin // ARSSum is not correct for total on report... Not sure if it is correct at all...
+                  ts = ts + MulRateToBase1(VIr.CurncyCode,rval,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+                end else begin
+                  ts = ts + rval;
+                end;
+                if (latedays>-1) then begin//-2???
+                  ARSSumNotLate = ARSSumNotLate + rval;
+                  ARSNotLateCount = ARSNotLateCount + 1;
+                  AddAPSInvoiceRow(aRwtype,aInvoiceNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRVAT,aSum4,aVEInvNo,aCurncyCode,acnt,
+                                   RepSpec,VEp,maxintdays,opensum,VIr,intv);
+                  ARSIntSum = ARSIntSum + intv;
+                  vatp = vatp + vatbc;
+                end else begin
+                  ARSSumLate = ARSSumLate + rval;
+                  ARSLateCount = ARSLateCount + 1;
+                  AddAPSInvoiceRow(aRwtype,aInvoiceNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRVAT,aSum4,aVEInvNo,aCurncyCode,acnt,
+                                   RepSpec,VEp,maxintdays,opensum,VIr,intv);
+                  ARSIntSum = ARSIntSum + intv;
+                  vatp = vatp + vatbc;
+                end;
+              case 2:
+                if (latedays<=-1) then begin//-2???
+                  tsb1 = tsb1 + MulRateToBase1(VIr.CurncyCode,rval,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+                  if (RepSpec.flags[4]!=0) then begin
+                    ts = ts + MulRateToBase1(VIr.CurncyCode,rval,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+                  end else begin
+                    ts = ts + rval;
+                  end;
+                  ARSSum = ARSSum + rval;
+                  ARSSumLate = ARSSumLate + rval;
+                  ARSLateCount = ARSLateCount + 1;
+                  AddAPSInvoiceRow(aRwtype,aInvoiceNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRVAT,aSum4,aVEInvNo,aCurncyCode,acnt,
+                                   RepSpec,VEp,maxintdays,opensum,VIr,intv);
+                  ARSIntSum = ARSIntSum + intv;
+                  vatp = vatp + vatbc;
+                end;
+            end;
+          end;               
+      end;
+L20OneAPSFormOpenOnDate:;      
+    end;
+  end;
+  VendAged(VEp,ARSARSum,ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151);
+  ARSARSum = ARSARSum + ARSOnAccBal;
+  ARSs0 = ARSs0 + ARSOnAccBal;
+  testf = true;
+  if (RepSpec.flags[1]==1) then begin
+    if (ARSARSum==0) and (ARSOnAccBal==0) then begin
+      testf = false;
+    end;
+  end;
+  if (RepSpec.flags[16]!=0) then begin
+    if (acnt==0) and (ARSOnAccBal==0) then begin testf = false; end;
+  end;
+  if (testf) then begin
+    switch (reportmode) begin
+      case 0: 
+//          PrintAPSForm(RepSpec,VEp,ARSSum,ARSOnAccBalb1,ARSSumb1,ARSOnAccBal,ARSIntSum,ARSSumLate,ARSARSum,ARSStartBal,ARSSumNotLate,ARSLateCount,ARSNotLateCount,
+//                       ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,aRwtype,aInvoiceNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRVAT,aSum4,aDebVal,aVEInvNo,aCurncyCode,acnt); 
+
+          PrintAPSForm(RepSpec,VEp,ARSSum,ARSOnAccBal,ARSOnAccBalb1,ARSSumb1,ARSIntSum,ARSSumLate,ARSARSum,ARSStartBal,ARSSumNotLate,ARSLateCount,ARSNotLateCount,
+                       ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,aRwtype,aInvoiceNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRVAT,aSum4,aDebVal,aVEInvNo,aCurncyCode,acnt); 
+
+        case 1: 
+          APSrList(RepSpec,VEp,ARSSum,ARSOnAccBal,ARSOnAccBalb1,ARSIntSum,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,aRwtype,aInvoiceNr,aRecNr,alatedays,aRemndr,aInvDate,aDueDate,aIntVal,aRVal,aRVAT,aSum4,aVEInvNo,aCurncyCode,acnt,acur,av1,curcnt); 
+      end;
+  end;
+  balpb1 = balpb1 + tsb1 + ARSOnAccBalb1;
+  if (RepSpec.flags[4]!=0) then begin
+    balp = balp + ts + ARSOnAccBal;
+  end else begin
+    balp = balp + tsb1 + ARSOnAccBalb1;
+  end;
+  RETURN;
+END;

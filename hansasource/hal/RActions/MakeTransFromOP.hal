@@ -1,0 +1,1753 @@
+external procedure GetVATCodePrelVATAcc(string,var string);
+external function Boolean ConvertNLTrans_VIVc(record TRVc,record OPrsVc,record CUVc,Boolean,var record VIVc);
+external function Integer PMCheckType(string,var string,var string);
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external function Integer DoBookOPWHTAXforMexico(record TRVc,record OPVc,row OPVc,record VIVc,record APAccBlock,
+                                      val,val,val,val,val,Boolean,Boolean,string,var val);
+external function Integer DoBookOPOnAccVAT(record TRVc,record OPVc,row OPVc,record APAccBlock,record VATCodeBlock,Boolean,Boolean,var val);
+external procedure OPGetVATCodeTAX1AccNumbers(record VATCodeBlock,string,var string,var string);
+external function Boolean GetAPPayRate(LongInt,var val,var val,var val,var val,var val,string,Date);
+external procedure GetPrepaymentBaseAmounts(LongInt,var val,var val);
+external function val GetAPPayBoolRVal(LongInt,Date);
+external function string 255 GetSupplierOnAccountAC(string);
+external function string 20 GetPayPurchVATAcc(string,record VATCodeBlock);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function val MulWithRateToBase2(var string,Date,val,roundmode);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+external procedure Base1ToBase2(var val,Date,var val);
+external procedure GetVATdouble(string,var val,var val,Integer);
+external procedure AddActualVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external function Boolean CheckTTRPerRow(string,string,string,Boolean,var string,Integer);
+external function string 5 AddVATCodeToVATAccRows(string);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external function Integer GetIntYc(Date);
+external procedure AddTransAutoTransRows(record TRVc);
+external function Integer BookVATonRateGainOP(record TRVc,record VIVc,var val,var val,val,val,Boolean,var val);
+external function Integer TypeOfCurncy(var string,var Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external procedure TRSumup(var record TRVc,var val);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external procedure AddEuroCurncyNomARTrRow(record TRVc,string,string,string,string,val,val,Boolean,
+                                  Boolean,var val,string,val,val,val,val,val,
+                                  val,val,string,LongInt,Integer,val,Date,LongInt,Boolean,string,string,string);
+external function Boolean CheckVATLaws();
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean TransInFiscal(Date);
+external procedure GetPORate(LongInt,var val,var val,var val,var val,var val);
+external procedure OPGetVATCodeAccNumbers(record VATCodeBlock,string,var string,var string);
+external procedure OPGetVATCodeAccNumbers2(record VATCodeBlock,string,Integer,var string,var string);
+external function Integer AddOPRowWHTax(record TRVc,record OPVc,record VIVc,row WHTaxBlock,Integer,
+                        var val,var val,var val,
+                        string,string,Boolean,Boolean,Boolean,Integer,
+                        Boolean,Integer);
+                        
+function string 255 FindOPChequeNumber(string oppaymode,string oprowpaymode,LongInt chequenr)
+begin
+  string 255 res;
+  record CheckVc Checkr;
+  record OwnCheckVc OwnCheckr;
+  string 255 tstr,thepm;
+  Integer cht;
+  
+  res = chequenr;
+  thepm = oprowpaymode;
+  if (blank(thepm)) then begin
+    thepm = oppaymode; 
+  end;
+  cht = PMCheckType(thepm,tstr,tstr);
+  switch (cht) begin
+    case kPayModeTypeCheque:
+      Checkr.SerNr = chequenr;
+      if (ReadFirstMain(Checkr,1,true)) then begin
+        res = Checkr.CheckNr;
+      end;
+    case kPayModeTypeOwnCheque:
+      OwnCheckr.SerNr = chequenr;
+      if (ReadFirstMain(OwnCheckr,1,true)) then begin
+        res = OwnCheckr.CheckNr;
+      end;
+  end;
+  FindOPChequeNumber = res;
+  return;
+end;
+
+function
+Integer AddOPRowPayMode(record TRVc gTRp,record OPVc OPp,record VIVc VIp,record PMBlock PMb,Integer pmrownr,Integer currow,
+                        var val rowsum,var val currowsum,var val TotSum,
+                        record APAccBlock APAccb,LongInt chequenr,Boolean dc1,Boolean dc2,Boolean aaccf,Integer transtocreate,
+                        Boolean vendinfof,record BaseCurBlock bcur,
+                        val prepbook,val prepbook2,Boolean NegativeAmountsf)
+BEGIN
+  row PMBlock pmrw;
+  row OPVc OPrw;
+  string 255 accstr,tstr,otxt,taccnumber,tstr2;
+  val booked,booked2,curbooked;
+  Integer res,oldstyle;
+  val fr,to1,to2,br1,br2;
+  Boolean accf,rgdc1,rgdc2;
+  Date bd;
+  val brd,brd2;
+  val bookedwithcurrate,bookedwithcurrate2;
+
+
+  accf = aaccf;
+  res = 0; 
+  MatRowGet(PMb,pmrownr,pmrw);
+  MatRowGet(OPp,currow,OPrw);
+  if (OPrw.BankVal!=0) then begin
+    switch (transtocreate) begin
+      case 1:
+        accstr = pmrw.AccNr;
+        tstr = pmrw.Comment;
+        if (chequenr!=-1) then begin
+          tstr = tstr & " ";
+          tstr = tstr & FindOPChequeNumber(OPp.PayMode,OPrw.PayMode,chequenr);
+          accf = true;
+        end;
+        otxt = pmrw.Objects;
+      case 3:
+        accstr = pmrw.AccNr;
+        tstr = pmrw.Comment;
+        if (chequenr!=-1) then begin
+          tstr = tstr & " ";
+          tstr = tstr & FindOPChequeNumber(OPp.PayMode,OPrw.PayMode,chequenr);
+          accf = true;
+        end;
+        otxt = pmrw.Objects;
+      case 2:
+        accstr = pmrw.PrelAccOut;
+        if (GetAccName(pmrw.PrelAccOut,tstr,60)==false) then begin
+          res = 2191;
+          goto LAddOPRowPayMode;
+        end;
+      case 4:
+        if (blank(VIp.APAcc)) then begin
+          VIp.APAcc = APAccb.APAcc;
+        end;
+        VIp.APAcc = accstr;
+        if (VIp.SerNr!=-1) then begin
+          tstr = VIp.SerNr;
+        end else begin
+          tstr = VIp.VECode;
+        end;
+        tstr = tstr & " ";
+        tstr = tstr & VIp.VEName;
+        otxt = pmrw.Objects;
+    end;
+    if (nonblank(tstr)) then begin
+      if (GetAccName(accstr,tstr2,60)==false) then begin
+        res = 1007;
+        goto LAddOPRowPayMode;
+      end;
+    end;
+    curbooked = OPrw.BankVal;
+    curbooked = curbooked + OPrw.BankFeeVal;
+    GetFullCurncyRate(OPrw.BankCurncy,OPp.TransDate,fr,to1,to2,br1,br2);
+
+    if (OPrw.Coef!=0) then begin
+      br2 = OPrw.Coef;
+    end else begin
+      if (OPrw.OrderNr>0) then begin
+        GetPORate(OPrw.OrderNr,fr,to1,to2,br1,br2);
+      end;
+    end;
+    if (vendinfof) then begin
+      tstr = tstr & " ";
+      if (OPrw.VISerNr!=-1) then begin
+        tstr = tstr & OPrw.VISerNr;      
+      end else begin
+        tstr = tstr & OPrw.VECode;
+      end;
+      tstr = tstr & " ";
+      tstr = tstr & OPrw.Comment;
+    end;
+    if (APAccb.ObjectonBankAcc!=0) then begin
+      if ((nonblank(otxt)) and (nonblank(OPrw.Objects))) then begin
+        otxt = otxt & ",";
+      end;
+      otxt = otxt & OPrw.Objects;
+    end;
+    if (CheckTTRPerRow("OPVc",accstr,otxt,false,taccnumber,1)) then begin end;      
+    booked2 = blankval;
+
+    if (OPrw.BankCurncy!=OPrw.RecCurncy) then begin
+      switch (TypeOfCurncy(OPrw.RecCurncy,oldstyle)) begin
+        case 1: 
+          booked = MulRateToBase1(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+          booked2 = MulRateToBase2(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        case 2: 
+          booked = MulRateToBase1(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+          booked2 = MulRateToBase2(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        otherwise
+          if (OPrw.VISerNr>0) then begin          
+            booked = MulRateToBase1(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+            booked2 = MulRateToBase2(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+          end else begin
+            booked = MulRateToBase1(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+            booked2 = MulRateToBase2(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+//            GetFullCurncyRate(OPrw.RecCurncy,OPp.TransDate,fr,to1,to2,br1,br2);
+//            booked = MulRateToBase1(OPrw.RecCurncy,OPrw.RecVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+          end;
+      end;
+    end else begin
+      booked = MulRateToBase1(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+      booked2 = MulRateToBase2(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+    end;
+
+    if (OPrw.RecCurncy==bcur.BaseCur2) then begin
+      booked2 = OPrw.RecVal;
+    end;
+    if (OPrw.BankCurncy==bcur.BaseCur2) then begin
+      booked2 = OPrw.BankVal;
+    end;
+    if ((OPrw.BankCurncy==bcur.BaseCur1) or (blank(OPrw.BankCurncy))) then begin
+      if (nonblank(OPrw.B1BankVal)) then begin
+        booked = OPrw.B1BankVal;
+        if (nonblank(OPrw.BankFeeVal)) then begin
+          booked = OPrw.B1BankVal + MulRateToBase1(OPrw.BankCurncy,OPrw.BankFeeVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        end;
+        if (nonblank(OPrw.ToRateB1BankVal)) then begin
+          to1 = OPrw.ToRateB1BankVal;
+        end else begin
+//?
+        end;
+      end;
+      if (nonblank(OPrw.B2BankVal)) then begin
+        booked2 = OPrw.B2BankVal;
+      end else begin
+        Base1ToBase2(booked,OPp.TransDate,booked2);
+      end;
+    end else begin
+      if (nonblank(OPrw.B1BankVal)) then begin
+        booked = OPrw.B1BankVal;
+        if (nonblank(OPrw.BankFeeVal)) then begin
+          booked = OPrw.B1BankVal + MulRateToBase1(OPrw.BankCurncy,OPrw.BankFeeVal,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        end;
+        if (nonblank(OPrw.ToRateB1BankVal)) then begin
+          to1 = OPrw.ToRateB1BankVal;
+        end else begin
+//?
+        end;
+        if (nonblank(OPrw.B2BankVal)) then begin
+          booked2 = OPrw.B2BankVal;
+          br2 = booked2/booked;
+        end else begin
+          booked2 = MulRateToBase2(OPrw.PInvCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        end;
+      end;
+    end;
+
+    AddEuroCurncyNomARTrRow(gTRp,accstr,otxt,"",tstr,booked,booked2,accf,false,TotSum,
+                            OPrw.BankCurncy,fr,to1,to2,br1,br2,
+                            curbooked,blankval,"",-1,0,blankval,bd,-1,NegativeAmountsf,taccnumber,"","");
+    
+//    AddEuroCurncyTrRow(gTRp,accstr,otxt,"",tstr,booked,accf,false,TotSum,
+//                       OPrw.BankCurncy,fr,to1,to2,br1,br2,curbooked,blankval,-1,false,"");
+    rowsum = rowsum + booked;
+    currowsum = rowsum + curbooked;
+
+    if (OPrw.VISerNr==-1) and (OPrw.RecCurncy!=bcur.BaseCur1) then begin
+
+      switch (OPrw.stp) begin
+        case kPaymentRowTypeNormal:
+          bookedwithcurrate = MulWithRateToBase1(OPrw.PInvCurncy,OPp.TransDate,OPrw.PInvVal,DefaultCurRoundOff);
+          bookedwithcurrate2 = MulWithRateToBase2(OPrw.PInvCurncy,OPp.TransDate,OPrw.PInvVal,DefaultCurRoundOff);
+          if (OPrw.B1BankVal<0) and (OPrw.PrepayNr>0) then begin
+            if (OPrw.BankCurncy==bcur.BaseCur1) then begin
+              bookedwithcurrate = OPrw.B1BankVal;
+              if (nonblank(OPrw.B2BankVal)) then begin
+                bookedwithcurrate2 = OPrw.B2BankVal;
+              end else begin
+                Base1ToBase2(bookedwithcurrate,OPp.TransDate,bookedwithcurrate2);
+              end;
+            end;          
+          end else begin
+            if (nonblank(OPrw.B1BankVal)) then begin
+              bookedwithcurrate = OPrw.B1BankVal;
+            end;
+            if (nonblank(OPrw.B2BankVal)) then begin
+              bookedwithcurrate2 = OPrw.B2BankVal;
+            end;
+          end;
+//          bookedwithcurrate = bookedwithcurrate;
+//          bookedwithcurrate2 = bookedwithcurrate2;
+          rgdc1 = true;
+          rgdc2 = false;
+          
+          brd = bookedwithcurrate - prepbook;
+          brd2 = bookedwithcurrate2 - prepbook2; 
+
+          if (bookedwithcurrate<0) then begin
+            brd = -brd;
+            brd2 = -brd2;
+            rgdc1 = false;
+          end;
+          if (brd!=0) then begin
+            if (brd>0) then begin
+              if (GetAccName(APAccb.RateGainAcc,tstr,60)==false) then begin
+                res = 1917;
+                goto LAddOPRowPayMode;
+              end;
+              AddEuroCurncyNomARTrRow(gTRp,APAccb.RateGainAcc,"","",tstr,brd,brd2,true,rgdc1,totsum,
+                                      "",blankval,blankval,blankval,blankval,blankval,
+                                      blankval,blankval,"",-1,0,blankval,bd,-1,false,"","","");
+            end else begin
+              if (GetAccName(APAccb.RateLossAcc,tstr,60)==false) then begin
+                res = 1918;
+                goto LAddOPRowPayMode;
+              end;
+              AddEuroCurncyNomARTrRow(gTRp,APAccb.RateLossAcc,"","",tstr,brd,brd2,true,rgdc2,totsum,
+                                      "",blankval,blankval,blankval,blankval,blankval,
+                                      blankval,blankval,"",-1,0,blankval,bd,-1,false,"","","");
+            end;
+          end;
+          rgdc1 = false;
+          rgdc2 = false;
+          brd = bookedwithcurrate - booked;
+          brd2 = bookedwithcurrate2 - booked2; 
+/*
+strange
+          if (bookedwithcurrate<0) then begin
+            brd = brd;
+            brd2 = brd2;
+            rgdc1 = false;
+          end;
+*/
+//Trace("bookedwithcurrate2 " & bookedwithcurrate2 & " booked2 " & booked2 & " brd " & brd  & " brd2 " & brd2,"");
+          if (brd!=0) then begin
+            if (brd>0) then begin
+              accstr = APAccb.BankRateGainAcc;
+              if (blank(accstr) and IsStandardProduct) then begin
+                accstr = APAccb.RateGainAcc;
+              end;
+              if (GetAccName(accstr,tstr,60)==false) then begin
+                res = 24220;
+                goto LAddOPRowPayMode;
+              end;
+              AddEuroCurncyNomARTrRow(gTRp,accstr,"","",tstr,brd,brd2,true,rgdc1,totsum,
+                                      "",blankval,blankval,blankval,blankval,blankval,
+                                      blankval,blankval,"",-1,0,blankval,bd,-1,false,"","","");
+            end else begin
+              accstr = APAccb.BankRateLossAcc;
+              if (blank(accstr) and IsStandardProduct) then begin
+                accstr = APAccb.RateLossAcc;
+              end;
+              if (GetAccName(accstr,tstr,60)==false) then begin
+                res = 24221;
+                goto LAddOPRowPayMode;
+              end;
+
+              AddEuroCurncyNomARTrRow(gTRp,accstr,"","",tstr,brd,brd2,true,rgdc2,totsum,
+                                      "",blankval,blankval,blankval,blankval,blankval,
+                                      blankval,blankval,"",-1,0,blankval,bd,-1,false,"","","");
+            end;
+          end;
+      end;    
+    end;
+
+    if (OPrw.BankFeeVal!=0) then begin
+      if (GetAccName(APAccb.ExtraCostAcc,tstr,60)==false) then begin
+        res = 2136;
+        goto LAddOPRowPayMode;
+      end;
+      curbooked = OPrw.BankFeeVal;
+      booked = MulRateToBase1(OPrw.BankCurncy,curbooked,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+      if (CheckTTRPerRow("OPVc",APAccb.ExtraCostAcc,"",true,taccnumber,1)) then begin end;      
+
+      AddEuroCurncyTrRow(gTRp,APAccb.ExtraCostAcc,"","",tstr,booked,true,true,TotSum,
+                         OPrw.BankCurncy,fr,to1,to2,br1,br2,curbooked,blankval,-1,false,taccnumber);
+      rowsum = rowsum + booked;
+      currowsum = currowsum + curbooked;
+    end;
+  end;
+LAddOPRowPayMode:;
+  AddOPRowPayMode = res;
+  RETURN;
+END;
+
+procedure APFindPaydAmount(record OPrsVc OPrsp,Integer noordered,var val ap,var val apbase)
+BEGIN
+  record OPVc OPr;
+  row OPVc OPrw;
+  Integer i,rwcnt;
+  Boolean testf;
+  
+  ap = 0;
+  OPr.SerNr = OPrsp.TransNr;
+  if (ReadFirstMain(OPr,1,true)) then begin
+    testf = false;
+    if ((OPr.OrderedFlag!=0) and (OPr.RejectedFlag==0)) then begin testf = true; end;
+    if (noordered!=0) then begin
+      if ((OPr.OrderedFlag!=0) and (OPr.DoneFlag==0)) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      if (OPr.TransDate==OPrsp.TransDate) then begin
+        rwcnt = MatRowCnt(OPr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(OPr,i,OPrw);
+          if ((OPrw.ovst==0)) then begin
+            if (OPrw.VISerNr==OPrsp.VINr) then begin
+              if ((OPrw.stp==kPaymentRowTypeNormal) or (OPrw.stp==kPaymentRowTypeSettlementDiscount)) then begin
+                ap = ap + OPrw.PInvVal;
+//                apbase = apbase + MulWithRateToBase1(OPrw.PInvCurncy,OPr.TransDate,OPrw.PInvVal,DefaultCurRoundOff);;
+              end;  
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+function val VIPaidAmount(record VIVc OrgVIr,LongInt opnrskip)
+BEGIN
+  val res,basevalp;
+  record VIVc VIr;
+  record PurgeTRVc PurgeTRr;
+  record TRVc TRr;
+  row TRVc TRrw;
+  record CLInVc CLInr;
+  row CLInVc CLInrw;
+  record CLOutVc CLOutr;
+  row CLOutVc CLOutrw;
+  record OPrsVc OPrsr;
+  Boolean found;
+  val amnt,t,t2,basp;
+  Integer i,rwcnt,oldstyle;
+
+  OPrsr.VINr = OrgVIr.SerNr;
+  found = true;
+  while (LoopKey("VIKey",OPrsr,1,found)) begin
+    if (found) then begin
+      if (OPrsr.VINr!=OrgVIr.SerNr) then begin found = false; end;
+    end;  
+    if (found) then begin
+      if (OPrsr.TransType==kOPrsTransTypeInvoice) then begin
+        if (OPrsr.TransNr!=OrgVIr.SerNr) then begin
+          VIr.SerNr = OPrsr.TransNr;
+          if (ReadFirstMain(VIr,1,true)) then begin
+            if (VIr.Invalid==0) then begin
+              if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                t = -VIr.PayVal;
+                res = res + t;
+                basevalp = basevalp + MulRateToBase1(VIr.CurncyCode,t,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+              end;
+            end;
+          end;  
+        end;
+      end;
+      if (OPrsr.TransType==kOPrsTransTypePayment) then begin      
+        if (OPrsr.TransNr!=opnrskip) then begin
+          APFindPaydAmount(OPrsr,0,amnt,basp);
+          t = -amnt;
+          t2 = -basp;
+          res = res + t;
+          basevalp = basevalp - MulRateToBase1(OrgVIr.CurncyCode,amnt,OrgVIr.FrRate,OrgVIr.ToRateB1,OrgVIr.ToRateB2,OrgVIr.BaseRate1,OrgVIr.BaseRate2,DefaultCurRoundOff);
+        end;
+      end;
+      if (OPrsr.TransType==kOPrsTransTypePurgeNLTransaction) then begin
+        PurgeTRr.Number = OPrsr.TransNr;
+        PurgeTRr.IntYc = GetIntYc(OPrsr.TransDate);                
+        PurgeTRr.TransRow = OPrsr.TransRow;
+        if (ReadFirstMain(PurgeTRr,3,true)) then begin
+          if (PurgeTRr.TransDate==OPrsr.TransDate) then begin
+            t = 0;
+            if (PurgeTRr.Typ==2) then begin
+              if (PurgeTRr.SerNr==OrgVIr.SerNr) then begin
+                if ((PurgeTRr.CurDebVal<>0) or (PurgeTRr.CurCredVal<>0)) then begin              
+                  t = PurgeTRr.CurCredVal - PurgeTRr.CurDebVal;
+                  basevalp = basevalp + (PurgeTRr.CredVal - PurgeTRr.DebVal);
+                end else begin
+                  t = PurgeTRr.CredVal - PurgeTRr.DebVal;
+                  basevalp = basevalp + t;
+                end;                        
+                if (TypeOfCurncy(PurgeTRr.Curncy,oldstyle)==2) then begin
+                  t = PurgeTRr.CredVal2 - PurgeTRr.DebVal2;
+                end;
+                res = res + t;
+              end;  
+            end;    
+          end;
+        end;
+      end;
+      if (OPrsr.TransType==kOPrsTransTypeNLTransaction) then begin
+        TRr.Number = OPrsr.TransNr;
+        TRr.IntYc = GetIntYc(OPrsr.TransDate);                
+        if (ReadFirstMain(TRr,2,true)) then begin
+          if (TRr.TransDate==OPrsr.TransDate) then begin
+            t = 0;
+
+            rwcnt = MatRowCnt(TRr);
+            for (i=0; i<rwcnt; i=i+1) begin
+              MatRowGet(TRr,i,TRrw);
+              if (TRrw.ovst==0) then begin
+                if (TRrw.stp==1) and (TRrw.Typ==2) then begin
+                  if (TRrw.SerNr==OrgVIr.SerNr) then begin
+                    if ((TRrw.CurDebVal<>0) or (TRrw.CurCredVal<>0)) then begin              
+                      t = TRrw.CurCredVal - TRrw.CurDebVal;
+                      basevalp = basevalp + (TRrw.CredVal - TRrw.DebVal);
+                    end else begin
+                      t = TRrw.CredVal - TRrw.DebVal;
+                      basevalp = basevalp + t;
+                    end;                        
+                    if (TypeOfCurncy(TRrw.Curncy,oldstyle)==2) then begin
+                      t = TRrw.CredVal2 - TRrw.DebVal2;
+                    end;
+                    res = res + t;
+                  end;  
+                end;    
+              end;
+            end;
+
+          end;
+        end;
+      end;
+      if (OPrsr.TransType==kOPrsTransTypeCashOut) then begin
+        CLOutr.SerNr = OPrsr.TransNr;
+        if (ReadFirstMain(CLOutr,1,true)) then begin
+          if (CLOutr.TransDate==OPrsr.TransDate) then begin
+            t = 0;
+            rwcnt = MatRowCnt(CLOutr);
+            for (i=0; i<rwcnt; i=i+1) begin
+              MatRowGet(CLOutr,i,CLOutrw);
+              if (CLOutrw.Type==2) then begin
+                if (CLOutrw.TransNr==OrgVIr.SerNr) then begin
+                  t = CLOutrw.Sum;
+                  res = res - t;
+                  basevalp = basevalp - MulRateToBase1(CLOutr.CurncyCode,t,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+                end;  
+              end;    
+            end;
+          end;
+        end;
+      end;
+      if (OPrsr.TransType==kOPrsTransTypeCashIn) then begin
+        CLInr.SerNr = OPrsr.TransNr;
+        if (ReadFirstMain(CLInr,1,true)) then begin
+          if (CLInr.TransDate==OPrsr.TransDate) then begin
+            t = 0;
+            rwcnt = MatRowCnt(CLInr);
+            for (i=0; i<rwcnt; i=i+1) begin
+              MatRowGet(CLInr,i,CLInrw);
+              if (CLInrw.Type==2) then begin
+                if (CLInrw.TransNr==OrgVIr.SerNr) then begin
+                  t = CLInrw.Sum;
+                  res = res + t;
+                  basevalp = basevalp - MulRateToBase1(CLInr.CurncyCode,t,CLInr.FrRate,CLInr.ToRateB1,CLInr.ToRateB2,CLInr.BaseRate1,CLInr.BaseRate2,DefaultCurRoundOff);
+                end;  
+              end;    
+            end;
+
+          end;
+        end;
+      end;
+                  
+    end;
+  end;
+
+  VIPaidAmount = -res;
+  RETURN;
+END;
+
+function Integer DoBookOPVAT(record TRVc gTRp,record OPVc OPp,Integer rownr,record VIVc VIr,record APAccBlock APAccb,record VATCodeBlock VATCb,
+                    val frrate,val torate1,val torate2,val baserate1,val baserate2,Boolean dc1,Boolean dc2,var val totsump)
+BEGIN
+  Integer res;
+  row OPVc OPrwp;
+  Integer i,rwcnt;
+  Integer j,virwcnt;
+  row VATCodeBlock VATCoderw;
+  string 255 tstr,vatobjstr,vatacc,taccnumber,pvatacc;
+  val rd,nv,paidv,vat,t1,tnv,talreadybookednv;
+  row VIVc VIrw;
+  record SMVc VATr;
+  row SMVc VATrw;
+  Integer vcrwcnt;
+  val vatprc,tax1;
+  record CUVc VEr;
+  Integer OPBookVAT;
+  
+  res = 0;
+  VEr.Code = VIr.VECode;
+  ReadFirstMain(VEr,1,true);
+  if (HasLocalization("POL")) then begin
+    OPBookVAT = VIr.OPBookVAT;
+  end else begin
+    switch (VEr.OPBookVAT) begin
+      case 1:
+        OPBookVAT = 1;
+      case 2:
+        OPBookVAT = 0;
+      otherwise
+        OPBookVAT = APAccb.OPBookVAT;
+    end;
+  end;
+  if (OPBookVAT!=0) then begin
+    MatRowGet(OPp,rownr,OPrwp);
+
+  if (OPrwp.ChequeNr<=0) then begin //vat posted when check cleared
+    vatobjstr = ""; 
+    if (APAccb.VATUseObj!=0) then begin
+      vatobjstr = OPrwp.Objects;
+    end;
+    GetVATdouble(OPrwp.VATCode,vatprc,tax1,1);
+    if (OPrwp.VATVal!=0) or ((vatprc==0) and (nonblank(vatprc))) then begin
+      rwcnt = MatRowCnt(VATCb);
+      if (rwcnt==0) then begin
+        res = 1902;
+        goto LDoBookOPVAT;
+      end;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(VATCb,i,VATCoderw);
+        if (OPrwp.VATCode==VATCoderw.VATCode) then begin
+          goto L22;
+        end;
+      end;
+      MatRowGet(VATCb,0,VATCoderw);
+L22:;
+      rd = MulRateToBase1(OPrwp.PInvCurncy,OPrwp.VATVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+//      nv = MulRateToBase1(OPrwp.PInvCurncy,OPrwp.PInvVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+//      nv = nv - rd;
+      if (OPBookVAT!=0 and HasLocalization("POL")) then begin
+        vatacc = VATCoderw.PurchVATAcc;
+      end else begin
+        vatacc = VATCoderw.PayPurchVATAcc;
+      end;
+      if (blank(vatacc)) then begin
+        vatacc = APAccb.VATAcc;
+      end;
+      if (GetAccName(vatacc,tstr,60)==false) then begin
+        res = 2172;
+        goto LDoBookOPVAT;
+      end;
+      if (CheckTTRPerRow("OPVc",vatacc,vatobjstr,dc1,taccnumber,1)) then begin end;      
+      AddEuroTrRow(gTRp,vatacc,vatobjstr,AddVATCodeToVATAccRows(OPrwp.VATCode),tstr,rd,baserate1,baserate2,true,dc1,totsump,false,taccnumber,"","");
+      
+      if (OPBookVAT!=0 and HasLocalization("POL")) then begin
+        vatacc = VATCoderw.CorPurchVATAcc;
+      end else begin
+        vatacc = VATCoderw.PurchVATAcc;
+      end;
+
+      if (GetAccName(vatacc,tstr,60)==false) then begin
+        res = 2171;
+        goto LDoBookOPVAT;
+      end;
+      if (CheckTTRPerRow("OPVc",vatacc,vatobjstr,dc2,taccnumber,1)) then begin end;      
+      AddEuroTrRow(gTRp,vatacc,vatobjstr,AddVATCodeToVATAccRows(VATCoderw.VATCode),tstr,rd,baserate1,baserate2,true,dc2,totsump,false,taccnumber,"","");
+    end else begin
+      paidv = VIPaidAmount(VIr,OPp.SerNr);
+      virwcnt = MatRowCnt(VIr);
+      
+      SetupVATBase(VATr,vcrwcnt);  
+      for (j=0;j<virwcnt;j=j+1) begin
+        MatRowGet(VIr,j,VIrw);
+        if (VIrw.stp==kInvoiceRowTypeNormal) then begin
+          if (nonblank(VIrw.VATCode)) then begin
+            tnv = OPrwp.PInvVal/VIr.PayVal;
+            if (VIrw.VATVal!=0) then begin
+              AddActualVATBase(VATr,VIrw.VATCode,VIrw.Sum*tnv,VIrw.VATVal,vcrwcnt,0,VIr.NoTAXonVAT);
+            end else begin
+              AddVATBase(VATr,VIrw.VATCode,VIrw.Sum*tnv,blankval,vcrwcnt,0,VIr.NoTAXonVAT);
+            end;
+          end;
+        end;
+      end;      
+      for (j=0;j<vcrwcnt;j=j+1) begin
+        MatRowGet(VATr,j,VATrw);
+        OPGetVATCodeAccNumbers2(VATCb,VATrw.VATCode,OPBookVAT,pvatacc,vatacc);
+        if (blank(vatacc)) then begin
+          vatacc = APAccb.VATAcc;
+        end;
+        if (nonblank(pvatacc)) and (nonblank(vatacc)) then begin
+          rd = FindVAT(VATrw.VATCode,VATrw.DebVal,0,VIr.NoTAXonVAT);
+          if (rd!=0) then begin
+            rd = MulRateToBase1(OPrwp.PInvCurncy,rd,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            if (GetAccName(vatacc,tstr,60)==false) then begin
+              res = 2172;
+              goto LDoBookOPVAT;
+            end;
+            if (CheckTTRPerRow("OPVc",vatacc,vatobjstr,dc1,taccnumber,1)) then begin end;      
+            AddEuroTrRow(gTRp,vatacc,vatobjstr,AddVATCodeToVATAccRows(VATrw.VATCode),tstr,rd,baserate1,baserate2,true,dc1,totsump,false,taccnumber,"","");
+            if (GetAccName(pvatacc,tstr,60)==false) then begin
+              res = 2171;
+              goto LDoBookOPVAT;
+            end;
+            if (CheckTTRPerRow("OPVc",pvatacc,vatobjstr,dc2,taccnumber,1)) then begin end;      
+            AddEuroTrRow(gTRp,pvatacc,vatobjstr,AddVATCodeToVATAccRows(VATrw.VATCode),tstr,rd,baserate1,baserate2,true,dc2,totsump,false,taccnumber,"","");
+          end;
+        end;
+      end;
+      
+/*      
+      for (j=0;j<virwcnt;j=j+1) begin
+        MatRowGet(VIr,j,VIrw);
+        tnv = tnv + VIrw.Sum;
+        vat = blankval;
+        if (nonblank(VIrw.VATCode)) then begin
+          AddVATBase(VATr,VIrw.VATCode,VIrw.Sum,blankval,vcrwcnt,0,VIp.NoTAXonVAT);
+          CalcVATBaseVAT(VATr,0,0,vcrwcnt,vat,t1);
+          if ((tnv + vat)>=paidv) then begin
+            nv = tnv - VIrw.Sum - talreadybookednv;
+            nv = VIrw.Sum - (paidv - nv);
+            rwcnt = MatRowCnt(VATCb);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(VATCb,i,VATCoderw);
+              if (VIrw.VATCode==VATCoderw.VATCode) then begin
+                goto L222;
+              end;
+            end;
+            MatRowGet(VATCb,0,VATCoderw);
+L222:;            
+            vatacc = VATCoderw.PayPurchVATAcc;
+            if (blank(vatacc)) then begin
+              vatacc = APAccb.VATAcc;
+            end;
+            if (nonblank(VATCoderw.PurchVATAcc)) and (nonblank(vatacc)) then begin
+              rd = MulRateToBase1(OPrwp.PInvCurncy,FindVAT(VIrw.VATCode,nv,0,VIr.NoTAXonVAT),frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+              if (GetAccName(VATCoderw.PayPurchVATAcc,tstr,60)==false) then begin
+                res = 2172;
+                goto LDoBookOPVAT;
+              end;
+              if (CheckTTRPerRow("OPVc",VATCoderw.PurchVATAcc,vatobjstr,dc1,taccnumber,1)) then begin end;      
+              AddEuroTrRow(gTRp,VATCoderw.PayPurchVATAcc,vatobjstr,AddVATCodeToVATAccRows(OPrwp.VATCode),tstr,rd,baserate1,baserate2,true,dc1,totsump,false,taccnumber,"","");
+              if (GetAccName(VATCoderw.PurchVATAcc,tstr,60)==false) then begin
+                res = 2171;
+                goto LDoBookOPVAT;
+              end;
+              if (CheckTTRPerRow("OPVc",VATCoderw.PurchVATAcc,vatobjstr,dc2,taccnumber,1)) then begin end;      
+              AddEuroTrRow(gTRp,VATCoderw.PurchVATAcc,vatobjstr,AddVATCodeToVATAccRows(VATCoderw.VATCode),tstr,rd,baserate1,baserate2,true,dc2,totsump,false,taccnumber,"","");
+              talreadybookednv = talreadybookednv + VIrw.Sum;
+            end else begin
+              talreadybookednv = talreadybookednv + VIrw.Sum;
+            end;
+          end;
+        end;
+      end;
+*/      
+    end;      
+  end;
+  end;
+LDoBookOPVAT:;
+  DoBookOPVAT = res;
+  RETURN;
+END;
+
+function val FindAPPrepaidBase1Amount(LongInt vepnr,string pinvcurncy,val pinvval)
+begin
+  val res,curval,v;
+  Boolean found;
+  record APPayHistVc APPayHistr; 
+  
+  found = true;
+  APPayHistr.VEPNr = vepnr;  
+  while (LoopKey("MainKey",APPayHistr,1,found)) begin
+    if (APPayHistr.VEPNr!=vepnr) then begin found = false; end;
+    if (found) then begin
+      res = res + APPayHistr.BookVal;
+      if (pinvcurncy==APPayHistr.CurncyCode) then begin
+        curval = curval + APPayHistr.Val;
+      end else begin
+        CurValToOtherCur(APPayHistr.TransDate,APPayHistr.CurncyCode,APPayHistr.Val,pinvcurncy,v,DefaultCurRoundOff);
+        curval = curval + v;
+      end;
+    end;
+  end;  
+  res = (res*pinvval)/curval;
+  FindAPPrepaidBase1Amount = res;
+  return;
+end;
+
+function Integer PostBaseCur1RemainingBalance(record TRVc gTRp,record VIVc VIr,row OPVc OPrw,record APAccBlock APAccb,val baserate1,val baserate2,Boolean dc1,Boolean dc2,var val totsum)
+begin
+  Integer res;
+  record APVc APr;
+  val ors;
+  string 255 tstr,otxt,taccnumber,accstr;
+  
+  APr.SerNr = Vir.SerNr;
+  if (ReadFirstMain(APr,1,true)) then begin
+    if (APr.RVal==OPrw.PInvVal) then begin
+      ors = MulRateToBase1(VIr.CurncyCode,OPrw.PInvVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+      if (APr.BookRVal!=ors) then begin
+        if (GetAccName(VIr.APAcc,tstr,60)==false) then begin
+          res = 1915;
+          goto LPostBaseCur1RemainingBalance;
+        end;
+        ors = ors - APr.BookRVal;
+        ors = Round(ors,DefaultCurRoundOff);
+         
+        if (ors!=0) then begin
+          if (CheckTTRPerRow("OPVc",VIr.APAcc,otxt,dc1,taccnumber,1)) then begin end;      
+          AddEuroTrRow(gTRp,VIr.APAcc,otxt,false,tstr,ors,baserate1,baserate2,false,dc2,totsum,false,taccnumber,"","");
+
+          if (ors>0) then begin
+            accstr = APAccb.RateLossAcc;
+            if (GetAccName(accstr,tstr,60)==false) then begin
+              res = 1918;
+              goto LPostBaseCur1RemainingBalance;
+            end;
+          end else begin
+            accstr = APAccb.RateGainAcc;
+            if (GetAccName(accstr,tstr,60)==false) then begin
+              res = 1917;
+              goto LPostBaseCur1RemainingBalance;
+            end;
+          end;        
+          if (CheckTTRPerRow("OPVc",accstr,otxt,dc1,taccnumber,1)) then begin end;      
+          AddEuroTrRow(gTRp,accstr,otxt,false,tstr,ors,baserate1,baserate2,false,dc1,totsum,false,taccnumber,"","");
+        end;
+      end;
+    end;
+  end;
+LPostBaseCur1RemainingBalance:;  
+  PostBaseCur1RemainingBalance = res;
+  return;
+end;
+
+function Integer MakeTransFromOP2(record TRVc gTRp,record OPVc OPp,Boolean rpt,Integer transtocreate)
+begin
+  Integer res;
+  record VATCodeBlock VATCb;
+  record APAccBlock APAccb;
+  record TRGenBlock TRGb;
+  record BaseCurBlock bcur;
+  record PMBlock PMb;
+  record WHTaxBlock WHTaxRec;
+  record TRVc lTRr;
+  record OPrsVc OPrsr;
+  record VIVc VIr;
+  record CUVc VEr;
+  record CCatVc CCatr;
+  record VGVc VGr;
+  row OPVc OPrw;
+  row TRVc TRrw;
+  row PMBlock pmrw;
+  row PMBlock headpmrw;
+  row WHTaxBlock WHTaxrw;
+  Integer rwcnt,pmrwcnt,whrwcnt;
+  Integer i,j,PMn;
+  string 255 ftxt,otxt,accstr,onaccacc,vatobjstr,taccnumber,tax1acc,ppvatacc;
+  string 255 tstr,t2;
+  Boolean dc1,dc2;
+  val frrate,torate1,torate2,baserate1,baserate2;
+  val bfrrate,btorate1,btorate2,bbaserate1,bbaserate2;
+  val rs,v,rs2,t;
+  val ors,ors2,rd,rd2,brd,brd2;
+  val booked,curbooked;
+  val vatval,rebval,totsum,bsum;
+  Boolean accf,vatflag,vendinfof,sumrowf,invfound;
+  Boolean lightFlag;
+  LongInt insrow;
+  Integer oldstyle;
+  Date bd;
+  string 20 vatacc,vatcode;
+  val prepbook,prepbook2,pinvval;
+//  val b1,b2;
+  record CYBlock TRSetb;
+  Boolean NegativeAmountsf;
+  Boolean onaccdc1,onaccdc2;
+  record AccVc Accr;
+  val ro,ro2;
+
+  if ((ProgramType==typFirstOffice) or 
+      (ProgramType==typFirstOfficeSmall) or 
+      (IsBooks)) then begin
+    lightFlag = true;
+  end;  
+  BlockLoad(VATCb);
+  BlockLoad(PMb);
+  BlockLoad(WHTaxRec);
+  BlockLoad(TRGb);
+  BlockLoad(APAccb);
+  BlockLoad(TRSetb);
+  BlockLoad(bcur);
+  if (rpt==false) then begin
+    if (TRGb.OPGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromOP2;
+    end;
+  end;  
+  if (rpt==false) then begin
+    if (nonblankdate(TRGb.OPStartDate) and
+        (OPp.TransDate<TRGb.OPStartDate)) then begin
+      res = 0;
+      goto LMakeTransFromOP2;
+    end;
+  end;    
+  res = 1085;
+  RecordNew(gTRp);
+  switch (transtocreate) begin
+    case 1: gTRp.IntYc = OPYc;
+    case 2: gTRp.IntYc = OPOYc;
+    case 3: gTRp.IntYc = OPYc;
+    case 4: gTRp.IntYc = OPBYc;
+  end;
+  gTRp.Number = OPp.SerNr;
+  gTRp.RefStr = OPp.PayNumber;
+  if (rpt==false) then begin
+    lTRr.IntYc = gTRp.IntYc;
+    lTRr.Number = gTRp.Number;
+    if (ReadFirstMain(lTRr,2,true)) then begin
+      res = 1032;
+      goto LMakeTransFromOP2;
+    end;
+  end;    
+  gTRp.RegDate = CurrentDate;
+  gTRp.RegTime = CurrentTime;
+  switch (transtocreate) begin
+    case 2: gTRp.TransDate = OPp.PayDate;
+    otherwise gTRp.TransDate = OPp.TransDate;
+  end;
+  if (rpt==false) then begin
+    if (TransInFiscal(gTRp.TransDate)==false) then begin
+      res = 1075;
+      goto LMakeTransFromOP2;
+    end;
+  end;
+  gTRp.Comment = OPp.BankName;
+  whrwcnt = MatRowCnt(WHTAxRec);
+  PMn = 0;
+  pmrwcnt = MatRowCnt(PMb);
+  if (len(OPp.PayMode)>0) then begin
+    for (j=0;j<pmrwcnt;j=j+1) begin
+      MatRowGet(PMb,j,pmrw);
+      if (pmrw.Code==OPp.PayMode) then begin
+        MatRowGet(PMb,j,headpmrw);
+        PMn = j;
+        j = pmrwcnt;
+      end;
+    end;
+  end;
+  dc1 = true;
+  dc2 = false;
+  t2 = "";
+  rwcnt = MatRowCnt(OPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    vatflag = false;
+    MatRowGet(OPp,i,OPrw);
+    if (OPrw.ovst==0) then begin
+      onaccacc = "";
+      otxt = "";
+      VEr.Code = OPrw.VECode;
+      if (ReadFirstMain(VEr,1,true)) then begin
+        if (APAccb.APUseObj!=0) then begin
+          otxt = OPrw.Objects;
+        end;
+        if (nonblank(OPrw.Objects)) then begin
+          if (nonblank(otxt)) then begin
+            otxt = otxt & ",";
+          end;
+          otxt = otxt & OPrw.Objects;
+        end;
+        onaccacc = OPrw.APAcc;        
+        if (blank(onaccacc)) then begin
+          onaccacc = VEr.OnAccAccAP;
+        end;
+        if (blank(onaccacc)) then begin
+          if (blank(VEr.VECat)) then begin
+            CCatr.Code = VEr.CustCat;
+            if (ReadFirstMain(CCatr,1,true)) then begin
+              onaccacc = CCatr.OnAccAccAP;
+            end;
+          end else begin
+            VGr.Code = VEr.VECat;
+            if (ReadFirstMain(VGr,1,true)) then begin
+              onaccacc = VGr.OnAccAcc;
+            end;
+          end;
+        end;
+      end;
+      if (blank(onaccacc)) then begin
+        onaccacc = APAccb.OnAccAcc;
+      end;
+
+      if (OPrw.VISerNr==-1) then begin
+        if (OPrw.OrderNr>0) then begin
+          GetPORate(OPrw.OrderNr,frrate,torate1,torate2,baserate1,baserate2);
+        end;
+        switch (OPrw.stp) begin
+          case kPaymentRowTypeSettlementDiscount:
+            if (OPrw.BankVal!=0) then begin
+              GetFullCurncyRate(OPrw.BankCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+              rs = MulRateToBase1(OPrw.BankCurncy,OPrw.BankVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+              if (GetAccName(APAccb.ExtraCostAcc,tstr,60)==false) then begin
+                res = 2121;
+                goto LMakeTransFromOP2;
+              end;
+              if (CheckTTRPerRow("OPVc",APAccb.ExtraCostAcc,"",dc1,taccnumber,1)) then begin end;      
+              AddEuroCurncyTrRow(gTRp,APAccb.ExtraCostAcc,"","",tstr,rs,false,dc1,
+                                 totsum,OPrw.BankCurncy,frrate,torate1,torate2,baserate1,baserate2,OPrw.BankVal,blankval,-1,false,taccnumber);
+            end;
+          case kPaymentRowTypeBankFee:
+            if (OPrw.BankVal!=0) then begin
+              GetFullCurncyRate(OPrw.BankCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+              rs = MulRateToBase1(OPrw.BankCurncy,OPrw.BankVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+              if (GetAccName(APAccb.ExtraCostAcc,tstr,60)==false) then begin
+                res = 2121;
+                goto LMakeTransFromOP2;
+              end;
+              if (CheckTTRPerRow("OPVc",APAccb.ExtraCostAcc,"",dc1,taccnumber,1)) then begin end;      
+              AddEuroCurncyTrRow(gTRp,APAccb.ExtraCostAcc,"","",tstr,rs,false,dc1,
+                                 totsum,OPrw.BankCurncy,frrate,torate1,torate2,baserate1,baserate2,OPrw.BankVal,blankval,-1,false,taccnumber);
+            end;
+          otherwise
+            rs2 = blankval;            
+            pinvval = OPrw.PInvVal;
+            if (OPrw.PrepayNr==-1) then begin
+              GetFullCurncyRate(OPrw.PInvCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+              rs = MulRateToBase1(OPrw.PInvCurncy,OPrw.PInvVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            end else begin
+              GetAPPayRate(OPrw.PrepayNr,frrate,torate1,torate2,baserate1,baserate2,OPrw.PInvCurncy,OPp.TransDate);//??
+              if (OPrw.BankCurncy==bcur.BaseCur1 and OPrw.B1BankVal!=0) then begin
+                rs = OPrw.B1BankVal;
+                if (nonblank(OPrw.B2BankVal)) then begin
+                  rs2 = OPrw.B2BankVal;
+                end else begin
+                  Base1ToBase2(rs,OPp.TransDate,rs2);
+                end;
+              end else begin
+/*              
+              if (OPrw.FrRateBankVal!=0) then begin frrate = OPrw.FrRateBankVal; end;
+              if (OPrw.BaseRate1BankVal!=0) then begin baserate1 = OPrw.BaseRate1BankVal; end;
+              if (OPrw.BaseRate2BankVal!=0) then begin baserate2 = OPrw.BaseRate2BankVal; end;
+              if (OPrw.ToRateB1BankVal!=0) then begin torate1 = OPrw.ToRateB1BankVal; end;
+              if (OPrw.ToRateB2BankVal!=0) then begin torate2 = OPrw.ToRateB2BankVal; end;      
+*/              
+//              GetPrepaymentBaseAmounts(OPrw.PrepayNr,rs,rs2);// rs = FindAPPrepaidBase1Amount(OPrw.PrepayNr,OPrw.PInvCurncy,OPrw.PInvVal); 
+                rs = MulRateToBase1(OPrw.PInvCurncy,OPrw.PInvVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+                rs2 = MulRateToBase2(OPrw.PInvCurncy,OPrw.PInvVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);            
+              end;
+              if (APAccb.PrepExclVAT!=0 and APAccb.PreOPBookVAT!=kPreOPBookVATTypeNotVAT) then begin
+                rs = rs - MulRateToBase1(OPrw.PInvCurncy,OPrw.VATVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+                rs2 = rs2 - MulRateToBase2(OPrw.PInvCurncy,OPrw.VATVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+              end;
+            end;
+            onaccdc1 = dc1;
+            onaccdc2 = dc2;
+            if (OPrw.PInvVal<0) then begin
+              if (OPrw.PrepayNr<0) then begin
+                if (nonblank(OPrw.B1BankVal)) then begin
+                  rs = OPrw.B1BankVal;
+                  if (nonblank(OPrw.ToRateB1BankVal)) then begin
+                    torate1 = OPrw.ToRateB1BankVal;
+                  end else begin
+//?
+                  end;
+                  if (nonblank(OPrw.B2BankVal)) then begin
+                    rs2 = OPrw.B2BankVal;
+                  end else begin
+                    Base1ToBase2(rs,OPp.TransDate,rs2);
+                  end;
+                end else begin
+                  if (nonblank(OPrw.B2BankVal)) then begin
+                    rs2 = OPrw.B2BankVal;
+                  end;
+                end;
+              end else begin
+/*              
+                if (nonblank(OPrw.B1BankVal)) then begin
+                  rs = OPrw.B1BankVal;
+                end;
+                if (nonblank(OPrw.B2BankVal)) then begin
+                  rs2 = OPrw.B2BankVal;
+                end;
+*/                
+              end;
+            end else begin
+              if (nonblank(OPrw.B1BankVal)) then begin
+                rs = OPrw.B1BankVal;
+                if (nonblank(OPrw.ToRateB1BankVal)) then begin
+                  torate1 = OPrw.ToRateB1BankVal;
+                end else begin
+//?
+                end;
+                if (nonblank(OPrw.B2BankVal)) then begin
+                  rs2 = OPrw.B2BankVal;
+                end else begin
+                  Base1ToBase2(rs,OPp.TransDate,rs2);
+                end;
+              end else begin
+                if (nonblank(OPrw.B2BankVal)) then begin
+                  rs2 = OPrw.B2BankVal;
+                end;
+              end;
+            end;
+            if (GetAccName(onaccacc,tstr,60)==false) then begin
+              res = 1916;
+              goto LMakeTransFromOP2;
+            end;
+            if (CheckTTRPerRow("OPVc",onaccacc,otxt,onaccdc1,taccnumber,1)) then begin end;      
+            prepbook = rs;            
+            prepbook2 = rs2;
+            if (OPrw.RecCurncy==bcur.BaseCur2) then begin
+              prepbook2 = OPrw.RecVal;
+            end;
+            if (OPrw.BankCurncy==bcur.BaseCur2) then begin
+              prepbook2 = OPrw.BankVal;
+            end;
+            if (prepbook2==0) then begin
+              if (blank(prepbook2)) and (nonblank(bcur.BaseCur2)) then begin
+                Base1ToBase2(prepbook,OPp.TransDate,prepbook2);
+              end;
+            end;
+            if (OPp.APonTR!=0) then begin
+              AddEuroCurncyNomARTrRow(gTRp,onaccacc,otxt,"",tstr,rs,rs2,false,onaccdc1,totsum,
+                  OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,pinvval,blankval,
+                  OPrw.VECode,OPrw.VISerNr,2,blankval,OPp.PayDate,-1,false,taccnumber,"","");
+            end else begin
+              AddEuroCurncyTrRow(gTRp,onaccacc,otxt,"",tstr,rs,false,onaccdc1,totsum,
+                         OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,pinvval,blankval,-1,false,taccnumber);
+            end;
+
+            if (nonblank(OPrw.VATCode)) then begin
+              vatflag = true;
+              if (OPrw.PrepayNr!=-1) then begin
+                if (APAccb.PreOPBookVAT==0) then begin vatflag = false; end;
+              end else begin
+                vatflag = false; 
+              end;
+            end;
+            
+        end;
+        
+        
+        goto L80;
+      end;
+      VIr.SerNr = OPrw.VISerNr;
+      invfound = ReadFirstMain(VIr,1,true);
+      if (invfound==false) then begin
+        OPrsr.VINr = OPrw.VISerNr;
+        OPrsr.TransType = kOPrsTransTypeNLTransaction;
+        if (ReadFirstKey("VIKey",OPrsr,2,true)) then begin
+          VEr.Code = OPrsr.VECode;
+          ReadFirstMain(VEr,1,true);
+          lTRr.IntYc = OPrsr.IntYc;
+          lTRr.Number = OPrsr.TransNr;
+          if (ReadFirstMain(lTRr,2,true)) then begin
+            ConvertNLTrans_VIVc(lTRr,OPrsr,VEr,true,VIr);
+            invfound = true;
+          end;
+        end;
+      end;
+      if (invfound) then begin
+        v = OPrw.PInvVal;        
+        ftxt = "";
+        NegativeAmountsf = (TRSetb.NegativeAmounts!=0) and (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales);
+        if (VIr.SerNr!=-1) then begin
+          if (OPrw.ChequeNr!=-1) then begin
+            ftxt = FindOPChequeNumber(OPp.PayMode,OPrw.PayMode,OPrw.ChequeNr);    
+          end else begin
+            if (lightFlag==false) then begin
+              if (nonblank(VIr.InvoiceNr)) then begin
+                ftxt = VIr.InvoiceNr;
+              end else begin
+                ftxt = VIr.SerNr;
+              end;
+            end;
+          end;
+        end else begin
+          ftxt = VIr.VECode;
+        end;
+        if (nonblank(ftxt)) then begin
+          ftxt = ftxt & " ";
+        end;
+        ftxt = ftxt & VIr.VECode;
+        ftxt = ftxt & " ";
+        ftxt = ftxt & VIr.VEName;
+        accf = false;
+        if (blank(VIr.APAcc)) then begin
+          VIr.APAcc = APAccb.APAcc;
+        end;
+        if (OPrw.stp!=kPaymentRowTypeBankFee) then begin
+          switch(transtocreate) begin
+            case 1:
+             if (OPrw.stp==kPaymentRowTypeSettlementDiscount) then begin
+/*wrong, creditors account must be cleared             
+               accstr = headpmrw.AccNr;
+               if (GetAccName(accstr,ftxt,60)==false) then begin
+                 res = 1085;
+                 goto LMakeTransFromOP2;
+               end;
+*/             
+               accstr = VIr.APAcc;
+             end else begin
+               accstr = OPrw.APAcc;  
+               if (blank(accstr)) then begin
+                 accstr = VIr.APAcc;
+               end;
+             end;             
+             accf = HasLocalization("FIN");
+//*              if (CheckOPCheqandPayMode(OPp,OPrw.PayMode,OPrw.ChequeNr,i)) then accf = true;  it is not needed likely
+            case 2:
+              accstr = VIr.APAcc;
+//*            accf = true;
+//*              if (CheckOPCheqandPayMode(OPp,OPrw.PayMode,OPrw.ChequeNr,i)) then accf = true;  it is not needed likely
+            case 3:
+              MatRowGet(PMb,PMn,pmrw);
+              accstr = pmrw.PrelAccOut;
+              if (GetAccName(accstr,ftxt,60)==false) then begin
+                res = 2191;
+                goto LMakeTransFromOP2;;
+              end;
+              otxt = pmrw.Objects;
+            case 4:
+              accstr = pmrw.AccNr;
+              if (GetAccName(accstr,ftxt,60)==false) then begin
+                res = 2191;
+                goto LMakeTransFromOP2;
+              end;
+              ftxt = pmrw.Comment;
+              otxt = otxt & pmrw.Objects;
+          end;
+          GetFullCurncyRate(OPrw.PInvCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+          if (OPrw.PInvCurncy==VIr.CurncyCode) then begin
+            GetFullCurncyRate(OPrw.BankCurncy,OPp.TransDate,bfrrate,btorate1,btorate2,bbaserate1,bbaserate2);
+            if (OPrw.FrRateBankVal>0) then begin bfrrate = OPrw.FrRateBankVal; end;
+            if (OPrw.ToRateB1BankVal>0) then begin btorate1 = OPrw.ToRateB1BankVal; end;
+            if (OPrw.ToRateB2BankVal>0) then begin btorate2 = OPrw.ToRateB2BankVal; end;
+            if (OPrw.BaseRate1BankVal>0) then begin bbaserate1 = OPrw.BaseRate1BankVal; end;
+            if (OPrw.BaseRate2BankVal>0) then begin bbaserate2 = OPrw.BaseRate2BankVal; end;
+//OPrw.PInvCurncy is always same as VIr.CurncyCode , so what the code is for? 
+            rs = MulRateToBase1(OPrw.PInvCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            rs2 = MulRateToBase2(OPrw.PInvCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            ors = MulRateToBase1(VIr.CurncyCode,v,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+            ors2 = MulRateToBase2(VIr.CurncyCode,v,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+            ro = MulRateToBase1(OPrw.PInvCurncy,OPrw.RoundOff,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            ro2 = MulRateToBase2(OPrw.PInvCurncy,OPrw.RoundOff,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            if (nonblank(OPrw.B1BankVal)) then begin
+              rs = OPrw.B1BankVal;
+            end;        
+            if (nonblank(OPrw.B2BankVal)) then begin
+              rs2 = OPrw.B2BankVal;
+            end;
+            if (nonblank(OPrw.B1BankVal)) then begin
+              rd = ors - rs - ro;
+            end else begin
+              rd = ors - rs; 
+            end;           
+            rd = Round(rd,DefaultRoundMode);
+            if (nonblank(OPrw.B2BankVal)) then begin
+              rd2 = ors2 - rs2 - ro2;
+            end else begin
+              rd2 = ors2 - rs2;
+            end;
+            rd2 = Round(rd2,DefaultRoundMode);
+            rs = OPrw.B1BankVal;
+            rs2 = OPrw.B2BankVal;
+            if (blank(rs)) then begin
+              if ((OPrw.BankCurncy==bcur.BaseCur1) or (blank(OPrw.BankCurncy))) then begin
+                rs = OPrw.BankVal;
+                if (blank(rs2)) and (nonblank(bcur.BaseCur2)) then begin
+                  Base1ToBase2(rs,OPp.TransDate,rs2);
+                end;
+              end else begin
+/*
+//OPrw.PInvCurncy is always same as VIr.CurncyCode , so what the code is for? 
+                rs = MulRateToBase1(OPrw.PInvCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+                if (blank(rs2)) then begin
+                  rs2 = MulRateToBase2(OPrw.PInvCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+                end;
+*/
+                rs = MulRateToBase1(OPrw.BankCurncy,OPrw.BankVal,bfrrate,btorate1,btorate2,bbaserate1,bbaserate2,DefaultCurRoundOff);
+                if (blank(rs2)) then begin
+                  rs2 = MulRateToBase2(OPrw.BankCurncy,OPrw.BankVal,bfrrate,btorate1,btorate2,bbaserate1,bbaserate2,DefaultCurRoundOff);
+                end;
+              end;
+            end;
+            
+            brd = ors - rs - ro;
+            brd2 = ors2 - rs2 - ro2;          
+            brd = Round(brd,DefaultRoundMode);
+            brd2 = Round(brd2,DefaultRoundMode);
+            brd = brd - rd;
+            brd2 = brd2 - rd2;
+
+            if (CheckTTRPerRow("OPVc",accstr,otxt,dc1,taccnumber,1)) then begin end;      
+            if (OPp.APonTR!=0) then begin
+              AddEuroCurncyNomARTrRow(gTRp,accstr,otxt,"",ftxt,ors,ors2,accf,dc1,totsum,
+                OPrw.PInvCurncy,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,v,blankval,
+                OPrw.VECode,OPrw.VISerNr,2,blankval,OPp.PayDate,-1,NegativeAmountsf,taccnumber,"","");
+            end else begin
+              AddEuroCurncyTrRow(gTRp,accstr,otxt,"",ftxt,ors,accf,dc1,totsum,
+                OPrw.PInvCurncy,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,v,blankval,-1,NegativeAmountsf,taccnumber);
+            end;
+            if (APAccb.BookVATonRateGain!=0) then begin
+              res = BookVATonRateGainOP(gTRp,VIr,rd,rd2,baserate1,baserate2,dc2,TotSum);
+              if (res!=0) then begin
+                goto LMakeTransFromOP2;
+              end;
+            end;
+            if (rd>0) then begin
+              if (GetAccName(APAccb.RateGainAcc,tstr,60)==false) then begin
+                res = 1917;
+                goto LMakeTransFromOP2;
+              end;
+              if (APAccb.BookRateGainPerOPRow!=0) then begin
+                if (nonblank(tstr)) then begin
+                  tstr = tstr & ", ";
+                end;
+                tstr = tstr & OPrw.VISerNr;
+              end;
+              if (TypeOfCurncy(OPrw.PInvCurncy,oldstyle)==2) then begin
+                AddEuroCurncyNomARTrRow(gTRp,APAccb.RateGainAcc,"","",tstr,rd,0,APAccb.BookRateGainPerOPRow==0,dc2,totsum,
+                                        OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,
+                                        blankval,blankval,"",-1,0,blankval,bd,-1,false,"","","");
+//                AddEuroTrRow(gTRp,APAccb.RateGainAcc,"","",tstr,rd,1,0,true,dc2,totsum,false,"","","");
+              end else begin
+                AddEuroTrRow(gTRp,APAccb.RateGainAcc,"","",tstr,rd,baserate1,baserate2,APAccb.BookRateGainPerOPRow==0,dc2,totsum,false,"","","");
+              end;
+              t2 = tstr;
+            end;
+
+            if (rd<0) then begin
+              if (GetAccName(APAccb.RateLossAcc,tstr,60)==false) then begin
+                res = 1918;
+                goto LMakeTransFromOP2;
+              end;
+              if (APAccb.BookRateGainPerOPRow!=0) then begin
+                if (nonblank(tstr)) then begin
+                  tstr = tstr & ", ";
+                end;
+                tstr = tstr & OPrw.VISerNr;
+              end;
+              if (TypeOfCurncy(OPrw.PInvCurncy,oldstyle)==2) then begin
+                AddEuroCurncyNomARTrRow(gTRp,APAccb.RateLossAcc,"","",tstr,rd,0,APAccb.BookRateGainPerOPRow==0,dc2,totsum,
+                                        OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,
+                                        blankval,blankval,"",-1,0,blankval,bd,-1,false,"","","");
+//              AddEuroTrRow(gTRp,APAccb.RateLossAcc,"","",tstr,rd,baserate1,baserate2,APAccb.BookRateGainPerOPRow==0,dc2,totsum,false,"","","");
+              end else begin
+                AddEuroTrRow(gTRp,APAccb.RateLossAcc,"","",tstr,rd,baserate1,baserate2,APAccb.BookRateGainPerOPRow==0,dc2,totsum,false,"","","");
+              end;
+
+              t2 = tstr;
+            end;
+            if (brd>0) then begin
+              accstr = APAccb.BankRateGainAcc;
+              if (blank(accstr) and IsStandardProduct) then begin
+                accstr = APAccb.RateGainAcc;
+              end;
+              if (GetAccName(accstr,tstr,60)==false) then begin
+                res = 24220;
+                goto LMakeTransFromOP2;
+              end;
+              if (APAccb.BookRateGainPerOPRow!=0) then begin
+                if (nonblank(tstr)) then begin
+                  tstr = tstr & ", ";
+                end;
+                tstr = tstr & OPrw.VISerNr;
+              end;
+              AddEuroCurncyTrRow(gTRp,accstr,OPrw.Objects,"",tstr,brd,APAccb.BookRateGainPerOPRow==0,dc2,totsum,
+                                 bcur.BaseCur2,blankval,blankval,blankval,baserate1,baserate2,brd2,blankval,-1,false,""); //trrwcnt-2);
+            end;
+            if (brd<0) then begin
+              accstr = APAccb.BankRateLossAcc;
+              if (blank(accstr) and IsStandardProduct) then begin
+                accstr = APAccb.RateLossAcc;
+              end;
+              if (GetAccName(accstr,tstr,60)==false) then begin
+                res = 24221;
+                goto LMakeTransFromOP2;
+              end;
+              if (APAccb.BookRateGainPerOPRow!=0) then begin
+                if (nonblank(tstr)) then begin
+                  tstr = tstr & ", ";
+                end;
+                tstr = tstr & OPrw.VISerNr;
+              end;
+              AddEuroCurncyTrRow(gTRp,accstr,OPrw.Objects,"",tstr,brd,APAccb.BookRateGainPerOPRow==0,dc2,totsum,
+                                 bcur.BaseCur2,blankval,blankval,blankval,baserate1,baserate2,brd2,blankval,-1,false,""); //trrwcnt-2);
+            end;            
+            PostBaseCur1RemainingBalance(gTRp,VIr,OPrw,APAccb,baserate1,baserate2,dc1,dc2,totsum);
+          end else begin
+            rs = MulRateToBase1(OPrw.PInvCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            if (CheckTTRPerRow("OPVc",accstr,otxt,dc1,taccnumber,1)) then begin end;      
+            AddEuroCurncyTrRow(gTRp,accstr,otxt,"",ftxt,rs,accf,dc1,totsum,
+                         OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,v,blankval,-1,false,taccnumber);
+          end;
+          if (nonblank(OPrw.PayMode)) or (nonblank(OPrw.WHTax)) then begin
+            goto L80;
+          end;
+        end;
+        if (OPrw.stp==kPaymentRowTypeSettlementDiscount) then begin
+          GetFullCurncyRate(OPrw.BankCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+          rebval = OPrw.BankVal;
+          rs = MulRateToBase1(OPrw.BankCurncy,rebval,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+          switch (VIr.ExportFlag) begin
+            case 0:
+              accstr = APAccb.PERebAcc;
+            case 1:
+              accstr = APAccb.EUPERebAcc;
+            case 2:
+              accstr = APAccb.ExpPERebAcc;
+            case 4:
+              accstr = APAccb.EUPERebAcc;
+            case 5:
+              accstr = APAccb.ExpPERebAcc;
+          end;
+          if (blank(accstr)) then begin
+            accstr = APAccb.PERebAcc;
+          end;
+          if (GetAccName(accstr,tstr,60)==false) then begin
+            res = 2132;
+            goto LMakeTransFromOP2;
+          end;
+          if (CheckTTRPerRow("OPVc",accstr,OPrw.Objects,dc2,taccnumber,1)) then begin end;
+          AddEuroCurncyTrRow(gTRp,accstr,OPrw.Objects,"",tstr,rs,false,dc2,totsum,
+                             OPrw.BankCurncy,frrate,torate1,torate2,baserate1,baserate2,rebval,blankval,-1,false,taccnumber);
+//                AddEuroTrRow(gTRp,accstr,OPrw.Objects,"",tstr,rs,baserate1,baserate2,false,dc2,totsum,false,taccnumber,"","");
+          if (nonblank(APAccb.PVATBAcc)) then begin
+            if (VIr.VATVal==0) then begin
+              vatval = VIr.CalcVATVal;
+            end else begin
+              vatval = VIr.VATVal;
+            end;
+            if (vatval!=0) then begin
+              sumrowf = false;
+              v = rebval*vatval;
+              v = v/VIr.PayVal;
+              v = Round(v,DefaultRoundMode);
+              if (HasLocalization("FIN")) then begin
+//*why it is like that , PVATBAcc is debited and credited. IS this what they wanted, it is sent as a bug
+//*PL>>Account Usage P/L>>Cash Discount VAT
+/*
+this must be crap, we need to post settlment discount VAT , same as in SL
+                if (nonblank(APAccb.PVATBAcc)) then begin
+                  ftxt = APAccb.PVATBAcc;
+                  sumrowf = true;
+                end else begin
+                  ftxt = APAccb.PERebAcc;
+                end;
+*/                
+                ftxt = APAccb.PERebAcc;
+                sumrowf = true;
+              end else begin
+//* Should take the VAT account and sum per line from the Purchase Invoice 
+//* But this is good enough for 99% of the customers in Finland 
+                ftxt = APAccb.PERebAcc;
+              end;
+              rs = MulRateToBase1(OPrw.BankCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+              if (GetAccName(ftxt,tstr,60)==false) then begin
+                res = 2132;
+                goto LMakeTransFromOP2;
+              end;
+              if (CheckTTRPerRow("OPVc",ftxt,"",dc1,taccnumber,1)) then begin end;      
+              AddEuroTrRow(gTRp,ftxt,"",AddVATCodeToVATAccRows(OPrw.VATCode),tstr,rs,baserate1,baserate2,sumrowf,dc1,totsum,false,taccnumber,"","");
+              if (GetAccName(APAccb.PVATBAcc,tstr,60)==false) then begin
+                res = 2132;
+                goto LMakeTransFromOP2;
+              end;
+              vatcode = OPrw.VATCode;
+              if (blank(vatcode)) then begin
+                Accr.AccNumber = APAccb.PVATBAcc;
+                ReadFirstMain(Accr,1,true);
+                vatcode = Accr.VATCode;
+              end;
+              if (CheckTTRPerRow("OPVc",APAccb.PVATBAcc,"",dc2,taccnumber,1)) then begin end;      
+              AddEuroTrRow(gTRp,APAccb.PVATBAcc,"",AddVATCodeToVATAccRows(vatcode),tstr,rs,baserate1,baserate2,sumrowf,dc2,totsum,false,taccnumber,"","");
+            end;
+          end;
+        end;
+        if (OPrw.stp==kPaymentRowTypeBankFee) then begin
+          if (OPrw.BankVal!=0) then begin
+            GetFullCurncyRate(OPrw.BankCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+            rs = MulRateToBase1(OPrw.BankCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            if (GetAccName(APAccb.ExtraCostAcc,tstr,60)==false) then begin
+              res = 2121;
+              goto LMakeTransFromOP2;
+            end;
+            if (CheckTTRPerRow("OPVc",APAccb.ExtraCostAcc,"",dc1,taccnumber,0)) then begin end;      
+            AddEuroCurncyTrRow(gTRp,APAccb.ExtraCostAcc,"","",tstr,rs,false,dc1,
+                               totsum,OPrw.BankCurncy,frrate,torate1,torate2,baserate1,baserate2,OPrw.BankVal,blankval,-1,false,taccnumber);
+          end;
+        end;
+      end;
+L80:;
+//*#if 1
+//*JJ to follow coresponding account rules
+      NegativeAmountsf = false;
+      if (HasLocalization("SVN")) then begin
+        NegativeAmountsf = (TRSetb.NegativeAmounts!=0) and (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales);
+      end;
+      if (nonblank(OPrw.PayMode)) or (nonblank(OPrw.WHTax)) then begin
+        accf = false;
+        vendinfof = false;
+        if (APAccb.OPTransBankRowPerVE!=0) then begin
+          accf = false;
+          vendinfof = true;
+        end;    
+        if (nonblank(OPrw.WHTax)) then begin
+          for (j=0;j<whrwcnt;j=j+1) begin
+            MatRowGet(WHTaxRec,j,WHTaxrw);
+            if (WHTaxrw.Code==OPrw.WHTax) then begin
+              res = AddOPRowWHTax(gTRp,OPp,VIr,WHTaxrw,i,booked,curbooked,totsum,APAccb.APAcc,APAccb.ExtraCostAcc,
+                                  dc1,dc2,accf,transtocreate,vendinfof,APAccb.ObjectonBankAcc);
+              if (res!=0) then begin
+                goto LMakeTransFromOP2;
+              end;
+              j = whrwcnt;
+            end;
+          end;
+        end else begin
+          if (nonblank(OPrw.PayMode)) then begin
+            for (j=0;j<pmrwcnt;j=j+1) begin
+              MatRowGet(PMb,j,pmrw);
+              if (pmrw.Code==OPrw.PayMode) then begin
+                res = AddOPRowPayMode(gTRp,OPp,VIr,PMb,j,i,booked,curbooked,totsum,APAccb,
+                                    OPrw.ChequeNr,dc1,dc2,accf,transtocreate,vendinfof,
+                                    bcur,prepbook,prepbook2,NegativeAmountsf);
+                if (res!=0) then begin
+                  goto LMakeTransFromOP2;
+                end;
+                j = pmrwcnt;
+              end;
+            end;
+          end;
+        end;
+      end else begin
+
+        accf = true;
+        vendinfof = false;
+        if (APAccb.OPTransBankRowPerVE!=0) then begin
+          accf = false;
+          vendinfof = true;
+        end;    
+//*        if (OPrw.ChequeNr!=BlankM4Long) then accf = false;
+        if (OPrw.stp==kPaymentRowTypeBankFee) then begin accf = false; end;
+        if ((OPrw.stp==kPaymentRowTypeNormal) or (OPrw.stp==kPaymentRowTypeBankFee)) then begin
+          for (j=0;j<pmrwcnt;j=j+1) begin
+            MatRowGet(PMb,j,pmrw);
+            if (pmrw.Code==OPp.PayMode) then begin
+              res = AddOPRowPayMode(gTRp,OPp,VIr,PMb,j,i,booked,curbooked,totsum,APAccb,
+                                    OPrw.ChequeNr,dc1,dc2,accf,transtocreate,vendinfof,
+                                    bcur,prepbook,prepbook2,NegativeAmountsf);
+              if (res!=0) then begin
+                goto LMakeTransFromOP2;
+              end;
+              j = pmrwcnt;
+            end;
+          end;
+        end;
+      end;
+      
+//*#endif
+
+      if (OPrw.RoundOff!=0) then begin
+        GetFullCurncyRate(OPrw.PInvCurncy,OPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+        rs = MulRateToBase1(OPrw.PInvCurncy,OPrw.RoundOff,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+        if (GetAccName(OPrw.RoundOffAcc,tstr,60)==false) then begin
+          res = 20099;
+          goto LMakeTransFromOP2;
+        end;
+        AddEuroCurncyTrRow(gTRp,OPrw.RoundOffAcc,"","",tstr,rs,false,dc2,
+                       totsum,OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,OPrw.RoundOff,blankval,-1,false,"");
+      end;
+    end;
+    if (vatflag) then begin
+      vatobjstr = ""; 
+      if (APAccb.VATUseObj!=0) then begin
+        vatobjstr = OPrw.Objects;
+      end;    
+      v = OPrw.VATVal;
+      rs = MulRateToBase1(OPrw.PInvCurncy,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+      vatacc = GetPayPurchVATAcc(OPrw.VATCode,VATCb);
+      if (blank(vatacc)) then begin        
+        vatacc = APAccb.VATAcc;
+      end;
+      if (GetAccName(vatacc,tstr,60)==false) then begin
+        res = 20025;
+        goto LMakeTransFromOP2;
+      end;
+      if (CheckTTRPerRow("OPVc",vatacc,vatobjstr,dc1,taccnumber,1)) then begin end;      
+      AddEuroCurncyTrRow(gTRp,vatacc,vatobjstr,AddVATCodeToVATAccRows(OPrw.VATCode),tstr,rs,true,dc1,totsum,
+                         OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,v,blankval,-1,false,taccnumber);
+
+      if (APAccb.PrepExclVAT==0) then begin
+        accstr = "";
+        if (HasLocalization("LVA")) then begin
+          if (nonblank(OPrw.VATCode)) then begin
+            GetVATCodePrelVATAcc(OPrw.VATCode,accstr);
+          end;
+        end;
+        if (blank(accstr)) then begin
+          accstr = APAccb.OnAccVAT;
+        end;
+        if (GetAccName(accstr,tstr,60)==false) then begin
+          res = 24222;
+          goto LMakeTransFromOP2;
+        end;
+        if (CheckTTRPerRow("OPVc",accstr,vatobjstr,dc2,taccnumber,1)) then begin end;      
+        AddEuroCurncyTrRow(gTRp,accstr,vatobjstr,AddVATCodeToVATAccRows(OPrw.VATCode),tstr,rs,false,dc2,totsum,
+                           OPrw.PInvCurncy,frrate,torate1,torate2,baserate1,baserate2,v,blankval,-1,false,taccnumber);
+      end;
+      if (OPrw.PrepayNr!=-1) then begin
+/*
+        if (OPrw.TAX1Sum!=0) then begin
+          OPGetVATCodeTAX1AccNumbers(VATCb,OPrw.VATCode,tax1acc,ppvatacc);
+          if (GetAccName(ppvatacc,tstr,60)==false) then begin 
+            res = 20025;
+            goto LMakeTransFromOP2;
+          end;
+          if (CheckTTRPerRow("OPVc",ppvatacc,"",dc1,taccnumber,0)) then begin end;
+          AddEuroTrRow(gTRp,ppvatacc,"","",tstr,OPrw.TAX1Sum,baserate1,baserate2,false,dc1,TotSum,false,taccnumber,"","");         
+
+          if (GetAccName(tax1acc,tstr,60)==false) then begin 
+            res = 20078;
+            goto LMakeTransFromOP2;
+          end;
+          if (CheckTTRPerRow("OPVc",tax1acc,"",dc2,taccnumber,0)) then begin end;
+          AddEuroTrRow(gTRp,tax1acc,"","",tstr,OPrw.TAX1Sum,baserate1,baserate2,false,dc2,TotSum,false,taccnumber,"","");         
+        end;      
+*/
+      end;
+    end;
+  end;
+  
+  
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(OPp,i,OPrw);
+//*#if 0
+//*    vatflag = false;
+//*    if (nonblankstrp(OPrw.VATCode)) then begin
+//*      vatflag = true;
+//*      if (OPrw.PrepayNr!=BlankM4Long) then begin
+//*        if (APAccb.PreOPBookVAT==0) then vatflag = false;
+//*      end else begin
+//*        vatflag = false; 
+//*      end;
+//*    end;
+//*JJ to follow coresponding account rules
+//*    if ((OPrw.ovst==0) and (vatflag==false)) then begin
+//*      if (nonblankstrp(OPrw.PayMode)) then begin
+//*        VIr.SerNr = OPrw.VISerNr;
+//*      if (m4_ReadFirstMain(VIVc,&VIr,1,true)) then begin
+//*        end;
+//*        accf = false;
+//*        for (j = 0; j<pmrwcnt; j++) begin
+//*          if (strpeq(pmrp[j].Code,OPrw.PayMode)!=0) then begin
+//*            if (AddOPRowPayMode(OPp,&VIr,&pmrp[j],i,&booked,&curbooked,&totsum,APAccb.APAcc,APAccb.ExtraCostAcc,
+//*                                OPrw.ChequeNr,dc1,dc2,accf,transtocreate)==false) then goto LMakeTransFromOP2;
+//*          end;
+//*        end;
+//*      end else begin
+//*        accf = true;
+//*        if (OPrw.ChequeNr!=BlankM4Long) then accf = false;
+//*        if ((OPrw.stp==kPaymentRowTypeNormal) or (OPrw.stp==kPaymentRowTypeBankFee)) then
+//*        for (j = 0; j<pmrwcnt; j++) begin
+//*          if (strpeq(pmrp[j].Code,OPp.PayMode)!=0) then begin
+//*            if (AddOPRowPayMode(OPp,&VIr,&pmrp[j],i,&booked,&curbooked,&totsum,APAccb.APAcc,APAccb.ExtraCostAcc,OPrw.ChequeNr,dc1,dc2,accf,transtocreate)==false) then goto LMakeTransFromOP2;
+//*          end;
+//*        end;
+//*      end;
+//*    end;
+//*    if (OPrw.ovst==0) then begin
+//*      if (M4ValZeroTest(&OPrw.VATVal)==0) then begin
+//*        VIr.SerNr = OPrw.VISerNr;
+//*        if (m4_ReadFirstMain(VIVc,&VIr,1,true)) then begin
+//*          if (DoBookOPVAT(OPp,&OPrw,&VIr.FrRate,&VIr.ToRateB1,&VIr.ToRateB2,&VIr.BaseRate1,&VIr.BaseRate2,dc1,dc2,&totsum)==false) then begin 
+//*            goto LMakeTransFromOP2;
+//*          end;
+//*        end;
+//*      end;
+//*    end;
+//*#endif
+
+    if (OPrw.ovst==0) then begin
+      if (OPrw.VISerNr>0) then begin
+        VIr.SerNr = OPrw.VISerNr;
+        if (ReadFirstMain(VIr,1,true)) then begin
+          if (gTRp.IntYc==OPYc) then begin
+            res = DoBookOPVAT(gTRp,OPp,i,VIr,APAccb,VATCb,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,dc1,dc2,totsum);
+            if (res!=0) begin
+              goto LMakeTransFromOP2;
+            end;
+            if (HasLocalization("MEX")) then begin
+              res = DoBookOPWHTAXforMexico(gTRp,OPp,OPrw,VIr,APAccb,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,dc1,dc2,"OPVc",totsum);
+              if (res!=0) begin
+                goto LMakeTransFromOP2;
+              end;
+            end;
+          end;
+/*
+          if (HasLocalization("MEX")) then begin
+            res = DoBookOPWHTAXforMexico(gTRp,OPp,OPrw,VIr,APAccb,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,dc1,dc2,"OPVc",totsum);
+            if (res!=0) begin
+              goto LMakeTransFromOP2;
+            end;
+          end;
+*/
+        end;
+      end else begin
+        if (OPrw.VISerNr<0) and (OPrw.PrepayNr<0) then begin//onacc
+          if (OPrw.VATVal!=0) then begin
+            res = DoBookOPOnAccVAT(gTRp,OPp,OPrw,APAccb,VATCb,dc1,dc2,totsum);
+            if (res!=0) begin
+              goto LMakeTransFromOP2;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  TRSumup(gTRp,t);
+
+  if (gTRp.DiffVal!=0) then begin
+//rate gain here ? 
+
+/*
+gain calculated in difrent place
+    if (gTRp.DiffVal>0) then begin
+      if (GetAccName(APAccb.BankRateGainAcc,t2,60)) then begin
+        AddEuroTrRow(gTRp,APAccb.BankRateGainAcc,"","",t2,gTRp.DiffVal,baserate1,baserate2,true,false,totsum,false,"","","");
+        gTRp.DiffVal = totsum;
+      end;
+    end else begin
+      if (GetAccName(APAccb.BankRateLossAcc,t2,60)) then begin
+        AddEuroTrRow(gTRp,APAccb.BankRateLossAcc,"","",t2,gTRp.DiffVal,baserate1,baserate2,true,false,totsum,false,"","","");
+        gTRp.DiffVal = totsum;
+      end;
+    end;
+*/    
+    gTRp.DiffVal = Round(gTRp.DiffVal,SetRoundModeD(7));
+    if (gTRp.DiffVal!=0) then begin
+      if (GetAccName(APAccb.RateRndOffAcc,t2,60)==false) then begin
+        res = 20099;
+        goto LMakeTransFromOP2;
+      end;
+      AddEuroTrRow(gTRp,APAccb.RateRndOffAcc,"","",t2,gTRp.DiffVal,baserate1,baserate2,true,false,totsum,false,"","","");
+    end;
+    TRSumup(gTRp,t);
+  end;  
+  AddTransAutoTransRows(gTRp);
+  res = 0;
+LMakeTransFromOP2:;
+  MakeTransFromOP2 = res;
+  return;
+end;
+
+global
+function Integer MakeTransFromOP(record TRVc gTRp,record OPVc OPp,Boolean rpt)
+begin
+  Integer transtocreate;
+  Integer res;
+  val fr,to1,to2,br1,br2;
+  Integer rwcnt,i;
+  val payval;
+  row OPVc OPrw;
+
+  transtocreate = 1;  
+  res = MakeTransFromOP2(gTRp,OPp,rpt,transtocreate);
+  MakeTransFromOP = res;
+  return;
+end;
+

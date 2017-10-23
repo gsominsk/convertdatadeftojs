@@ -1,0 +1,240 @@
+external function roundmode SetRoundModeD(Integer);
+external updating procedure UpdProgMn(record RcVc);
+external updating procedure CalcSOPOStockMn(record RcVc);
+external function Boolean IsLocationToInclude(string);
+
+updating procedure StoreItemDeficiency(string artcode,string location,val qty,Integer itemtype)
+begin
+  record MainStockBlock MainStockRec;
+  record PrelStockVc PrelStockr;
+  Boolean foundf;
+
+  if ((itemtype==0) or (itemtype==1)) then begin
+    BlockLoad(MainStockRec);
+    PrelStockr.ItemCode = artcode;
+    PrelStockr.Location = location;
+    if (blank(PrelStockr.Location)) then begin
+      PrelStockr.Location = MainStockRec.MainStock;
+    end;
+    if (ReadFirstMain(PrelStockr,2,true)) then begin
+    end else begin
+      RecordNew(PrelStockr);
+      PrelStockr.ItemCode = artcode;
+      PrelStockr.Location = location;
+      PrelStockr.MaintDate = CurrentDate;
+      if (blank(PrelStockr.Location)) then begin
+        PrelStockr.Location = MainStockRec.MainStock;
+      end;
+      PrelStockr.Qty = 0;
+      PrelStockr.ItemType = itemtype;
+    end;
+    PrelStockr.Qty = PrelStockr.Qty + qty;
+    if (RecordStore(PrelStockr,true)) then begin
+    end;
+  end;
+  return;
+end;
+
+updating procedure ExpandAndStoreStructure(string item,string location,val qty,string recepy,Integer itemtype)
+begin
+  record INVc INr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  Integer i,rwcnt;
+  val newqty,prcval;
+  
+  prcval = 1;
+  Recr.Code = recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    rwcnt = MatRowCnt(Recr);
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.Item==item) then begin
+        if (Recrw.OutQty>0) then begin
+          prcval = Recrw.OutQty;
+        end;
+      end;
+    end;
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.Item<>item) then begin
+        if (Recrw.InQty>0) then begin
+          INr.Code = Recrw.Item;
+          if (ReadFirstMain(INr,1,true)) then begin
+            newqty = Round(((qty * Recrw.InQty) / prcval)+49999.00/100000.00,SetRoundModeD(0));
+            if (nonblank(INr.Recepy)) then begin
+              ExpandAndStoreStructure(INr.Code,location,newqty,INr.Recepy,INr.ItemType);
+            end else begin
+              StoreItemDeficiency(INr.Code,location,newqty,INr.ItemType);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure CleanPrelStock()
+begin
+  record PrelStockVc PrelStockr;
+  Boolean foundf;
+  Integer cnt,flcnt;
+
+  flcnt = 100;
+  cnt = 0;
+  foundf = true;
+  while (LoopMain(PrelStockr,1,foundf)) begin
+    RecordDelete(PrelStockr);
+    StepBack(PrelStockr);
+    cnt = cnt + 1;
+    if (cnt>flcnt) then begin
+//      DBFlush;
+//      DBHold;
+      cnt = 0;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CleanPrelPOSOStock()
+begin
+  record PrelORPUStockVc PrelORPUStockr;
+  Boolean foundf;
+  Integer cnt,flcnt;
+
+  flcnt = 100;
+  cnt = 0;
+  foundf = true;
+  while (LoopMain(PrelORPUStockr,1,foundf)) begin
+    RecordDelete(PrelORPUStockr);
+    StepBack(PrelORPUStockr);
+    cnt = cnt + 1;
+    if (cnt>flcnt) then begin
+//      DBFlush;
+//      DBHold;
+      cnt = 0;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CleanPrelINProg()
+begin
+  record INProgVc INProgr;
+  Boolean foundf;
+  Integer cnt,flcnt;
+
+  flcnt = 100;
+  cnt = 0;
+  foundf = true;
+  while (LoopMain(INProgr,1,foundf)) begin
+    RecordDelete(INProgr);
+    StepBack(INProgr);
+    cnt = cnt + 1;
+    if (cnt>flcnt) then begin
+//      DBFlush;
+//      DBHold;
+      cnt = 0;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CalcINLevelsMn(record RcVc RepSpec)
+begin
+  record ItemStatusVc ISr;
+  record INVc INr;
+  Boolean foundf,testf;
+  
+  CleanPrelStock;
+  foundf = true;
+  ISr.Code = "";
+  while (LoopMain(ISr,1,foundf)) begin
+    testf = true;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (nonblank(ISr.Location)) then begin
+      if (IsLocationToInclude(ISr.Location)==false) then begin
+        testf =  false;
+      end;
+    end;
+    if (ISr.Location==";;;") then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      INr.Code = ISr.Code;
+      if (ReadFirstMain(INr,1,true)) then begin
+        if (INr.Terminated<>0) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          if (nonblank(INr.Recepy)) then begin
+            ExpandAndStoreStructure(ISr.Code,ISr.Location,ISr.Instock,INr.Recepy,INr.ItemType);
+          end else begin
+            StoreItemDeficiency(ISr.Code,ISr.Location,ISr.Instock,INr.ItemType);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CallAllCleanMn(record RcVc RepSpec)
+begin
+  if (RepSpec.flags[1]==1) then begin
+    CleanPrelINProg;
+  end;
+  if (RepSpec.flags[2]==1) then begin
+    CleanPrelPOSOStock;
+  end;
+  if (RepSpec.flags[3]==1) then begin
+    CleanPrelStock;
+  end;
+  return;
+end;
+
+global
+updating procedure CalcAllPurchProgMn(record RcVc RepSpec)
+begin
+  UpdProgMn(RepSpec);
+  CalcSOPOStockMn(RepSpec);
+  CalcINLevelsMn(RepSpec);
+  return;
+end;
+
+global
+updating procedure DelPOMn(record RcVc RepSpec)
+begin
+  record POVc POr;
+  Boolean foundf;
+  Integer cnt,flcnt;
+
+  flcnt = 10;
+  cnt = 0;
+  foundf = true;
+  POr.OKFlag = 0;
+  while (LoopKey("OKFlag",POr,1,foundf)) begin
+    if (POr.OKFlag<>0) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      RecordDelete(POr);
+      StepBack(POr);
+      cnt = cnt + 1;
+      if (cnt>flcnt) then begin
+//        DBFlush;
+//        DBHold;
+        cnt = 0;
+      end;
+    end;
+  end;
+  return;
+end;
+

@@ -1,0 +1,157 @@
+external procedure GetFullCurncyRateText(Boolean,var string,val,val,val,val,val);
+external function val FindAccBalance(string,string,date,record ObjBalVc,Integer,Integer,Integer,string,Integer);
+external function val MulWithRateToBase2(var string,Date,val,roundmode);
+external function Boolean GetFullCurncyRateDate(var string,Date,var val,var val,var val,var val,var val,var Date);
+external procedure MockObjFromVATCode(string,var string);
+
+procedure ListExchangeRates(record RcVc RepSpec)
+begin
+  record CurncyCodeVc ccr;
+  Boolean TrHs;
+  val fr,to1,to2,br1,br2;
+  Date ed;
+  string 255 tstr;
+
+  TrHs = true;
+  while (LoopMain(ccr,1,TrHs)) begin
+    if (GetFullCurncyRateDate(ccr.CurncyCode,RepSpec.d1,fr,to1,to2,br1,br2,ed)) then begin end;
+    StartFormat(15);
+    OutString(0,0,ccr.CurncyCode,false);
+    OutDate(300,0,ed,false);
+    if (fr<>0) then begin
+      GetFullCurncyRateText(false,tstr,fr,to1,to2,br1,br2);
+    end else begin
+      GetFullCurncyRateText(true,tstr,fr,to1,to2,br1,br2);
+    end;  
+    OutString(1,0,tstr,true);
+    EndFormat;
+  end;
+  return;
+end;
+
+global   
+procedure NLBRateRn(var record RcVc RepSpec)
+begin
+  val B1b,B2b,Db,Diff;
+  record AccVc Accr;
+  Boolean Vws;
+  Boolean testf,test77,test2f;
+  string 255 RU;
+  record ObjBalVc ObjBalr;
+  Boolean Objbals;
+  Boolean CurObjbals;
+  record NLRateBlock nlrate;
+  val DiffSum,d;
+  Date td,dat;
+  record BaseCurBlock BaseCurRec;
+  string 255 fracc,toacc;
+
+  BlockLoad(nlrate);
+  BlockLoad(BaseCurRec);
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;
+  dat = RepSpec.d2;
+  if (BlankDate(dat)) then begin
+    dat = RepSpec.d1;
+  end;
+  fracc = FirstInRange(RepSpec.AccStr,10);
+  toacc = LastInRange(RepSpec.AccStr,10);
+  StartReportJob(USetStr(6890));
+  EndHeader;
+  StartFormat(20);
+  OutDate(0,0,RepSpec.d1,false);
+  EndFormat;
+
+  StartFormat(15);
+  OutString(0,0,USetStr(7670),false);
+  OutString(80,0,USetStr(7671),false);
+  OutString(270,0,USetStr(7677),true);
+  OutString(340,0,USetStr(7678),true);
+  OutString(410,0,USetStr(7679),true);
+  OutString(1,0,USetStr(7676),true);
+  EndFormat;
+  Gray_Divider(0,1);
+
+  if (RepSpec.flags[1]==1) then begin
+    ListExchangeRates(RepSpec);
+    StartFormat(20);
+    EndFormat;
+  end;
+  Accr.AccNumber = fracc;
+  Vws = true;
+  while (LoopMain(Accr,1,Vws)) begin
+    testf = true;
+    test77 = true;
+    if (nonblank(toacc)) then begin
+      if (Accr.AccNumber>toacc) then begin
+        Vws = false;
+      end;
+    end;
+    if (nonblank(fracc)) then begin
+      if (Accr.AccNumber<fracc) then begin
+        Vws = false;
+      end;
+    end;
+    if (Vws==false) then begin
+      testf = false;
+      test77 = false;
+    end;
+    if (nonblank(Accr.Curncy)) then begin
+      if ((Accr.Curncy<>BaseCurRec.BaseCur1) and (Accr.Curncy<>BaseCurRec.BaseCur2)) then begin
+//        test77 = false;//people want to have it off, I mean it should work for all account, what was the purpose of this one
+      end;
+    end;
+//    if (Accr.AccType>=3) then begin test77 = false; end;
+    if (test77==true) then begin
+      MockObjFromVATCode(Accr.Curncy,RU);
+      ObjBalr.AccNumber = Accr.AccNumber;
+      ObjBalr.Object = "";
+      Objbals = ReadFirstMain(ObjBalr,2,true);
+
+      B1b = FindAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,RepSpec.SimVerf,0,0,RepSpec.CurncyCode,RepSpec.IncDaughter);
+      B2b = FindAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,RepSpec.SimVerf,1,0,RepSpec.CurncyCode,RepSpec.IncDaughter);
+      if (RepSpec.flags[5]==0) then begin
+        if ((B1b==0) and (B2b==0)) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        Accr.Curncy = "";//account curency does not influence, B1 is base 1 value not Accr.Curncy value
+        Db = MulWithRateToBase2(Accr.Curncy,dat,B1b,DefaultCurRoundOff);      
+        Diff = Db - B2b;        
+        test2f = true;
+        if (RepSpec.flags[6]==0) then begin
+          if ((Diff==0)) then begin
+            test2f = false;
+          end;
+        end;
+        if (RepSpec.flags[2]==1) then begin
+          if (nlrate.Limit<>0) then begin          
+            d = Diff;
+            if (d<0) then begin d = 0 - d; end;
+            if (d<nlrate.Limit) then begin test2f = false; end;
+          end;
+        end;
+        if (test2f==true) then begin
+          StartFormat(15);
+          OutString(0,0,Accr.AccNumber,false);
+          OutString(80,0,Accr.Comment,false);
+          OutVal(270,0,B1b,M4Val,true);
+          OutVal(340,0,B2b,M4Val,true);
+          OutVal(410,0,Db,M4Val,true);
+          OutVal(1,0,Diff,M4Val,true);
+          EndFormat;
+          DiffSum = DiffSum + Diff;
+        end;
+      end;
+    end;
+  end;
+
+  Black_Divider(400,1);
+  StartFormat(15);
+  OutVal(1,0,DiffSum,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

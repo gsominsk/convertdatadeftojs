@@ -1,0 +1,862 @@
+external procedure ExplodeString(string,string,var array string,var Integer);
+external function string 255 GetNextValue(var string);
+
+function integer Pos(string SubStr,string Str)
+begin
+  integer res,i;
+
+  i = 0;
+  
+  while ((i < (Len(Str) - Len(SubStr)) and (Mid(Str,i,Len(SubStr)) != SubStr))) begin
+    i = i + 1;
+  end;
+  
+  if (Mid(Str,i,Len(SubStr))==SubStr) then begin
+    res = i;
+  end else begin
+    res = -1;
+  end;
+  
+  Pos = res;
+  return;
+end;
+
+procedure Explode(string Delimiter,string Value,var array string Result,var integer Count)
+begin
+  integer i;
+  string 255 InStr;
+  
+  InStr = Value;
+  Count = 0;
+  
+  if (InStr != "") then begin
+    i = Pos(Delimiter,InStr);
+    
+    while (i > -1) begin
+      Count = Count + 1;
+      Result[Count - 1] = Left(InStr,i);
+      InStr = Right(Value,Len(InStr) - i - 1);
+      i = Pos(Delimiter,InStr);
+    end;
+  
+    Count = Count + 1;
+    Result[Count - 1] = InStr;
+  end;
+  
+  return;
+end;
+
+function string 100 GetFunctionName(string s,var array string Params,var integer ParamCount)
+begin
+  string 100 res;
+  integer i,Count;
+  integer BeginPos,EndPos;
+  
+  Count = Len(s);
+  
+  while (i < Count and Mid(s,i,1) != "(" and Mid(s,i,1) != ";") begin
+    res = res & Mid(s,i,1);
+    i = i + 1;
+  end;
+  
+  BeginPos = Pos("(",s);
+  EndPos = Pos(")",s);
+  
+  if (BeginPos >= 0 and EndPos >= 0) then begin
+    Explode(",",Mid(s,BeginPos + 1,EndPos - BeginPos - 1),Params,ParamCount);
+  end else begin
+    ParamCount = 0;
+  end;
+  
+  GetFunctionName = res;
+  return
+end;
+
+procedure AddLine(var record RITVc RITr,integer Indent,string Line)
+begin
+  integer i;
+  string 100 s;
+  
+  for (i = 0; i < Indent; i = i + 1) begin
+    s = s & " ";
+  end;
+  
+  LineTextPut(RITr,LineTextCnt(RITr),s & Line);
+  
+  return;
+end;
+
+procedure GetRecordData(record RITVc RITr,var string RecordName,var string RecordAlias,var string MainKey,var boolean HasPackedMatrix,var boolean HasMatrix,var record SMVc MainKeySegmentsr)
+begin
+  integer i,Count;
+  string 100 FunctionName;
+  array string 100 Params;
+  integer ParamCount;
+  string 255 s;
+  Boolean parsingmainkeyf;
+  row SMVc MainKeySegmentsrw;
+  vector string 255 vfieldtype;
+  
+  RecordName = "";
+  HasPackedMatrix = false;
+  HasMatrix = false;
+  Count = LineTextCnt(RITr);
+  
+  for (i = 0; i < Count; i = i + 1) begin
+    s = LineTextGet(RITr,i);
+    s = Trim(s);
+    FunctionName = GetFunctionName(s,Params,ParamCount);
+    
+    if (SetInSet(FunctionName,"KeyBegin,KeyBegin2,SubsetKeyBegin,SubsetKeyBegin2")) then begin
+      parsingmainkeyf = false;
+    end;
+
+    switch (FunctionName) begin
+      case "RecordBegin":
+        RecordName = Left(Params[0],Len(Params[0]) - 2);
+        RecordAlias = Mid(Params[2],1,Len(Params[2]) - 2);
+        
+        if (Blank(RecordAlias)) then begin
+          RecordAlias = RecordName & "Vc";
+        end;
+      case "RecordField":
+        vfieldtype[Params[0]] = Params[1];
+        if (Params[1]=="M4PackedMatrix") then begin
+          HasPackedMatrix = true;
+        end;
+      case "ArrayField":
+        if (Params[1]=="M4PackedMatrix") then begin
+          HasPackedMatrix = true;
+        end;
+      case "MainKeyBegin":
+        MainKey = Params[0];
+        parsingmainkeyf = true;
+      case "KeySegment":
+        if (parsingmainkeyf) then begin
+          ClearRow(MainKeySegmentsr,MainKeySegmentsrw,1);
+          MainKeySegmentsrw.Comment = Params[0] & "," & vfieldtype[Params[0]];
+          MatRowPut(MainKeySegmentsr,MatRowCnt(MainKeySegmentsr),MainKeySegmentsrw);
+        end;
+      case "ArrayBegin":
+        HasMatrix = true;
+      case "BlockBegin":
+        RecordName = Left(Params[0],Len(Params[0]) - 5);
+        RecordAlias = Mid(Params[2],1,Len(Params[2]) - 2);
+        
+        if (Blank(RecordAlias)) then begin
+          RecordAlias = RecordName & "Block";
+        end;
+    end;
+  end;
+  
+  return;
+end;
+
+function string 100 GetImportFieldConv(string FieldType)
+begin
+  string 100 res;
+  
+  res = "ImportField";
+  
+  if (SetInSet(FieldType,"M4Val,M423Val,M4Rate,M45Val,M4Prcnt,M41Val,M40Val,M4Uval,M4TVal,M4MVal,M4DVal,M4CVal,M4NegVal,M4Uprcnt,M4Qty,M4UVal")) then begin
+    res = "StringToVal(ImportField," & FieldType & ")";
+  end;
+  
+  if (SetInSet(FieldType,"M4Int,M4Mark,M4Set")) then begin
+    res = "StringToInt(ImportField)";
+  end;
+
+  if (FieldType=="M4Date") then begin
+    res = "StringToDate(ImportField)";
+  end;
+
+  if (FieldType=="M4Time" or FieldType=="M4STime") then begin
+    res = "StringToTime(ImportField)";
+  end;
+
+  if (FieldType=="M4Long") then begin
+    res = "StringToLongint(ImportField)";
+  end;
+
+  if (FieldType=="M4UUID") then begin
+    res = "StringToUUID(ImportField)";
+  end;
+
+  GetImportFieldConv = res;
+  return;
+end;
+
+procedure ProcessLine(var record RITVc RITr,string Line,string RecordName,string RecordAlias,string MainKey,boolean HasPackedMatrix,boolean HasMatrix,record SMVc MainKeySegmentsr,var integer indent,var boolean HasM4TextField)
+begin
+  string 100 FunctionName;
+  array string 100 Params;
+  integer ParamCount;
+  string 255 s;
+  integer i,rwcnt;
+  row SMVc MainKeySegmentsrw;
+  string 255 tstr,fieldname;
+  
+  FunctionName = GetFunctionName(Line,Params,ParamCount);
+  
+  switch (FunctionName) begin
+    case "RecordBegin":
+      AddLine(RITr,indent+0,"procedure ReadImportTag" & RecordAlias & "Record(record " & RecordName & "Vc " & RecordName & "r)");
+      AddLine(RITr,indent+0,"begin");
+      if (HasPackedMatrix) then begin
+        AddLine(RITr,indent+2,"record TaxMatrixVc TMr;");
+      end;
+      AddLine(RITr,indent+2,"string 255 tstr;");
+      if (HasMatrix) then begin
+        AddLine(RITr,indent+2,"row " & RecordName & "Vc " & RecordName & "rw;");
+        AddLine(RITr,indent+2,"integer rwcnt;");
+        AddLine(RITr,indent+2,"");
+      end;
+      AddLine(RITr,indent+2,"RecordNew(" & RecordName & "r);");
+    case "NewAutosyncRegister":
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,RecordName & "r.UUID = StringToUUID(ImportField); // NewAutosyncRegister");
+      AddLine(RITr,indent+2,"ImportField; // NewAutosyncRegister");
+      AddLine(RITr,indent+2,"ImportField; // NewAutosyncRegister");
+    case "RecordField":
+      if (!SetInSet(Params[1],"M4Matrix,M4TextField")) then begin
+        switch (Params[1]) begin
+//          case "M4Dummy": is exported as blank string
+//            AddLine(RITr,indent+2,"/*" & RecordName & "r." & Params[0] & " =*/ " & GetImportFieldConv(Params[1]) & ";");            
+          case "M4PackedMatrix":
+            AddLine(RITr,indent+2,"ImportPackedMatrix(TMr);");
+            AddLine(RITr,indent+2,"PackFieldMatrix(" & RecordName & "r,""" & Params[0] & """,TMr);");
+          otherwise
+            AddLine(RITr,indent+2,RecordName & "r." & Params[0] & " = " & GetImportFieldConv(Params[1]) & ";");
+        end;
+      end;
+      if (Params[1]=="M4TextField") then begin 
+        HasM4TextField = true;
+      end;  
+    case "ArrayBegin":
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"rwcnt = 0;");
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"while (NextImportLine(false)) begin");
+      AddLine(RITr,indent+4,"ClearRow(" & RecordName & "r," & RecordName & "rw,1);");
+    case "ArrayField":
+      switch (Params[1]) begin
+        case "M4PackedMatrix":
+          AddLine(RITr,indent+4,"ImportPackedMatrix(TMr);");
+          AddLine(RITr,indent+4,"PackRowFieldMatrix(" & RecordName & "rw,""" & Params[0] & """,TMr);");
+        otherwise
+          AddLine(RITr,indent+4,RecordName & "rw." & Params[0] & " = " & GetImportFieldConv(Params[1]) & ";");
+      end;
+    case "EndArray":
+      AddLine(RITr,indent+4,"MatRowPut(" & RecordName & "r,rwcnt," & RecordName & "rw);");
+      AddLine(RITr,indent+4,"rwcnt = rwcnt + 1;");
+      AddLine(RITr,indent+2,"end;");
+    case "EndRecord":
+      if (HasM4TextField==true) then begin 
+        AddLine(RITr,indent+2,"");
+        AddLine(RITr,indent+2,"while (NextImportLine(false)) begin");
+        AddLine(RITr,indent+4,"tstr = ImportField;");
+        AddLine(RITr,indent+4,"if nonblank(tstr) then begin");
+        AddLine(RITr,indent+6,"AddToText(tstr," & RecordName & "r);");
+        AddLine(RITr,indent+6,"if (ImportIntoText(" & RecordName & "r)) then begin");
+        AddLine(RITr,indent+6,"end;");
+        AddLine(RITr,indent+4,"end;");
+        AddLine(RITr,indent+2,"end;");
+      end;
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"return;");
+      AddLine(RITr,indent+0,"end;");
+      AddLine(RITr,indent+0,"");
+      AddLine(RITr,indent+0,"global");
+      AddLine(RITr,indent+0,"updating procedure ReadImportTag" & RecordAlias & "(string thetag)");
+      AddLine(RITr,indent+0,"begin");
+      AddLine(RITr,indent+2,"record " & RecordName & "Vc " & RecordName & "r;");
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"while (NextImportLine(false)) begin");
+      AddLine(RITr,indent+4,"ReadImportTag" & RecordAlias & "Record(" & RecordName & "r);");
+      rwcnt = MatRowCnt(MainKeySegmentsr);
+      AddLine(RITr,indent+4,"RecordImportStore(" & RecordName & "r,false);");
+      AddLine(RITr,indent+2,"end;");
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"return;");
+      AddLine(RITr,indent+0,"end;");
+    case "BlockBegin":
+      AddLine(RITr,indent+0,"global");
+      AddLine(RITr,indent+0,"updating procedure ReadImportTag" & RecordAlias & "(string thetag)");
+      AddLine(RITr,indent+0,"begin");
+      AddLine(RITr,indent+2,"record " & RecordName & "Block " & RecordName & "r;");
+      if (HasMatrix) then begin
+        AddLine(RITr,indent+2,"row " & RecordName & "Block " & RecordName & "rw;");
+        AddLine(RITr,indent+2,"Integer i,rwcnt");
+      end else begin
+        AddLine(RITr,indent+2,"");
+        AddLine(RITr,indent+2,"if (NextImportLine(false)) then begin");
+        indent = indent + 2;
+      end;
+    case "EndBlock":
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"BlockStore(" & RecordName & "r);");
+      if (HasMatrix==false) then begin
+        indent = indent - 2;
+        AddLine(RITr,indent+2,"end;");
+      end;
+      AddLine(RITr,indent+2,"");
+      AddLine(RITr,indent+2,"return;");
+      AddLine(RITr,indent+0,"end;");
+  end;
+  
+  return;
+end;
+
+procedure ProcessMainKey(var record RITVc RITr,string RecordName,string RecordAlias,record SMVc MainKeySegmentsr)
+begin
+  integer i,rwcnt;
+  row SMVc MainKeySegmentsrw;
+  string 255 tstr,fieldname,fieldtype;
+  
+  rwcnt = MatRowCnt(MainKeySegmentsr);
+  if (rwcnt>0) then begin
+    AddLine(RITr,0,"");
+    AddLine(RITr,0,"global");
+    AddLine(RITr,0,"function string 120 ReadRecordIdStr" & RecordAlias & "(Integer compnr,string thetag)");
+    AddLine(RITr,0,"begin");
+    AddLine(RITr,2,"record " & RecordName & "Vc " & RecordName & "r;");
+    AddLine(RITr,2,"");
+
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MainKeySegmentsr,i,MainKeySegmentsrw);
+      tstr = MainKeySegmentsrw.Comment;
+      fieldname = GetNextValue(tstr);
+      fieldtype = GetNextValue(tstr);
+      if (!SetInSet(fieldtype,"M4Matrix,M4TextField")) then begin
+        if (fieldtype=="M4Dummy") then begin
+          AddLine(RITr,2,"/*" & RecordName & "r." & fieldname & " =*/ " & GetImportFieldConv(fieldtype) & ";");
+        end else begin
+          AddLine(RITr,2,RecordName & "r." & fieldname & " = " & GetImportFieldConv(fieldtype) & ";");
+        end;
+      end;
+    end;
+
+    AddLine(RITr,2,"ReadRecordIdStr" & RecordAlias & " = BuildRecordIdStr(" & RecordName & "r,compnr);");
+    AddLine(RITr,2,"return;");
+    AddLine(RITr,0,"end;");
+  end;
+  return;
+end;
+
+global
+procedure RITWClassConvert()
+begin
+  record RITVc RITr,RIT2r;
+  integer wn,i,Count;
+  string 255 s;
+  string 100 RecordName,RecordAlias,MainKey;
+  boolean HasPackedMatrix,HasMatrix,HasM4TextField;
+  record SMVc MainKeySegmentsr;
+  integer indent;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,true);
+  GetWindowRecord(wn,RITr);
+  GetRecordData(RITr,RecordName,RecordAlias,MainKey,HasPackedMatrix,HasMatrix,MainKeySegmentsr);
+  RecordNew(RIT2r);
+  Count = LineTextCnt(RITr);
+  for (i=0;i<Count;i=i+1) begin
+    s = LineTextGet(RITr,i);
+    s = Trim(s);
+    ProcessLine(RIT2r,s,RecordName,RecordAlias,MainKey,HasPackedMatrix,HasMatrix,MainKeySegmentsr,indent,HasM4TextField);
+  end;
+  ProcessMainKey(RIT2r,RecordName,RecordAlias,MainKeySegmentsr);
+  PutWindowRecord(wn,RIT2r);
+  SelectWindow(wn);
+  
+  return;
+end;
+
+
+//Convert to Document start
+
+procedure AddLine(var record RITVc RITr,integer Indent,string Line)
+begin
+  integer i;
+  string 100 s;
+  
+  for (i = 0; i < Indent; i = i + 1) begin
+    s = s & " ";
+  end;
+  
+  LineTextPut(RITr,LineTextCnt(RITr),s & Line);
+  
+  return;
+end;
+
+function boolean BlankString( string source )
+begin
+  Integer lSource,i,k;
+  Boolean ret;
+  string 255 tstr;
+  
+  
+  k = 0;
+  ret= true;
+
+  lSource= len(source);
+  tstr = mid(source,1,lSource-2);
+  lSource= len(tstr);
+  if (lSource==0) then begin
+   // ret = true;
+    goto LBlankString;
+  end;
+  //stopalert("lSource " & lSource & " tstr " & tstr);
+
+  for (i=0;i<lSource;i=i+1) begin
+    k = k + lSource;
+    if (mid(tstr,i,1)!=" ") then begin
+      ret=false;
+    end;
+  end;
+  LBlankString:;
+  BlankString= ret;
+  return;
+end;
+
+
+procedure ProcessLine(var record RITVc RIT2r,string s,integer indent,string RecordName,string prefix)
+begin
+  Array String 255 astring;
+  integer acount,j;
+  string 255 q,sn,label;
+  string 255 type;
+  boolean notblankf;
+  
+  sn = RecordName;
+  type = "";
+  ExplodeString(s,",",astring,acount);
+  if (left(astring[0],len("EditField")) == "EditField") then begin
+    type = "EditField";
+    sn = sn & ".";
+  end;
+  
+  if (left(astring[0],len("TextField")) == "TextField") then begin
+    type = "TextField";
+  end;
+
+  if (left(astring[0],len("MatrixBegin")) == "MatrixBegin") then begin
+    type = "MatrixBegin";
+  end;
+
+  if (left(astring[0],len("MatColTL")) == "MatColTL") then begin
+    type = "MatColTL";
+    sn = sn &  "w.";
+    goto Lswitch;
+  end;
+
+  if (left(astring[0],len("MatCol")) == "MatCol") then begin
+    type = "MatCol";
+    sn = sn &  "w.";
+  end;
+  if (left(astring[0],len("EndMatrix")) == "EndMatrix") then begin
+    type = "EndMatrix";
+  end;
+Lswitch:;
+  switch (type) begin
+    notblankf = false;
+    case "EditField" :
+      if (BlankString(astring[3])==false) then begin
+        label = trim(astring[3]);
+        notblankf = true;
+      end else begin
+        label = astring[5];
+      end;
+      q = "OUTFORMFIELD(";
+      q = q & """" & prefix;
+      if (notblankf) then begin
+        q = q & right(label,len(label)-1) & ",";
+      end else begin
+       q = q & label & """" & ",";
+      end;
+      q = q & sn &  astring[5] & ");";
+      AddLine(RIT2r,indent,q); 
+    case "TextField" :
+      q = "rwcnt2 = LineTextCnt(" & RecordName & ");";   
+      AddLine(RIT2r,indent,q); 
+      q = "for (k=0;k<rwcnt2;k=k+1) begin";
+      AddLine(RIT2r,indent,q); 
+      q = "tstr = LineTextGet(" & RecordName & ",k);";
+      AddLine(RIT2r,indent+2,q); 
+      q = "OUTFORMFIELD(" & """" & prefix & "MTEXT"",tstr);";    
+      AddLine(RIT2r,indent+2,q); 
+      q = "end;";
+      AddLine(RIT2r,indent,q);
+    case "MatrixBegin":
+      q = "matcnt = MatRowCnt(" & RecordName & ");";   
+      AddLine(RIT2r,indent,q); 
+      q = "for (j=0;j<matcnt;j=j+1) begin";
+      AddLine(RIT2r,indent,q); 
+      q = "MatRowGet(" & RecordName & ",j," & RecordName & "w);"   ;
+      AddLine(RIT2r,indent+2,q); 
+    case "MatCol":
+      q = "OUTFORMFIELD(";
+      q = q & """" & prefix & "M";
+      q = q & right(astring[2],len(astring[2])-1) & ",";
+      q = q & sn &  astring[4] & ");";
+      AddLine(RIT2r,indent+2,q); 
+    case "MatColTL":
+      q = "OUTFORMFIELD(";
+      q = q & """" & prefix & "M";
+      q = q & right(astring[2],len(astring[2])-1) & ",";
+      q = q & sn &  astring[7] & ");";
+      AddLine(RIT2r,indent+2,q); 
+    case "EndMatrix" :
+      q = "EndFormRow;";
+      AddLine(RIT2r,indent+2,q);
+      q = "end;";
+      AddLine(RIT2r,indent,q);
+    otherwise  
+  end;
+  return;
+end;
+
+function string 40 GetRecordName(var record RITVc RIT2r,integer rwcnt)
+begin
+  integer i,l;
+  string 255 s,res;
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    s = LineTextGet(RIT2r,i);
+    s = Trim(s);
+    l = len("UseView(");
+    if (left(s,l)=="UseView(") then begin
+      res = mid(s,l,len(s)-l-4);
+      res = res & "r";
+      goto LGetRecordName; 
+    end;
+  end;
+LGetRecordName:;
+  GetRecordName = res;
+  return;
+end;
+
+function string 255 GetWindowName(var record RITVc RIT2r,integer rwcnt)
+begin
+  integer i,l,acount;
+  string 255 s,res;
+  Array String 255 astring;
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    s = LineTextGet(RIT2r,i);
+    s = Trim(s);
+    ExplodeString(s,",",astring,acount);
+    if (left(astring[0],len("WindowBegin"))=="WindowBegin") then begin
+      res = astring[0];
+      res = right(res,len(res)-len("WindowBegin("));
+      res = right(res,len(res)-1);
+      res = left(res,len(res)-1);
+      res = res & "s";
+      goto LGetWindowName; 
+    end;
+  end;
+LGetWindowName:;
+  GetWindowName = res;
+  return;
+end;  
+ 
+
+function boolean HasMatrix(var record RITVc RIT2r,integer rwcnt)
+begin
+  integer i,l;
+  string 255 s;
+  boolean res;
+
+  res = true;  
+  for (i=0;i<rwcnt;i=i+1) begin
+    s = LineTextGet(RIT2r,i);
+    s = Trim(s);
+    l = len("MatrixBegin");
+    if (left(s,l)=="MatrixBegin") then begin
+      res = true;
+      goto LHasMatrix; 
+    end;
+  end;
+LHasMatrix:;
+  HasMatrix = res;
+  return;
+end;  
+
+procedure AddHeaderLines(var record RITVc RIT2r,string RecordName, integer indent,boolean matrixf)
+begin
+  string 255 q,r,vcname;  
+  
+  r = left(RecordName,len(RecordName)-1);
+  vcname = r & "Vc";
+  q = " //**************Document Function Code***************************";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q = "external function Boolean FindFormcode(Integer,Integer);";
+  AddLine(RIT2r,indent,q); 
+  q = "external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);";
+  AddLine(RIT2r,indent,q); 
+  q = "external function Integer NumberofDocumentPages(string,Integer);";
+  AddLine(RIT2r,indent,q); 
+  q = "external procedure CommonDocumentFields(record RcVc);";
+  AddLine(RIT2r,indent,q);
+  q = "  ";
+  AddLine(RIT2r,indent,q);
+  q = "global";
+  AddLine(RIT2r,indent,q);
+  q = "procedure Do" & r & "Form" & "(record RcVc RepSpec,record" & " " & vcname & " " & RecordName & ")";
+  AddLine(RIT2r,indent,q);
+  q = "BEGIN";
+  AddLine(RIT2r,indent,q);
+  q = "record FormDefVc FDr;";
+  AddLine(RIT2r,indent,q);
+  q = "row FormDefVc FDrw;";
+  AddLine(RIT2r,indent,q);
+  if (matrixf) then begin
+    q = "row "  & vcname & " " & RecordName & "w" & ";";
+    AddLine(RIT2r,indent,q);
+  end;
+  q = "Integer i,j,matcnt,rwcnt,rwcnt2;";
+  AddLine(RIT2r,indent,q);
+  q = "Boolean printf;";
+  AddLine(RIT2r,indent,q);
+  q = "Integer intdocnr;";
+  AddLine(RIT2r,indent,q);
+  q = "string 30 formcode;";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q = "FDr.repname = RepSpec.repname;";
+  AddLine(RIT2r,indent,q);
+  q = "FDr.shortname = RepSpec.shortname;";
+  AddLine(RIT2r,indent,q);
+  q = "if (ReadFirstMain(FDr,1,true)==false) then begin";
+  AddLine(RIT2r,indent,q);
+  q = "  MessageBox(1624, "" "" & USetStr(1623));";
+  AddLine(RIT2r,indent,q);
+  q =  "  goto LDo" & r & "Form;";
+  AddLine(RIT2r,indent,q);
+  q = "end;";
+  AddLine(RIT2r,indent,q);
+  q = "rwcnt = MatRowCnt(FDr);";
+  AddLine(RIT2r,indent,q);
+  q = "intdocnr = 1;";
+  AddLine(RIT2r,indent,q);
+  q = "printf = true;";
+  AddLine(RIT2r,indent,q);
+  q = "while (printf) begin  ";
+  AddLine(RIT2r,indent,q);
+  q = "  formcode = """";";
+  AddLine(RIT2r,indent,q);
+  q = "  for (i=rwcnt-1;i>=0;i=i-1) begin";
+  AddLine(RIT2r,indent,q);
+  q = "    MatRowGet(FDr,i,FDrw);";
+  AddLine(RIT2r,indent,q);
+  q = "    if (FindFormcode(" & RecordName &".OKFlag,FDrw.Typ)) then begin ";
+  AddLine(RIT2r,indent,q);
+  q = "      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr," & RecordName & ".SerNr,FDrw.PrintGroupCode,";
+  AddLine(RIT2r,indent,q);
+  q = "           """""&",intdocnr,""" & vcname & """,formcode)) then";
+  AddLine(RIT2r,indent,q);
+  q = "      begin";
+  AddLine(RIT2r,indent,q);
+  q = "        goto LBREAK" &  r & ";";
+  AddLine(RIT2r,indent,q);
+  q = "      end;";
+  AddLine(RIT2r,indent,q);
+  q = "    end;";
+  AddLine(RIT2r,indent,q);
+  q = "  end;";
+  AddLine(RIT2r,indent,q);
+  q = "LBREAK" & r & ":;";
+  AddLine(RIT2r,indent,q);
+  q = "  if (nonblank(formcode)) then begin";
+  AddLine(RIT2r,indent,q);
+  q = "    if (OpenForm(formcode)) then begin";
+  AddLine(RIT2r,indent,q);
+  q = "      CommonDocumentFields(RepSpec);";
+  AddLine(RIT2r,indent,q);
+  if (matrixf) then begin
+    q = "      NumberofDocumentPages(formcode,MatRowCnt(" & RecordName & "));";
+    AddLine(RIT2r,indent,q);
+  end;
+  return;
+end;
+
+procedure AddFooterLines(var record RITVc RIT2r,string RecordName, integer indent)
+begin
+  string 255 q,r;  
+  
+  r = left(RecordName,len(RecordName)-1);
+  q =  "        CloseForm;";
+  AddLine(RIT2r,indent,q);
+  q =  "      end;";
+  AddLine(RIT2r,indent,q);
+  q =  "    end else begin";
+  AddLine(RIT2r,indent,q);
+  q =  "      printf = false;";
+  AddLine(RIT2r,indent,q);
+  q =  "      if (intdocnr==1) then begin";
+  AddLine(RIT2r,indent,q);
+  q =  "        MessageBox(1624, "" "" & USetStr(1623));";
+  AddLine(RIT2r,indent,q);
+  q =  "      end;";
+  AddLine(RIT2r,indent,q);
+  q =  "    end;";
+  AddLine(RIT2r,indent,q);
+  q =  "    intdocnr = intdocnr + 1;";
+  AddLine(RIT2r,indent,q);
+  q =  "  end;";
+  AddLine(RIT2r,indent,q);
+  q =  "  LDo" & r & "Form:;";
+  AddLine(RIT2r,indent,q);
+  q = "  RETURN;";
+  AddLine(RIT2r,indent,q);
+  q = "END;";
+  AddLine(RIT2r,indent,q);
+  return;
+end;  
+
+procedure AddWinDefLines(var record RITVc RIT2r,string RecordName,string WindowName,integer indent)
+begin
+  string 255 q,r;  
+  
+  r = left(RecordName,len(RecordName)-1);
+  q = " //**************Window Definition Code***************************";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q =  "external procedure FORMDEF_ENG();";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q =  "  WindowBegin(""Definition"  &  " " & WindowName & """" & "," &  r & "FClass,CGHbl,HBlRecType);";
+  AddLine(RIT2r,indent,q);
+  q =  "  SetBlid(" & r & "DefBlock);";
+  AddLine(RIT2r,indent,q);
+  q =  "  FORMDEF_ENG;";
+  AddLine(RIT2r,indent,q);
+  q =  "  EndWindow;";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q =  "  WindowBegin(""Specify"  &  " " & WindowName & """" & "," &  r & "RClass,CGRcW,RcType);";
+  AddLine(RIT2r,indent,q);
+  q =  "  SetWRect(20,80,400,150);";
+  AddLine(RIT2r,indent,q);
+  q =  "  EditFieldTL(100,v=10, 150,""No."",   M4Str,Normal,30,f1,false,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  EndWindow;";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  Return;
+end;
+
+procedure AddDataDefLines(var record RITVc RIT2r,string RecordName,integer indent)
+begin
+  string 255 q,r;  
+
+  r = left(RecordName,len(RecordName)-1);
+  q = "// **************Code to be included in datadef.hal***********";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q =  "procedure YYDEFBLOCK";
+  AddLine(RIT2r,indent,q);
+  q =  "begin";
+  AddLine(RIT2r,indent,q);
+  q =  "  RecordField(Math,M4Matrix,0,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayBegin(Math,-,1);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(LangCode,M4Code,5,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(UserGroup,M4Code,5,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(SerNr,M4Long,0,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(FPCode,M4Str,20,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(PrintGroupCode,M4Code,20,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(intdocnr,M4Long,0,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(EformCode,M4Str,20,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  ArrayField(Typ,M4Set,99,0);";
+  AddLine(RIT2r,indent,q);
+  q =  "  EndArray;";
+  AddLine(RIT2r,indent,q);
+  q =  "  return;";
+  AddLine(RIT2r,indent,q);
+  q =  "end;";
+  AddLine(RIT2r,indent,q);
+  q =  "";
+  AddLine(RIT2r,indent,q);
+  q =  "procedure XXDEFBLOCK";
+  AddLine(RIT2r,indent,q);
+  q =  "begin";
+  AddLine(RIT2r,indent,q);
+  q =  "  YYDEFBLOCK;";
+  AddLine(RIT2r,indent,q);
+  q =  "  EndBlock;";
+  AddLine(RIT2r,indent,q);
+  q =  "  return;";
+  AddLine(RIT2r,indent,q);
+  q =  "end;";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  q = "BlockBegin(" & r & "DefBlock,-,"""");";
+  AddLine(RIT2r,indent,q);
+  q =  "XXDEFBLOCK;";
+  AddLine(RIT2r,indent,q);
+  q = "";
+  AddLine(RIT2r,indent,q);
+  Return;
+end;
+    
+global
+procedure RITWClassConvertDocument()
+begin
+  record RITVc RITr,RIT2r;
+  integer wn,i,k,rwcnt,indent;
+  string 255 s,RecordName,WindowName,prefix;
+  boolean matrixf;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,true);
+  GetWindowRecord(wn,RITr);
+
+  indent = 0;
+  prefix = "";
+  RecordNew(RIT2r);
+  rwcnt = LineTextCnt(RITr);
+  RecordName = GetRecordName(RITr,rwcnt);
+//  AddDataDefLines(RIT2r,RecordName,indent);
+  WindowName = GetWindowName(RITr,rwcnt);
+  AddWinDefLines(RIT2r,RecordName,WindowName,indent);
+  matrixf = HasMatrix(RITr,rwcnt); 
+  AddHeaderLines(RIT2r,RecordName,indent,matrixf);
+  indent = 6;
+  s = LineTextGet(RITr,0);
+  s = Trim(s);
+  if (left(s,len("WindowBegin"))<>"WindowBegin") then begin
+    prefix =  s;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    s = LineTextGet(RITr,i);
+    s = Trim(s);
+    ProcessLine(RIT2r,s,indent,RecordName,prefix);
+  end;
+  indent = 0;
+  AddFooterLines(RIT2r,RecordName,indent);
+  PutWindowRecord(wn,RIT2r);
+  SelectWindow(wn);
+  return;
+end;
+
+//Convert to Document end

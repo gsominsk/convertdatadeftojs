@@ -1,0 +1,548 @@
+external function val AbsoluteVal(val);
+external procedure GetAccountDescription2(string,string,var string);
+external procedure GetAccDCBalance(string,string,Date,record ObjBalVc,Integer,Integer,Integer,string,var val,var val,Integer);
+external procedure GetLangNr(string,var record LangNrVc);
+
+procedure GetMonthText(Date td,var string res)
+BEGIN
+  res = USetStr(2780+GetMonth(td));
+  RETURN;
+END;
+
+function Boolean EndOfTrialGroup(record SMVc SMr,string accg,var string lastaccg)
+begin
+//  row SMVc SMrw;
+  Integer rwcnt;
+  Boolean res;
+  string 200 accgbeg;
+  
+  res = false;
+  accgbeg = Left(accg,len(lastaccg));    
+  rwcnt = MatRowCnt(SMr);
+  if (rwcnt==0) then begin
+    res = true;
+  end else begin
+//    MatRowGet(SMr,0,SMrw);
+    if (blank(lastaccg)) then begin lastaccg = accg; end;
+    if (lastaccg<>accgbeg) then begin res = true; end;
+  end;
+  if (res==true) then begin lastaccg = accg; end;
+  EndOfTrialGroup = res;
+  return;
+end;
+
+procedure AnalyticLineMem(record SMVc SMr,string t1,string t2,val s1a,val s1b,val s2a,val s2b,val s3a,val s3b,val s4a,val s4b,Integer groupf)
+begin
+  row SMVc SMrw;
+  Integer rwcnt,i,therow;
+
+  therow = -1;
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    if (t1==SMrw.AccNumber) then begin
+      therow = i;
+      goto L77;
+    end;
+  end;
+L77:;
+  if (therow>-1) then begin
+    MatRowGet(SMr,therow,SMrw);
+  end else begin
+    ClearRow(SMr,SMrw,1);
+    SMrw.AccNumber = t1;    
+    SMrw.Comment = t2;
+    therow = rwcnt;
+    SMrw.RowSimStat = groupf;
+  end;
+  SMrw.DebVal = SMrw.DebVal + s1a;
+  SMrw.CredVal = SMrw.CredVal + s1b;
+  SMrw.DebVal2 = SMrw.DebVal2 + s2a;
+  SMrw.CredVal2 = SMrw.CredVal2 + s2b;
+  SMrw.CurDebVal = SMrw.CurDebVal + s3a;
+  SMrw.CurCredVal = SMrw.CurCredVal + s3b;
+  SMrw.BaseRate1 = SMrw.BaseRate1 + s4a;
+  SMrw.BaseRate2 = SMrw.BaseRate2 + s4b;
+  MatRowPut(SMr,therow,SMrw);
+  return;
+end;
+
+procedure PrintAnalyticLinesMem(record SMVc SMr,Integer usedonly,Integer sumtot,Integer onlygr,Integer forfiscal,Integer cutaccname,Integer showzeros,Boolean everysecond)
+begin
+  row SMVc SMrw;
+  row SMVc SMrw2;
+  Integer rwcnt,i,j;
+  string 200 accgbeg;
+  string 50 pdeb;
+  string 50 adeb;
+  string 50 bdeb;
+  string 50 pcred;
+  string 50 acred;
+  string 50 bcred;
+  Boolean printf;
+  string 5 decavg;
+  string 5 thoavg;
+  record LangNrVc LangNrr;
+  string 255 accname;
+  
+  GetLangNr("",LangNrr);
+  printf = false;
+  decavg = DecimalSeparator;
+  thoavg = ThousandSeparator;
+  if (forfiscal==1) then begin
+    thoavg = "";
+  end;
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    for (j=i+1;j<rwcnt;j=j+1) begin
+      MatRowGet(SMr,j,SMrw2);
+      accgbeg = Left(SMrw2.AccNumber,len(SMrw.AccNumber));    
+      if (accgbeg==SMrw.AccNumber) then begin
+        SMrw.DebVal = SMrw.DebVal + SMrw2.DebVal;
+        SMrw.CredVal = SMrw.CredVal + SMrw2.CredVal;
+        SMrw.DebVal2 = SMrw.DebVal2 + SMrw2.DebVal2;
+        SMrw.CredVal2 = SMrw.CredVal2 + SMrw2.CredVal2;
+        SMrw.CurDebVal = SMrw.CurDebVal + SMrw2.CurDebVal;
+        SMrw.CurCredVal = SMrw.CurCredVal + SMrw2.CurCredVal;
+//        SMrw.BaseRate1 = SMrw.BaseRate1 + SMrw2.BaseRate1;
+//        SMrw.BaseRate2 = SMrw.BaseRate2 + SMrw2.BaseRate2;
+//kypp
+        if (SMrw2.BaseRate1>(-SMrw2.BaseRate2)) then begin
+          SMrw.BaseRate1 = SMrw.BaseRate1 + SMrw2.BaseRate1 + SMrw2.BaseRate2;
+        end else begin
+          SMrw.BaseRate2 = SMrw.BaseRate2 + SMrw2.BaseRate2 + SMrw2.BaseRate1;
+        end;
+      end;
+    end;
+
+    if (SMrw.RowSimStat==0) then begin
+      if (AbsoluteVal(SMrw.BaseRate1)>AbsoluteVal(SMrw.BaseRate2)) then begin
+        SMrw.BaseRate1 = SMrw.BaseRate1+SMrw.BaseRate2;
+        SMrw.BaseRate2 = BlankVal;
+      end else begin
+        SMrw.BaseRate2 = SMrw.BaseRate2+SMrw.BaseRate1;
+        SMrw.BaseRate1 = BlankVal;
+      end;
+    end;
+
+    if (onlygr==0) then begin
+      if (SMrw.BaseRate1==0) then begin SMrw.BaseRate1 = BlankVal; end;
+      if (SMrw.BaseRate2==0) then begin SMrw.BaseRate2 = BlankVal; end;
+    end;
+    if ((onlygr==0) or ((onlygr==1) and (i==0))) then begin
+      if ((SMrw.DebVal<>0) or (SMrw.DebVal2<>0) or //or (SMrw.CurDebVal<>0) 
+          (SMrw.CredVal<>0) or (SMrw.CredVal2<>0) or //or (SMrw.CurCredVal<>0)
+          (SMrw.BaseRate1<>0) or (SMrw.BaseRate2<>0) or (usedonly==0)) then begin
+
+        pdeb = ValToString(SMrw.DebVal,M4DVal,thoavg,decavg,LangNrr.CutDecimals);
+        pcred = ValToString(SMrw.CredVal,M4NegVal,thoavg,decavg,LangNrr.CutDecimals);
+        adeb = ValToString(SMrw.DebVal2,M4DVal,thoavg,decavg,LangNrr.CutDecimals);
+        acred = ValToString(SMrw.CredVal2,M4NegVal,thoavg,decavg,LangNrr.CutDecimals);
+        if (sumtot==0) then begin
+          bdeb = ValToString(SMrw.BaseRate1,M4Val,thoavg,decavg,LangNrr.CutDecimals);
+          if (onlygr<>0 or HasLocalization("PRT")==false) then begin
+            bcred = ValToString(SMrw.BaseRate2,M4NegVal,thoavg,decavg,LangNrr.CutDecimals);
+          end else begin
+            bcred = ValToString(SMrw.BaseRate2,M4Val,thoavg,decavg,LangNrr.CutDecimals);
+          end;
+        end else begin
+          bcred = ValToString(SMrw.BaseRate1 + SMrw.BaseRate2,M4Val,thoavg,decavg,LangNrr.CutDecimals);
+        end;
+        if (showzeros!=0) then begin
+          if (blank(pdeb)) then begin pdeb = 0.00; end;
+          if (blank(pcred)) then begin pcred = 0.00; end;
+          if (blank(adeb)) then begin adeb = 0.00; end;
+          if (blank(acred)) then begin acred = 0.00; end;
+          if (blank(bdeb)) then begin bdeb = 0.00; end;
+          if (blank(bcred)) then begin bcred = 0.00; end;
+        end;
+        if (forfiscal==1) then begin
+//          pdeb = Mid(pdeb,0,Len(pdeb)-1); not any more
+//          pcred = Mid(pcred,0,Len(pcred)-1);
+//          adeb = Mid(adeb,0,Len(adeb)-1);
+//          acred = Mid(acred,0,Len(acred)-1);
+//          bdeb = Mid(bdeb,0,Len(bdeb)-1);
+//          bcred = Mid(bcred,0,Len(bcred)-1);
+        end;
+        if (everysecond==false) then begin
+          StartFormat(15);
+          if (SMrw.RowSimStat==0) then begin
+            OutString(0,"DblNL",SMrw.AccNumber,false);
+          end else begin
+            OutString(0,"DblMBARn",SMrw.AccNumber,false);
+          end;
+          if (cutaccname==1) then begin
+            accname = Left(SMrw.Comment,15);            
+            if (forfiscal==1) then begin
+              OutStringCut(2,-90,0,accname,false,0);
+            end else begin
+              OutStringCut(2,-130,0,accname,false,0);
+            end;
+          end else begin
+            OutString(2,0,SMrw.Comment,false);
+          end;  
+          OutString(3,0,pdeb,true);
+          OutString(4,0,pcred,true);
+          OutString(5,0,adeb,true);
+          OutString(6,0,acred,true);
+          if (sumtot==0) then begin
+            OutString(7,0,bdeb,true);
+          end;
+          OutString(8,0,bcred,true);
+          EndFormat;
+        end else begin
+//Trace("SMrw.AccNumber " & SMrw.AccNumber," adeb " & adeb & " acred " & acred);
+          if ((len(pdeb)>13) or (len(pcred)>13) or (len(adeb)>13) or (len(acred)>13)) then begin
+            StartFormat(15);
+            if (SMrw.RowSimStat==0) then begin
+              OutString(0,"DblNL",SMrw.AccNumber,false);
+            end else begin
+              OutString(0,"DblMBARn",SMrw.AccNumber,false);
+            end;
+            if (nonblank(SMrw.Comment)) then begin
+              if (cutaccname==1) then begin
+                accname = Left(SMrw.Comment,15);            
+                if (forfiscal==1) then begin
+                  OutStringCut(2,-90,0,accname,false,0);          //Left(SMrw.Comment,15)
+                end else begin
+                  OutStringCut(2,-130,0,accname,false,0);
+                end; 
+              end else begin
+                OutString(2,0,SMrw.Comment,false);
+              end;                                 
+            end;  
+            OutString(3,0,pdeb,true);
+            OutString(5,0,adeb,true);
+            if (sumtot==0) then begin
+              OutString(7,0,bdeb,true);
+            end;
+            EndFormat;
+            StartFormat(15);
+            OutString(4,0,pcred,true);
+            OutString(6,0,acred,true);
+            OutString(8,0,bcred,true);
+            EndFormat;
+          end else begin
+            StartFormat(15);
+            if (SMrw.RowSimStat==0) then begin
+              OutString(0,"DblNL",SMrw.AccNumber,false);
+            end else begin
+              OutString(0,"DblMBARn",SMrw.AccNumber,false);
+            end;
+            if (cutaccname==1) then begin            
+              accname = Left(SMrw.Comment,15);            
+              if (forfiscal==1) then begin
+                OutStringCut(2,-90,0,accname,false,0);
+              end else begin
+                OutStringCut(2,-130,0,accname,false,0);
+              end;
+            end else begin
+              OutString(2,0,SMrw.Comment,false);
+            end;                
+            OutString(3,0,pdeb,true);
+            OutString(4,0,pcred,true);
+            OutString(5,0,adeb,true);
+            OutString(6,0,acred,true);
+            if (sumtot==0 or showzeros!=0) then begin
+              if (nonblank(bdeb) or HasLocalization("PRT")==false) then begin
+                OutString(7,0,bdeb,true);
+              end;
+            end;
+            OutString(8,0,bcred,true);
+            EndFormat;            
+          end;
+          /*
+          StartFormat(15);
+          OutString(0,"DblNL",SMrw.AccNumber,false);
+          if (nonblank(SMrw.Comment)) then begin
+            OutStringCut(2,-70,0,SMrw.Comment,false,0);
+          end;  
+          OutString(3,0,pdeb,true);
+          OutString(5,0,adeb,true);
+          if (sumtot==0) then begin
+            OutString(7,0,bdeb,true);
+          end;
+          EndFormat;
+          StartFormat(15);
+          OutString(4,0,pcred,true);
+          OutString(6,0,acred,true);
+          OutString(8,0,bcred,true);
+          EndFormat;
+          */
+        end;
+        printf = true;
+      end;
+    end;
+  end;
+  if ((onlygr==0) and (printf)) then begin
+    Gray_Divider(0,1);
+  end;
+  return;
+end;
+
+// kytt
+procedure MBHeader2(record RcVc RepSpec)
+begin
+  StartFormat(15);
+  if (RepSpec.repname=="MBA3Rn") then begin
+    OutString(3,0,USetStr(3476),false);
+    OutString(5,0,USetStr(3477),false);
+  end else begin
+    OutString(3,0,USetStr(3474),false);
+    OutString(5,0,USetStr(3475),false);
+  end;
+  if ((RepSpec.flags[1]==1) and (RepSpec.flags[8]==0)) then begin
+    OutString(7,0,USetStr(3467),false);
+  end;
+  EndFormat;
+  StartFormat(20);
+  OutString(0,0,USetStr(3462),false);
+  if (RepSpec.flags[1]<>1) then begin
+    OutString(2,0,USetStr(3471),false);
+  end;
+  OutString(3,0,USetStr(3472),true);
+  OutString(4,0,USetStr(3473),true);
+  OutString(5,0,USetStr(3472),true);
+  OutString(6,0,USetStr(3473),true);
+  if ((RepSpec.flags[1]==0) or (RepSpec.flags[8]<>0)) then begin
+    OutString(7,0,USetStr(3467),true);
+  end else begin
+    OutString(7,0,USetStr(3472),true);
+    OutString(8,0,USetStr(3473),true);
+  end;
+  EndFormat;
+  Black_Divider(0,1);
+  return;
+end;
+
+global
+procedure AnalyticalGroup(record RcVc RepSpec)
+begin
+  record AccVc Accr;
+  record ObjBalVc ObjBalr;
+  record SMVc SMr;
+  Boolean foundf;
+  Boolean testf;
+  val dv,cv;
+  val sdeb,scred,pdeb,pcred,adeb,acred,edeb,ecred;
+  val tsdeb,tscred,tpdeb,tpcred,tadeb,tacred,tedeb,tecred;
+  string 20 lastgroup,accname;
+  Date fwddate,sbd;
+  string 20 monthstr;
+  val NOSIMSpdeb, NOSIMSpcred, NOSIMSadeb, NOSIMSacred;
+  val TMPdeb, TMPcred;
+  string 20 sDate;
+  Integer SimVerf;
+
+  foundf = true;
+  lastgroup = "";
+  fwddate = RepSpec.sStartDate;
+  if (nonblankdate(RepSpec.d2)) then begin
+    if (RepSpec.d2<fwddate) then begin fwddate = RepSpec.d2; end;
+  end;
+  if (RepSpec.flags[1]==0) then begin
+    SetRepCol(2,45);
+    SetRepCol(3,220);
+    SetRepCol(4,280);
+    SetRepCol(5,340);
+    SetRepCol(6,400);
+    SetRepCol(7,460);
+    SetRepCol(8,480);
+  end;
+  if (RepSpec.flags[1]==1) then begin
+    if (RepSpec.flags[13]==1) then begin
+      SetRepCol(2,20);
+      SetRepCol(3,145);
+      SetRepCol(4,212);
+      SetRepCol(5,279);
+      SetRepCol(6,346);
+      SetRepCol(7,413);
+      SetRepCol(8,480);
+    end else begin
+      SetRepCol(2,20);
+      SetRepCol(3,180);
+      SetRepCol(4,240);
+      SetRepCol(5,300);
+      SetRepCol(6,360);
+      SetRepCol(7,420);
+      SetRepCol(8,480);
+    end;
+  end;
+
+  MBHeader2(RepSpec);
+  StartHeader2(50,false);
+  MBHeader2(RepSpec);
+  EndHeader2;
+  
+  RecordNew(SMr);
+  Accr.AccNumber = RepSpec.FirstAcc;
+  while (LoopMain(Accr,1,foundf)) begin
+    if (nonblank(RepSpec.LastAcc)) then begin
+      if (Accr.AccNumber>RepSpec.LastAcc) then begin foundf = false; end;
+    end;
+    testf = true;
+//    if ((Accr.blockedFlag<>0) or (Accr.GroupAcc<>0)) then begin testf = false; end;  // we dont have this check when group account is off
+    if (Accr.GroupAcc<>0) then begin testf = false; end;
+    if (foundf==false) then begin testf = false; end;
+    if (nonblank(RepSpec.TransStr)) then begin
+      if (Left(Accr.AccNumber,len(RepSpec.TransStr))!=RepSpec.TransStr and Accr.AccNumber!=RepSpec.TransStr) then begin testf = false; end;
+    end;
+    if (Accr.GroupAcc<>0) then begin
+      if (EndOfTrialGroup(SMr,Accr.AccNumber,lastgroup)) then begin
+        PrintAnalyticLinesMem(SMr,RepSpec.UsedOnly,RepSpec.flags[8],RepSpec.flags[1],RepSpec.flags[13],RepSpec.flags[14],RepSpec.flags[20],true);
+        RecordNew(SMr);
+      end;
+      GetAccountDescription2(Accr.AccNumber,RepSpec.Language,accname);        
+      AnalyticLineMem(SMr,Accr.AccNumber,accname,0,0,0,0,0,0,0,0,1);
+    end;
+    if (testf) then begin
+      sdeb = 0;scred = 0;pdeb = 0;pcred = 0;adeb = 0;acred = 0;edeb = 0;ecred = 0;
+      NOSIMSpdeb = 0;NOSIMSpcred = 0;NOSIMSadeb = 0;NOSIMSacred = 0;
+      TMPdeb = 0;TMPcred = 0;
+      ObjBalr.AccNumber = Accr.AccNumber;
+      ObjBalr.Object = RepSpec.ObjStr;
+      if (ReadFirstMain(ObjBalr,1,true)) then begin
+
+//        SimVerf = RepSpec.SimVerf;
+//        RepSpec.SimVerf = 0;
+
+        sbd = AddDay(fwddate,-1);
+        GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,sbd,ObjBalr,RepSpec.SimVerf,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+        sdeb = sdeb + dv;//StartDeb
+        scred = scred - cv; //StartCred
+        sbd = AddDay(RepSpec.sStartDate,-1);
+        GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,sbd,ObjBalr,RepSpec.SimVerf,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+        pdeb = pdeb + dv; //PerDeb
+        pcred = pcred - cv; //PerCred
+
+//        RepSpec.SimVerf = SimVerf;
+
+        if (RepSpec.SimVerf == 2) then begin
+          dv = 0;
+          cv = 0;
+          GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,sbd,ObjBalr,0,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+          NOSIMSpdeb = NOSIMSpdeb + dv; //PerDeb
+          NOSIMSpcred = NOSIMSpcred - cv; //PerCred
+        end;
+        
+        if (RepSpec.SimVerf == 3) then begin
+          dv = 0;
+          cv = 0;
+          GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,sbd,ObjBalr,2,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+          NOSIMSpdeb = NOSIMSpdeb + dv; //PerDeb
+          NOSIMSpcred = NOSIMSpcred - cv; //PerCred
+        end;
+
+        dv = 0;
+        cv = 0;
+//        SimVerf = RepSpec.SimVerf;
+//        RepSpec.SimVerf = 0;
+        GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,RepSpec.sEndDate,ObjBalr,RepSpec.SimVerf,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+        adeb = adeb + dv; //AccDeb
+        acred = acred - cv; //AccCred
+//        RepSpec.SimVerf = SimVerf;
+
+        if (RepSpec.SimVerf == 2) then begin
+          dv = 0;
+          cv = 0;
+          GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,RepSpec.sEndDate,ObjBalr,0,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+          NOSIMSadeb = NOSIMSadeb + dv; //AccDeb
+          NOSIMSacred = NOSIMSacred - cv; //AccCred
+        end;
+
+        if ((RepSpec.SimVerf == 3)) then begin
+          dv = 0;
+          cv = 0;
+          GetAccDCBalance(Accr.AccNumber,RepSpec.ObjStr,RepSpec.sEndDate,ObjBalr,2,RepSpec.basecurncy,0,RepSpec.CurncyCode,dv,cv,RepSpec.flags[6]);
+          NOSIMSadeb = NOSIMSadeb + dv; //AccDeb
+          NOSIMSacred = NOSIMSacred - cv; //AccCred
+        end;
+        pdeb = adeb - pdeb;
+        pcred = acred - pcred;
+        adeb = adeb - sdeb;
+        acred = acred - scred;
+        edeb = sdeb + adeb;
+        ecred = scred + acred;
+
+ // kypp
+       
+        if ((Accr.AccType==3) or (Accr.AccType==4)) then begin
+          sdeb = 0;
+          scred = 0;
+        end;
+
+//jj??
+//        if ((RepSpec.SimVerf > 1)) then begin
+//          pdeb = pdeb - NOSIMSadeb + NOSIMSpdeb;  // i think pdeb already includes
+//          pcred = pcred - NOSIMSacred + NOSIMSpcred;
+//        end;
+//jj??
+//        if (RepSpec.SimVerf<3) then begin
+          if (sdeb>(-scred)) then begin
+            TMPdeb = sdeb + scred;
+          end else begin
+            TMPcred = scred + sdeb;
+          end;
+          adeb = adeb + TMPdeb;
+          acred = acred + TMPcred;
+//        end;
+        edeb = adeb;
+        ecred = acred;
+        
+        if (RepSpec.flags[12]<>0) then begin
+        
+           if (sdeb>(-scred)) then begin
+             pdeb = TMPdeb;
+             adeb = TMPdeb;
+             edeb = TMPdeb;
+             sdeb = TMPdeb;
+             pcred = 0;
+             acred = 0;
+             ecred = 0;
+             scred = 0;
+           end else begin
+             pcred = TMPcred;
+             acred = TMPcred;
+             ecred = TMPcred;
+             scred = TMPcred;
+             pdeb = 0;
+             adeb = 0;
+             edeb = 0;
+             sdeb = 0;
+           end;
+        end;
+
+        tpdeb = tpdeb + pdeb;
+        tpcred = tpcred + pcred;
+        tadeb = tadeb + adeb;
+        tacred = tacred + acred;
+        tsdeb = tsdeb + sdeb;
+        tscred = tscred + scred;
+
+//        tedeb = tedeb + edeb;
+//        tecred = tecred + ecred;
+        if (edeb>(-ecred)) then begin
+          tedeb = tedeb + edeb + ecred;
+        end else begin
+          tecred = tecred + ecred + edeb;
+        end;
+
+ // kypp --
+ 
+      end; 
+      GetAccountDescription2(Accr.AccNumber,RepSpec.Language,accname);        
+      AnalyticLineMem(SMr,Accr.AccNumber,accname,pdeb,pcred,adeb,acred,sdeb,scred,edeb,ecred,0);
+    end;
+  end;
+  PrintAnalyticLinesMem(SMr,RepSpec.UsedOnly,RepSpec.flags[8],RepSpec.flags[1],RepSpec.flags[13],RepSpec.flags[14],RepSpec.flags[20],true);
+  RecordNew(SMr);
+  if (RepSpec.flags[1]==1) then begin
+    Black_Divider(0,1);
+  end;
+  StartFormat(15);
+  EndFormat;
+  AnalyticLineMem(SMr,USetStr(3247),"",tpdeb,tpcred,tadeb,tacred,tsdeb,tscred,tedeb,tecred,1);
+  PrintAnalyticLinesMem(SMr,1,RepSpec.flags[8],RepSpec.flags[1],RepSpec.flags[13],RepSpec.flags[14],RepSpec.flags[20],true);
+  return;
+end;

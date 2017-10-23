@@ -1,0 +1,235 @@
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external function Integer CheckUsers(string,string,var string,Boolean);
+external function Boolean SerialNrAvail(string,string,string,val);
+external function Boolean Date2Test(string,Date,string,Integer);
+external function Boolean IsSerialNrCorrect(string);
+
+global
+function LongInt BPCVcRecordDefaults(var record BPCVc BPCr,record BPCVc BPC2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record AccBlock Accb;
+
+  BlockLoad(Accb);
+  BPCr.SerNr = -1;
+  BPCr.TransDate = CurrentDate;
+  BPCr.OKFlag = 0;
+  BPCr.Signature = CurrentUser;
+  BPCr.InclVAT = Accb.BasePriceInclVAT;
+  if (SingleUserMode) then begin
+    BPCr.SerNr = NextSerNr("BPCVc",BPCr.TransDate,-1,false,"");
+  end;
+  BPCVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt BPCVcRecordDuplicate(var record BPCVc BPCr,record BPCVc BPC2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  BPCr.SerNr = -1;
+  BPCr.OKFlag = 0;
+  BPCr.Signature = CurrentUser;
+  if (SingleUserMode) then begin
+    BPCr.SerNr = NextSerNr("BPCVc",BPCr.TransDate,-1,false,"");
+  end;
+  BPCVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+updating procedure BPCUpdateBasePrice(record BPCVc BPCp)
+BEGIN
+  record INVc INr;
+  row BPCVc BPCrw;
+  Boolean found;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(BPCp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(BPCp,i,BPCrw);
+    if (BPCrw.Qty!=0) then begin
+      INr.Code = BPCrw.ArtCode;
+      found = ReadFirstMain(INr,1,true);
+      if ((found) and (BPCrw.BasePriceAfter!=0)) then begin
+        INr.UPrice1 = BPCrw.BasePriceAfter;
+        INr.LastBasePriceChange = BPCp.TransDate;
+        if (RecordStore(INr,true)) then begin end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt BPCVcRecordSaveAfter(var record BPCVc BPCr,record BPCVc BPC2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (BPCr.OKFlag!=0) then begin
+    BPCUpdateBasePrice(BPCr);
+  end;
+  BPCVcRecordSaveAfter = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt BPCVcRecordUpdateAfter(var record BPCVc BPCr,record BPCVc BPC2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((BPC2r.OKFlag==0) and (BPCr.OKFlag!=0)) then begin
+    BPCUpdateBasePrice(BPCr);
+  end;
+  BPCVcRecordUpdateAfter = res; 
+  RETURN;
+END;
+
+global
+function LongInt BPCVcRecordRemoveTest(var record BPCVc BPCr,record BPCVc BPC2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 1;
+  if (BPCr.OKFlag!=0) then begin
+    if (long3>0) then begin
+      MessageBox(1560,"");
+    end;
+    res = 0;
+  end;
+LBPCVcRecordRemoveTest:;
+  BPCVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+function LongInt BPCVcRecordCheck(var record BPCVc BPCr,record BPCVc BPC2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  string 255 tstr;
+  Integer insertmode,updatemode;
+  record BPCVc lBPCr;
+  row BPCVc BPCrw;
+  record INVc INr;
+  Integer i,rwcnt,cnt;
+  LongInt oldnr;
+  Boolean transf,gentrans,check;
+  row BPCVc BPC2rw;
+  val prevsn;
+  Integer errstr;
+
+  res = 0;     
+  insertmode = 1;
+  updatemode = 2;
+  if (long4>0) then begin
+    check = true;
+  end else begin
+    check = false;
+  end;  
+  oldnr = BPCr.SerNr; 
+  transf = false;
+  if (BPCr.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (BPC2r.OKFlag==0) then begin transf = true; end;
+    end;
+  end;
+  if (stat==updatemode) then begin
+    if (BPCr.SerNr<=0) and (BPC2r.OKFlag==0) then begin
+      BPCr.SerNr = BPC2r.SerNr;
+    end;
+  end;  
+  if (BPCr.SerNr<=0) then begin
+    BPCr.SerNr = NextSerNr("BPCVc",BPCr.TransDate,-1,false,"");
+  end;
+  if ((stat==insertmode) or (BPCr.SerNr!=BPC2r.SerNr)) then begin
+    lBPCr.SerNr = BPCr.SerNr;
+    if (ReadFirstMain(lBPCr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1; 
+      goto LBPCVcRecordCheck;
+    end;
+  end;
+  if (Date2Test("BPCVc",BPCr.TransDate,"TransDate",-1)==false) then begin
+    res = -1; 
+    goto LBPCVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,BPCr.TransDate,"TransDate",-1)) then begin
+    res = -1;
+    goto LBPCVcRecordCheck;
+  end;
+  if (blank(BPCr.Signature)) then begin
+    RecordCheckError(1028,"",-1,"Signature");      
+    res = -1; 
+    goto LBPCVcRecordCheck;
+  end;     
+  errstr = CheckUsers(BPCr.Signature,"",tstr,false);  
+  if (errstr!=0) then begin
+    RecordCheckError(errstr,tstr,-1,"Signature");      
+    res = -1;
+    goto LBPCVcRecordCheck;
+  end;
+  rwcnt = MatRowCnt(BPCr);
+  for (i=0;i<rwcnt;i=i+1) begin    
+    MatRowGet(BPCr,i,BPCrw);
+    if (nonblank(BPCrw.ArtCode)) then begin
+      INr.Code = BPCrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)==false) then begin
+        RecordCheckError(1233,"",i,"ArtCode");      
+        res = -1; 
+        goto LBPCVcRecordCheck;
+      end;
+      if (check==true) then begin
+        if (BPCrw.Qty<=0) then begin
+          RecordCheckError(1058,"",i,"Qty");      
+          res = -1; 
+          goto LBPCVcRecordCheck;          
+        end;
+        if (BPCrw.BasePriceBefore<=0) then begin
+          RecordCheckError(1058,"",i,"BasePriceBefore");      
+          res = -1; 
+          goto LBPCVcRecordCheck;          
+        end;
+        if (BPCrw.BasePriceAfter<=0) then begin
+          RecordCheckError(1058,"",i,"BasePriceAfter");      
+          res = -1; 
+          goto LBPCVcRecordCheck;          
+        end;
+      end;
+      if ((INr.SerNrf>0) and (INr.SerNrf<3)) then begin
+        if (BPCrw.Qty>0) then begin
+          if (IsSerialNrCorrect(BPCrw.SerialNr)==false) then begin
+            RecordCheckError(24154,BPCrw.SerialNr,i,"SerialNr");      
+            res = -1; 
+            goto LBPCVcRecordCheck;
+          end;
+          if (INr.SerNrf==1) then begin
+            if (SerialNrAvail(BPCrw.ArtCode,BPCrw.SerialNr,"",BPCrw.Qty)==false) then begin
+              RecordCheckError(1240,"",i,"SerialNr");      
+              res = -1; 
+              goto LBPCVcRecordCheck;
+            end;
+          end else begin
+            prevsn = blankval;
+            for (cnt=0;cnt<i;cnt=cnt+1) begin
+              MatRowGet(BPCr,cnt,BPC2rw);
+              if ((BPC2rw.ArtCode==BPCrw.ArtCode) and (BPC2rw.SerialNr==BPC2rw.SerialNr)) then begin
+                prevsn = prevsn + BPC2rw.Qty;
+              end;
+            end;
+            prevsn = prevsn + BPCrw.Qty;
+            if (SerialNrAvail(BPCrw.ArtCode,BPCrw.SerialNr,"",prevsn)==false) then begin
+              RecordCheckError(1240,"",i,"SerialNr");      
+              res = -1; 
+              goto LBPCVcRecordCheck;
+            end;
+          end;
+        end;        
+      end;
+    end;
+  end;  
+LBPCVcRecordCheck:;
+  if (res!=0) then begin BPCr.SerNr = oldnr; end;
+  BPCVcRecordCheck = res;
+  RETURN;
+END;

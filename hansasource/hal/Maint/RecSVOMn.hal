@@ -1,0 +1,151 @@
+external procedure CheckFlush(var Integer,Integer);
+external procedure SetWSFlags(record WSVc);
+external procedure SetSVOFlags(record SVOVc);
+
+global
+procedure UpdateSVO(record SVOVc SVOp,integer wsivtype,LongInt wsnr,Integer therow,var val invqtyp)
+begin
+  row SVOVc SVOrw;
+  record WSVc WSr;
+  row WSVc WSrw;
+  Boolean wschf;
+  Integer rwcnt,i;
+  record ActVc Actr;
+  
+  switch (wsivtype) begin
+    case 0: //worksheet
+      wschf = false;
+      WSr.SerNr = wsnr;
+      if (ReadFirstMain(WSr,1,true)) then begin
+        if (MatRowCnt(WSr)>=therow) then begin
+           MatRowGet(WSr,therow,WSrw);
+           rwcnt = MatRowCnt(SVOp);
+           for (i=0;i<rwcnt;i=i+1) begin
+             MatRowGet(SVOp,i,SVOrw);
+             if (SVOrw.SerialNr==WSrw.MotherNr) then begin
+               SVOrw.Invd = SVOrw.Invd + invqtyp;
+               MatRowPut(SVOp,i,SVOrw);
+               i = rwcnt;
+             end;
+           end;
+        end;
+      end;
+    case 1: //activity
+      Actr.SerNr = wsnr;
+      if (ReadFirstMain(Actr,1,true)) then begin
+        rwcnt = MatRowCnt(SVOp);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(SVOp,i,SVOrw);
+          if (SVOrw.SerialNr==Actr.SerialNr) then begin
+            SVOrw.Invd = SVOrw.Invd + invqtyp;
+            MatRowPut(SVOp,i,SVOrw);
+            i = rwcnt;
+          end;
+        end;
+      end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateWS(LongInt wsnr,Integer therow,var val invqtyp)
+begin
+  record WSVc WSr;
+  record WSVc oldWSr;
+  row WSVc WSrw;
+  Boolean wschf;
+  Integer invfl;
+
+  invfl = 18;
+  wschf = false;
+  WSr.SerNr = wsnr;
+  if (ReadFirstMain(WSr,1,true)) then begin
+    RecordCopy(oldWSr,WSr);
+    if (MatRowCnt(WSr)>=therow) then begin
+      MatRowGet(WSr,therow,WSrw);
+      if (WSrw.Invd>invqtyp) then begin
+        invfl = 0;
+      end;
+      WSrw.Invd = invqtyp; // invqtyp is always Blank, looks wierd...
+      MatRowPut(WSr,therow,WSrw);
+      wschf = true;
+    end;
+    if (WSr.InvFlag!=0) then begin wschf = false; end;
+    if (wschf) then begin
+      WSr.InvFlag = invfl;
+      SetWSFlags(WSr);
+      if (RecordUpdate(oldWSr,WSr,false)==0) then begin
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure RecSVOMn(record RcVc RepSpec)
+begin
+  record SVOVc oldSVOr;
+  record SVOVc SVOr;
+  record IVVc IVr;
+  record WSIVVc WSIVr;
+  record WSIVVc oldWSIVr;
+  Boolean TrHs,testf;
+  LongInt fror,toor;
+  string 255 frcu;
+  string 255 tocu;
+  val temp;
+  Integer flushcnt;
+
+  fror = FirstInRange(RepSpec.f1,10);
+  toor = LastInRange(RepSpec.f1,10);
+  frcu = FirstInRange(RepSpec.f2,10);
+  tocu = LastInRange(RepSpec.f2,10);
+  TrHs = true;
+  WSIVr.SVONr = fror;
+  while (LoopKey("SVONr",WSIVr,1,TrHs)) begin  
+    if (nonblank(RepSpec.f1)) then begin
+      if (WSIVr.SVONr>toor) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = true;
+    if (nonblank(RepSpec.f2)) then begin
+      if (WSIVr.CUCode<frcu) then begin
+        testf = false;
+      end;
+      if (WSIVr.CUCode>tocu) then begin
+        testf = false;
+      end;
+    end;
+    if (WSIVr.InvNr==-1) then begin
+      testf = false;
+    end;
+    if (TrHs==false) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      IVr.SerNr = WSIVr.InvNr;
+      if (ReadFirstMain(IVr,1,true)==false) then begin
+        RecordCopy(oldWSIVr,WSIVr);
+        WSIVr.InvNr = -1;
+        if (RecordUpdate(oldWSIVr,WSIVr,false)==0) then begin
+        end;
+        temp = BlankVal;
+        if (WSIVr.RecType==0) then begin UpdateWS(WSIVr.SerNr,WSIVr.Row,temp); end;
+        SVOr.SerNr = WSIVr.SVONr;
+        if (ReadFirstMain(SVOr,1,true)) then begin
+          RecordCopy(oldSVOr,SVOr);
+          temp = -WSIVr.InvQty;
+          UpdateSVO(SVOr,WSIVr.RecType,WSIVr.SerNr,WSIVr.Row,temp);
+//          SVOr.InvFlag = 0;
+          SetSVOFlags(SVOr);
+          if (RecordUpdate(oldSVOr,SVOr,false)==0) then begin
+          end;
+          CheckFlush(flushcnt,10);          
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+

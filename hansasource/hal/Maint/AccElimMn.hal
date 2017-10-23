@@ -1,0 +1,276 @@
+external function Integer CountObjects(string);
+external procedure GetAccDCStartBalance(string,string,Date,record ObjBalVc,Integer,Integer,string,Integer,var val,var val);
+external procedure GetAccDCTurnover(string,string,Date,Date,record ObjBalVc,string,Integer,Integer,Integer,val,val,var val,var val);
+external procedure AddSMRow(record SMVc,Date,string,string,string,string,val,Boolean,Boolean ,var val);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external updating function Boolean SaveSim(record SMVc);
+external updating procedure SaveTrans(record TRVc);
+external function Integer GetIntYc(Date);
+
+function Boolean FindAccElim(record RcVc RepSpec,var record AccElimVc AEp)
+BEGIN
+  Boolean res;
+  Integer oldcomp;
+
+  if (nonblank(RepSpec.FirstAcc)) then begin
+    oldcomp = CurrentCompany;
+    if (SetCompanyCode(RepSpec.FirstAcc,false)==false) then begin
+      goto LFindAccElim;
+    end;
+  end;
+  AEp.Code = RepSpec.f1;
+  if (ReadFirstMain(AEp,1,true)==false) then begin
+    goto LFindAccElim;
+  end;
+  res = true;
+LFindAccElim:;
+  if (nonblank(RepSpec.FirstAcc)) then begin
+    ResetCompany(oldcomp);
+  end;
+  FindAccElim = res;
+  RETURN;
+END;
+
+procedure GetAccElim2(record RcVc RepSpec,string tdeb,string tcre,string acc,string obj,var val dv,var val cv)
+begin
+  record ObjBalVc ObjBalr;
+  Boolean Objbals;
+  Boolean skipf;
+  val dSb,cSb,d,c;
+
+  skipf = false;
+  d = BlankVal;
+  c = BlankVal;
+  ObjBalr.AccNumber = acc;
+  ObjBalr.Object = obj;
+  Objbals = ReadFirstMain(ObjBalr,2,true);
+  if (Objbals==false) then begin
+    if (RepSpec.IncDaughter==0) then begin
+      if (CountObjects(obj)<=1) then begin
+        skipf = true;
+      end;
+    end;
+  end;
+  if (skipf==false) then begin
+    if (Objbals) then begin
+      d = GetTurnover(ObjBalr,tdeb,RepSpec.sStartDate,RepSpec.sEndDate);
+      c = GetTurnover(ObjBalr,tcre,RepSpec.sStartDate,RepSpec.sEndDate);
+    end else begin
+      GetAccDCTurnover(acc,obj,RepSpec.sStartDate,RepSpec.sEndDate,ObjBalr,RepSpec.CurncyCode,RepSpec.SimVerf,RepSpec.basecurncy,0,dSb,cSb,d,c);
+    end;
+    dv = dv + d;
+    cv = cv + c;
+  end;
+  return;
+end;
+
+procedure GetAccElim(record RcVc RepSpec,string tdeb,string tcre,string acc1,string obj1,string acc2,string obj2,var val dv1,var val cv1,var val dv2,var val cv2)
+begin
+  string 255 objs;
+  val edv,ecv;
+  
+  GetAccElim2(RepSpec,tdeb,tcre,acc1,obj1,dv1,cv1);
+  GetAccElim2(RepSpec,tdeb,tcre,acc2,obj2,dv2,cv2);
+  if (nonblank(RepSpec.LastAcc)) then begin
+    objs = obj1;
+    if (nonblank(objs)) then begin
+      objs = objs & ",";
+    end;
+    objs = objs & RepSpec.LastAcc;
+    edv = 0; ecv = 0;
+    GetAccElim2(RepSpec,tdeb,tcre,acc1,objs,edv,ecv);
+    dv1 = dv1 - edv;
+    cv1 = cv1 - ecv;
+    objs = obj2;
+    if (nonblank(objs)) then begin
+      objs = objs & ",";
+    end;
+    objs = objs & RepSpec.LastAcc;
+    edv = 0; ecv = 0;
+    GetAccElim2(RepSpec,tdeb,tcre,acc2,objs,edv,ecv);
+    dv2 = dv2 - edv;
+    cv2 = cv2 - ecv;
+  end;
+  return;
+end;
+
+updating procedure AccElimMnExecute(record RcVc RepSpec)
+BEGIN
+  record TRVc TRr;
+  record SMVc SMr;
+  record AccVc Accr;
+  row SMVc SMrw;
+  record AccElimVc AEr;
+  row AccElimVc AErw;
+  record ObjBalVc ObjBalr;
+  Integer rwcnt,i;
+  val v,TotSum;
+  val baserate1,baserate2;
+  val cv,dv;
+  val cv1,dv1;
+  val cv2,dv2;
+  string 200 tstr1,tstr2,tstr;
+  Boolean dc1,dc2,multicompf;
+  Date bldat;
+  Integer oldcomp;
+  record DaughterCompBlock DaughterCompRec;
+  row DaughterCompBlock DaughterComprw;
+  Integer di,drwcnt;
+  record ConsolidationBlock ConsolidationRec;
+  string 30 debcol,credcol;
+
+  if (blank(RepSpec.f1)) then begin goto LAccElimMn; end;
+  RecordNew(TRr);
+  RecordNew(SMr);
+  if (blankdate(RepSpec.d2)) then begin
+    TRr.TransDate = RepSpec.d1;
+  end else begin
+    TRr.TransDate = RepSpec.d2;
+  end;
+  if (blankdate(TRr.TransDate)) then begin
+    TRr.TransDate = RepSpec.sEndDate;
+  end;
+  SMr.TransDate = TRr.TransDate;
+  if (FindAccElim(RepSpec,AEr)==false) then begin
+    goto LAccElimMn;
+  end;
+  if (nonblank(RepSpec.FirstAcc)) then begin multicompf = true; end;
+
+  TRr.Comment = AEr.Comment;
+  SMr.Comment = AEr.Comment;
+  GetFullCurncyRate(tstr,TRr.TransDate,v,v,v,baserate1,baserate2);
+  dc1 = true;
+  dc2 = false;
+  rwcnt = MatRowCnt(AEr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(AEr,i,AErw);
+    if ((nonblank(AErw.Acc1)) and (nonblank(AErw.Acc2)) and (nonblank(AErw.ToAcc))) then begin
+      if (GetAccName(AErw.Acc1,tstr1,60)==false) then begin
+        goto LSKIPROW;
+      end;
+      if (GetAccName(AErw.Acc2,tstr2,60)==false) then begin
+        goto LSKIPROW;
+      end;
+      if (GetAccName(AErw.ToAcc,tstr,60)==false) then begin
+        goto LSKIPROW;
+      end;
+      dv1 = blankval;
+      cv1 = blankval;
+      dv2 = blankval;
+      cv2 = blankval;
+// Always local company as well.
+      GetAccElim(RepSpec,"transdebit","transcredit",AErw.Acc1,AErw.Acc1Object,AErw.Acc2,AErw.Acc2Object,dv1,cv1,dv2,cv2);
+
+      if (multicompf) then begin
+        oldcomp = CurrentCompany;
+        BlockLoad(DaughterCompRec);
+        drwcnt = MatRowCnt(DaughterCompRec);
+        for (di=0;di<drwcnt;di=di+1) begin
+          MatRowGet(DaughterCompRec,di,DaughterComprw);
+          if (SetCompanyCode(DaughterComprw.CompCode,false)) then begin
+            BlockLoad(ConsolidationRec);
+            RepSpec.basecurncy = ConsolidationRec.ConsCrncy;
+            if (ConsolidationRec.ConsCrncy==0) then begin
+              debcol = "transdebit";
+              credcol = "transcredit";
+            end else begin
+              debcol = "transdebit2";
+              credcol = "transcredit2";
+            end;
+            GetAccElim(RepSpec,debcol,credcol,AErw.Acc1,AErw.Acc1Object,AErw.Acc2,AErw.Acc2Object,dv1,cv1,dv2,cv2);
+          end;
+        end;
+        ResetCompany(oldcomp);
+      end;
+
+      dv = dv1 - dv2;
+      cv = cv1 - cv2;
+      if (dv!=0) or (cv!=0) then begin
+        if (AEr.Register==0) then begin
+          AddEuroTrRow(TRr,AErw.Acc1,AErw.Acc1Object,"",tstr1,dv1-cv1,baserate1,baserate2,false,dc2,TotSum,false,"","","");
+        end else begin
+          AddSMRow(SMr,bldat,AErw.Acc1,AErw.Acc1Object,"-1",tstr1,dv1-cv1,false,dc2,TotSum);
+        end;
+        if (AEr.Register==0) then begin
+          AddEuroTrRow(TRr,AErw.Acc2,AErw.Acc2Object,"",tstr2,dv2-cv2,baserate1,baserate2,false,dc2,TotSum,false,"","","");
+        end else begin
+          AddSMRow(SMr,bldat,AErw.Acc2,AErw.Acc2Object,"-1",tstr2,dv2-cv2,false,dc2,TotSum);
+        end;
+        if (AEr.Register==0) then begin
+          AddEuroTrRow(TRr,AErw.ToAcc,"","",tstr,(dv1-cv1)+(dv2-cv2),baserate1,baserate2,false,dc1,TotSum,false,"","","");
+        end else begin
+          AddSMRow(SMr,bldat,AErw.ToAcc,"-1","-1",tstr,(dv1-cv1)+(dv2-cv2),false,dc1,TotSum);
+        end;
+      end;
+    end;
+LSKIPROW:;
+  end;
+  if (multicompf) then begin
+    oldcomp = CurrentCompany;
+    if (SetCompanyCode(RepSpec.FirstAcc,false)) then begin end;
+  end;
+  if (MatRowCnt(TRr)>0) then begin
+    TRr.Number = NextSerNr("TRVc",TRr.TransDate,AEr.NrSeries,false,"");
+    TRr.IntYc = GetIntYc(TRr.TransDate);
+    SaveTrans(TRr);
+  end;
+  if (MatRowCnt(SMr)>0) then begin
+    SMr.SerNr = NextSerNr("SMVc",SMr.TransDate,AEr.NrSeries,false,"");
+    if (SaveSim(SMr)) then begin end;
+  end;
+  if (multicompf) then begin
+    ResetCompany(oldcomp);
+  end;
+LAccElimMn:;
+  RETURN;
+END;
+
+global
+updating procedure AccElimMn(record RcVc aRepSpec)
+BEGIN
+  record RcVc RepSpec;
+  Date ld,td;
+  Integer m;
+  Boolean onetransactionf;
+
+  RecordCopy(RepSpec,aRepSpec);
+  if (GetDay(RepSpec.sStartDate)!=1) or (GetDay(RepSpec.sEndDate)!=DaysInMonth(GetYear(RepSpec.sEndDate),GetMonth(RepSpec.sEndDate))) then begin
+    MessageBox(1163,"");
+    goto LAccElimMn;
+  end;
+  onetransactionf = true;
+  if (GetMonth(RepSpec.sStartDate)!=GetMonth(RepSpec.sEndDate)) or (GetYear(RepSpec.sStartDate)!=GetYear(RepSpec.sEndDate)) then begin
+    if (blankdate(RepSpec.d2)) then begin
+      onetransactionf = false;
+    end;
+  end;
+  
+  if (onetransactionf) then begin
+    AccElimMnExecute(RepSpec);
+  end else begin
+    td = RepSpec.sStartDate;
+    td.day = DaysInMonth(GetYear(td),GetMonth(td));
+    RepSpec.sEndDate = td;
+    RepSpec.d2 = RepSpec.sEndDate;
+    
+    m = 1;
+    ld = aRepSpec.sStartDate;
+    while (ld<aRepSpec.sEndDate) begin
+      AccElimMnExecute(RepSpec);
+      
+      RecordCopy(RepSpec,aRepSpec);
+      RepSpec.sStartDate = AddMonth(RepSpec.sStartDate,m);
+      td = RepSpec.sStartDate;
+      td.day = DaysInMonth(GetYear(td),GetMonth(td));
+      RepSpec.sEndDate = td;
+      RepSpec.d2 = RepSpec.sEndDate;
+
+      m = m + 1;
+      ld = AddMonth(ld,1);
+    end;
+  end;
+LAccElimMn:;  
+  RETURN;
+END;

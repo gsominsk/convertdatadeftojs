@@ -1,0 +1,361 @@
+external function string 60 AddObjectToObjectList(string,string);
+external procedure ExtractObj(string,var Integer,var string);
+external function Boolean HasSalesmanChanged(string,string);
+external procedure TBBUVc_PasteCurncyCode(var record TBBUVc,string,Boolean);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure AddXSRow(var record XSVc,string,string,val,val,val,val,val,
+                            string,val,val,val,Integer);
+external procedure GetItemSalesAcc(string,Integer,var string);
+external procedure RoundRowSum(string,string,string,var val);
+external procedure GetItemVATCode(string,Integer,var string,Boolean);
+external procedure PastePDInInv(var record IVVc,string,Boolean);
+external function Boolean PasteCustInInv(var record IVVc);
+external procedure TBPRNewInvoice(var record IVVc,record PRVc);
+external procedure RemoveOldPRClassObjects(string,var string);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+
+procedure GetPRClassObject(string aclass,var string tstr)
+BEGIN
+  record PRClassBlock PRClassRec;
+  row PRClassBlock prrp;
+  Integer i,rwcnt;
+
+  BlockLoad(PRClassRec);
+  tstr = "";
+  rwcnt = MatRowCnt(PRClassRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PRClassRec,i,prrp);
+    if (aclass==prrp.Code) then begin
+      tstr = prrp.DefObject;
+      i = rwcnt;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure PRVc_PastePRClass(string efstr,var record PRVc PRp)
+BEGIN
+  string 255 tstr;
+  
+  if ((efstr!=PRp.PRClass) and (nonblank(efstr))) then begin
+    tstr = PRp.Objects;
+    RemoveOldPRClassObjects(efstr,tstr);
+    PRp.Objects = tstr;
+  end;
+  GetPRClassObject(PRp.PRClass,tstr);  
+  if (nonblank(PRp.Objects)) then begin
+    if (nonblank(tstr)) then begin
+      PRp.Objects = PRp.Objects & ",";
+    end;
+  end;
+  PRp.Objects = PRp.Objects & tstr;
+  RETURN;
+END;
+
+global
+procedure PRVc_PasteLeader(var record PRVc PRp)
+BEGIN
+  record UserVc EMr;
+  
+  PRp.LeaderName = "";
+  EMr.Code = PRp.Leader;
+  if (ReadFirstMain(EMr,1,true)) then begin
+    PRp.LeaderName = EMr.Name;
+  end;
+  RETURN;
+END;
+
+global
+procedure PRVc_PastePrSalesMan(var record PRVc PRp,string oldsalesmen)
+BEGIN
+  record UserVc Userr;
+  string 255 salesman;
+  Integer pos;
+  
+  if (HasSalesmanChanged(PRp.PrSalesMan,oldsalesmen)) then begin
+    PRp.SalesGroup = "";    
+    pos = 0;
+    ExtractObj(PRp.PrSalesMan,pos,salesman);
+    while (nonblank(salesman)) begin
+      Userr.Code = salesman;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        PRp.SalesGroup = AddObjectToObjectList(PRp.SalesGroup,Userr.SalesGroup);                
+      end;
+      ExtractObj(PRp.PrSalesMan,pos,salesman);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure PRVc_PasteCustCode(var record PRVc PRp,var string warning)
+BEGIN
+  record CUVc CUr;
+  
+  PRp.CustName = "";
+  CUr.Code = PRp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    PRp.CustName = CUr.Name;
+    PRp.Contact = CUr.Person;
+    PRp.Email = CUr.eMail;
+    PRp.LangCode = CUr.LangCode;
+    PRp.PrSalesMan = CUr.SalesMan;
+    if (nonblank(CUr.CurncyCode)) then begin
+      PRp.CurncyCode = CUr.CurncyCode;
+    end;
+    warning = CUr.WarnText1;
+    if (nonblank(CUr.PayDeal)) then begin
+      PRp.PayDeal = CUr.PayDeal;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure PRVc_PasteContact(var record PRVc PRp)
+BEGIN
+  record CUVc ContactCUr;
+  record CUVc CUr;
+  
+  if (FindCustomerRelation(PRp.CustCode,PRp.Contact,ContactCUr)) then begin
+    PRp.Email = ContactCUr.eMail;
+  end else begin
+    CUr.Code = PRp.CustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      PRp.Email = CUr.eMail;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure GetDownpayItemComment(var string comment)
+BEGIN
+  record ProjectBlock PRRec;
+  record INVc INr;
+
+  if (nonblank(comment)) then begin 
+    goto LGetDownpayItemComment;
+  end;
+  BlockLoad(PRRec);
+  INr.Code = PRRec.Item;
+  if (ReadFirstMain(INr,1,true)) then begin
+    comment = INr.Name;
+  end;
+LGetDownpayItemComment:;    
+  RETURN;
+END;
+
+global
+procedure PRVc_PasteValStr(var record PRVc PRp,Integer rownr)
+BEGIN
+  row PRVc PRrw;
+  string 255 tstr;
+  
+  MatRowGet(PRp,rownr,PRrw);
+  if (nonblank(PRrw.ValStr)) then begin
+    switch (PRrw.RowType) begin
+      case 0:
+        GetDownpayItemComment(tstr);
+        PRrw.Comment = tstr;
+        MatRowPut(PRp,rownr,PRrw);
+      case 1:
+//        if (Mid(tstr,len(tstr)-1,1)!="%") then begin
+//          PRrw.ValStr = PRrw.ValStr & "%";
+//        end;
+//        MatRowPut(PRp,rownr,PRrw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure PasteTBBUInIV(var record TBBUVc TBBUr)
+BEGIN
+  record PRVc PRr;
+  record XSVc XSr;
+  row TBBUVc TBBUrw;
+  record TBBUVc oldTBBUr;
+  record IVVc IVr;
+  row IVVc IVrw;
+  Integer wn;
+  Integer rwcnt;
+  Integer i,j;
+  val fr,to1,to2,br1,br2,t;
+  string 60 objstr;
+  string 255 tstr;
+
+  PRr.Code = TBBUr.PRCode;
+  if (ReadFirstMain(PRr,1,true)) then begin end;
+  if (nonblank(TBBUr.LangCode)) then begin
+    IVr.LangCode = TBBUr.LangCode;
+  end;    
+  TBPRNewInvoice(IVr,PRr);
+  objstr = IVr.Objects;
+  IVr.PRCode = TBBUr.PRCode;
+  IVr.CustCode = TBBUr.CustCode;
+  if (nonblankdate(TBBUr.TransDate)) then begin
+    IVr.InvDate = TBBUr.TransDate; 
+    IVr.TransDate = TBBUr.TransDate;
+  end;  
+  if (PasteCustInInv(IVr)) then begin
+  end;
+  if (nonblank(PRr.PayDeal)) then begin
+    IVr.PayDeal = PRr.PayDeal;
+  end;
+  if (nonblank(PRr.CustOrdNr)) then begin
+    IVr.CustOrdNr = PRr.CustOrdNr;
+  end;
+  if (nonblank(IVr.Objects)) then begin
+    objstr = objstr & ",";
+    objstr = objstr & IVr.Objects;
+  end;
+  IVr.Objects = objstr;
+  IVr.InvComment = TBBUr.Comment;
+  IVr.SalesMan = TBBUr.PRLeader;
+  IVr.FromBUQT = 1;
+  PastePDInInv(IVr,"",false);
+  
+  j = 0;
+  rwcnt = MatRowCnt(TBBUr);
+  for (i = 0 ; i<rwcnt ; i=i+1) begin
+    MatRowGet(TBBUr,i,TBBUrw);
+    if (TBBUrw.stp==1) then begin
+      if (TBBUrw.Invoiced<=0) then begin
+        if (TBBUrw.BudType!=3) then begin
+          if (blankdate(TBBUrw.InvAfter) or (TBBUrw.InvAfter<=CurrentDate)) then  begin
+//          if (TBBUrw.ItemType==0) then begin
+            ClearRow(IVr,IVrw,1);
+            IVrw.ArtCode = TBBUrw.ArtCode;
+            IVrw.Spec = TBBUrw.Comment;
+            IVrw.Quant = TBBUrw.Qty;
+            IVrw.Price = TBBUrw.Price;
+            IVrw.vRebate = TBBUrw.Discount;
+            IVrw.Sum = TBBUrw.Sum;
+            IVrw.BasePrice = TBBUrw.Cost;
+            IVrw.rowGP = TBBUrw.GP;
+            IVrw.Objects = TBBUrw.Objects;
+            GetItemVATCode(IVrw.ArtCode,IVr.ExportFlag,tstr,true);
+            IVrw.VATCode = tstr;
+            GetItemSalesAcc(IVrw.ArtCode,IVr.ExportFlag,tstr);            
+            IVrw.SalesAcc = tstr;
+            if (nonblank(IVr.CustVATCode)) then begin
+              IVrw.VATCode = IVr.CustVATCode;
+            end;
+            t = IVrw.Sum;
+            RoundRowSum(IVr.CurncyCode,IVr.PayDeal,"IVVc",t);
+            IVrw.Sum = t;
+            MatRowPut(IVr,j,IVrw);
+            j = j + 1;
+//          end;
+          end;
+        end;
+      end;
+    end;  
+  end;
+  IVSumup(IVr,true);
+  if (IVr.SerNr==-1) then begin
+    IVr.SerNr = NextSerNr("IVVc",IVr.TransDate,-1,false,IVr.LangCode);  
+  end;  
+  if (RecordStore(IVr,false)) then begin
+    XSr.FileName = "IVVc";
+    XSr.SerNr = IVr.SerNr;
+    RecordCopy(oldTBBUr,TBBUr);
+    for (i = 0 ; i<rwcnt ; i=i+1) begin
+      MatRowGet(TBBUr,i,TBBUrw);
+      if (TBBUrw.Invoiced<=0) then begin      
+        TBBUrw.Invoiced = IVr.SerNr;
+        TBBUrw.InvDate = IVr.InvDate;
+        t = blankval;
+        AddXSRow(XSr,"TBBUVc","",t,t,t,t,t,TBBUrw.ArtCode,TBBUrw.Qty,t,TBBUrw.Sum,i);
+        MatRowPut(TBBUr,i,TBBUrw);
+      end;  
+    end;    
+    if (RecordStore(XSr,false)) then begin
+      if (RecordUpdate(oldTBBUr,TBBUr,true)==0) then begin
+      end;  
+    end;  
+  end;  
+  wn = OpenWindow("IVDClass",1,0,"","",IVr);
+  RETURN;
+END;
+
+global
+procedure PRVc_PasteLeader2(var record PRVc PRp)
+BEGIN
+  record UserVc EMr;
+  
+  PRp.Leader2Name = "";
+  EMr.Code = PRp.Leader2;
+  if (ReadFirstMain(EMr,1,true)) then begin
+    PRp.Leader2Name = EMr.Name;
+  end;
+  return;
+END;
+
+global
+procedure PRVc_PasteLeader3(var record PRVc PRp)
+BEGIN
+  record UserVc EMr;
+  
+  PRp.Leader3Name = "";
+  EMr.Code = PRp.Leader3;
+  if (ReadFirstMain(EMr,1,true)) then begin
+    PRp.Leader3Name = EMr.Name;
+  end;
+  return;
+END;
+
+global
+procedure PRVc_PasteLeader4(var record PRVc PRp)
+BEGIN
+  record UserVc EMr;
+  
+  PRp.Leader4Name = "";
+  EMr.Code = PRp.Leader4;
+  if (ReadFirstMain(EMr,1,true)) then begin
+    PRp.Leader4Name = EMr.Name;
+  end;
+  return;
+END;
+
+global
+procedure PRVc_PasteLeader5(var record PRVc PRp)
+BEGIN
+  record UserVc EMr;
+  
+  PRp.Leader5Name = "";
+  EMr.Code = PRp.Leader5;
+  if (ReadFirstMain(EMr,1,true)) then begin
+    PRp.Leader5Name = EMr.Name;
+  end;
+  return;
+end;
+
+global
+function Integer PastePRInTBBU(record PRVc PRr,var record TBBUVc TBBUr)
+begin
+  Integer err;
+  string 255 warntext;
+
+  TBBUr.PRCode = PRr.Code;
+  if (ReadFirstMain(TBBUr,1,true)==false) then begin
+    RecordNew(TBBUr);
+    TBBUr.TransDate = CurrentDate;
+    TBBUr.PRCode = PRr.Code;
+    TBBUr.PRName = PRr.Name;  
+    TBBUr.CustCode = PRr.CustCode;
+    TBBUr.CustName = PRr.CustName;    
+    TBBUr.SalesMan = PRr.PrSalesMan;
+    TBBUr.SalesGroup = PRr.SalesGroup;
+    TBBUr.PRLeader = PRr.Leader;
+    TBBUr.LangCode = PRr.LangCode;
+    TBBUr.Members = PRr.Members;
+    TBBUr.CurncyCode = PRr.CurncyCode;
+    if (nonblank(TBBUr.CurncyCode)) then begin
+      TBBUVc_PasteCurncyCode(TBBUr,"",true);
+    end;
+    err = 0;
+  end;
+  return;
+end;

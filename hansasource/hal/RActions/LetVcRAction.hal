@@ -1,0 +1,225 @@
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external procedure GetCurUser(var record UserVc);
+external updating procedure MakeActFromSubSys_LetVc(var record LetVc,Boolean);
+external function Boolean SerNrTestLetVc(LongInt,Date,var Boolean);
+
+function string 255 TimeToString(time t) //not needed in 7.0
+begin
+  string 255 tstr;
+  
+  if (nonblanktime(t)) then begin
+    if (t.hour<10) then begin
+      tstr = "0";
+    end;
+    tstr = tstr & t.hour;
+
+    tstr = tstr & ":";
+    
+    if (t.minute<10) then begin
+      tstr = tstr & "0";
+    end;
+    tstr = tstr & t.minute;
+  end;
+  
+  TimeToString = tstr;
+  return;
+end;
+
+global
+function LongInt LetVcRecordDefaults(var record LetVc Letr,record LetVc Let2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc Userr;
+
+  Letr.SerNr = -1;
+  Letr.TransDate = CurrentDate;
+//70  Letr.TransTime = CurrentTime;
+  Letr.TransTime = TimeToString(CurrentTime);//not needed in 7.0
+  if (SingleUserMode) then begin
+    Letr.SerNr = NextSerNr("LetVc",Letr.TransDate,-1,false,"");
+  end;
+  if (nonblank(CurrentUser)) then begin
+    GetCurUser(Userr);
+    Letr.ShortSign = Userr.Code;
+    Letr.Signature = Userr.Name;
+  end;
+  LetVcRecordDefaults = res;
+  RETURN;
+END;
+
+global
+function LongInt LetVcRecordDuplicate(var record LetVc Letr,record LetVc Let2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc Userr;
+
+  Letr.SerNr = -1;
+  Letr.TransDate = CurrentDate;
+//70  Letr.TransTime = CurrentTime;
+  Letr.TransTime = TimeToString(CurrentTime);//not needed in 7.0
+    Letr.Printdf = 0;
+  Letr.OKFlag = 0;
+  if (SingleUserMode) then begin
+    Letr.SerNr = NextSerNr("LetVc",Letr.TransDate,-1,false,"");
+  end;
+  if (nonblank(CurrentUser)) then begin
+    GetCurUser(Userr);
+    Letr.ShortSign = Userr.Code;
+    Letr.Signature = Userr.Name;
+  end;
+  LetVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function LongInt LetVcRecordSave(var record LetVc Letr,record LetVc Let2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Date blankd;
+
+  if (Letr.SerNr==-1) then begin
+    Letr.SerNr = NextSerNr("LetVc",Letr.TransDate,-1,false,"");
+  end;
+  LetVcRecordSave = res; 
+  RETURN;
+END;
+
+updating procedure CopyLTxtLinks(var record LetVc Letr)
+BEGIN
+  Integer pos,textsize,filenr;
+  record Attach2Vc Attach2r;
+  record RLinkVc RLr;
+  record LTxtVc LTxtr;
+
+//    CopyRecordLinks(LTxtr,Letr);
+  if (nonblank(Letr.LTxtCode)) then begin
+    LTxtr.Code = Letr.LTxtCode;
+    if (ReadFIrstMain(LTxtr,1,true)) then begin
+      filenr = 1;
+      while (ReadRecordLink(LTxtr,filenr,Attach2r,RLr)) begin
+        if ((nonblank(Attach2r.FileName)) and (Attach2r.Uploading==0) and (Attach2r.FileName!="body.html")) then begin
+          CreateRecordLink(Letr,CurrentCompany,Attach2r,CurrentCompany);  
+        end;
+        filenr = filenr + 1;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt LetVcRecordSaveAfter(var record LetVc Letr,record LetVc Let2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Date blankd;
+
+  if (Letr.OKFlag<>0) then begin
+    MakeActFromSubSys_LetVc(Letr,false);
+  end;
+  CopyLTxtLinks(Letr);
+  LetVcRecordSaveAfter = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt LetVcRecordUpdateAfter(var record LetVc Letr,record LetVc Let2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Date blankd;
+
+  if ((Let2r.OKFlag==0) and (Letr.OKFlag<>0)) then begin
+    MakeActFromSubSys_LetVc(Letr,false);
+  end;
+  if (Letr.LTxtCode!=Let2r.LTxtCode) then begin
+    CopyLTxtLinks(Letr);
+  end;
+  LetVcRecordUpdateAfter = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt LetVcRecordCheck(var record LetVc Letr,record LetVc Let2r,LongInt stat,LongInt long4)
+BEGIN
+  record LetVc LetTempr;
+  record CUVc CUr;
+  Integer res;
+  LongInt oldnr;
+  LongInt newnr;
+  record CRMBlock CRMb;
+  Boolean gentrans;
+  
+  res = 0;
+  if ((Let2r.OKFlag==1) and (stat==2)) then begin
+    goto LLetVcRecordCheckEnd;
+  end;
+  BlockLoad(CRMb);
+  oldnr = Letr.SerNr;
+  if (Letr.SerNr<=0) then begin
+    newnr = 0;
+    Letr.SerNr = NextSerNr("LetVc",Letr.TransDate,newnr,false,"");
+  end;
+  if (stat==2) then begin
+    if (Letr.SerNr<=0) and (Let2r.OKFlag==0) then begin
+      Letr.SerNr = Let2r.SerNr;
+    end;
+  end;
+  if (SerNrTestLetVc(Letr.SerNr,Letr.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");
+    res = -1;
+    goto LLetVcRecordCheck;
+  end;
+  if ((stat==0) or (Letr.SerNr!=Let2r.SerNr)) then begin
+    LetTempr.SerNr = Letr.SerNr;
+    if (ReadFirstMain(LetTempr,1,true)) then begin
+      RecordCheckError(1115,"",-1,"SerNr");      
+      res = -1; 
+      goto LLetVcRecordCheck;
+    end;
+  end;
+  if (blank(Letr.CustCode)) then begin // If you want all, put *
+    RecordCheckError(22068,"",-1,"CustCode");
+    res = -1; 
+    goto LLetVcRecordCheck;
+  end;
+  if (Letr.CustCode=="*") then begin
+    if (CRMb.RequireCustomerClassOnLet!=0) then begin
+      if (blank(Letr.Classification)) then begin
+        RecordCheckError(1058,"",-1,"Classification");
+        res = -1; 
+        goto LLetVcRecordCheck;
+      end;
+    end;
+  end;
+  CUr.Code = Letr.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if ((Letr.Contact<>CUr.Person) and (nonblank(Letr.Contact))) then begin
+      if (FindCustomerRelation(Letr.CustCode,Letr.Contact,CUr)==false) then begin
+        RecordCheckError(1272,"",-1,"Contact");      
+        res = -1; 
+        goto LLetVcRecordCheck;
+      end;
+    end;
+  end; 
+LLetVcRecordCheck:;
+  if (res!=0) then begin
+    Letr.SerNr = oldnr;
+  end;
+LLetVcRecordCheckEnd:;
+  LetVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt LetVcRecordRemoveTest(var record LetVc Letr,record LetVc Let2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 1;
+  if (Letr.OKFlag!=0) then begin
+    if (long3>0) then begin MessageBox(1560,"") end;
+    res = 0;
+  end;
+LLetVcRecordRemoveTest:;
+  LetVcRecordRemoveTest = res;
+  RETURN;
+END;

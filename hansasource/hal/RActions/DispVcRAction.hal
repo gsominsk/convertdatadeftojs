@@ -1,0 +1,585 @@
+external procedure WarnFutureDate(Boolean,Date);
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external updating function LongInt RentResVcRecordUpdateAfter(var record RentResVc,record RentResVc,LongInt,LongInt);
+external updating procedure UpdateCustRentStat(LongInt,string,string,val);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external updating procedure UpdateInternalInstock(string,string,val);
+external function val HALGetIntStockQty(string,string,Date);
+external function Boolean IntSerialNrAvail(string,string,string,val);
+external procedure GetFullCurncyRate(var string,Date,var val,var val,var val,var val,var val);
+external updating procedure DispatchUpdateSVO(record DispatchVc);
+external function Boolean ShouldItemUpdateStock(string);
+external updating procedure DispatchUpdateIntINrs(record DispatchVc,Boolean,Boolean);
+external function Boolean SerNrTestDispatchVc(LongInt,Date,var Boolean);
+external function Boolean Date2Test(string,Date,string,Integer);
+external procedure NewRentalCharge(Integer,var record RentChrgVc,Date,LongInt,LongInt,var string,string);
+external function Boolean PasteRentChrgItem(var record RentChrgVc,var string);
+external function Boolean CheckRentCustCreditLimit(string,string,string,val,Date,Date);
+external procedure SetRentResStatus(var record RentResVc,record RentControlBlock);
+
+global
+function LongInt DispatchVcRecordDefaults(var record DispatchVc Dispr,record DispatchVc Disp2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  Dispr.SerNr = -1;
+  Dispr.RegDate = CurrentDate;
+  Dispr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    Dispr.SerNr = NextSerNr("DispatchVc",Dispr.TransDate,-1,false,"");
+  end;
+  Dispr.AgreementNr = -1;
+  Dispr.SVONr = -1;
+  Dispr.Comment = "";
+  Dispr.OKFlag = 0;
+  Dispr.OKCheck = 0;
+//  Dispr.ToSalesStock = 0;
+  Dispr.SumQuant = BlankVal;
+  DispatchVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt DispatchVcRecordDuplicate(var record DispatchVc Dispr,record DispatchVc Disp2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  Dispr.SerNr = -1;
+  Dispr.RegDate = CurrentDate;
+  Dispr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    Dispr.SerNr = NextSerNr("DispatchVc",Dispr.TransDate,-1,false,"");
+  end;
+  Dispr.OKFlag = 0;
+  Dispr.OKCheck = 0;
+  WarnFutureDate(true,Dispr.TransDate);
+  DispatchVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt DispatchVcRecordSave(var record DispatchVc Dispr,record DispatchVc Disp2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  if (Dispr.OKFlag==1) then begin
+    Dispr.OKCheck = 1;
+  end else begin
+    Dispr.OKCheck = 0;
+  end;
+  DispatchVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt DispatchVcRecordUpdate(var record DispatchVc Dispr,record DispatchVc Disp2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (Dispr.OKFlag==1) then begin
+    Dispr.OKCheck = 1;
+  end else begin
+    Dispr.OKCheck = 0;
+  end;
+  DispatchVcRecordUpdate = res;
+  return;
+end;
+
+global
+updating function LongInt DispatchVcRecordCheck(var record DispatchVc Dispatchp,record DispatchVc Dispatch2p,LongInt stat,LongInt check)
+BEGIN
+  LongInt res,sernr;
+  record AgreementVc Agreementr;
+  row DispatchVc Dispatchrw;
+  record RentResVc RentResr;
+  row RentResVc RentResrw;
+  record INVc INr;
+  record LocationVc LocRec;
+  record MainStockBlock MainStockRec;
+  record SRBlock SRRec;
+  record DispatchVc locDispatchr;
+  row DispatchVc Dispatch2rw;            
+  Integer i,rwcnt,j,cnt,errcode;
+  Integer insertmode,updatemode;
+  LongInt oldnr,newnr;
+  Boolean transf,gentrans;
+  val t,prev;
+  string 10 location;
+  Boolean hasrentr;
+  
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  BlockLoad(SRRec);
+  BlockLoad(MainStockRec);
+  oldnr = Dispatchp.SerNr; 
+  transf = false;
+  if (Dispatchp.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if ((Dispatch2p.OKFlag==0) or (Dispatch2p.OKFlag==2)) then begin transf = true; end;
+    end;
+  end;
+  if (stat==updatemode) then begin
+    if (Dispatchp.SerNr<=0) and ((Dispatch2p.OKFlag==0) or (Dispatch2p.OKFlag==2)) then begin
+      Dispatchp.SerNr = Dispatch2p.SerNr;
+    end;
+  end;  
+  if (Dispatchp.OKFlag==1) then begin
+    Dispatchp.OKCheck = 1;
+  end else begin
+    Dispatchp.OKCheck = 0;
+  end;
+  if (blank(Dispatchp.CustCode)) then begin
+    RecordCheckError(1058,"",-1,"CustCode");
+    res = -1;
+    goto LDispatchVcRecordCheck;
+  end;
+  if (Dispatchp.SerNr<=0) then begin
+    Dispatchp.SerNr = NextSerNr("DispatchVc",Dispatchp.TransDate,-1,false,"");
+  end;
+  if ((stat==insertmode) or (Dispatchp.SerNr!=Dispatch2p.SerNr)) then begin
+    locDispatchr.SerNr = Dispatchp.SerNr;
+    if (ReadFirstMain(locDispatchr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1;
+      goto LDispatchVcRecordCheck;
+    end;
+  end;
+  if (SerNrTestDispatchVc(Dispatchp.SerNr,Dispatchp.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1; 
+    goto LDispatchVcRecordCheck;
+  end;
+  if (Date2Test("DispatchVc",Dispatchp.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto LDispatchVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,Dispatchp.TransDate,"TransDate",-1)) then begin
+    res = -1;
+    goto LDispatchVcRecordCheck;
+  end;
+  if (Dispatchp.AgreementNr>-1) then begin
+    Agreementr.SerNr = Dispatchp.AgreementNr;
+    if (ReadFirstMain(Agreementr,1,true)) then begin
+      if ((Agreementr.OKFlag==0) or (Agreementr.AgreeStatus>0)) then begin
+        RecordCheckError(2161,"",-1,"SerNr");      
+        res = -1; 
+        goto LDispatchVcRecordCheck;
+      end;
+    end else begin
+      RecordCheckError(1290,"",-1,"SerNr");      
+      res = -1; 
+      goto LDispatchVcRecordCheck;
+    end;
+  end;
+  location = Dispatchp.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  LocRec.Code = location;
+  if (nonblank(location)) then begin
+    if (ReadFirstMain(LocRec,1,true)==false) then begin
+      RecordCheckError(1120,location,-1,"Location");      
+      res = -1;
+      goto LDispatchVcRecordCheck;
+    end;
+  end;
+  rwcnt = MatRowCnt(Dispatchp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Dispatchp,i,Dispatchrw);
+    if (nonblank(Dispatchrw.ArtCode)) then begin
+      if (ReadFirstItem(Dispatchrw.ArtCode,INr,true,true)==false) then begin
+        RecordCheckError(1233,"",i,"ArtCode");      
+        res = -1;
+        goto LDispatchVcRecordCheck;
+      end;
+      if (INr.ItemType==2) then begin
+         RecordCheckError(1247,"",i,"Quant");      
+         res = -1; 
+         goto LDispatchVcRecordCheck;
+      end;
+      if ((check!=0) and (transf)) then begin
+        RentResr.SerNr = Dispatchrw.RentResSerNo;
+        hasrentr = ReadFirstMain(RentResr,1,true);
+        if (Dispatchrw.RentResRow==-1) then begin
+          if (CheckRentCustCreditLimit(Agreementr.CustCode,Dispatchrw.ArtCode,Dispatchrw.SerialNr,Dispatchrw.Quant,Dispatchp.TransDate,Dispatchp.TransDate)==false) then begin
+            RecordCheckError(1164,"",i,"ArtCode");      
+            res = -1; 
+            goto LDispatchVcRecordCheck;
+          end;
+          if (hasrentr) then begin
+            if ((Dispatchrw.Quant+RentResr.RentResDel)>RentResr.RentQuant) then begin
+              RecordCheckError(1303,"",i,"Quant");      
+              res = -1; 
+              goto LDispatchVcRecordCheck;
+            end;
+          end;
+        end else begin
+          if (Dispatchrw.RentResRow<MatRowCnt(RentResr)) then begin
+            MatRowGet(RentResr,Dispatchrw.RentResRow,RentResrw);
+            if (hasrentr) then begin
+              if ((Dispatchrw.Quant+RentResrw.Del)>RentResrw.Quant) then begin
+                RecordCheckError(1303,"",i,"Quant");      
+                res = -1; 
+                goto LDispatchVcRecordCheck;
+              end;
+            end;
+          end;
+        end;
+        if ((INr.SerNrf>0) and (INr.SerNrf<3)) then begin
+          if (blank(Dispatchrw.SerialNr)) then begin
+            if (Dispatchrw.Quant!=0) then begin
+              RecordCheckError(1239,"",i,"SerialNr");      
+              res = -1; 
+              goto LDispatchVcRecordCheck;
+            end;
+          end;
+          if (Dispatchrw.Quant>0) then begin
+            if (IntSerialNrAvail(Dispatchrw.ArtCode,Dispatchrw.SerialNr,location,Dispatchrw.Quant)==false) then begin
+              RecordCheckError(1240,"",i,"SerialNr");      
+              res = -1; 
+              goto LDispatchVcRecordCheck;
+            end;
+          end;
+          if ((Dispatchrw.Quant>1) and (INr.SerNrf==1)) then begin
+            RecordCheckError(1242,"",i,"SerialNr");      
+            res = -1; 
+            goto LDispatchVcRecordCheck;
+          end;
+          if (Dispatchrw.Quant>0) then begin
+            for (j=0;j<i;j=j+1) begin
+              MatRowGet(Dispatchp,j,Dispatch2rw);
+              if ((Dispatchrw.ArtCode==Dispatch2rw.ArtCode) and (Dispatchrw.SerialNr==Dispatch2rw.SerialNr)) then begin
+                RecordCheckError(1242,"",i,"SerialNr");      
+                res = -1; 
+                goto LDispatchVcRecordCheck;
+              end;
+            end;
+          end;
+        end else begin
+          prev = 0;
+          for (cnt=0;cnt<i;cnt=cnt+1) begin
+            MatRowGet(Dispatchp,cnt,Dispatch2rw);
+            if (Dispatch2rw.ArtCode==Dispatchrw.ArtCode) then begin
+              prev = prev + Dispatch2rw.Quant;
+            end;
+          end;
+          if (INr.ItemType==1) then begin
+            prev = prev + Dispatchrw.Quant;
+            if (HALGetIntStockQty(Dispatchrw.ArtCode,location,Dispatchp.TransDate)<prev) then begin
+              RecordCheckError(1247,"",i,"ArtCode");      
+              res = -1; 
+              goto LDispatchVcRecordCheck;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+LDispatchVcRecordCheck:;
+  if (res!=0) then begin
+    Dispatchp.SerNr = oldnr;
+  end;
+  DispatchVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function Boolean DispatchDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record DispatchVc Dispatchr;
+  row DispatchVc Dispatchrw;
+  Boolean res;
+
+  res = true;
+  if (rownr>-1) then begin
+    GetWindowRecord(wn,Dispatchr);
+    if (Dispatchr.OKFlag==0) then begin
+      MatRowGet(Dispatchr,rownr,Dispatchrw);
+    end else begin
+      res = false;
+    end;
+  end;
+  DispatchDClassDeleteRowTest = res;
+  return;
+end;
+
+updating procedure DispatchUpdateStock(var record DispatchVc Dispatchp)
+BEGIN
+  record MainStockBlock MainStockRec;
+  row DispatchVc Dispatchrw;
+  Integer i,rwcnt;
+  val t,t2,q2;
+  string 10 location,loc2;
+  
+  BlockLoad(MainStockRec);
+  location = Dispatchp.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(Dispatchp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Dispatchp,i,Dispatchrw);
+    if (nonblank(Dispatchrw.ArtCode)) then begin
+      t2 = -Dispatchrw.Quant;
+      if (ShouldItemUpdateStock(Dispatchrw.ArtCode)==false) then begin
+        t2 = blankval;
+      end;
+      if (t2!=0) then begin
+        UpdateInternalInstock(Dispatchrw.ArtCode,location,t2);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+/* Doesn't work, not neccesary now, but perhaps will be */
+updating procedure CreateDispatchCharges(record DispatchVc Dispatchr)
+begin
+  row DispatchVc Dispatchrw;
+  record RentResVc RentResr;
+  record RentResVc oldRentResr;
+  record RentChrgVc RentChrgr;
+  row RentResVc RentResrw;
+  Boolean changedf;
+  Integer rwcnt,i;
+  Integer res;
+  string 200 warn;
+  
+  rwcnt = MatRowCnt(Dispatchr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Dispatchr,i,Dispatchrw);
+    if (Dispatchrw.RentResRow>-1) then begin
+      RentResr.SerNr = Dispatchrw.RentResSerNo;
+      if (ReadFirstMain(RentResr,1,true)) then begin
+        RecordCopy(oldRentResr,RentResr);
+        if (Dispatchrw.RentResRow<MatRowCnt(RentResr)) then begin
+          MatRowGet(RentResr,Dispatchrw.RentResRow,RentResrw);
+          if (RentResrw.Type==2) then begin
+            RentResrw.Inv = RentResrw.Inv + Dispatchrw.Quant;
+            if (RentResrw.Inv==0) then begin
+              RentResrw.Inv = BlankVal;
+            end;
+            MatRowPut(RentResr,Dispatchrw.RentResRow,RentResrw);
+            changedf = true;
+            NewRentalCharge(5,RentChrgr,Dispatchr.TransDate,Dispatchr.AgreementNr,RentResr.SerNr,warn,Dispatchr.Site);
+            RentChrgr.Item = Dispatchrw.ArtCode;
+            RentChrgr.Quant = Dispatchrw.Quant;
+            RentChrgr.Site = Dispatchr.Site;
+            if (blank(RentChrgr.Site)) then begin
+//              RentChrgr.Site = Agreementr.Site;
+            end;
+            if (PasteRentChrgItem(RentChrgr,warn)) then begin
+              RentChrgr.SerNr = NextSerNr("RentChrgVc",RentChrgr.TransDate,-1,false,"");
+              if (RecordInsert(RentChrgr,true)) then begin end;
+            end;
+          end;
+        end;
+      end;
+      if (changedf) then begin
+        res = RecordUpdate(oldRentResr,RentResr,false);
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure DispatchOK(record DispatchVc Dispatchr,Boolean importf)
+begin
+  DispatchUpdateStock(Dispatchr);
+  DispatchUpdateIntINrs(Dispatchr,importf,false);
+  DispatchUpdateSVO(Dispatchr);
+  return;
+end;
+
+updating procedure TestSerialNr(record DispathVc Dispatchr,var record RentResVc RentResr)
+begin
+  row DispatchVc Dispatchrw;
+  integer i, rwcnt;  
+  
+  rwcnt = MatRowCnt(Dispatchr);
+  for (i=0;i<1;i=i+1) begin   //Changed
+    MatRowGet(Dispatchr,i,Dispatchrw);
+    if (Dispatchrw.RentResRow==-1) then begin
+      if (RentResr.SerialNr <> Dispatchrw.SerialNr) then begin
+        RentResr.SerialNr = Dispatchrw.SerialNr; 
+        goto L99;
+      end;
+    end;
+  end;
+  L99:;
+  return;
+end;
+
+procedure SetRecepyDelRentResr(var record RentResVc RentResr,Date transdate)
+begin
+  record RentControlBlock RCr;
+  row RentResVc RentResrw;
+  Integer rwcnt,i;
+  Boolean alldelf;
+  
+  BlockLoad(RCr);
+  if (RentResr.RecepyItem!=0) then begin
+    alldelf = true;
+    rwcnt = MatRowCnt(RentResr);
+    if (rwcnt==0) then begin alldelf = false; end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentResr,i,RentResrw);
+      if (RentResrw.Quant!=RentResrw.Del) then begin alldelf = false; end;
+    end;
+    if (alldelf) then begin
+      RentResr.RentResDel = RentResr.RentQuant;
+//      RentResr.TransDate = transdate;
+//      RentResr.AgreeStatus = RCr.AgreeStatusDelivered;
+    end;
+  end;
+  return;
+end;
+
+updating procedure UpdateDispatchRentRes(record DispatchVc Dispatchr,Boolean negf)
+begin
+  record RentControlBlock RCr;
+  row DispatchVc Dispatchrw;
+  record RentResVc RentResr;
+  record RentResVc oldRentResr;
+  row RentResVc RentResrw;
+  Boolean changedf;
+  Integer rwcnt,i;
+  Integer res;
+  val qty;
+  
+  BlockLoad(RCr);
+  rwcnt = MatRowCnt(Dispatchr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    changedf = false;
+    MatRowGet(Dispatchr,i,Dispatchrw);
+    RentResr.SerNr = Dispatchrw.RentResSerNo;
+    if (ReadFirstMain(RentResr,1,true)) then begin
+      RecordCopy(oldRentResr,RentResr);
+      if (negf) then begin
+        qty = -Dispatchrw.Quant;
+      end else begin
+        qty = Dispatchrw.Quant;
+      end;
+//      TestSerialNr(Dispatchr,RentResr);  //This is not very good code, what should it solve??
+      if (Dispatchrw.RentResRow==-1) then begin
+        RentResr.RentResDel = RentResr.RentResDel + qty;
+        SetRentResStatus(RentResr,RCr);        
+        if (qty>0) then begin
+          if (RCr.StartDateFromDispatch<>0) then begin
+            RentResr.TransDate = Dispatchr.TransDate; // My cause conflicts
+          end;
+        end;
+        if (RentResr.RentResDel==0) then begin
+          RentResr.RentResDel = BlankVal;
+        end;
+        changedf = true;
+      end else begin
+        if (Dispatchrw.RentResRow<MatRowCnt(RentResr)) then begin
+          MatRowGet(RentResr,Dispatchrw.RentResRow,RentResrw);
+          if (nonblank(Dispatchrw.SerialNr) and (qty==1)) then begin
+            RentResrw.SerialNr = Dispatchrw.SerialNr;
+          end;
+          RentResrw.Del = RentResrw.Del + qty;
+          if (RentResrw.Del==0) then begin
+            RentResrw.Del = BlankVal;
+          end;
+          MatRowPut(RentResr,Dispatchrw.RentResRow,RentResrw);
+          changedf = true;
+        end;
+      end;
+      SetRecepyDelRentResr(RentResr,Dispatchr.TransDate);
+      if (changedf) then begin
+        res = RecordUpdate(oldRentResr,RentResr,false);
+        if (RentResVcRecordUpdateAfter(RentResr,oldRentResr,0,0)==0) then begin end;
+        if (Dispatchrw.RentResRow==-1) then begin
+          UpdateCustRentStat(RentResr.AgreementNr,Dispatchrw.ArtCode,Dispatchrw.SerialNr,qty);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt DispatchVcRecordSaveAfter(var record DispatchVc Dispatchr,record DispatchVc Dispatch2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (Dispatchr.OKFlag==1) then begin
+    UpdateDispatchRentRes(Dispatchr,false);
+    DispatchOK(Dispatchr,false);
+//    MakeTrans
+  end;
+  DispatchVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt DispatchVcRecordUpdateAfter(var record DispatchVc Dispatchr,record DispatchVc Dispatch2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((Dispatchr.OKFlag==1) and (Dispatch2r.OKFlag!=1)) then begin
+    UpdateDispatchRentRes(Dispatchr,false);
+    DispatchOK(Dispatchr,false);
+//    MakeTrans
+  end;
+  if ((Dispatchr.OKFlag!=1) and (Dispatch2r.OKFlag==1)) then begin//unok
+  end;
+  DispatchVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt DispatchVcRecordRemove(var record DispatchVc Dispatchr,record DispatchVc Dispatch2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (Dispatchr.OKFlag==1) then begin
+    UpdateDispatchRentRes(Dispatchr,true);
+  end;
+  DispatchVcRecordRemove = res;
+  RETURN;
+END;
+
+global
+function LongInt DispatchVcRecordRemoveTest(var record DispatchVc Dispatchr,record DispatchVc Dispatch2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  res = 1;
+  if (Dispatchr.OKFlag==1) then begin
+    res = 0;
+  end;
+  DispatchVcRecordRemoveTest = res;  
+  return;
+end;
+
+global
+function LongInt DispatchVcRecordImport(var record DispatchVc Dispr,record DispatchVc Disp2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (Dispr.OKFlag==1) then begin
+    if (Dispr.OKCheck!=1) then begin
+      Dispr.OKCheck = 1;
+    end;
+  end;
+  DispatchVcRecordImport = res; 
+  return;
+end;
+
+global
+updating function LongInt DispatchVcRecordImportAfter(var record DispatchVc Dispatchr,record DispatchVc Dispatch2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+    
+  if (Dispatchr.OKFlag==1) then begin
+    DispatchOK(Dispatchr,true);
+  end;
+  DispatchVcRecordImportAfter = res; 
+  RETURN;
+END;
+

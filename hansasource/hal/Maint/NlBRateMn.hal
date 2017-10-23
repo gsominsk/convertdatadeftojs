@@ -1,0 +1,133 @@
+external procedure SplitEclass(string,var Array string);
+external function val FindAccBalance(string,string,date,record ObjBalVc,Integer,Integer,Integer,string,Integer);
+external procedure TRSumup(var record TRVc,var val);
+external function val MulWithRateToBase2(var string,Date,val,roundmode);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external function Integer GetIntYc(Date);
+external procedure MockObjFromVATCode(string,var string);
+
+global   
+updating procedure NLBRateMn(var record RcVc RepSpec)
+begin
+  record AccVc Accr;
+  record ObjBalVc ObjBalr;
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer rwcnt,i;
+  val B1b,B2b,Db,Diff;
+  Boolean foundf;
+  Boolean testf;
+  string 255 RU;
+  Boolean Objbals;
+  val DiffSum,TotSum,blnkval;
+  Date dat;
+  record BaseCurBlock BCb;
+  string 255 fracc,toacc;
+  Boolean dcflag;
+  record CYBlock CYb;
+  record ObjVc ObjOnAllRowsr;
+  string 60 preobj;
+  Array string 20 ac;
+  
+  blnkval = BlankVal;
+  BlockLoad(BCb);
+  BlockLoad(CYb);
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate();
+  end;
+  dat = RepSpec.d2;
+  if (BlankDate(dat)) then begin
+    dat = RepSpec.d1;
+  end;
+  i = 0;
+  SplitEclass(CYb.Object,ac);
+  while (nonblank(ac[i])) begin
+    ObjOnAllRowsr.Code = ac[i];
+    if (ReadFirstMain(ObjOnAllRowsr,1,true)) then begin
+      if (nonblank(preobj)) then begin
+        preobj = preobj & ",";
+      end;
+      preobj = preobj & ObjOnAllRowsr.Code;
+    end;
+    i = i + 1;
+  end;
+  RecordNew(TRr);
+  TRr.Comment = USetStr(9576);
+  TRr.TransDate = RepSpec.d1;
+  fracc = FirstInRange(RepSpec.f1,10);
+  toacc = LastInRange(RepSpec.f1,10);
+  foundf = true;
+  Accr.AccNumber = fracc;
+  while (LoopMain(Accr,1,foundf)) begin
+    testf = true;
+    if (nonblank(toacc)) then begin
+      if (Accr.AccNumber>toacc) then begin
+        foundf = false;
+      end;
+    end;
+    if (nonblank(fracc)) then begin
+      if (Accr.AccNumber<fracc) then begin
+        foundf = false;
+      end;
+    end;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+/*
+why not for Currency Accounts ?     
+    if (nonblank(Accr.Curncy)) then begin
+      if ((Accr.Curncy<>BCb.BaseCur1) and (Accr.Curncy<>BCb.BaseCur2)) then begin
+        testf = false;
+      end;
+    end;
+*/    
+    if (testf) then begin
+      MockObjFromVATCode(Accr.Curncy,RU);
+      ObjBalr.AccNumber = Accr.AccNumber;
+      ObjBalr.Object = "";
+      Objbals = ReadFirstMain(ObjBalr,2,true);
+
+      B1b = FindAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,RepSpec.SimVerf,0,0,RepSpec.CurncyCode,RepSpec.IncDaughter);
+      B2b = FindAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,RepSpec.SimVerf,1,0,RepSpec.CurncyCode,RepSpec.IncDaughter);
+      if (RepSpec.flags[5]==0) then begin
+        if ((B1b==0) and (B2b==0)) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (testf) then begin
+//        Db = MulWithRateToBase2(Accr.Curncy,dat,B1b,DefaultCurRoundOff);      
+        Db = MulWithRateToBase2(BCb.BaseCur1,dat,B1b,DefaultCurRoundOff);      
+        Diff = Db - B2b;
+        DiffSum = DiffSum + Diff;
+        if (Diff<0) then begin
+          dcflag = false;
+          Diff = -Diff;
+        end else begin
+          dcflag = true;
+        end;
+        AddEuroCurncyTrRow(TRr,Accr.AccNumber,preobj,"",Accr.Comment,0,true,dcflag,TotSum,BCb.BaseCur1,blnkval,blnkval,blnkval,0,0,Diff,blnkval,-1,false,"");
+        MaintTrace(Accr.AccNumber);
+    end;
+  end;
+//  if (DiffSum<>0) then begin
+    Accr.AccNumber = RepSpec.AccStr;
+    if (ReadFirstMain(Accr,1,true)) then begin
+      if (DiffSum<0) then begin
+        dcflag = true;
+        DiffSum = -DiffSum;
+      end else begin
+        dcflag = false;
+      end;
+      AddEuroCurncyTrRow(TRr,Accr.AccNumber,preobj,"",Accr.Comment,0,true,dcflag,TotSum,BCb.BaseCur1,blnkval,blnkval,blnkval,0,0,DiffSum,blnkval,-1,false,"");
+      TRr.IntYc = GetIntYc(TRr.TransDate);                
+      TRr.Number = NextSerNr("TRVc",TRr.TransDate,-1,false,"");
+      if (TRr.Number<>-1) then begin
+        TRSumup(TRr,TotSum);
+        testf = RecordStore(TRr,true);
+        TotSum = blankval;
+      end;
+    end;
+//  end;
+  return;
+end;

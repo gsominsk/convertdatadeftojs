@@ -1,0 +1,380 @@
+external function roundmode GetVATRoundMode(record RoundBlock);
+external function roundmode SetRoundModeD(Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure RoundVATSum(string,string,string,var val);
+external procedure MulM4ProcVal(val,val,var val);
+remote procedure PasteVIRowToVATVI(record VIVc,var record VATVIVc,Integer,var Integer);
+remote procedure PasteVIToVATVI(record VIVc,var record VATVIVc);
+
+global
+procedure VATVICalcVals(var record VATVIVc VATVIp)
+begin
+  record RoundBlock RoundRec;
+  row VATVIVc VATVIrw;
+  record SMVc VATr;
+  Integer rwcnt,i,vcrwcnt;
+  val vat,t1;
+  roundmode rndtotal;
+ 
+  BlockLoad(RoundRec); 
+  SetupVATBase(VATr,vcrwcnt);  
+  VATVIp.CalcVATVal = blankval;
+  rwcnt = MatRowCnt(VATVIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATVIp,i,VATVIrw);
+    if (VATVIrw.stp==1) then begin
+      if (nonblank(VATVIrw.VATCode)) then begin
+        AddVATBase(VATr,VATVIrw.VATCode,VATVIrw.Sum,blankval,vcrwcnt,0,VATVIp.NoTAXonVAT);
+      end;
+    end;
+  end;
+  CalcVATBaseVAT(VATr,0,VATVIp.NoTAXonVAT,vcrwcnt,vat,t1);
+  RoundVATSum(VATVIp.CurncyCode,"","VIVc",vat);        
+  if (VATVIp.ExportFlag!=2) then begin // NEWVAT I don't think this is correct
+//  if ((VATVIp.ExportFlag==0) or (VATVIp.ExportFlag==3) or (VATVIp.ExportFlag==4)) then begin
+    rndtotal = GetVATRoundMode(RoundRec);  
+    vat = Round(vat,rndtotal);//2    
+    VATVIp.CalcVATVal = vat;
+  end;
+  return;
+end;
+
+global
+procedure VATVISumup(var record VATVIVc VATVIr)
+BEGIN
+  row VATVIVc VATVIrw;
+  Integer i,rwcnt;
+  
+  VATVIr.PayVal = blankval;
+  rwcnt = MatRowCnt(VATVIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATVIr,i,VATVIrw);
+    switch (VATVIrw.stp) begin
+      case 1:
+        if (VATVIrw.ovst==0) then begin
+          VATVIr.PayVal = VATVIr.PayVal + VATVIrw.Sum;   
+        end;
+    end; 
+  end;
+  VATVIr.PayVal = VATVIr.PayVal + VATVIr.CalcVATVal;
+  RETURN;
+END;
+
+procedure CalcAutoVATVI(record VATVIVc VATVIp)
+BEGIN
+  record VITBlock VITRec;
+  val t;
+
+  BlockLoad(VITRec);
+  if (VITRec.autoVATflag!=0) then begin
+    if ((VATVIp.ExportFlag==0) or (VATVIp.ExportFlag==3) or (VATVIp.ExportFlag==4)) then begin
+      MulM4ProcVal(StringToVal(VITRec.autoVATVal,M4Rate),VATVIp.PayVal,t);
+      RoundVATSum(VATVIp.CurncyCode,"","VIVc",t);      
+      VATVIp.VATVal = t;
+    end;
+  end;
+  RETURN;
+END;
+
+//HEADER
+
+function Boolean VATVIDClassPayValEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATVIVc VATVIr;
+  row VATVIVc VATVIrw;
+  val t;
+  
+  if (changed!=0) then begin
+    GetWindowRecord(wn,VATVIr);
+    CalcAutoVATVI(VATVIr);
+    VATVISumup(VATVIr);
+    PutWindowRecord(wn,VATVIr);    
+  end;  
+  VATVIDClassPayValEFAfter = res;
+  RETURN;
+END;
+
+function Boolean VATVIDClassVINrEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATVIVc VATVIr;
+  record VIVc VIr;
+  LongInt oldnr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,VATVIr);
+    VIr.SerNr = VATVIr.VINr;
+    if (ReadFirstMain(VIr,1,true)) then begin
+      PasteVIToVATVI(VIr,VATVIr);
+      VATVICalcVals(VATVIr);
+    end else begin
+      oldnr = VATVIr.SerNr;
+      RecordNew(VATVIr);
+      VATVIr.SerNr = oldnr;
+    end;
+    VATVISumup(VATVIr);
+    PutWindowRecord(wn,VATVIr);
+  end;  
+  VATVIDClassVINrEFAfter = res;
+  RETURN;
+END;
+
+//ROWS
+function Boolean VATVIDClassVIRowEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VIVc VIr;
+  record VATVIVc VATVIr;
+  row VATVIVc VATVIrw;
+  Boolean chsum;
+  Integer vati;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,VATVIr);
+    if (rownr>-1) then begin
+      MatRowGet(VATVIr,rownr,VATVIrw);
+      VIr.SerNr = VATVIr.VINr;
+      if (ReadFirstMain(VIr,1,true)) then begin
+        vati = rownr;
+        PasteVIRowToVATVI(VIr,VATVIr,VATVIrw.VIRow,vati);
+        VATVICalcVals(VATVIr);
+        chsum = true;
+      end;      
+    end;
+    if (chsum) then begin
+      VATVISumup(VATVIr);
+    end;    
+    PutWindowRecord(wn,VATVIr);
+  end;
+  VATVIDClassVIRowEFAfter = res;
+  RETURN;
+END;
+
+function Boolean VATVIDClassSumEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATVIVc VATVIr;
+  row VATVIVc VATVIrw;
+  val t;
+  Boolean chsum;
+  
+  if (changed!=0) then begin
+    GetWindowRecord(wn,VATVIr);
+    if (rownr>-1) then begin
+      MatRowGet(VATVIr,rownr,VATVIrw);
+      VATVICalcVals(VATVIr);
+//      MatRowPut(VATVIr,rownr,VATVIrw);
+      chsum = true;
+    end;
+    if (chsum) then begin
+      VATVISumup(VATVIr);
+    end;
+    PutWindowRecord(wn,VATVIr);    
+  end;  
+  VATVIDClassSumEFAfter = res;
+  RETURN;
+END;
+
+function Boolean VATVIDClassTransDateEFAfter(Integer wn,Boolean changedf)
+begin
+  Boolean res;
+  record VATVIVc VATVIr;
+  record VATVIVc VATVI2r;
+  record VIVc VIr;
+  record VATIVTBlock VATIVb;
+  
+  GetWindowRecord(wn,VATVI2r);
+  if (VATVI2r.OKFlag==0) then begin
+    BlockLoad(VATIVb);
+    if (VATIVb.TRforVATCorrwithDateinPast==0) then begin
+      GetWindowRecord(wn,VATVIr);
+      VIr.SerNr = VATVIr.VINr;
+      if (ReadFirstMain(VIr,1,true)) then begin
+        if (VATVIr.TransDate<VATVIr.VITransDate) then begin
+          MessageBox(20850,"");
+        end;
+      end;
+    end;
+  end;
+  VATVIDClassTransDateEFAfter = res;
+  return;
+end;
+
+global
+function Boolean VATVIDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "Sum": res = VATVIDClassSumEFAfter(wn,fn,rownr,changed);
+    case "VIRow": res = VATVIDClassVIRowEFAfter(wn,fn,rownr,changed);
+    case "VINr": res = VATVIDClassVINrEFAfter(wn,fn,rownr,changed);
+    case "PayVal": res = VATVIDClassPayValEFAfter(wn,fn,rownr,changed);
+    case "TransDate": res = VATVIDClassTransDateEFAfter(wn,changed!=0);
+  end;
+  VATVIDClassAfterEditField = res;
+  RETURN;
+END;
+
+function Boolean VATVIDClassEFActive(Integer wn)
+begin
+  Boolean res;
+  record VATVIVc VATVIr;
+  
+  GetWindowRecord(wn,VATVIr);
+  if (VATVIr.OKFlag==0) then begin
+    res = true;
+  end;
+  VATVIDClassEFActive = res;
+  return;
+end;
+
+function Boolean VATVIDClassTransDateEFActive(Integer wn,Integer changed)
+begin
+  Boolean res;
+  record VATVIVc VATVIr;
+  row VATVIVc VATVIrw;
+  Integer oldrwcnt,rwcnt;
+  Boolean umf;
+  
+  GetWindowRecord(wn,VATVIr);
+  if (VATVIr.OKFlag==0) then begin
+    res = true;
+    umf = true;
+  end else begin
+    oldrwcnt = WindowOldRowCnt(wn);
+    rwcnt = MatRowCnt(VATVIr);
+    if (oldrwcnt<rwcnt) then begin
+      MatRowGet(VATVIr,oldrwcnt,VATVIrw);
+      if (VATVIrw.stp==2) then begin umf = true; end;
+    end;
+  end;
+  if (umf==false) then begin
+    if (changed!=0) then begin MessageBox(1512,""); end;
+  end else begin
+    res = true;
+  end;
+  VATVIDClassTransDateEFActive = res;
+  return;
+end;
+
+global
+function Boolean VATVIDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATVIVc VATVIr;
+  
+  switch (fieldname) begin
+    case "VINr": res = VATVIDClassEFActive(wn);
+    case "VATVal": res = VATVIDClassEFActive(wn);
+    case "TransDate": res = VATVIDClassTransDateEFActive(wn,changed);
+    case "VATVIDate": res = VATVIDClassTransDateEFActive(wn,changed);
+    case "SerNr": res = VATVIDClassEFActive(wn);
+    case "InvoiceNr": res = VATVIDClassEFActive(wn);
+    case "VATVIType": res = VATVIDClassEFActive(wn);
+    case "MonthSeqNr": res = VATVIDClassEFActive(wn);
+/*      
+      GetWindowRecord(wn,VATVIr);
+      res = blank(VATVIr.VINr);
+      if (res) then begin
+        res = VATVIr.OKFlag==0;
+      end;
+*/      
+    otherwise res = false;
+  end;
+  VATVIDClassActiveEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean VATVIDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record VATVIVc VATVIr;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,VATVIr);    
+    VATVICalcVals(VATVIr);
+    VATVISumup(VATVIr);
+    PutWindowRecord(wn,VATVIr);    
+  end;
+  res = true;
+  VATVIDClassOnOverStrike = res;
+  RETURN;
+END;
+
+global
+function Boolean VATVIDClassOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record VATVIVc VATVIr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,VATVIr);
+    if (VATVIr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;    
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,VATVIr);
+    if (VATVIr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  VATVIDClassOKFlagButtonAction = res;
+  return;
+end;
+
+global
+procedure UpdateVATVIDsm()
+BEGIN  
+  record VATVIVc VATVIr;
+  row VATVIVc VATVIrw;
+  Integer wn;
+
+  wn = CurWindow;
+  if (WindowState(wn)!=1) then begin  //Rs_insert
+    GetWindowRecord(wn,VATVIr);
+    if (VATVIr.OKFlag!=0) then begin
+      ClearRow(VATVIr,VATVIrw,2);
+      VATVIrw.OldTransDate = VATVIr.TransDate;
+      VATVIrw.Sign = CurrentUser;
+      MatRowPut(VATVIr,MatRowCnt(VATVIr),VATVIrw);
+      PutWindowRecord(wn,VATVIr);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure PrintVATVID(Integer wn,Boolean previewf)
+BEGIN
+  Boolean res;
+  Integer normalmode;
+  record VATVIVc VATVIr;
+  record RcVc RepSpec;
+  
+  normalmode = 0;//Rs_normal
+  GetWindowRecord(wn,VATVIr);
+  if (WindowState(wn)==normalmode) then begin
+    RepSpec.Media = mtPrinter;
+    RepSpec.OnlyUnprntd = 1;    
+    if (previewf) then begin
+      RepSpec.Media = mtScreen;
+    end;
+    RepSpec.repname = "VATVIRn";
+    RepSpec.f1 = VATVIr.SerNr;
+    RunReport(RepSpec,0);
+  end;    
+  RETURN;
+END;

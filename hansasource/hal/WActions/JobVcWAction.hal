@@ -1,0 +1,1042 @@
+external procedure AutomatedSalesOrderly(string);
+remote function Integer JobPasteResUsage(var record JobVc,string);
+remote procedure JobVc_PasteCurncyCode(var record JobVc,string);
+remote procedure JobVc_PasteMother(var record JobVc);
+remote procedure JobPasteNrOfDays(var record JobVc);
+remote procedure JobPasteTransDate(var record JobVc);
+remote procedure JobVc_PasteGuestCode(var record JobVc,Integer);
+remote function Integer JobPasteType(var record JobVc,string);
+remote function Integer JobPasteResCode(var record JobVc,string);
+remote function val ValueStayJob(record JobVc,string,var val,Integer,var val,Boolean);
+external function LongInt DateDiff(Date,Date);
+external procedure RemoveOldBookOriginObjects(string,var string);
+external procedure RemoveOldCustObjects(string,var string);
+external procedure RemoveOldResUsageObjects(string,var string);
+remote procedure JobSumup(var record JobVc);
+remote function Boolean PasteCUCodeToJob(var record JobVc,Integer);
+remote function Boolean PasteSourceToJob(var record JobVc,string);
+remote procedure AddObj(String, var string);
+external function integer GetGuestsInJob(record JobVc);
+
+function Boolean JobDClassRequestTypeEFAfter(integer wn,Integer fn,Integer rownr,Integer changedf)   
+begin
+  Boolean res;
+  record HotelBlock Hotelr;
+  string 20 ResType;  
+  val nprice,pprice,namount,pamount,pvat,nvat;  
+  record JobVc Jobr;                       
+  Integer InclVAT;
+  LongInt NoOfGuests;
+
+  InclVAT = 1; //##
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    BlockLoad(Hotelr);
+    if (Jobr.Type==Jobr.RequestType) then begin
+      Jobr.RequestType = "";
+    end else begin
+      NoOfGuests = GetGuestsInJob(Jobr);
+      if (nonblankdate(Jobr.TransDate) and (NoOfGuests>0) and nonblank(Jobr.Type) and nonblank(Jobr.ResUsage) and nonblank(Jobr.PriceList)) then begin
+        namount = ValueStayJob(Jobr,Jobr.Type,nprice,InclVAT,nvat,true);
+      end; 
+      if (nonblankdate(Jobr.TransDate) and (NoOfGuests>0) and nonblank(Jobr.RequestType) and nonblank(Jobr.ResUsage) and nonblank(Jobr.PriceList)) then begin
+        pamount = ValueStayJob(Jobr,Jobr.RequestType,pprice,InclVAT,pvat,true);
+      end; 
+      
+      switch (Hotelr.PriceUpgrade) begin
+        case 0 : // nada
+        case 1 : Jobr.AgreedPrice = pprice;
+                 Jobr.Sum4        = pamount;
+                 Jobr.VatSum      = pvat;
+
+        case 2 : Jobr.AgreedPrice = nprice; 
+                 Jobr.Sum4        = namount;
+                 Jobr.VatSum      = nvat;
+                 if (pprice < nprice) then begin
+                   Jobr.AgreedPrice = pprice;
+                   Jobr.Sum4        = pamount;
+                   Jobr.VatSum      = pvat;
+                 end;    
+      end;
+    end;  
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassRequestTypeEFAfter = res;
+  RETURN;
+END;
+
+global
+procedure GetJobSalesGroup(string salesman,var string salesgroup,var string objs)
+BEGIN
+  record UserVc Userr;
+
+  salesgroup = "";
+  Userr.Code = salesman;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    salesgroup = Userr.SalesGroup;
+    objs       = Userr.PersObjx;
+  end;
+  RETURN;
+END;
+
+procedure JobSumup_wn(Integer wn)
+BEGIN
+  record JobVc Jobr;
+  
+  GetWindowRecord(wn,Jobr);
+  JobSumup(Jobr);
+  PutWindowRecord(wn,Jobr);
+  RETURN;
+END;
+
+function Boolean JobDClassQtyConvEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  record JobVc Jobr;
+  record ResTypeVc ResTyper;
+  record ResVc Resr;
+  LongInt maxl;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+//    if (blank(Jobr.QtyConv)) then begin
+      if (nonblank(Jobr.ResCode)) then begin
+        Resr.Code = Jobr.ResCode;
+        if (ReadFirstMain(Resr,1,true)) then begin
+          Jobr.MaxPersons = Resr.MaxPersons;
+          Jobr.MaxChildren = Resr.MaxChildren; 
+          Jobr.MaxPax = Resr.MaxPax; 
+        end;
+      end else begin
+        if (nonblank(Jobr.Type)) then begin
+          ResTyper.Code = Jobr.Type;
+          if (ReadFirstMain(ResTyper,1,true)) then begin 
+            Jobr.MaxPersons = ResTyper.MaxPersons;
+            Jobr.MaxChildren = ResTyper.MaxChildren; 
+            Jobr.MaxPax = ResTyper.MaxPax; 
+          end;
+        end;
+      end;
+//    end else begin
+//      Jobr.MaxPersons = GetQtyConv(Jobr.QtyConv);
+//    end;
+    if (Jobr.MaxPersons<1) then begin
+      Jobr.MaxPersons = 1;
+    end;
+    if (Jobr.MaxChildren<1) then begin
+      Jobr.MaxChildren = 0;
+    end;
+    if (Jobr.MaxPax<1) then begin
+      Jobr.MaxPax = Jobr.MaxPersons+Jobr.MaxChildren;
+    end;
+    JobSumup(Jobr);
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassQtyConvEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassSalesManEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  string 60 tstr,objs,SalesObj;
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    GetJobSalesGroup(Jobr.SalesMan,tstr,SalesObj);
+    Jobr.SalesGroup = tstr;
+    objs = Jobr.Objects;
+    AddObj(SalesObj,objs);
+    Jobr.Objects = objs;
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassSalesManEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassPLPriceEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+  end;
+  JobDClassPLPriceEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassCClassEFAfter(integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    JobSumup_wn(wn);
+  end;
+  JobDClassCClassEFAfter = res;
+  return;
+end;
+
+function Boolean JobDClassAgreedPriceEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+    AutomatedSalesOrderly("HasPriceLists+Edit_JobVc");
+  end;
+  JobDClassAgreedPriceEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassTransDateEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  record JobVc Jobr;
+  
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    JobPasteTransDate(Jobr);
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassTransDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassEndDateEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  record JobVc Jobr;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    Jobr.NrOfDays = DateDiff(Jobr.EndDate,Jobr.TransDate);
+    JobSumup(Jobr);
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassEndDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassAgreedDiscountEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+  end;
+  JobDClassAgreedDiscountEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassPersonsEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+    GetWindowRecord(wn,Jobr)
+    if (nonblank(Jobr.Type)) then begin
+      if (Jobr.MaxPersons<Jobr.Persons) then begin
+        MessageBox(1946,"");
+        goto LJobDClassPersonsEFAfter;
+      end;
+      if (Jobr.MaxPax!=-1) then begin
+        if (Jobr.MaxPax<Jobr.Pax) then begin
+          MessageBox(1946,"");
+          goto LJobDClassPersonsEFAfter;
+        end;
+      end;
+      if (Jobr.MaxChildren!=-1) then begin
+        if ((Jobr.MaxChildren<Jobr.Children)) then begin
+          MessageBox(1946,"");
+          goto LJobDClassPersonsEFAfter;
+        end;
+      end;
+    end;
+  end;
+LJobDClassPersonsEFAfter:;
+  JobDClassPersonsEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassChildrenEFAfter(integer wn,Boolean changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    JobSumup_wn(wn);
+    GetWindowRecord(wn,Jobr)
+    if (nonblank(Jobr.Type)) then begin
+      if (Jobr.MaxPersons<Jobr.Persons) then begin
+        MessageBox(1946,"");
+        goto LJobDClassPersonsEFAfter;
+      end;
+      if (Jobr.MaxPax!=-1) then begin
+        if (Jobr.MaxPax<Jobr.Pax) then begin
+          MessageBox(1946,"");
+          goto LJobDClassPersonsEFAfter;
+        end;
+      end;
+      if (Jobr.MaxChildren!=-1) then begin
+        if ((Jobr.MaxChildren<Jobr.Children)) then begin
+          MessageBox(1946,"");
+          goto LJobDClassPersonsEFAfter;
+        end;
+      end;
+    end;
+  end;
+LJobDClassPersonsEFAfter:;
+  JobDClassChildrenEFAfter = res;
+  return;
+end;
+
+function Boolean JobDClassNrOfDaysEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    JobPasteNrOfDays(Jobr);
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassNrOfDaysEFAfter = res;
+  return;
+end;
+
+function Boolean JobDClassMotherEFAfter(integer wn,Boolean changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,Jobr);
+    JobVc_PasteMother(Jobr);
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassMotherEFAfter = res;
+  return;
+end;
+
+function Boolean JobDClassCurncyCodeEFAfter(Integer wn,Integer changedf)
+begin
+  record JobVc Jobr;
+  
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);    
+    JobVc_PasteCurncyCode(Jobr,WindEFstr(wn));
+    PutWindowRecord(wn,Jobr);    
+  end; 
+  JobDClassCurncyCodeEFAfter = true;
+  return;
+end;
+
+function Boolean JobDClassBookOriginEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  record BookOrgBlock BOr;
+  row BookOrgBlock BOrw;
+  Integer rwcnt,i;
+  Boolean res;
+  string 60 objs,efstr;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    efstr = WindEFstr(wn);
+    if ((efstr!=Jobr.BookOrigin) and (nonblank(efstr))) then begin
+      objs = Jobr.Objects;
+      RemoveOldBookOriginObjects(efstr,objs);
+      Jobr.Objects = objs;
+    end;
+    BlockLoad(BOr);
+    rwcnt = MatRowCnt(BOr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(BOr,i,BOrw);
+      if (BOrw.Code==Jobr.BookOrigin) then begin
+        if (nonblank(BOrw.Objects)) then begin
+          objs = Jobr.Objects;
+          AddObj(BOrw.Objects,objs);
+          Jobr.Objects = objs;
+        end;
+      end;
+    end;
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassBookOriginEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassResStatusEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  record JobVc oldJobr;
+  Boolean res,oldf;
+  record HotelBlock Hotelb;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    BlockLoad(Hotelb);
+    if (Hotelb.AutoCheckInOut!=0) then begin
+      if (Jobr.ResStatus==Hotelb.ChOutSt) then begin 
+        oldf = true;
+      end;
+      if (Jobr.ResStatus==Hotelb.ChInSt) then begin 
+        oldf = true;
+      end;
+    end;
+    if (oldf) then begin
+      GetPrevWindowRecord(wn,oldJobr);
+      Jobr.ResStatus = oldJobr.ResStatus;
+      MessageBox(0,USetStr(2154));
+      goto LJobDClassResStatusEFAfter99;
+    end;
+    if (Jobr.ResStatus==Hotelb.NoshowStatus) then begin 
+      Jobr.ResCode = "";
+    end;
+LJobDClassResStatusEFAfter99:;
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassResStatusEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassCUCodeEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+  string 255 efstr,tstr;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    efstr = WindEFstr(wn);
+    if ((efstr!=Jobr.CUCode) and (nonblank(efstr))) then begin
+      tstr = Jobr.Objects;
+      RemoveOldCustObjects(efstr,tstr);
+      Jobr.Objects = tstr;
+    end;
+    res = PasteCUCodeToJob(Jobr,rownr);
+    if (res) then begin
+      JobSumup(Jobr);
+      PutWindowRecord(wn,Jobr);
+    end else begin
+      Beep;
+    end;
+  end;
+  JobDClassCUCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean JobDClassSourceEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    res = PasteSourceToJob(Jobr,WindEFstr(wn));
+    if (res) then begin
+      PutWindowRecord(wn,Jobr);
+    end else begin
+      Beep;
+    end;
+  end;
+  JobDClassSourceEFAfter = res;  
+  return;
+end;
+
+function Boolean JobDClassTypeEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+  Integer err;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    JobSumup(Jobr);
+    err = JobPasteType(Jobr,WindEFstr(wn));
+    if (err!=0) then begin
+      MessageBox(err," " & Jobr.Type);
+    end;
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassTypeEFAfter = res;  
+  RETURN;
+END;
+
+function Boolean JobDClassResUsageEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  Record ResUsageVc ResUsager;
+  String 60 objs,efstr;
+  record JobVc Jobr;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    if (JobPasteResUsage(Jobr,WindEFstr(wn))==0) then begin
+      PutWindowRecord(wn,Jobr);
+    end;    
+  end;
+  JobDClassResUsageEFAfter = res;
+  return;
+end;
+
+function Boolean JobDClassPriceListEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+  end;
+  JobDClassPriceListEFAfter = res;  
+  RETURN;
+END;
+
+function Boolean JobDClassGuestCodeEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    JobVc_PasteGuestCode(Jobr,rownr);
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassGuestCodeEFAfter = res;  
+  RETURN;
+END;
+
+function Boolean JobDClassResCodeEFAfter(integer wn,Integer changedf)
+begin
+  record JobVc Jobr;
+  Boolean res;
+  Integer err;
+  record LocalMachineBlock LMb;
+
+  res = true;
+  if (changedf!=0) then begin
+    BlockLoad(LMb);
+    GetWindowRecord(wn,Jobr);
+    err = JobPasteResCode(Jobr,LMb.ResLoc);
+    if (err!=0) then begin
+      MessageBox(err,"");
+    end;
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassResCodeEFAfter = res;  
+  RETURN;
+END;
+
+function Boolean JobDClassStartTimeEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+  end;
+  JobDClassStartTimeEFAfter = res; 
+  RETURN;
+END;
+
+function Boolean JobDClassEndTimeEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+
+  res = true;
+  if (changedf!=0) then begin
+    JobSumup_wn(wn);
+  end;
+  JobDClassEndTimeEFAfter = res;  
+  RETURN;
+END;
+
+function Boolean JobDClassCommentEFAfter(integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  record JobVc Jobr;
+  record TextTypeVc TextTyper;
+  
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Jobr);
+    TextTyper.Code = Jobr.Comment;
+    if (ReadFirstMain(TextTyper,1,true)) then begin
+      Jobr.Comment = TextTyper.Comment;
+    end;
+    PutWindowRecord(wn,Jobr);
+  end;
+  JobDClassCommentEFAfter = res;  
+  RETURN;
+END;
+
+global
+function Boolean JobDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "RequestType": res = JobDClassRequestTypeEFAfter(wn,fn,rownr,changed);
+    case "EndTime": res = JobDClassEndTimeEFAfter(wn,rownr,changed);
+    case "StartTime": res = JobDClassStartTimeEFAfter(wn,rownr,changed);
+    case "ResCode": res = JobDClassResCodeEFAfter(wn,changed);
+    case "GuestCode": res = JobDClassGuestCodeEFAfter(wn,rownr,changed);
+    case "PriceList": res = JobDClassPriceListEFAfter(wn,rownr,changed);
+    case "ResUsage": res = JobDClassResUsageEFAfter(wn,rownr,changed);
+    case "Type": res = JobDClassTypeEFAfter(wn,rownr,changed);
+    case "CUCode": res = JobDClassCUCodeEFAfter(wn,rownr,changed);
+    case "Persons": res = JobDClassPersonsEFAfter(wn,rownr,changed);
+    case "NrOfDays": res = JobDClassNrOfDaysEFAfter(wn,rownr,changed);
+    case "AgreedDiscount": res = JobDClassAgreedDiscountEFAfter(wn,rownr,changed);
+    case "AgreedPrice": res = JobDClassAgreedPriceEFAfter(wn,rownr,changed);
+    case "EndDate": res = JobDClassEndDateEFAfter(wn,rownr,changed);
+    case "TransDate": res = JobDClassTransDateEFAfter(wn,rownr,changed);
+    case "PLPrice": res = JobDClassPLPriceEFAfter(wn,rownr,changed);
+    case "SalesMan": res = JobDClassSalesManEFAfter(wn,rownr,changed);
+    case "Source": res = JobDClassSourceEFAfter(wn,rownr,changed);
+    case "BookOrigin": res = JobDClassBookOriginEFAfter(wn,rownr,changed);
+    case "ResStatus": res = JobDClassResStatusEFAfter(wn,rownr,changed);
+    case "Comment": res = JobDClassCommentEFAfter(wn,rownr,changed);
+    case "CClass": res = JobDClassCClassEFAfter(wn,rownr,changed!=0);
+    case "Children": res = JobDClassChildrenEFAfter(wn,changed!=0);
+    case "Mother": res = JobDClassMotherEFAfter(wn,changed!=0);
+    case "CurncyCode": res = JobDClassCurncyCodeEFAfter(wn,changed);
+  end;
+  JobDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean GroupJobDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+begin
+  Boolean res;
+
+  res = JobDClassAfterEditField(wn,fieldname,fn,rownr,changed);
+  GroupJobDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean JobDClassUpdateTest(Integer wn)
+BEGIN
+  Boolean res;
+  record JobVc Jobr;
+  record JobPriceVc JPr;
+  
+  res = true;
+  GetWindowRecord(wn,Jobr);
+  JPr.RecType = 0;
+  JPr.SerNr = Jobr.SerNr;
+  JPr.RowNr = 0;
+  if (IsRecordLocked(JPr)) then begin
+    res = false;
+  end;
+  JobDClassUpdateTest = res;
+  RETURN;
+END;
+
+global
+function Boolean GroupJobDClassUpdateTest(Integer wn)
+begin
+  Boolean res;
+  record JobVc Jobr;
+  record JobPriceVc JPr;
+  
+  res = true;
+  GetWindowRecord(wn,Jobr);
+  JPr.RecType = 0;
+  JPr.SerNr = Jobr.SerNr;
+  JPr.RowNr = 0;
+  if (IsRecordLocked(JPr)) then begin
+    res = false;
+  end;
+  GroupJobDClassUpdateTest = res;
+  return;
+end;
+
+function Boolean JobCustUpdateAllowed(LongInt jobsernr,string custcode,Boolean checkcust)
+begin
+  record ShopBaskVc ShopBaskr;
+  Boolean res;
+
+  res = true;
+  if (checkcust==false) then begin
+    ShopBaskr.OwnerSerNr = jobsernr;
+    if (ReadFirstKey("OwnerSerNr",ShopBaskr,1,true)) then begin
+      res = false;
+    end;
+  end else begin
+    if (nonblank(custcode)) then begin
+      ShopBaskr.CUCode = custcode;
+      ShopBaskr.OwnerSerNr = jobsernr;
+      if (ReadFirstKey("CUOwner",ShopBaskr,2,true)) then begin
+        res = false;
+      end;
+    end else begin
+      if (ReadFirstKey("OwnerSerNr",ShopBaskr,1,true)) then begin
+        res = false;
+      end;
+    end;
+  end;
+  JobCustUpdateAllowed = res;
+  return;
+end;
+
+function Boolean JobCustUpdateAllowedSource(record JobVc Jobr)
+begin
+  Boolean res;
+  
+  if (blank(Jobr.Source)) then begin
+    res = JobCustUpdateAllowed(Jobr.SerNr,"",false);
+  end else begin
+    res = JobCustUpdateAllowed(Jobr.SerNr,Jobr.Source,true);
+  end;
+  JobCustUpdateAllowedSource = res;
+  return;
+end;
+
+function Boolean JobCustUpdateAllowedCUCode(record JobVc Jobr)
+begin
+  Boolean res;
+  
+  if (blank(Jobr.CUCode)) then begin
+    res = JobCustUpdateAllowed(Jobr.SerNr,"",false);
+  end else begin
+    res = JobCustUpdateAllowed(Jobr.SerNr,Jobr.CUCode,true);
+  end;
+  JobCustUpdateAllowedCUCode = res;
+  return;
+end;
+
+function Boolean JobCustUpdateAllowedCUCodeRow(record JobVc Jobr,LongInt rowno)
+begin
+  Boolean res;
+  row JobVc Jobrw;
+  
+  MatRowGet(Jobr,rowno,Jobrw);
+  if (blank(Jobrw.CUCode)) then begin
+    res = true;
+  end else begin
+    res = JobCustUpdateAllowed(Jobr.SerNr,Jobr.CUCode,true);
+  end;
+  JobCustUpdateAllowedCUCodeRow = res;
+  return;
+end;
+
+global
+function Boolean JobDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record JobVc Jobr;
+  row JobVc Jobrw;
+  record HotelBlock Hotelb;
+  integer ws,jobstate;
+  
+  // We need a superuser that can change anyway
+  res = true;
+  if (wnst==Rs_update) then begin
+    GetPrevWindowRecord(wn,Jobr);
+    BlockLoad(Hotelb);
+    if (Jobr.ResStatus==Hotelb.ChOutSt) then begin 
+      jobstate = 2;
+    end else begin
+      if (Jobr.ResStatus==Hotelb.ChInSt) then begin 
+        jobstate = 1;
+      end else begin
+        jobstate = 0;
+      end;
+    end;
+
+    switch (fieldname) begin
+      case "SerNr"      : if (true) then begin res = false; end;
+      case "ArrivalSequence" : res = false;
+      case "TransDate"  : if (jobstate>=1) then begin res = false; end;
+      case "StartTime"  : if (jobstate>=1) then begin res = false; end;
+      case "ResCode"    : 
+        if (jobstate>=1) then begin res = false; end;
+        if (Jobr.RoomChangeFlag!=0) then begin res = false; end;
+      case "Type"       : if (jobstate>=1) then begin res = false; end;
+      case "NrOfDays"   : if (jobstate>=2) then begin res = false; end;
+      case "EndDate"    : if (jobstate>=2) then begin res = false; end;
+      case "EndTime"    : if (jobstate>=2) then begin res = false; end;
+      case "ResUsage"   : if (jobstate>=2) then begin res = false; end;
+      case "PriceList"  : if (jobstate>=2) then begin res = false; end;
+      case "xQtyConv"    : if (jobstate>=2) then begin res = false; end;
+      case "SourceName" : if (jobstate>=2) then begin res = false; end;
+      case "RequestType": if (jobstate>=2) then begin res = false; end;
+      case "AgreedPrice":
+        if (jobstate>=2) then begin res = false; end;
+        if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+      case "Source":
+        if (jobstate>=1) then begin res = false; end;
+        if (JobCustUpdateAllowedSource(Jobr)==false) then begin res = false; end;
+      case "CUCode":
+        if (jobstate>=2) then begin res = false; end;
+        if (JobCustUpdateAllowedCUCode(Jobr)==false) then begin res = false; end;
+      case "GuestCode":
+        if (jobstate>=2) then begin res = false; end;
+        if (JobCustUpdateAllowedCUCodeRow(Jobr,rownr)==false) then begin res = false; end;
+      case "CurncyCode": res = Jobr.Mother<=0;
+      case "FrRate": res = Jobr.Mother<=0;
+      case "ToRateB1": res = Jobr.Mother<=0;
+      case "ToRateB2": res = Jobr.Mother<=0;
+      case "BaseRate1": res = Jobr.Mother<=0;
+      case "BaseRate2": res = Jobr.Mother<=0;
+      case "BranchID": 
+        res = UserCanAction("AllowJobBranchIDChange",false);
+    end;  
+  end else begin
+    GetWindowRecord(wn,Jobr);
+    switch (fieldname) begin
+      case "CurncyCode": res = Jobr.Mother<=0;
+      case "FrRate": res = Jobr.Mother<=0;
+      case "ToRateB1": res = Jobr.Mother<=0;
+      case "ToRateB2": res = Jobr.Mother<=0;
+      case "BaseRate1": res = Jobr.Mother<=0;
+      case "BaseRate2": res = Jobr.Mother<=0;
+      case "BranchID": 
+        res = UserCanAction("AllowJobBranchIDChange",false);
+    end;  
+  end;
+  JobDClassActiveEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean JobDClassInsertRowTest(Integer wn,Integer rownr)
+BEGIN
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  switch (WindowState(wn)) begin
+    case 0://Rs_normal
+      GetWindowRecord(wn,Jobr);
+      if (JobCustUpdateAllowed(Jobr.SerNr,"",false)==false) then begin
+        res = false;
+      end;
+    case 2://Rs_update
+      GetPrevWindowRecord(wn,Jobr);
+      if (JobCustUpdateAllowed(Jobr.SerNr,"",false)==false) then begin
+        res = false;
+      end;
+  end;
+  JobDClassInsertRowTest = res;
+  RETURN;
+END;
+
+global
+function Boolean JobDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record JobVc Jobr;
+  Boolean res;
+
+  res = true;
+  if (WindowState(wn)==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,Jobr);    
+    if (JobCustUpdateAllowed(Jobr.SerNr,"",false)==false) then begin
+      res = false;
+    end;
+  end;
+  JobDClassDeleteRowTest = res;
+  return;
+end;
+
+global
+function Boolean JobDClassListDblClick(Integer wn)
+begin
+  Integer nwn;
+  record JobVc Jobr;
+  record JobVc SubJobr;
+  
+  if (WindowState(wn)==Rs_normal) then begin
+    if (ReadMarkedRecord(wn,SubJobr)) then begin
+      nwn = OpenWindow("JobDClass",1,0,"","",SubJobr);    
+    end;
+  end;
+  JobDClassListDblClick = true;
+  return;
+end;
+
+global
+function Boolean GroupJobDClassListDblClick(Integer wn)
+begin
+  Integer nwn;
+  record JobVc Jobr;
+  record JobVc SubJobr;
+  
+  if (WindowState(wn)==Rs_normal) then begin
+    if (ReadMarkedRecord(wn,SubJobr)) then begin
+      switch (SubJobr.ReservationType) begin
+        case kReservationTypeGroup:      
+          nwn = OpenWindow("GroupJobDClass",1,0,"","",SubJobr);    
+        case kReservationTypeNormal:      
+          nwn = OpenWindow("JobDClass",1,0,"","",SubJobr);    
+      end;
+    end;
+  end;
+  GroupJobDClassListDblClick = true;
+  return;
+end;
+
+global
+function Boolean JobDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record JobVc Jobr;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,Jobr);    
+    JobSumup(Jobr);
+    PutWindowRecord(wn,Jobr);    
+  end;
+  res = true;
+  JobDClassOnOverStrike = res;
+  RETURN;
+END;
+
+global
+function Boolean JobDClassRoomChangeFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record JobVc Jobr;
+ 
+  res = true;
+  GetWindowRecord(wn,Jobr);
+  if (Jobr.RoomChangeFlag!=0) then begin
+    res = false;
+    if (UserCanAction("AllowRoomChanging",true)) then begin
+      res = true;
+    end;
+  end;
+  JobDClassRoomChangeFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function string 40 ResSClassSpecPName(string defpsname)
+begin
+  string 40 psname;
+  record LocalMachineBlock LMb;
+
+  psname = defpsname;
+  if (UserCanAction("LimitToResLoc",false)) then begin
+    BlockLoad(LMb);
+    if (nonblank(LMb.ResLoc)) then begin  
+      psname = "Res2SClass";
+    end;
+  end;
+  ResSClassSpecPName = psname;
+  return;
+end;
+
+global
+function string 40 ResTypeSClassSpecPName(string defpsname)
+begin
+  string 40 psname;
+  record LocalMachineBlock LMb;
+
+  psname = defpsname;
+  if (UserCanAction("LimitToResLoc",false)) then begin
+    BlockLoad(LMb);
+    if (nonblank(LMb.ResLoc)) then begin  
+      psname = "ResType2SClass";
+    end;
+  end;
+  ResTypeSClassSpecPName = psname;
+  return;
+end;
+procedure JobDClassSpecPasteNameResStatus(Integer wn,var string psname)
+begin
+  record JobVc Jobr;
+  Integer rownr;
+
+  GetWindowRecord(wn,Jobr);
+  if (blank(Jobr.ResStatus)) then begin
+    psname = "ReservationStatusSClass";
+  end else begin
+    psname = "ReservationStatus2SClass";
+  end;  
+  return;
+end;
+
+global
+function string 40 JobDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "ResCode": psname = ResSClassSpecPName(defpsname);
+    case "Type": psname = ResTypeSClassSpecPName(defpsname);
+    case "RequestType": psname = ResTypeSClassSpecPName(defpsname);
+    case "ResStatus": JobDClassSpecPasteNameResStatus(wn,psname);
+  end;
+  JobDClassSpecPasteName = psname;
+  return;
+end;
+
+global
+function string 40 SwitchRoomVClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "f3": psname = ResSClassSpecPName(defpsname);
+    case "f4": psname = ResSClassSpecPName(defpsname);
+  end;
+  SwitchRoomVClassSpecPasteName = psname;
+  return;
+end;
+
+global
+function string 40 FindJobRClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 40 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "FirstAcc": psname = ResSClassSpecPName(defpsname);
+  end;
+  FindJobRClassSpecPasteName = psname;
+  return;
+end;
+
+/*
+global
+function Boolean GroupJobDClassOnOpenWindow(Integer wn)
+begin
+  record JobVc Jobr;
+  
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,Jobr);
+    Jobr.ReservationType = kReservationTypeGroup;
+    PutWindowRecord(wn,Jobr);
+  end;
+  GroupJobDClassOnOpenWindow = false;
+  return;
+end;
+*/

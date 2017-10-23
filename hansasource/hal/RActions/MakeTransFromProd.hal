@@ -1,0 +1,407 @@
+external function Integer CheckObjs(string,string,var string);
+external function string 60 AddObjectToObjectList(string,string);
+external function roundmode DefaultRoundMode();
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean TransInFiscal(Date);
+external function Integer ProductionOperationTransaction(var record TRVc,record ProdOperationVc);
+external procedure GetProductionAccounts(Integer,string,string,string,string,var string,var string);
+external procedure GetConsigmentStockAcc(string,string,var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroTrRowType(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string,Integer);
+external procedure AddEuroTrRowTypeQty(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string,Integer,val);
+external procedure GetITStockAcc(string,var string);
+external function Boolean CheckTTRPerRow(string,string,string,Boolean,var string,Integer);
+external procedure AddTransAutoTransRows(record TRVc);
+
+global
+procedure GetProdWCostAcc(Integer ItemGroupAccounts,string itcode,string ProdWCostAcc,var string res)
+BEGIN
+  record ITVc ITr;
+
+  res = "";
+  if (ItemGroupAccounts!=0) then begin
+    ITr.Code = itcode;
+    if (ReadFirstMain(ITr,1,true)) then begin
+      res = ITr.ProdWCostAcc;
+      if (nonblank(res)) then begin
+        goto LGetProdWCostAcc;
+      end;
+      res = ProdWCostAcc;
+      if (nonblank(res)) then begin
+        goto LGetProdWCostAcc;
+      end;
+/*
+non stocked items must not influence stock
+      res = ITr.InvAcc;
+      if (nonblank(res)) then begin
+        goto LGetProdWCostAcc;
+      end;
+*/      
+    end;  
+  end;
+  res = ProdWCostAcc;
+  if (nonblank(res)) then begin
+    goto LGetProdWCostAcc;
+  end;
+LGetProdWCostAcc:;  
+  RETURN;
+END;
+
+global
+procedure GetProdStockAcc(Integer ItemGroupAccounts,string locstockacc,string MainStock,string itcode,string accusageprodicostacc,string accusagestockacc,var string res,var string stockobjects)
+BEGIN
+  record LocationVc Locr;
+  
+  res = "";
+  stockobjects = "";
+  res = locstockacc;
+  if (nonblank(res)) then begin
+    goto LGetProdStockAcc;
+  end;
+  Locr.Code = MainStock;
+  if (ReadFirstMain(Locr,1,true)) then begin
+    res = Locr.StockAcc;
+    stockobjects = Locr.Objects;
+  end;
+  if (nonblank(res)) then begin
+    goto LGetProdStockAcc;
+  end;
+  if (ItemGroupAccounts!=0) then begin
+    GetITStockAcc(itcode,res);
+    if (nonblank(res)) then begin
+      goto LGetProdStockAcc;
+    end;
+  end;
+  
+  res = accusageprodicostacc;
+  if (nonblank(res)) then begin
+    goto LGetProdStockAcc;
+  end;
+  res = accusagestockacc;
+  if (nonblank(res)) then begin
+    goto LGetProdStockAcc;
+  end;
+LGetProdStockAcc:;  
+  RETURN;
+END;
+
+global
+function Integer AddProdCostRow(record TRVc gTRp,record ProdVc Prodp,row ProdVc Prodrw,record LocationVc Locr,record MainStockBlock MSb,
+                                record CostAccBlock CAb,record AccBlock ARb,record ProdAccBlock PAb,Boolean compusagef,Boolean consignmentstockf,
+                                Boolean accf,Boolean dcf,val baserate1,val baserate2,val qty,var val TotSum)
+BEGIN
+  Integer res;
+  string 10 prodwcost,prodicost,rowstockacc,compusageacc,prodcontrol;
+  Boolean stockf;
+  record INVc INr;
+  string 255 objstr,tstr,ttstr,taccnumber,locobjstr,errstr,rowstockobjstr;
+  val t,v;
+  Boolean ecdcf;
+
+  prodwcost = ARb.ProdWCostAcc;
+  prodicost = ARb.ProdICostAcc;
+  stockf = false;
+  if (ReadFirstItem(Prodrw.Item,INr,false,false)) then begin
+    if (INr.ItemType==kItemTypeStocked) then begin
+      stockf = true;
+    end;
+  end;
+  objstr = Prodp.Objects;
+  if (nonblank(objstr)) then begin objstr = objstr & ","; end;
+  objstr = objstr & Prodrw.Objects;
+  if (stockf) then begin // stockfracc was used, and Prodrw.FIFORowVal should be used when it is setup correctly
+    t = qty*Prodrw.ItemCost;
+    switch (Prodp.RowsHoldActualQty) begin
+      case 1: ;
+      otherwise t = t*Prodp.Qty;
+    end;    
+    t = Round(t,DefaultRoundMode);
+    GetProdStockAcc(CAb.ItemGroupAccounts,Locr.StockAcc,MSb.MainStock,INr.Group,ARb.ProdICostAcc,ARb.StockAcc,rowstockacc,locobjstr);
+    rowstockobjstr = AddObjectToObjectList(objstr,locobjstr);
+    if (consignmentstockf and stockf) then begin
+      if (Prodrw.InQty!=0) then begin
+        GetConsigmentStockAcc(Prodrw.Item,Prodrw.SerialNr,rowstockacc);
+      end;
+      if (Prodrw.OutQty!=0) then begin
+        rowstockacc = ARb.ConsigStockAcc;
+      end;
+    end;
+    if (GetAccName(rowstockacc,tstr,60)==false) then begin
+      res = 2120;
+      goto LAddProdCostRow;
+    end;
+    res = CheckObjs(rowstockacc,rowstockobjstr,errstr);
+    if (res!=0) then begin
+      goto LAddProdCostRow;
+    end;
+    if (CheckTTRPerRow("ProdVc",rowstockacc,rowstockobjstr,dcf,taccnumber,1)) then begin end;
+    switch (Prodp.RowsHoldActualQty) begin
+      case 1:
+        AddEuroTrRowTypeQty(gTRp,rowstockacc,rowstockobjstr,"",tstr,t,baserate1,baserate2,accf,dcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock,qty);
+      otherwise
+        AddEuroTrRowTypeQty(gTRp,rowstockacc,rowstockobjstr,"",tstr,t,baserate1,baserate2,accf,dcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock,Prodp.Qty*qty);
+    end;
+    if (Prodp.Disassemble!=0) then begin
+      if (GetAccName(ARb.DisassembleProdVar,tstr,60)==false) then begin
+        res = 22043;
+        goto LAddProdCostRow;
+      end;
+      switch (Prodp.RowsHoldActualQty) begin
+        case 1: v = Prodrw.OrgProdFIFORowVal - t;
+        otherwise v = Prodrw.OrgProdFIFORowVal*Prodp.Qty - t;
+      end;    
+      if (CheckTTRPerRow("ProdVc",ARb.DisassembleProdVar,objstr,dcf,taccnumber,1)) then begin end;      
+      AddEuroTrRowType(gTRp,ARb.DisassembleProdVar,objstr,"",tstr,v,baserate1,baserate2,false,dcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+    end;
+    if (compusagef) then begin
+      GetProductionAccounts(CAb.ItemGroupAccounts,INr.CompUsage,INr.Group,PAb.CompUsage,PAb.ProdControl,compusageacc,prodcontrol);
+      if (nonblank(compusageacc) and nonblank(prodcontrol)) then begin
+        if (GetAccName(compusageacc,tstr,60)==false) then begin
+          res = 20785; // This string has to do with HansaWorld contracts
+          goto LAddProdCostRow;
+        end;
+        if (CheckTTRPerRow("ProdVc",compusageacc,objstr,!dcf,taccnumber,1)) then begin end;
+        AddEuroTrRowType(gTRp,compusageacc,objstr,"",tstr,t,baserate1,baserate2,true,!dcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+        if (GetAccName(prodcontrol,tstr,60)==false) then begin
+          res = 20786; // This string doesn't exist....
+          goto LAddProdCostRow;
+        end;
+        if (CheckTTRPerRow("ProdVc",prodcontrol,objstr,dcf,taccnumber,1)) then begin end;
+        AddEuroTrRowType(gTRp,prodcontrol,objstr,"",tstr,t,baserate1,baserate2,true,dcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+      end;
+    end;
+  end else begin
+    t = qty*Prodrw.ItemCost;
+    switch (Prodp.RowsHoldActualQty) begin
+      case 1: ;
+      otherwise t = t*Prodp.Qty;
+    end;    
+    t = Round(t,DefaultRoundMode);
+    GetProdWCostAcc(CAb.ItemGroupAccounts,INr.Group,ARb.ProdWCostAcc,prodwcost);
+    if (GetAccName(prodwcost,tstr,60)==false) then begin
+      res = 2159;
+      goto LAddProdCostRow;
+    end;
+    if (CheckTTRPerRow("ProdVc",prodwcost,objstr,dcf,taccnumber,1)) then begin end;
+    AddEuroTrRowType(gTRp,prodwcost,objstr,"",tstr,t,baserate1,baserate2,true,dcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+  end;  
+  switch (Prodp.RowsHoldActualQty) begin
+    case 1: t = Prodrw.ExtraCost*Prodp.Qty;
+    otherwise t = Prodrw.ExtraCost*Prodp.Qty;
+  end;    
+  if (t!=0) then begin
+    ecdcf = false;
+    prodwcost = "";
+    GetProdWCostAcc(CAb.ItemGroupAccounts,INr.Group,ARb.ProdWCostAcc,prodwcost);
+    if (GetAccName(prodwcost,tstr,60)==false) then begin
+      res = 2159;
+      goto LAddProdCostRow;
+    end;
+    t = Round(t,DefaultRoundMode);
+    if (CheckTTRPerRow("ProdVc",prodwcost,objstr,ecdcf,taccnumber,1)) then begin end;
+    AddEuroTrRowType(gTRp,prodwcost,objstr,"",tstr,t,baserate1,baserate2,accf,ecdcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+/*    
+some wierd idea of Jarek
+    if (stockf) then begin
+      if (GetAccName(rowstockacc,tstr,60)==false) then begin
+        res = 2120;
+        goto LAddProdCostRow;
+      end;
+      res = CheckObjs(rowstockacc,rowstockobjstr,errstr);
+      if (res!=0) then begin
+        goto LAddProdCostRow;
+      end;
+      if (CheckTTRPerRow("ProdVc",rowstockacc,rowstockobjstr,dcf,taccnumber,1)) then begin end;
+      AddEuroTrRowType(gTRp,rowstockacc,rowstockobjstr,"",tstr,t,baserate1,baserate2,true,!ecdcf,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+    end;
+*/    
+  end;
+LAddProdCostRow:; 
+  AddProdCostRow = res;
+  RETURN;
+END;
+
+function Integer MakeTransFormProdOperations(var record TRVc gTRp,record ProdVc Prodr)
+begin
+  Integer res;
+  Boolean found;
+  record ProdOperationVc ProdOpr;
+  
+  found = true;
+  ProdOpr.ProdNr = Prodr.SerNr;
+  ProdOpr.PRStatusFlag = 3;
+  while (LoopKey("ProdNrPRStatus",ProdOpr,3,found)) begin
+    if (ProdOpr.ProdNr!=Prodr.SerNr) then begin found = false; end;
+    if (ProdOpr.PRStatusFlag!=3) then begin found = false; end;
+    if (found) then begin
+      res = ProductionOperationTransaction(gTRp,ProdOpr);
+      if (res!=0) then begin
+        goto LMakeTransFormProdOperations;
+      end;
+    end;
+  end;
+  found = true;
+  ResetLoop(ProdOpr);
+  ProdOpr.ProdNr = Prodr.SerNr;
+  ProdOpr.PRStatusFlag = 5;
+  while (LoopKey("ProdNrPRStatus",ProdOpr,3,found)) begin
+    if (ProdOpr.ProdNr!=Prodr.SerNr) then begin found = false; end;
+    if (ProdOpr.PRStatusFlag!=5) then begin found = false; end;
+    if (found) then begin
+      res = ProductionOperationTransaction(gTRp,ProdOpr);
+      if (res!=0) then begin
+        goto LMakeTransFormProdOperations;
+      end;
+    end;
+  end;
+LMakeTransFormProdOperations:;  
+  MakeTransFormProdOperations = res;
+  return;
+end;
+
+global
+function Integer MakeTransFromProd(record TRVc gTRp,record ProdVc Prodp,Boolean rpt)
+BEGIN
+  Integer res;
+  record CostAccBlock CAb;
+  record ProdAccBlock PAb;
+  record MainStockBlock MSb;
+  record TRGenBlock TRGenRec;
+  record AccBlock ARb;  
+  row ProdVc Prodrw;
+  record LocationVc Locr;
+  record INVc INr;
+  record TRVc locTRr;
+  Integer i,rwcnt;
+  string 255 ftxt,tstr;
+  string 10 rowstocktoacc,rowstockfromacc,taccnumber;
+  string 10 prodwcost,prodicost,stockgain;
+  string 60 stockobjs,objstr;
+  val baserate1,baserate2;
+  val t,TotSum;
+  Boolean dc1,dc2;
+  Boolean stockf,locf,accf,consignmentstockf;
+  record BatchTextVc BTr;
+  transaction string 255 gRuniningMaint;
+  
+  BlockLoad(PAb);
+  BlockLoad(ARb);
+  BlockLoad(TRGenRec);
+  BlockLoad(MSb);
+  BlockLoad(CAb);
+  locf = false;
+  Locr.Code = Prodp.Location;
+  if (ReadFirstMain(Locr,1,true)==false) then begin
+  end;
+  if (Prodp.Disassemble!=0) then begin
+    dc1 = true;
+    dc2 = false;
+  end else begin
+    dc1 = true;
+    dc2 = false;
+  end;
+  rwcnt = MatRowCnt(Prodp);
+  RecordNew(gTRp);
+  if (rpt==false) then begin
+    if (TRGenRec.ProdGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromProd;
+    end;
+    if (nonblankdate(TRGenRec.ProdStartDate)) then begin
+      if (Prodp.ProdDate<TRGenRec.ProdStartDate) then begin
+        res = 0;
+        goto LMakeTransFromProd;
+      end;
+    end;
+  end;
+  if (rpt==false) then begin
+    gTRp.IntYc = ProdYc;
+    gTRp.Number = Prodp.SerNr;
+    locTRr.Number = gTRp.Number;
+    locTRr.IntYc = gTRp.IntYc;
+    if (ReadFirstMain(locTRr,0,true)) then begin
+      switch (gRuniningMaint) begin    
+        case "RecalcStockMn":  ;
+        otherwise
+          res = 1032;
+          goto LMakeTransFromProd;
+      end;
+    end;
+  end;
+  gTRp.RegDate = CurrentDate;
+  gTRp.RegTime = CurrentTime;
+  gTRp.TransDate = Prodp.ProdDate;
+  if (TransInFiscal(gTRp.TransDate)==false) then begin
+    res = 1075;
+    goto LMakeTransFromProd;
+  end;
+  ftxt = Prodp.Comment;
+  gTRp.Comment = ftxt;
+  GetFullCurncyRate(tstr,gTRp.TransDate,t,t,t,baserate1,baserate2);
+  
+  if (nonblank(Prodp.Routing)) and (PAb.ProdTransaction==1) then begin 
+    res = MakeTransFormProdOperations(gTRp,Prodp);
+  end else begin  
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodp,i,Prodrw);
+      if (nonblank(Prodrw.Item)) then begin
+        if (ReadFirstItem(Prodrw.Item,INr,true,false)) then begin
+          if (INr.ItemType==kItemTypeStocked) then begin
+            BTr.ArtCode = Prodrw.Item;
+            BTr.SerialNr = Prodrw.SerialNr;
+            if (ReadFirstMain(BTr,2,true)) then begin 
+              if (BTr.ConsigStock!=0) then begin
+                consignmentstockf = true;
+                i = rwcnt;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodp,i,Prodrw);
+      if (Prodrw.InQty!=0) then begin
+         res = AddProdCostRow(gTRp,Prodp,Prodrw,Locr,MSb,CAb,ARb,PAb,Prodp.Disassemble==0,consignmentstockf,false,dc2,baserate1,baserate2,Prodrw.InQty,TotSum);
+         if (res!=0) then begin
+           goto LMakeTransFromProd;
+         end;
+      end;
+      if (Prodrw.OutQty!=0) then begin
+         res = AddProdCostRow(gTRp,Prodp,Prodrw,Locr,MSb,CAb,ARb,PAb,Prodp.Disassemble!=0,consignmentstockf,false,dc1,baserate1,baserate2,Prodrw.OutQty,TotSum);
+         if (res!=0) then begin
+           goto LMakeTransFromProd;
+         end;
+      end;
+    end;
+  end;
+  if (CAb.ObjOnStock!=0) then begin
+    stockobjs = Prodp.Objects;
+  end else begin
+    stockobjs = "";
+  end;
+  if (TotSum!=0) then begin
+    if (Prodp.PRStatusFlag==5) then begin
+      stockgain = ARb.DiscardedAccount;
+      if (GetAccName(stockgain,tstr,60)==false) then begin
+        res = 2169;
+        goto LMakeTransFromProd;
+      end;
+    end else begin
+      stockgain = ARb.StockGainAcc;
+      if (GetAccName(stockgain,tstr,60)==false) then begin
+        res = 2119;
+        goto LMakeTransFromProd;
+      end;
+    end;
+    t = TotSum;
+    if (CheckTTRPerRow("ProdVc",stockgain,stockobjs,dc2,taccnumber,0)) then begin end;
+    AddEuroTrRowType(gTRp,stockgain,stockobjs,"",tstr,t,baserate1,baserate2,true,dc2,TotSum,Prodp.Disassemble!=0,taccnumber,"","",kTransactionRowTypeStock);
+  end;
+  AddTransAutoTransRows(gTRp);
+  res = 0;
+LMakeTransFromProd:;
+  MakeTransFromProd = res;
+  RETURN;
+END;

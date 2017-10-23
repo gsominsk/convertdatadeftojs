@@ -1,0 +1,243 @@
+external function roundmode DefaultRoundMode();
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure StripEndingSpaces(var string);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure MulM4ProcVal(val,val,var val);
+external procedure CalcRowGP(record EDIORVc,string,string,val,val,val,val,val,var val);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+
+global
+procedure EDIORSumup(var record EDIORVc ORr)
+BEGIN
+  record SMVc SMr;
+  row EDIORVc ORrw;
+  val s,vats,ms2,temp,t,t1;
+  Integer i,rwcnt,vatcnt;
+  roundmode rndline,rndtotal,rndvat;
+
+  s = 0;
+  vats = 0;
+  ms2 = 0;
+  RecordNew(SMr);
+  SetupVATBase(SMr,vatcnt);
+  ORr.TotGP = 0;
+  rwcnt = MatRowCnt(ORr);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(ORr,i,ORrw);
+    if (nonblank(ORrw.ArtCode)) then begin
+      ORr.TotGP = ORr.TotGP + ORrw.rowGP;
+      s = s + ORrw.Sum;
+      AddVATBase(SMr,ORrw.VATCode,ORrw.Sum,blankval,vatcnt,ORr.InclVAT,ORr.NoTAXonVAT);
+    end;
+  end;
+  temp = ORr.TotGP / s;
+  ORr.GPProc = temp/100;
+  CalcVATBaseVAT(SMr,ORr.InclVAT,ORr.NoTAXonVAT,vatcnt,vats,t1);
+  GetCurncyRoundoff(ORr.CurncyCode,ORr.PayDeal,"ORVc",rndtotal,rndline,rndvat);
+  vats = Round(vats,rndvat);
+  if ((ORr.ExportFlag==1) or (ORr.ExportFlag==2)) then begin
+    if (ORr.InclVAT<>0) then begin
+      ms2 = s - vats;
+    end else begin
+      ms2 = s;
+    end;  
+    vats = 0;
+  end else begin
+    if (ORr.InclVAT<>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + vats;
+    end;  
+  end;
+  ms2 = Round(ms2,rndtotal);
+  if (ORr.DiscPerc<>0) then begin
+    MulM4ProcVal(ORr.DiscPerc,s,t);
+    ORr.DiscSum = t;
+  end;  
+  ORr.DiscSum = Round(ORr.DiscSum,DefaultRoundMode);
+  ORr.Sum1 = s;
+  ORr.Sum3 = vats;
+  ORr.Sum4 = ms2;
+  if (nonblank(ORr.CurncyCode)) then begin
+    ORr.BaseSum4 = MulRateToBase1(ORr.CurncyCode,ORr.Sum4,ORr.FrRate,ORr.ToRateB1,ORr.ToRateB2,ORr.BaseRate1,ORr.BaseRate2,DefaultCurRoundOff);
+  end;  
+  RETURN;
+END;
+
+procedure PasteEDICust(record CUVc CUr,var record EDIORVc ORr)
+begin
+  ORr.CustCode = CUr.Code;
+  ORr.ShipDeal = CUr.ShipDeal;
+  ORr.ShipMode = CUr.ShipMode;
+  ORr.Addr0 = CUr.Name;
+  if (ORr.Addr1=="") then begin
+    ORr.Addr1 = CUr.InvAddr0;
+    ORr.Addr2 = CUr.InvAddr1;
+    ORr.Addr3 = CUr.InvAddr2;         
+  end;
+  ORr.ShipAddr0 = CUr.Name;         
+  ORr.ShipAddr1 = CUr.DelAddr0;        
+  ORr.ShipAddr2 = CUr.DelAddr1;
+  ORr.ShipAddr3 = CUr.DelAddr2;
+  ORr.ANACode = CUr.ANACode;
+  return;
+end;
+
+procedure AddRow(record EDIORVc ORr,row EDIORVc ORrw,record GeneralOptionBlock GenOptRec,
+                 var Boolean itemexistf)
+BEGIN
+  val t;
+  
+  if (itemexistf) then begin
+    CalcSum(ORrw.Quant,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,t,GenOptRec.UseDiscount);  
+    ORrw.Sum = t;
+    CalcRowGP(ORr,ORrw.VATCode,ORrw.ArtCode,ORrw.Quant,ORrw.BasePrice,ORrw.PriceFactor,ORrw.Sum,ORrw.Price,t);  
+    ORrw.rowGP = t;  
+    MatRowPut(ORr,MatRowCnt(ORr),ORrw);
+  end;
+  ClearRow(ORr,ORrw,1);
+  ORrw.stp = 1;
+  itemexistf = false;
+  RETURN;
+END;
+
+global
+updating procedure EDITradekaIn()
+BEGIN
+  Boolean testf,storef;
+  record EDIORVc ORr;
+  record EDIORVc OR2r;
+  record CUVc CUr;
+  row EDIORVc ORrw;
+  record INVc INr;
+  string 255 mstr,tstr,lstr,tax2code;
+  Boolean dupordf,itemexistf;
+  Date td;
+  string 100 curitemname;
+  string 20 salesacc,vatcode;
+  val price,reb,cost,qty,instock,t1,tax2prc;
+  Boolean calcprice;
+  record GeneralOptionBlock GenOptRec;
+  Boolean dummyf;
+  string 255 taxtemplatecode;
+  Time blankt;
+
+  RecordNew(ORr);
+  ORr.VersionNr = 1;
+  ORr.ORSerNr = -1;
+  BlockLoad(GenOptRec);  
+  testf = true;
+  while (testf) begin
+    tstr = ImportField();
+    if (len(tstr)==0) then begin
+      testf = false;
+    end;
+    lstr = Left(tstr,5);
+    switch (lstr) begin
+      case "BGM_#":
+        mstr = MID(tstr,49,35);
+        StripEndingSpaces(mstr);
+        ORr.CustOrdNr = mstr;
+        OR2r.CustOrdNr = mstr;
+        if (ReadFirstKey("CustOrdNr",OR2r,1,true)) then begin
+          dupordf = true;
+        end;
+      case "DTM_#":
+        switch (MID(tstr,43,3)) begin
+          case "102": mstr = MID(tstr,8,8);//YYYYMMDD
+        end;
+        StripEndingSpaces(mstr);
+        td = StringToDate(mstr);
+        switch (MID(tstr,3,1)) begin
+          case "2": ;//delivery date
+          case "4": ORr.OrdDate = td;
+          case "9": ;//processingdate
+        end;
+      case "NAD_2": ;//?
+        mstr = MID(tstr,9,17);
+        StripEndingSpaces(mstr);
+        switch (MID(tstr,6,2)) begin
+          case "BY": //buyer,customer
+            CUr.ANACode = mstr;
+            if (nonblank(CUr.ANACode)) then begin
+              if (ReadFirstKey("ANACode",CUr,1,true)) then begin
+                PasteEDICust(CUr,ORr);
+              end;
+            end;            
+        end;
+      case "LIN_2":
+        if (nonblank(ORrw.ArtCode)) then begin
+          AddRow(ORr,ORrw,GenOptRec,itemexistf);
+        end;
+        mstr = MID(tstr,18,35);
+        StripEndingSpaces(mstr);
+        ClearRow(ORr,ORrw,1);
+        ORrw.stp = 1;
+        INr.Code = "";
+        INr.AlternativeCode = mstr;
+        itemexistf = ReadFirstKey("AlternativeCode",INr,1,true);
+        if (itemexistf==false) then begin
+          INr.Code = "";               
+          INr.BarCode = mstr;
+          itemexistf = ReadFirstKey("BarCode",INr,1,true);
+        end;
+        if (itemexistf==false) then begin
+          INr.Code = "";               
+          INr.EUCodex = mstr;
+          itemexistf = ReadFirstKey("EUCodex",INr,1,true);
+        end;
+        if (itemexistf) then begin  
+          ORrw.ArtCode = INr.Code;
+          ORrw.PriceFactor = INr.PriceFactor;
+          if (GetItemPriceDiscount3(ORrw.ArtCode,1,INr,CUr.CurncyCode,0,0,0,0,0,
+                CUr.LangCode,CUr.CustCat,CUr.PLCode,CUr.RebCode,
+                price,curitemname,reb,vatcode,cost,salesacc,
+                CUr.ExportFlag,calcprice,CurrentDate,blankt,CUr.Code,true,dummyf,CUr.PayDeal,tax2code,tax2prc,"","",taxtemplatecode)) then begin
+            if (price==0) then begin price = BlankVal; end;
+            if (reb==0) then begin reb = BlankVal; end;
+            if (cost==0) then begin cost = BlankVal; end;
+            ORrw.Price = price;
+            ORrw.vRebate = reb;
+            ORrw.BasePrice = cost;
+            ORrw.Spec = curitemname;
+            ORrw.VATCode = vatcode;
+            ORrw.SalesAcc = salesacc;
+          end;                              
+        end;
+      case "IMD_2":
+        mstr = MID(tstr,26,35);
+        StripEndingSpaces(mstr);
+        ORrw.Spec = mstr;
+      case "QTY_2":
+        switch (MID(tstr,7,2)) begin
+          case "21": mstr  = MID(tstr,10,15);//order qty
+          case "59": //normal delivery
+        end;
+        StripEndingSpaces(mstr);
+        ORrw.Quant = StringToVal(mstr,M4UVal);
+      case "2.UNS":
+        AddRow(ORr,ORrw,GenOptRec,itemexistf);
+        EDIORSumup(ORr);
+        ORr.CreateDate = CurrentDate;
+        ORr.CreateTime = CurrentTime;
+        if (dupordf==false) then begin
+          ORr.SerNr = NextSerNr("EDIORVc",ORr.OrdDate,-1,false,"");
+          storef = RecordInsert(ORr,true);
+        end;    
+        RecordNew(ORr);
+        ORr.VersionNr = 1;
+        ORr.ORSerNr = -1;
+        itemexistf = false;      
+    end;
+    if (testf) then begin
+      testf = NextImportLine(false);
+    end;    
+  end;  
+  RETURN;
+END;

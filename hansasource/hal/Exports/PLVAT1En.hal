@@ -1,0 +1,410 @@
+external procedure StripLeadingSpaces(var string);
+external function roundmode SetRoundModeD(Integer);
+external function val FindValFromVAT(string,val);
+external function Integer GetIntYc(Date);
+external function val AbsoluteVal(val);
+external procedure Alltrim(string,var string);
+external procedure PLVAT1OldEn(record RCVc);
+external procedure GetPLVAT2Rows(record RcVc,boolean,
+                        array string,array string,array val,array val,array longint,array string,
+                        array string,array string,array date,array val,array string,array string,
+                        array string,array string,var integer,
+                        var val,var val,var val,var val,var val,var val,array string,vector val,array string);
+
+                       
+global
+procedure ConvertStrToXMLStr(string source,var string res)
+begin
+  integer i,l;
+  string 10 addstr;
+  res = "";
+  l = len(source);
+  for (i = 0; i < l; i = i +1) begin
+    addstr = mid(source,i,1);
+    switch (addstr) begin
+      case "<": addstr = "&lt;";
+      case ">": addstr = "&gt;";
+      case "&": addstr = "&amp;";
+      case "'": addstr = "&apos;";
+      case """": addstr = "&quot;";
+    end;
+    res = res & addstr;
+  end;
+return;
+end;
+
+
+procedure MakeBlankTabs(integer cnt) 
+begin
+  integer i;
+    
+    for (i = 0; i<cnt; i = i + 1) begin
+      ExportString("");
+    end;
+return;
+end;
+
+
+procedure ExpXMLHead()
+begin
+  string 255 tstr;
+  tstr = "<?xml version=""1.0"" encoding=""UTF-8"" ?>";
+  ExportString(tstr); newline;
+  tstr = "<DokPVNMDPv1>";
+  ExportString(tstr); newline;
+return;
+end;
+
+global
+procedure XMLDeclStart()
+begin
+  string 255 tstr;
+  tstr = "<Tab>";
+  MakeBlankTabs(1);
+  ExportString(tstr);
+  newline;
+  tstr = "<Rs>";
+  MakeBlankTabs(2);
+  ExportString(tstr);
+  newline;
+return;
+end;
+
+global
+procedure XMLDeclEnd1()
+begin
+  string 255 tstr;
+
+  MakeBlankTabs(2);
+  ExportString("</Rs>");
+  newline;
+return;
+end;
+
+global
+procedure XMLDeclEnd2(string tag)
+begin
+  string 255 tstr;
+
+  tstr = "</Tab>";
+  MakeBlankTabs(1);
+  ExportString(tstr);
+  newline;
+  tstr = "</" & tag & ">";
+  ExportString(tstr);
+  newline;
+return;
+end;
+
+global
+procedure ExpXMLData(array string fields,array string values,integer size,string tag)
+begin
+  string 255 tstr;
+  integer i, cnt
+  
+  cnt = 1;
+  if (tag == "R") then begin
+    MakeBlankTabs(3);
+    ExportString("<" & tag & ">"); 
+    cnt = 4;
+    newline;
+  end;
+  if (tag == "Vertibas") then begin
+    cnt = 2;
+  end;
+  
+  for (i = 0; i < size; i = i +1) begin
+    if (values[i]<>"") then begin
+      MakeBlankTabs(cnt);
+      tstr = "<" & fields[i] & ">" & values[i] & "</" & fields[i] & ">";
+      ExportString(tstr);
+      newline;
+    end;
+  end;
+  if (tag == "R") then begin
+    MakeBlankTabs(3);
+    ExportString("</" & tag & ">"); 
+    newline;
+  end;
+return;
+end;
+
+global
+procedure FillHeadVals(array string Headvals,record RcVc RepSpec, val period)
+begin
+  record CYBlock CYbl;
+  string 255 tstr;
+
+  switch (period) begin
+    case 1: headvals[3] = getMonth(RepSpec.sStartDate);
+    case 3: headvals[3] = (getMonth(RepSpec.sStartDate) / 3)+1;
+    case 6: headvals[3] = (getMonth(RepSpec.sStartDate) / 6)+1;
+  end;
+        
+  blockload(CYBl);
+  Alltrim(right(CYBl.VATNr,len(CYBl.VATNr)-2),tstr);
+  headvals[0] = tstr;
+  headvals[1] = left(CYBl.CompName,120);
+  headvals[2] = getYear(RepSpec.sStartDate);
+  headvals[4] = RepSpec.f4;
+  headvals[5] = RepSpec.f2;
+  headvals[6] = RepSpec.f3;
+  headvals[7] = DatetoString(CurrentDate,"YYYY-MM-DD") & "T" & CurrentTime;
+  
+return;
+end;
+
+global
+procedure FillFootvals(array string footvals,val totvat,val total)
+begin
+  footvals[0] = ValToString(total,M4Val,"",".",0);
+  footvals[1] = ValToString(totvat,M4Val,"",".",0);
+return;
+end;
+function string 2 GetTransType(string supp,string trtype)
+begin
+  record CUVc CUr;
+  string 2 TransType;
+
+  if nonblank(trtype) then begin
+    TransType = trtype;
+  end else begin
+    TransType = "A";
+    if (blank(supp)) then begin
+      TransType = "T";
+    end else begin
+      CUr.Name = supp;
+      if (readfirstkey("VEActName",CUr,1,true)) then begin
+        if (blank(CUr.VATNr) or mid(CUr.VATNr,6,1) == "-") then begin//or StripNonDigits(left(Cur.VATNr,2))<>""
+          TransType = "N";
+        end else begin
+          if (CUr.ExportFlag == 2 or CUr.ExportFlag == 4) then begin
+            TransType = "I";
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  GetTransType = TransType;
+return;
+end;
+
+
+
+function string 255 VATCountryPart(string vatnumber)
+begin
+  string 255 res;
+  res = left(vatnumber,2);
+  if stripnondigits(res)<>"" then begin
+    res = "LV";
+  end;
+  VATCountryPart = res;
+  
+  return;
+end;
+
+function string 255 VATNumberPart(string vatnumber)
+begin
+  string 255 tstr,res;
+  
+  res = left(vatnumber,2);
+  if StripNonDigits(res)<>"" then begin
+    tstr = vatnumber;
+  end else begin
+    tstr = right(vatnumber,len(vatnumber)-2);
+    StripLeadingSpaces(tstr);
+  end;
+  VATNumberPart = tstr;
+  return;
+end;
+
+global
+procedure PLVAT1En(record RcVc RepSPec)
+begin
+  array string 255 headfields,headvals;
+  
+  array string 255 Rowfields,rowvals;
+
+  array string 255 footfields,footvals;
+  
+  array string 50 col0;
+  array string 50 col1;
+  array string 50 col2;
+  array string 50 col3;
+  array string 50 col4;
+  array string 50 col5;
+  array string 50 col6;
+  array string 50 col7;
+  array string 50 col8;
+  array string 50 col9;
+
+  array string 100 asupp;
+  array string 50 arcode;
+  array string 2 TransType2;
+  array val apaysum;
+  array val apayvat;
+  array longint ainvoicenr;
+  array string 10 adocname;
+  array string 100 adocnr,adocnr2;
+  array date atransdate;
+  array val acurpaysum;
+  array string 5 acurcode;
+  array string 10 adoctype;
+  array string 25 addwincode,addsernr;
+  val totvat,mintot,minvat,maxtot,maxvat;
+  val ttotpaysum,ttotpayvat;
+  string 255 supp;
+  date blankd;
+  val period;
+  integer rcnt;
+  string 2 TransType;
+  vector val vsuppval;
+  array string 30 asuppcode;
+  vector integer vsuppindex;
+  boolean showf;
+    
+  val total;
+  integer size;  
+  integer headsize;
+  integer rowsize,footsize;
+  integer i;
+  ExpXMLHead;
+  ttotpaysum = 0;ttotpayvat = 0;rcnt = 1;
+  if (RepSpec.flags[12] == 1) then begin
+    PLVAT1OldEn(RepSpec);
+    goto LPLVAT1En;//old version
+  end;
+
+  period = GetMonth(RepSpec.sEndDate) - GetMonth(RepSpec.sStartDate) + 1;
+  if (period<0) then begin
+    period = period + 12;
+  end;
+  switch (period) begin
+    case 1:headfields[3] = "ParskMen";
+    case 3:headfields[3] = "ParskCeturksnis";
+    case 6:headfields[3] = "TaksPusgads";
+    otherwise
+      MessageBox(17258,"");
+      //goto LPLVAT1En; removed to make export with any period
+  end;
+
+  headfields[0] = "NmrKods";
+  headfields[1] = "NmNosaukums";
+  headfields[2] = "ParskGads";
+  headfields[4] = "AtbPers";
+  headfields[5] = "Amats";
+  headfields[6] = "Talrunis";
+  headfields[7] = "SastDat";
+  headsize = 8;
+  
+  
+  rowfields[0] = "Npk";
+  rowfields[1] = "DpValsts";
+  rowfields[2] = "DpNumurs";
+  rowfields[3] = "DpNosaukums";
+  rowfields[4] = "DarVeids";
+  rowfields[5] = "VertibaBezPvn";
+  rowfields[6] = "PvnVertiba";
+  rowfields[7] = "DokVeids";
+  rowfields[8] = "DokNumurs";
+  rowfields[9] = "DokDatums";
+  rowsize = 10;
+  
+  footfields[0] = "VertibaBezPvnSum";
+  footfields[1] = "PvnVertibaSum";
+  footsize = 2;
+
+  GetPLVAT2Rows(RepSpec,false,
+                asupp,arcode,apaysum,apayvat,ainvoicenr,adocname,
+                adocnr,adocnr2,atransdate,acurpaysum,acurcode,adoctype,addwincode,addsernr,size,
+                total,totvat,mintot,minvat,maxtot,maxvat,TransType2,vsuppval,asuppcode);
+                
+
+  FIllHeadvals(headvals,RepSpec,period);
+  ExpXMLData(headfields,headvals,headsize,"DeclarationHeader");
+  XMLDeclStart;
+
+  for (i = 0; i < size; i = i + 1) begin
+    showf = true;
+    if nonblank(asuppcode[i]) and blank(transtype2[i]) then begin
+       if (AbsoluteVal(apaysum[i]) < AbsoluteVal(RepSpec.vals0) and nonblank(RepSpec.vals0)) then begin
+         if (vsuppval[asuppcode[i]] >= AbsoluteVal(RepSpec.vals0) and nonblank(RepSpec.vals0) and RepSpec.flags[15] == 0) then begin
+             if vsuppindex[asuppcode[i]]>0 then begin
+                apaysum[vsuppindex[asuppcode[i]]] = apaysum[vsuppindex[asuppcode[i]]] + apaysum[i];
+                apayvat[vsuppindex[asuppcode[i]]] = apayvat[vsuppindex[asuppcode[i]]] + apayvat[i];
+             end else begin
+                asupp[size] = asupp[i];
+                adoctype[size] = "V";
+                apaysum[size] = apaysum[i];
+                apayvat[size] = apayvat[i];
+                arcode[size] = arcode[i];
+                vsuppindex[asuppcode[i]] = size;
+                size = size + 1;
+             end;
+             showf = false;
+         end else begin
+           mintot = mintot + apaysum[i];
+           minvat = minvat + apayvat[i];
+           showf = false;
+         end;
+       end;
+     end;
+    if showf then begin
+      TransType = GetTransType(asupp[i],transtype2[i]);
+      ConvertStrToXMLStr(asupp[i],supp);
+      if adoctype[i] == "V" then begin
+        rowvals[0] = rcnt;
+        rowvals[1] = VATCountryPart(arcode[i]);;
+        rowvals[2] = VATNumberPart(arcode[i]);
+        rowvals[3] = supp;
+        rowvals[4] = "V";
+        rowvals[5] = valtostring(round(apaysum[i],SetRoundModeD(2)),M4Val,"",".",0);
+        rowvals[6] = valtostring(round(apayvat[i],SetRoundModeD(2)),M4Val,"",".",0);
+        rowvals[7] = "";
+        rowvals[8] = ""; 
+        rowvals[9] = "";
+
+      end else begin
+        rowvals[0] = rcnt;
+        rowvals[1] = VATCountryPart(arcode[i]);
+        rowvals[2] = VATNumberPart(arcode[i]);
+        rowvals[3] = supp;
+        rowvals[4] = TransType;
+        rowvals[5] = valtostring(round(apaysum[i],SetRoundModeD(2)),M4Val,"",".",0);
+        rowvals[6] = valtostring(round(apayvat[i],SetRoundModeD(2)),M4Val,"",".",0);
+        rowvals[7] = adoctype[i];
+        rowvals[8] = adocnr[i]; //serjia text part
+        rowvals[9] = DatetoString(atransdate[i],"YYYY-MM-DD") & "T00:00:00";
+      end;
+      rcnt = rcnt + 1;
+
+      ExpXMLData(rowfields,rowvals,rowsize,"R");
+
+    end;
+  end;
+  if mintot !=0 then begin//only one row can be with transtype "T"
+    rowvals[0] = rcnt;
+    rowvals[1] = "";
+    rowvals[2] = "";
+    rowvals[3] = "";
+    rowvals[4] = "T";
+    rowvals[5] = valtostring(round(mintot,SetRoundModeD(2)),M4Val,"",".",0);
+    rowvals[6] = valtostring(round(minvat,SetRoundModeD(2)),M4Val,"",".",0);
+    rowvals[7] = "";
+    rowvals[8] = ""; 
+    rowvals[9] = "";
+    ExpXMLData(rowfields,rowvals,rowsize,"R");
+  end;
+  
+  FillFootvals(footvals,totvat,total);
+  XMLDeclEnd1;
+  ExpXMLData(footfields,footvals,footsize,"Vertibas");
+  XMLDeclEnd2("DokPVNMDPv1");
+LPLVAT1En:;
+return;
+end;
+
+
+
+

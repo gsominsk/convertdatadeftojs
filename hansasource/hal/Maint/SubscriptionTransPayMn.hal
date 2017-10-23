@@ -1,0 +1,190 @@
+external function Boolean BillRecurringBillingSubscription(string,LongInt,string,val,var string,var string,record CCAccountIDVc,record CCMerchantIDVc);
+external updating function Boolean HandleStripeRecurringBillingTransaction(var record SubscriptionTransVc,var record NewCreditCardVc,record CCAccountIDVc,record CCMerchantIDVc);
+external procedure FindCCAccountID(string,string,Integer,var record CCAccountIDVc,Integer);
+
+global
+function Boolean IsNewSubscription(record SubscriptionTransVc STr)
+begin
+  record SubscriptionVc Subr;
+  row SubscriptionTransVc STrw;
+  Integer i,rwcnt;
+  Boolean res;
+
+  res = true;
+  rwcnt = MatRowCnt(STr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(STr,i,STrw);
+    Subr.SerNr = STrw.Subscription;
+    if (ReadFirstMain(Subr,1,true)) then begin
+      if (nonblank(Subr.PaidUntilDate)) then begin
+        res = false;
+        goto LIsNewSubscription;
+      end;
+    end;
+  end;
+LIsNewSubscription:;  
+  IsNewSubscription = res;
+  return;
+end;
+
+procedure RemoveInvoiceTypeSubscriptions(record SubscriptionTransVc STr,var record SubscriptionTransVc topaySTr)
+begin
+  row SubscriptionTransVc STrw;
+  record SubscriptionVc Subr;
+  Integer i,rwcnt;
+  
+  RecordCopy(topaySTr,STr);
+  while (MatRowCnt(topaySTr)>0) begin
+    MatRowDelete(topaySTr,0);
+  end;
+  topaySTr.Amount = 0;
+  rwcnt = MatRowCnt(STr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(STr,i,STrw);
+    Subr.SerNr = STrw.Subscription;
+    if (ReadFirstMain(Subr,1,true)) then begin
+      if (Subr.BillingType==kBillPaymentCC) then begin
+        MatRowPut(topaySTr,MatRowCnt(topaySTr),STrw);
+        topaySTr.Amount = topaySTr.Amount + STrw.RowSum;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating function Boolean DoSubscriptionTransPayMn(var record RcVc RepSpec)
+begin
+  Boolean res;
+  record SubscriptionTransVc STr;
+  record SubscriptionTransVc oldSTr;
+  record SubscriptionTransVc topaySTr;
+  Boolean found,testf;
+  record NewCreditCardVc CCr;
+  string 255 authorizationCode,reasoncode;
+  record CCAccountIDVc CCAccountIDr;  
+  record CCMerchantIDVc CCMerchantIDr;
+
+  found = true;
+  STr.Paid = 0;
+  if (RepSpec.ArtMode!=0) then begin
+    SetLoopPosition(STr,RepSpec.long2);
+  end;
+  RepSpec.ArtMode = 1;
+  while (LoopKey("Paid",STr,1,found)) begin
+    if (STr.Paid!=0) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+//      if (STr.SerNr!=222525) then begin testf = false; end;
+      if (testf) then begin
+//        RemoveInvoiceTypeSubscriptions(STr,topaySTr);
+//        if (MatRowCnt(topaySTr)<=0) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        switch (STr.BillingType) begin
+          case kBillPaymentCC:
+            FindCCAccountID(STr.CurrencyCode,"",kCCAccountTypeWeb,CCAccountIDr,kCardHolderNotPresent);//kCCAccountTypePOS,kCardHolderPresent
+            CCMerchantIDr.Code = CCAccountIDr.MerchantID;
+            if (ReadFirstMain(CCMerchantIDr,1,true)) then begin
+              CCr.CUCode = STr.CUCode;
+              if (ReadFirstKey("CUCode",CCr,1,true)) then begin
+                switch (CCMerchantIDr.Partner) begin
+                  case kCCPartnerCyberSource:
+                    if (STr.Amount>1) then begin//min cybersource amount
+                      if (nonblank(CCr.SubscriptionID)) and (CCr.Invalid==0) then begin
+                        RecordCopy(oldSTr,STr);
+                        if (BillRecurringBillingSubscription(CCr.SubscriptionID,STr.SerNr,STr.CurrencyCode,STr.Amount,authorizationCode,reasoncode,CCAccountIDr,CCMerchantIDr)) then begin
+                          STr.AuthorizationCode = authorizationCode;
+                          STr.Paid = 1;
+                          STr.PaidDate = CurrentDate;
+                          RepSpec.ArtMode = 0;
+                        end else begin
+                          STr.ReasonCode = reasoncode;
+                          STr.FailedPaymentCnt = STr.FailedPaymentCnt + 1;
+                          if (STr.FailedPaymentCnt>2) or (IsNewSubscription(STr)) then begin
+                            STr.Paid = 2;
+                          end;
+                        end;
+                        RecordUpdate(oldSTr,STr,true);
+                        StepBack(STr);
+                      end else begin
+                        RecordCopy(oldSTr,STr);
+                        STr.Paid = 2;
+                        RecordUpdate(oldSTr,STr,true);
+                        StepBack(STr);
+                      end;
+                    end else begin
+                      RecordCopy(oldSTr,STr);
+                      STr.Paid = 2;
+                      RecordUpdate(oldSTr,STr,true);
+                      StepBack(STr);
+                    end;
+                  case kCCPartnerStripe:
+                    if (HandleStripeRecurringBillingTransaction(STr,CCr,CCAccountIDr,CCMerchantIDr)) then begin
+                      RepSpec.ArtMode = 0;
+                    end;
+                  otherwise
+                    RecordCopy(oldSTr,STr);
+                    STr.Paid = 2;
+                    RecordUpdate(oldSTr,STr,true);
+                    StepBack(STr);
+                end;
+              end else begin
+                RecordCopy(oldSTr,STr);
+                STr.Paid = 2;
+                RecordUpdate(oldSTr,STr,true);
+                StepBack(STr);
+              end;
+            end else begin
+              RecordCopy(oldSTr,STr);
+              STr.Paid = 2;
+              RecordUpdate(oldSTr,STr,true);
+              StepBack(STr);
+            end;
+          case kBillPaymentDotpay:
+            RecordCopy(oldSTr,STr);
+            STr.Paid = 1;
+            STr.PaidDate = CurrentDate;
+            RepSpec.ArtMode = 0;
+            RecordUpdate(oldSTr,STr,true);
+            StepBack(STr);
+          case kBillPaymentPaytrail:
+            RecordCopy(oldSTr,STr);
+            STr.Paid = 1;
+            STr.PaidDate = CurrentDate;
+            RepSpec.ArtMode = 0;
+            RecordUpdate(oldSTr,STr,true);
+          case kBillPaymentPaypal:
+            RecordCopy(oldSTr,STr);
+            STr.Paid = 1;
+            STr.PaidDate = CurrentDate;
+            RepSpec.ArtMode = 0;
+            RecordUpdate(oldSTr,STr,true);
+            StepBack(STr);
+          case kBillPaymentPaysera: 
+            RecordCopy(oldSTr,STr);
+            STr.Paid = 1;
+            STr.PaidDate = CurrentDate;
+            RepSpec.ArtMode = 0;
+            RecordUpdate(oldSTr,STr,true);
+            StepBack(STr);
+          case kBillPaymentInvoice:
+            
+        end;
+        RepSpec.long2 = GetLoopPosition(STr);
+        res = true;
+      end;
+    end;
+  end;
+  DoSubscriptionTransPayMn = res;
+  return;
+end;
+
+global
+procedure SubscriptionTransPayMn(record RcVc RepSpec)
+begin
+
+  while (qupdating.DoSubscriptionTransPayMn(RepSpec)) begin
+  end;
+  return;
+end;

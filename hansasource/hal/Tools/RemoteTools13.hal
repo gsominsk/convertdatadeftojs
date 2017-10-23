@@ -1,0 +1,1464 @@
+external function string 255 CurDrawerCode(string);
+external function Boolean FindAccPeriod(Date,var record AccPeriodr);
+external procedure QTVc_PasteSalesMan(var record QTVc,string);
+external function Boolean PasteCustInQT(var record QTVc,string,string,var string,Boolean);
+external function LongInt DoHRMSEVcRecordDuplicate(var record HRMSEVc,record HRMSEVc,LongInt,LongInt);
+external updating function Boolean CheckEShipPRTItems_SHVc(record RcVc,var LongInt,var string,var integer,var string);
+external updating function Boolean CheckEShipPRTItems_StockMovVc(record RcVc,var LongInt,var string,var integer,var string);
+external updating function Boolean CheckEShipPRTItems_RetPUVc(record RcVc,var LongInt,var string,var integer,var string);
+external function LongInt ActVcRecordRemoveTest(var record ActVc,record ActVc,LongInt,LongInt);
+external function Boolean FindTheUser(var record UserVc);
+external updating procedure SubscriptionInvitationMn(record RcVc);
+external procedure GetValidUntilDates(array string,var array date,var array Integer,Longint,string,var string); 
+external function string 255 GenerateSAFTHash(Integer,string,date,date,time,string,val,string,string);
+external procedure PrepareOfficialSerialNrBlock(Integer,var record LegalInvNrBlock);
+external procedure FindFiscalYear(Date,var Date,var Date);
+external procedure GetLegalInvNrRow(string,var row LegalInvNrBlock);
+external procedure NextOfficialSerNr(string,LongInt,Date,string,var string);
+external function string 50 NextLegalSerNr(string,LongInt,Date,string,string,string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Integer CountNumberOfInvoicePrintPages(record IVVc);
+external function string 255 FindINObjects(string,string);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure ReverseString(string,var string);
+external procedure ExtractObj(string,var Integer,var string);
+external function Integer InString2(string,string);
+external function date CalculateLicenseEndDate(Date,Integer,string,Integer);
+external function boolean IsNumeric(string);
+
+global
+function string 100 FindOfficialNumber(integer  transtype, LongInt number)
+begin 
+  string 100 offnumber;
+  record IVVc IVr;
+  record StockMovVc StockMovr;
+  record SHVc SHr;
+  record RetVc Retr;
+
+  switch (transtype) begin
+    case IVYc:
+      IVr.SerNr = number;
+      if ReadFirstMain(IVr,1,true) then begin 
+        offnumber = IVr.OfficialSerNr;
+      end;
+    case SHYc:
+      SHr.SerNr = number;
+      if ReadFirstMain(SHr,1,true) then begin 
+        offnumber = SHr.OfficialSerNr;
+       end;
+     case STMovYc:
+       StockMovr.SerNr = number;
+       if ReadFirstMain(StockMovr,1,true) then begin 
+         offnumber = StockMovr.OfficialSerNr;
+       end;
+     case RetYc:
+       Retr.SerNr = number;
+       if ReadFirstMain(Retr,1,true) then begin 
+         offnumber = Retr.OfficialSerNr;
+       end;
+  end;
+  FindOfficialNumber = offnumber;        
+  return;
+end;  
+
+global
+updating procedure DeleteOffSerNr(LongInt sernr, string filename)
+BEGIN
+  record OffSerNrIVVc OffSNIVr;
+  Boolean found;
+
+  found = true;
+  OffSNIVr.IVNr = sernr;
+  OffSNIVr.FileName = filename;
+  while (LoopMain(OffSNIVr,2,found)) begin
+    if (OffSNIVr.IVNr!=sernr) then begin found = false; end;
+    if (OffSNIVr.FileName!=filename) then begin found = false; end;
+    if (found) then begin
+      RecordDelete(OffSNIVr);
+      StepBack(OffSNIVr);
+    end;
+  end;
+  //for old records without IVVc mark
+  if (filename=="IVVc") then begin 
+    ResetLoop(OffSNIVr);
+    found = true;
+    OffSNIVr.IVNr = sernr;
+    OffSNIVr.FileName = "";
+    while (LoopMain(OffSNIVr,2,found)) begin
+      if (OffSNIVr.IVNr!=sernr) then begin found = false; end;
+      if (OffSNIVr.FileName!="") then begin found = false; end;
+      if (found) then begin
+        RecordDelete(OffSNIVr);
+        StepBack(OffSNIVr);
+      end;
+    end;  
+  end;
+  
+  RETURN;
+END;
+
+updating procedure StoreOffSerNrIV(LongInt sernr,string filename,string officialsernr,string journalid)
+BEGIN
+  record OffSerNrIVVc OffSNIVr;
+
+  RecordNew(OffSNIVr);
+  OffSNIVr.IVNr = sernr;
+  OffSNIVr.OfficialSerNr = officialsernr;
+  OffSNIVr.FileName = filename;
+  OffSNIVr.JournalID = journalid;
+  if (RecordStore(OffSNIVr,false)) then begin end;
+  RETURN;
+END;
+
+global
+function string 255 FindOffSerNr(string tstr)
+BEGIN
+  string 255 res,temp;
+  Integer i;
+  string 1 c;
+  
+  for (i=len(tstr)-1;i>=0;i=i-1) begin
+    c = Mid(tstr,i,1);
+    if (asc(c)>=asc("0")) and (asc(c)<=asc("9")) then begin
+      temp = temp & c;
+    end else begin
+      i = -1;
+    end;    
+  end;
+  res = "";
+  ReverseString(temp,res);
+  FindOffSerNr = res;
+  RETURN;
+END;
+
+global
+updating procedure UpdateOffSerNr(LongInt sernr,string filename,Integer rtyp,string officialsernrs,Boolean updatef)
+BEGIN
+  string 20 froff,tooff,curoff,pre;
+  Integer where,pos;
+  LongInt frnr,tonr,curnr;
+  string 20 frnrstr,tonrstr,curnrstr,journalid;
+  
+  if (updatef) then begin
+    DeleteOffSerNr(sernr,filename);
+  end;
+  switch (filename) begin
+    case "IVVc":
+      switch (rtyp) begin
+        case kInvoiceTypeCashInvoiceReceiptPRT: journalid = "FR";
+        case kInvoiceTypeCash: journalid = "FS";
+        case kInvoiceTypeCredit: journalid = "NC";
+        case kInvoiceTypeInterest: journalid = "ND";
+        case kInvoiceTypeCreditSpecialSales: journalid = "NC";
+        otherwise journalid = "FT";
+      end;
+    case "IPVc": journalid = "REC";
+    case "IVCashVc": journalid = "POS";
+    case "IVCashVc2": journalid = "POS";
+    case "ProformaQTVc": journalid = "FATPROF";
+    case "ORVc": journalid = "ENC";
+    case "SHVc": journalid = "GREM";
+    case "RetVc": journalid = "DEVOLU";
+    case "RetPUVc": journalid = "DEVFF";
+    case "StockMovVc":
+      switch (rtyp) begin
+        case kStockMovTypeOwnGoodsTransport: journalid = "MOVGA";
+        case kStockMovTypeConsigment: journalid = "MOVGC";
+        case kStockMovTypeThirdEntGoodsTransport: journalid = "MOVGT";
+        case kStockMovTypeGlobalTransport: journalid = "MOVGL";
+        otherwise journalid = "MOVST";
+      end;
+    case "ConsStockMovInvVc": journalid = "FCCS";      
+  end;
+  where = InString2(officialsernrs,",");
+  if (where>0) then begin
+    pos = 0;
+    ExtractObj(officialsernrs,pos,curoff);
+    while (nonblank(curoff)) begin
+      StoreOffSerNrIV(sernr,filename,curoff,journalid);
+      ExtractObj(officialsernrs,pos,curoff);
+    end;  
+  end else begin
+    froff = FirstInRange(officialsernrs,20);
+    tooff = LastInRange(officialsernrs,20);
+    frnrstr = FindOffSerNr(froff);
+    tonrstr = FindOffSerNr(tooff);
+    frnr = StringToLongInt(frnrstr);
+    tonr = StringToLongInt(tonrstr);
+    pre = Left(froff,len(froff)-len(FindOffSerNr(froff)));
+    curnr = frnr;
+    while (curnr<=tonr) begin
+      M4PadString(curnr,len(frnrstr),"0",true,curnrstr);
+      curoff = pre & curnrstr;
+      StoreOffSerNrIV(sernr,filename,curoff,journalid);
+      curnr = curnr + 1;
+    end;
+  end;
+  RETURN;
+END;
+
+function string 255 GetPreviousRetHash(record RetVc curRetr)
+begin
+  record RetVc prevRetr;
+  string 255 res;
+  Date fsd,fed;
+  row LegalInvNrBlock LINrbrw;
+  Boolean testf;
+  
+  FindFiscalYear(curRetr.TransDate,fsd,fed);
+  GetLegalInvNrRow(curRetr.OfficialSerNr,LINrbrw);
+
+//1st invoice in Number series  
+  if (curRetr.OfficialSerNr==LINrbrw.Serie & LINrbrw.TSerStart) then begin
+    res = "";
+    goto LGetPreviousRetHash;
+  end;
+  
+//1st invoice in FIscal year  
+  ResetLoop(prevRetr);
+  prevRetr.RegDate = curRetr.RegDate;
+  prevRetr.RegTime = curRetr.RegTime;
+  if (LoopBackKey("RegDate",prevRetr,2,true)) then begin
+    if (prevRetr.SerNr==curRetr.SerNr) then begin
+      if (LoopBackKey("RegDate",prevRetr,2,true)) then begin
+      end;
+    end;
+    if (prevRetr.TransDate<fsd) then begin testf = true; end;
+    if (prevRetr.TransDate>fed) then begin testf = true; end;
+    if (testf) then begin
+      res = "";
+      goto LGetPreviousRetHash;
+    end;
+  end;  
+  
+  ResetLoop(prevRetr);
+  prevRetr.OfficialSerNr = curRetr.OfficialSerNr;
+  if (LoopBackKey("OfficialSerNr",prevRetr,1,true)) then begin
+    if (prevRetr.SerNr==curRetr.SerNr) then begin
+      if (LoopBackKey("OfficialSerNr",prevRetr,1,true)) then begin
+      end;
+    end;
+    res = prevRetr.Hash;
+  end;
+LGetPreviousRetHash:;  
+  GetPreviousRetHash = res;
+  return;
+end;
+
+procedure AddPortugueseSAFTHashToRet(record RetVc Retr)
+begin
+  val v;
+  row RetVc Retrw;
+  Integer i,rwcnt;
+  
+  if (HasLocalization("PRT")==false) then begin
+    goto LAddPortugueseSAFTHashToRet;
+  end;
+  rwcnt = MatRowCnt(Retr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Retr,i,Retrw);
+    v = v + Retrw.Quant*Retrw.UPrice;
+  end;
+
+  if (blank(v)) then begin v = 0.00; end;
+
+  Retr.Hash = GenerateSAFTHash(1,"RetVc",Retr.TransDate,Retr.RegDate,Retr.RegTime,Retr.OfficialSerNr,0.00,GetPreviousRetHash(Retr),"");
+  Retr.HashKeyVersion = CryptSAFTHashKeyVersion;
+
+LAddPortugueseSAFTHashToRet:;  
+  return;
+end;
+
+global
+function Boolean TestNextOfficialSerialNr_RetVc(row LegalInvNrBlock LINrbrw,string cuclass,record RetVc Retr,Boolean manualf)
+begin
+  Boolean testf;
+  
+  testf = false;
+  if (LINrbrw.RegType==kOfficialNumTypeRetVc or LINrbrw.RegType==kOfficialNumTypeManualRetVc or LINrbrw.RegType==kOfficialNumTypeRecoverdRetVc) then begin 
+    testf = true;
+  end;
+  if (LINrbrw.RegType==kOfficialNumTypeRecoverdRetVc) and (Retr.Status==kRecordStatusRecovered) then begin 
+    testf = true;
+  end;
+  if (testf==true) then begin 
+    if (manualf) then begin
+      if (LINrbrw.SelectionType==kLegalInvNrSelectionTypeManual) then begin 
+        testf = false; 
+      end; 
+    end;
+    if (LINrbrw.SelectionType==kLegalInvNrSelectionTypeAtOK)  and  (Retr.OKFlag!=1)  then begin 
+      testf = false; 
+    end; 
+    if (nonblank(LINrbrw.Branch)) then begin 
+      if (nonblank(Retr.BranchID)) then begin 
+        if (LINrbrw.Branch!=Retr.BranchID) then begin 
+          testf = false; 
+        end;
+      end else begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(LINrbrw.LocalMachineCode)) then begin 
+      if (nonblank(Retr.LocalMachineCode)) then begin 
+        if (LINrbrw.LocalMachineCode!=Retr.LocalMachineCode) then begin 
+          testf = false; 
+        end;
+      end else begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(LINrbrw.CClass)) then begin
+      if (nonblank(cuclass)) then begin
+        if (SetInSet(LINrbrw.CClass,cuclass)==false) then begin 
+          testf = false; 
+        end;
+      end else begin
+        testf = false; 
+      end;
+    end;
+    if (nonblankdate(LINrbrw.PurchDate)) then begin
+      if (Retr.TransDate<LINrbrw.PurchDate) then begin testf = false; end;
+    end;
+    if (nonblankdate(LINrbrw.EndDate)) then begin
+      if (Retr.TransDate>LINrbrw.EndDate) then begin testf = false; end;
+    end;
+  end;
+  TestNextOfficialSerialNr_RetVc = testf;
+  return;
+end;
+
+global
+procedure FindNextRetVcOfficialSerialNr(var record RetVc Retr)
+BEGIN
+  record CUVc CUr;
+  string 255 res,tstr;
+  record LegalInvNrBlock LINrb;
+  row LegalInvNrBlock LINrbrw;
+  Integer i,rwcnt,pages;
+  Boolean testf;
+  record OffSerNrIVVc OffSerNrIVr;
+
+  CUr.Code = Retr.CustCode;
+  ReadFirstMain(CUr,1,true);
+ 
+  NextOfficialSerNr("RetVc",Retr.SerNr,Retr.TransDate,"",res);
+  if (blank(res)) then begin
+    OffSerNrIVr.IVNr = Retr.SerNr;
+    OffSerNrIVr.FileName = "RetVc";
+    if (ReadFirstKey("MainKey",OffSerNrIVr,2,true)) then begin
+      res = OffSerNrIVr.OfficialSerNr;
+      goto LFindNextRetVcOfficialSerialNr;
+    end;
+    PrepareOfficialSerialNrBlock(kOfficialNumTypeRetVc,LINrb);
+    PrepareOfficialSerialNrBlock(kOfficialNumTypeManualRetVc,LINrb);
+    PrepareOfficialSerialNrBlock(kOfficialNumTypeRecoverdRetVc,LINrb);
+    rwcnt = MatRowCnt(LINrb);
+    if (rwcnt>0) then begin    
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(LINrb,i,LINrbrw);
+        testf = TestNextOfficialSerialNr_RetVc(LINrbrw,CUr.Classification,Retr,true);
+        if (testf) then begin
+          res = NextLegalSerNr("RetVc",Retr.SerNr,Retr.TransDate,LINrbrw.Serie,LINrbrw.TSerStart,LINrbrw.TSerEnd);
+          if (nonblank(res)) then begin 
+            /*
+            if (LINrbrw.PerPage==1) then begin
+              pages = CountNumberOfInvoicePrintPages(IVr);
+              if (pages>1) then begin
+                res = res & ":";
+                tstr = Right(res,len(LINrbrw.TSerStart));
+                tstr = StringToLongInt(tstr) + pages - 1;
+                M4PadString(tstr,len(LINrbrw.TSerStart),"0",true,tstr);
+                tstr = LINrbrw.Serie & tstr;
+                res = res & tstr;
+              end;
+            end;
+            */
+            i = rwcnt;
+          end;
+        end;
+      end;
+    end;   
+  end;
+  if (nonblank(res)) then begin 
+    Retr.OfficialSerNr = res;
+    AddPortugueseSAFTHashToRet(Retr);
+  end;  
+LFindNextRetVcOfficialSerialNr:;  
+  RETURN;
+END;
+
+function string 255 GetPreviousRetPUHash(record RetPUVc curRetPUr)
+begin
+  record RetPUVc prevRetPUr;
+  string 255 res;
+  Date fsd,fed;
+  row LegalInvNrBlock LINrbrw;
+  Boolean testf;
+  
+  FindFiscalYear(curRetPUr.TransDate,fsd,fed);
+  GetLegalInvNrRow(curRetPUr.OfficialSerNr,LINrbrw);
+  
+  //1st invoice in Number series  
+  if (curRetPUr.OfficialSerNr==LINrbrw.Serie & LINrbrw.TSerStart) then begin
+    res = "";
+    goto LGetPreviousRetPUHash;
+  end;
+  
+  //1st invoice in FIscal year  
+  ResetLoop(prevRetPUr);
+  prevRetPUr.RegDate = curRetPUr.RegDate;
+  prevRetPUr.RegTime = curRetPUr.RegTime;
+  if (LoopBackKey("RegDate",prevRetPUr,2,true)) then begin
+    if (prevRetPUr.SerNr==curRetPUr.SerNr) then begin
+      if (LoopBackKey("RegDate",prevRetPUr,2,true)) then begin
+      end;
+    end;
+    if (prevRetPUr.TransDate<fsd) then begin testf = true; end;
+    if (prevRetPUr.TransDate>fed) then begin testf = true; end;
+    if (testf) then begin
+      res = "";
+      goto LGetPreviousRetPUHash;
+    end;
+  end;  
+  
+  ResetLoop(prevRetPUr);
+  prevRetPUr.OfficialSerNr = curRetPUr.OfficialSerNr;
+  if (LoopBackKey("OfficialSerNr",prevRetPUr,1,true)) then begin
+    if (prevRetPUr.SerNr==curRetPUr.SerNr) then begin
+      if (LoopBackKey("OfficialSerNr",prevRetPUr,1,true)) then begin
+      end;
+    end;
+    res = prevRetPUr.Hash;
+  end;
+LGetPreviousRetPUHash:;  
+  GetPreviousRetPUHash = res;
+  return;
+end;
+
+procedure AddPortugueseSAFTHashToRetPU(record RetPUVc RetPUr)
+begin
+  row RetPUVc RetPUrw;
+  Integer i,rwcnt;
+  
+  if (HasLocalization("PRT")==false) then begin
+    goto LAddPortugueseSAFTHashToRetPU;
+  end;
+  
+  RetPUr.Hash = GenerateSAFTHash(1,"RetPUVc",RetPUr.TransDate,RetPUr.RegDate,RetPUr.RegTime,RetPUr.OfficialSerNr,0.00,GetPreviousRetPUHash(RetPUr),"");
+  RetPUr.HashKeyVersion = CryptSAFTHashKeyVersion;
+  
+LAddPortugueseSAFTHashToRetPU:;  
+  return;
+end;
+
+global
+function Boolean TestNextOfficialSerialNr_RetPUVc(row LegalInvNrBlock LINrbrw,string veclass,record RetPUVc RetPUr,Boolean notmanualf,Integer kLegalInvNrSelectionType)
+begin
+  Boolean testf;
+  
+  testf = false;
+  if (LINrbrw.RegType==kOfficialNumTypeRetPUVc or LINrbrw.RegType==kOfficialNumTypeManualRetPUVc or LINrbrw.RegType==kOfficialNumTypeRecoverdSHVc) then begin 
+    testf = true;
+  end;
+  if (LINrbrw.RegType==kOfficialNumTypeRecoverdRetPUVc) and (RetPUr.Status==kRecordStatusRecovered) then begin 
+    testf = true;
+  end;
+  if (testf==true) then begin 
+    if (notmanualf) then begin
+      if (LINrbrw.SelectionType==kLegalInvNrSelectionTypeManual) then begin 
+        testf = false; 
+      end; 
+    end;
+    switch (kLegalInvNrSelectionType) begin
+      case -1:
+         if (LINrbrw.SelectionType==kLegalInvNrSelectionTypeAtSendingERecord) then begin 
+           testf = false; 
+         end; 
+      case -2:
+      otherwise
+        if (LINrbrw.SelectionType!=kLegalInvNrSelectionType) then begin 
+          testf = false; 
+        end; 
+    end;
+    if (LINrbrw.SelectionType==kLegalInvNrSelectionTypeAtOK)  and  (RetPUr.OKFlag!=1)  then begin 
+      testf = false; 
+    end; 
+    if (nonblank(LINrbrw.Branch)) then begin 
+      if (nonblank(RetPUr.BranchID)) then begin 
+        if (LINrbrw.Branch!=RetPUr.BranchID) then begin 
+          testf = false; 
+        end;
+      end else begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(LINrbrw.LocalMachineCode)) then begin 
+      if (nonblank(RetPUr.LocalMachineCode)) then begin 
+        if (LINrbrw.LocalMachineCode!=RetPUr.LocalMachineCode) then begin 
+          testf = false; 
+        end;
+      end else begin
+        testf = false; 
+      end;
+    end;
+    if (nonblank(LINrbrw.CClass)) then begin
+      if (nonblank(veclass)) then begin
+        if (SetInSet(LINrbrw.CClass,veclass)==false) then begin 
+          testf = false; 
+        end;
+      end else begin
+        testf = false; 
+      end;
+    end;
+    if (nonblankdate(LINrbrw.PurchDate)) then begin
+      if (RetPUr.TransDate<LINrbrw.PurchDate) then begin testf = false; end;
+    end;
+    if (nonblankdate(LINrbrw.EndDate)) then begin
+      if (RetPUr.TransDate>LINrbrw.EndDate) then begin testf = false; end;
+    end;
+  end;
+  TestNextOfficialSerialNr_RetPUVc = testf;
+  return;
+end;
+
+global
+procedure FindNextRetPUVcOfficialSerialNr(var record RetPUVc RetPUr,Integer kLegalInvNrSelectionType)
+BEGIN
+  record CUVc VEr;
+  string 255 res,tstr;
+  record LegalInvNrBlock LINrb;
+  row LegalInvNrBlock LINrbrw;
+  Integer i,rwcnt,pages;
+  Boolean testf;
+  record OffSerNrIVVc OffSerNrIVr;
+  
+  VEr.Code = RetPUr.VECode;
+  ReadFirstMain(VEr,1,true);
+  
+  NextOfficialSerNr("RetPUVc",RetPUr.SerNr,RetPUr.TransDate,"",res);
+  if (blank(res)) then begin
+    OffSerNrIVr.IVNr = RetPUr.SerNr;
+    OffSerNrIVr.FileName = "RetPUVc";
+    if (ReadFirstKey("MainKey",OffSerNrIVr,2,true)) then begin
+      res = OffSerNrIVr.OfficialSerNr;
+      goto LFindNextRetPUVcOfficialSerialNr;
+    end;
+    PrepareOfficialSerialNrBlock(kOfficialNumTypeRetPUVc,LINrb);
+    PrepareOfficialSerialNrBlock(kOfficialNumTypeManualRetPUVc,LINrb);
+    PrepareOfficialSerialNrBlock(kOfficialNumTypeRecoverdRetPUVc,LINrb);
+    rwcnt = MatRowCnt(LINrb);
+    if (rwcnt>0) then begin    
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(LINrb,i,LINrbrw);
+        testf = TestNextOfficialSerialNr_RetPUVc(LINrbrw,VEr.Classification,RetPUr,true,kLegalInvNrSelectionType);
+        if (testf) then begin
+          res = NextLegalSerNr("RetPUVc",RetPUr.SerNr,RetPUr.TransDate,LINrbrw.Serie,LINrbrw.TSerStart,LINrbrw.TSerEnd);
+          if (nonblank(res)) then begin
+            i = rwcnt;
+          end;
+        end;
+      end;
+    end;   
+  end;
+  if (nonblank(res)) then begin 
+    RetPUr.OfficialSerNr = res;
+    AddPortugueseSAFTHashToRetPU(RetPUr);
+  end;  
+LFindNextRetPUVcOfficialSerialNr:;  
+  RETURN;
+END;
+
+global
+procedure MasterWClassOnOpenRemote(string curmodule,var Array record KPIDefVc aKPIr,var Integer acnt)
+begin
+  record KPIDefVc KPIr; 
+  record KPIDefVc ARDueKPIr; 
+  Boolean found;
+  string 255 tstr,modulestr,kpitypestr;
+  Integer kpicnt,type;
+  LongInt pos;
+
+  KPIr.SerNr = -1;
+  ResetLoop(KPIr);
+  found = true;
+  while (LoopMain(KPIr,1,found)) begin
+    if (found) then begin
+      switch (KPIr.Type) begin
+        case kKPITypeAR: modulestr = "modSL";
+        case kKPITypeAP: modulestr = "modPL";
+        case kKPITypeARDue: modulestr = "modSL";
+        case kKPITypeARDueNoDisputed: modulestr = "modSL";
+        case kKPITypeAPDue: modulestr = "modPL";
+        case kKPITypeORNr: modulestr = "modSO";
+        case kKPITypeORStock: modulestr = "modSO";
+        case kKPITypeQTNr: modulestr = "modQT";
+        case kKPITypeQTStock: modulestr = "modQT";
+        case kKPITypeSalesInclVAT: modulestr = "modSL";
+        case kKPITypeSalesExclVAT: modulestr = "modSL";
+        case kKPITypeCost: modulestr = "modIN";
+        case kKPITypeGPPrc: modulestr = "modSL";
+        case kKPITypeIP: modulestr = "modSL";
+        case kKPITypeActivityNr: modulestr = "modCRM";
+        case kKPITypeActivityCostTime: modulestr = "modCRM";
+      end;
+      if (KPIr.AutoCalculated!=0) and (modulestr==curmodule) then begin
+        aKPIr[acnt] = KPIr;
+        acnt = acnt + 1;
+        found = false;
+      end else begin
+        if (KPIr.AutoCalculated!=0 and modulestr=="modSL" and (KPIr.Type==kKPITypeARDue or KPIr.Type==kKPITypeARDueNoDisputed)) then begin
+          RecordCopy(ARDueKPIr,KPIr);
+        end;
+      end;
+    end;
+  end;
+  if (acnt==0) then begin
+    aKPIr[acnt] = ARDueKPIr;
+    acnt = acnt + 1;
+  end;
+  return;
+end;
+
+global
+procedure MasterWClassOnOKWindowRemote(string tag,var record KPIDefVc resKPIr)
+begin
+  record KPIDefVc KPIr; 
+  Boolean found;
+  Integer type;
+
+  if (blank(tag)) then begin
+    goto LMasterWClassOnOKWindowRemote;
+  end;
+  type = StringToInt(tag);
+  RecordClear(resKPIr);
+  found = true;
+  while (LoopMain(KPIr,1,found)) begin
+    if (found) then begin
+      if (KPIr.Type==type) then begin
+        RecordCopy(resKPIr,KPIr);
+        found = false;
+      end;
+    end;
+  end;
+LMasterWClassOnOKWindowRemote:;  
+  return;
+end;
+
+global
+updating procedure RemoteLicensesUpdate(var array record LicensesVc Licensesra,Longint cnta)
+begin
+  record LicensesVc Licensesr,OldLicensesr,LicensesrTemp;
+  boolean updatef;
+  Longint i;
+
+  for (i=0; i<cnta; i=i+1) begin
+    updatef = false;
+    LicensesrTemp = Licensesra[i];
+    Licensesr.SerNr = LicensesrTemp.SerNr;
+    if (ReadFirstMain(Licensesr,1,true)) then begin
+      if (Licensesr.StoreTransId!=LicensesrTemp.StoreTransId) then begin  updatef = true;  end;
+      if (Licensesr.Qty!=LicensesrTemp.Qty) then begin  updatef = true;  end;
+      if (Licensesr.Active!=LicensesrTemp.Active) then begin  updatef = true;  end;
+      if (updatef) then begin 
+        RecordCopy(OldLicensesr,Licensesra[i]);
+        LicensesrTemp.Qty = Licensesr.Qty;
+        LicensesrTemp.Active = Licensesr.Active;
+        LicensesrTemp.StoreTransId = Licensesr.StoreTransId;          
+        RecordUpdate(OldLicensesr,LicensesrTemp,false); 
+        Licensesra[i] = LicensesrTemp;
+      end;
+    end;
+  end;
+
+  return;
+end;
+
+global
+updating procedure RemoteLicensesUpdateFromClient(var array record LicensesVc Licensesra,Longint cnta)
+begin
+  record LicensesVc Licensesr,OldLicensesr,LicensesrTemp,LicensesrNew;
+  boolean updatef,Insertf,foundf;
+  Longint i;
+  
+  for (i=0; i<cnta; i=i+1) begin
+    Insertf = true;
+    LicensesrTemp = Licensesra[i];
+    if (LicensesrTemp.Function=="ServerSlot") then begin
+      ResetLoop(Licensesr);
+      Licensesr.Function = "ServerSlot";    
+      foundf = true;
+      while (LoopKey("ActiveFunction",Licensesr,1,foundf)) begin
+        if (foundf and Licensesr.StoreTransId==LicensesrTemp.StoreTransId) then begin
+          updatef = false;
+          Insertf = false;
+//          if (Licensesr.Qty==LicensesrTemp.Qty) then begin updatef = true;  end;
+//          if (Licensesr.Active==LicensesrTemp.Active) then begin updatef = true;  end;
+          if (updatef) then begin
+            RecordCopy(OldLicensesr,Licensesr);
+            LicensesrTemp.Qty = Licensesr.Qty;
+            LicensesrTemp.Active = Licensesr.Active;
+            LicensesrTemp.StoreTransId = Licensesr.StoreTransId;          
+            RecordUpdate(OldLicensesr,LicensesrTemp,false); 
+            foundf = false;
+          end;
+        end;
+      end;
+      if (Insertf) then begin 
+        RecordCopy(OldLicensesr,LicensesrTemp);
+        LicensesrTemp.SerNr = NextSerNr("LicensesVc",CurrentDate,-1,false,"");
+        RecordInsert(LicensesrTemp,true); 
+      end;
+    end;    
+  end;
+
+  return;
+end;
+
+global
+procedure FindRemoteLicencesAboutToExpire(var array record LicensesVc Licensesra,var Longint cnta,
+                                          var array record LicensesVc LicensesraSlotsExpire,var Longint cntaSlotsExpire,
+                                          Integer DaysAhead)
+begin
+  record LicensesVc Licensesr;
+  boolean foundf,testf;
+  string 255 UserCode;
+  date ExpireDate,StartDateCheck;
+  Integer Counter;
+  
+  
+  StartDateCheck = AddDay(CurrentDate,0); //For Testing.
+  
+  foundf= true;
+  while (LoopKey("ActiveFunction",Licensesr,1,foundf)) begin
+    testf = true; 
+    if (Licensesr.Function!="ServerSlot") then begin testf = false; end;
+    if (Licensesr.Active!=1) then begin testf = false; end;
+    if (Licensesr.Type==kLicItemTypePermanent) then begin testf = false; end;
+    if (DateInRange(Licensesr.EndDate,StartDateCheck,AddDay(StartDateCheck,DaysAhead))==false) then begin testf = false; end;
+
+    if (testf) then begin
+      Licensesra[cnta] = Licensesr;
+      cnta = cnta + 1;
+    end;
+  end;  
+  
+  Counter = 0;
+  ResetLoop(Licensesr);
+  Licensesr.EndDate = CurrentDate;
+  Licensesr.Active = 0;
+  while (LoopKey("ActiveFunction",Licensesr,1,foundf)) begin
+    testf = true; 
+    if (Licensesr.Function!="ServerSlot") then begin testf = false; end;
+    if (Licensesr.Active!=0) then begin testf = false; foundf = false; end;
+    if (Licensesr.Type==kLicItemTypePermanent) then begin testf = false; end;
+
+    if (testf) then begin
+      Counter = Counter + 1;
+      if (Counter <= 2) then begin 
+        Licensesra[cntaSlotsExpire] = Licensesr;
+        cntaSlotsExpire = cntaSlotsExpire + 1;
+      end;
+    end;
+  end;    
+  
+  return;
+end;
+
+global
+updating function Integer GetRemoteUserMonthNumbers()
+begin
+  record LicensesVc Licr;
+  boolean foundf,testf;
+  Integer res;
+  
+  res = 0;
+  foundf= true;
+  ResetLoop(Licr);
+  Licr.Active = 1;
+  Licr.Function = "ServerSlot";
+  while (LoopKey("ActiveFunction",Licr,2,foundf)) begin
+    testf = true;
+    if (Licr.Function!="ServerSlot") then begin testf = false; foundf = false; end;
+    if (Licr.Active==0) then begin testf = false; foundf = false; end;
+    if (testf) then begin
+      res = res + Licr.Qty - Licr.UsedQty;
+    end;
+  end;
+  GetRemoteUserMonthNumbers = res;
+end;
+
+global
+updating function Integer GetRemoteCompaniesMonthNumbers()
+begin
+  record LicensesVc Licr;
+  boolean foundf,testf;
+  Integer res;
+  
+  res = 0;
+  foundf= true;
+  ResetLoop(Licr);
+  Licr.Active = 1;
+  Licr.Function = "Company";
+  while (LoopKey("ActiveFunction",Licr,2,foundf)) begin
+    testf = true;
+    if (Licr.Function!="Company") then begin testf = false; foundf = false; end;
+    if (Licr.Active==0) then begin testf = false; foundf = false; end;
+    if (testf) then begin
+      res = res + Licr.Qty - Licr.UsedQty;
+    end;
+  end;
+  GetRemoteCompaniesMonthNumbers = res;
+end;
+
+global
+updating function Integer UpdateUserLicenses(Integer change)
+begin
+  record LicensesVc Licr,oldLicr;
+  boolean foundf,testf;
+  Integer remaining;
+  
+  if (change<=0) then begin
+    goto LUpdateUserLicenses;
+  end;
+  
+  remaining = change;
+  foundf = true;
+  ResetLoop(Licr);
+  Licr.Active = 1;
+  Licr.Function = "ServerSlot";
+  while (LoopKey("ActiveFunction",Licr,2,foundf)) begin
+    testf = true;
+    if (Licr.Function!="ServerSlot") then begin testf = false; end;
+    if (Licr.Active==0) then begin testf = false; foundf = false; end;
+    if (testf) then begin
+      if (Licr.Qty - Licr.UsedQty<=remaining) then begin
+        remaining = remaining - (Licr.Qty - Licr.UsedQty);
+        RecordCopy(oldLicr,Licr);
+        Licr.Active = 0;
+        Licr.UsedQty = Licr.Qty;
+        RecordUpdate(oldLicr,Licr,false);
+      end else begin
+        RecordCopy(oldLicr,Licr);
+        Licr.UsedQty = Licr.UsedQty + remaining;
+        RecordUpdate(oldLicr,Licr,false);
+        remaining = 0;
+      end;
+      if (remaining==0) then begin
+        goto LUpdateUserLicenses;
+      end;
+    end;
+  end;
+LUpdateUserLicenses:;
+  UpdateUserLicenses = remaining;
+end;
+
+global
+updating function Integer UpdateCompaniesLicenses(Integer change)
+begin
+  record LicensesVc Licr,oldLicr;
+  boolean foundf,testf;
+  Integer remaining;
+  
+  if (change<=0) then begin
+    goto LUpdateCompaniesLicenses;
+  end;
+  
+  remaining = change;
+  foundf= true;
+  ResetLoop(Licr);
+  Licr.Active = 1;
+  Licr.Function = "Company";
+  while (LoopKey("ActiveFunction",Licr,2,foundf)) begin
+    testf = true;
+    if (Licr.Function!="Company") and (Licr.Function!="User") then begin testf = false; end;
+    if (Licr.Active==0) then begin testf = false; foundf = false; end;
+    if (testf) then begin
+      if (Licr.Qty - Licr.UsedQty<=remaining) then begin
+        remaining = remaining - (Licr.Qty - Licr.UsedQty);
+        RecordCopy(oldLicr,Licr);
+        Licr.Active = 0;
+        Licr.UsedQty = Licr.Qty;
+        RecordUpdate(oldLicr,Licr,false);
+      end else begin
+        RecordCopy(oldLicr,Licr);
+        Licr.UsedQty = Licr.UsedQty + remaining;
+        RecordUpdate(oldLicr,Licr,false);
+        remaining = 0;
+      end;
+      if (remaining==0) then begin
+        goto LUpdateCompaniesLicenses;
+      end;
+    end;
+  end;
+LUpdateCompaniesLicenses:;
+  UpdateCompaniesLicenses = remaining;
+end;
+
+global
+function Integer GetNrOfActiveUsers()
+begin
+  Integer res;
+  record UserVc Userr;
+  Boolean TrHs;
+  
+  Userr.Closed = 0;
+  TrHs = true;
+  while (LoopKey("ActCode",Userr,1,TrHs)) begin
+    if (Userr.Closed!=0) then begin
+      TrHs = false;
+    end else begin
+      res = res + 1;
+    end;
+  end;
+  GetNrOfActiveUsers = res;
+end;
+
+global
+updating procedure UpdateRemoteUserChargeFields()
+begin
+  record CurLicensesBlock CLb;
+  Integer nrtocharge;
+  
+//LogText(0,"1.UpdateRemoteUserChargeFields CurrentModule " & CurrentModule & " ServerMode " & ServerMode);
+
+  if (ServerMode==false and CurrentModule!="modServ") then begin
+    goto LUpdateRemoteUserChargeFields;
+  end;
+
+//LogText(0,"2.UpdateRemoteUserChargeFields CurrentModule " & CurrentModule & " ServerMode " & ServerMode);
+
+  BlockLoad(CLb);
+  CLb.TotalUserMonths = GetRemoteUserMonthNumbers();
+  if (blankdate(CLb.CurPeriodEndDate) and CLb.NrUsersToCharge<=0) then begin
+    CLb.NrUsersToCharge = 1;
+  end;
+  if (blankdate(CLb.CurPeriodEndDate) or CLb.CurPeriodEndDate<CurrentDate) then begin
+    CLb.CurPeriodEndDate = CalculateLicenseEndDate(CurrentDate,1,"",kLicItemTypeExpiring);
+    if (CLb.NrUsersToCharge>0) then begin
+      CLb.NrUsersChargedForCurPeriod = CLb.NrUsersToCharge - UpdateUserLicenses(CLb.NrUsersToCharge);
+      CLb.TotalUserMonths = CLb.TotalUserMonths - CLb.NrUsersChargedForCurPeriod;
+    end;
+  end;
+  if (CLb.NrUsersChargedForCurPeriod<CLb.NrUsersToCharge) then begin
+    nrtocharge = CLb.NrUsersToCharge - CLb.NrUsersChargedForCurPeriod;
+    CLb.NrUsersChargedForCurPeriod = CLb.NrUsersChargedForCurPeriod + nrtocharge - UpdateUserLicenses(nrtocharge);
+  end;
+  if (CLb.TotalUserMonths>0) then begin 
+    CLb.AvailableMonths = CLb.TotalUserMonths / CLb.NrUsersToCharge;
+  end else begin
+    CLb.AvailableMonths = 0;
+  end;
+  BlockStore(CLb);
+LUpdateRemoteUserChargeFields:;
+end;
+
+global
+procedure GetRemoteUserChargeFields(var Integer NrUsersToCharge,var Integer NrUsersChargedForCurPeriod,var Integer AvailableMonths,var Integer TotalUserMonths,var Date CurPeriodEndDate)
+begin
+  record CurLicensesBlock CLb;
+  
+  BlockLoad(CLb);
+  NrUsersToCharge = CLb.NrUsersToCharge;
+  NrUsersChargedForCurPeriod = CLb.NrUsersChargedForCurPeriod;
+  AvailableMonths = CLb.AvailableMonths;
+  TotalUserMonths = CLb.TotalUserMonths;
+  CurPeriodEndDate = CLb.CurPeriodEndDate;
+end;
+
+global
+updating procedure UpdateRemoteNrUsersToCharge(Integer NrUsersToCharge)
+begin
+  record CurLicensesBlock CLb;
+  
+  BlockLoad(CLb);
+  CLb.NrUsersToCharge = NrUsersToCharge;
+  BlockStore(CLb);
+  UpdateRemoteUserChargeFields;
+end;
+
+global
+procedure GetRemoteCompaniesChargeFields(var Integer NrCompaniesToCharge,var Integer NrCompaniesChargedForCurPeriod,var Integer CompaniesAvailableMonths,var Integer TotalCompaniesMonths,var Date CurPeriodEndDate)
+begin
+  record CurLicensesBlock CLb;
+  
+  BlockLoad(CLb);
+  NrCompaniesToCharge = CLb.NrCompaniesToCharge;
+  NrCompaniesChargedForCurPeriod = CLb.NrCompaniesChargedForCurPeriod;
+  CompaniesAvailableMonths = CLb.CompaniesAvailableMonths;
+  TotalCompaniesMonths = CLb.TotalCompaniesMonths;
+  CurPeriodEndDate = CLb.CurPeriodEndDate;
+end;
+
+global
+updating procedure UpdateRemoteCompaniesChargeFields()
+begin
+  record CurLicensesBlock CLb;
+  Integer nrtocharge;
+  
+  if (ServerMode==false and CurrentModule!="modServ") then begin
+    goto LUpdateRemoteCompaniesChargeFields;
+  end;
+  BlockLoad(CLb);
+  CLb.TotalCompaniesMonths = GetRemoteCompaniesMonthNumbers();
+  if (blankdate(CLb.CurPeriodEndDate) and CLb.NrCompaniesToCharge<=0) then begin
+    CLb.NrCompaniesToCharge = 1;
+  end;
+  if (blankdate(CLb.CurPeriodEndDate) or CLb.CurPeriodEndDate<CurrentDate) then begin
+    CLb.CurPeriodEndDate = CalculateLicenseEndDate(CurrentDate,1,"",kLicItemTypeExpiring);
+    if (CLb.NrCompaniesToCharge>0) then begin
+      CLb.NrCompaniesChargedForCurPeriod = CLb.NrCompaniesToCharge - UpdateCompaniesLicenses(CLb.NrCompaniesToCharge);
+      CLb.TotalCompaniesMonths = CLb.TotalCompaniesMonths - CLb.NrCompaniesChargedForCurPeriod;
+    end;
+  end;
+  if (CLb.NrCompaniesChargedForCurPeriod<CLb.NrCompaniesToCharge) then begin
+    nrtocharge = CLb.NrCompaniesToCharge - CLb.NrCompaniesChargedForCurPeriod;
+    CLb.NrCompaniesChargedForCurPeriod = CLb.NrCompaniesChargedForCurPeriod + nrtocharge - UpdateCompaniesLicenses(nrtocharge);
+  end;
+  if (CLb.TotalUserMonths>0) then begin 
+    CLb.CompaniesAvailableMonths = CLb.TotalCompaniesMonths / CLb.NrCompaniesToCharge;
+  end else begin
+    CLb.CompaniesAvailableMonths = 0;
+  end;
+  BlockStore(CLb);
+LUpdateRemoteCompaniesChargeFields:;
+end;
+
+global
+updating procedure UpdateRemoteNrCompaniesToCharge(Integer NrCompaniesToCharge)
+begin
+  record CurLicensesBlock CLb;
+  
+  BlockLoad(CLb);
+  CLb.NrCompaniesToCharge = NrCompaniesToCharge;
+  BlockStore(CLb);
+  UpdateRemoteCompaniesChargeFields;
+end;
+
+global
+function Boolean TransactionForCustomerExists(string custcode)
+begin
+  Boolean res;
+  record IVVc IVr;
+  record IVCashVc IVCashr;
+  record QTVc QTr;
+  record ORVc ORr;
+  
+  IVr.CustCode = custcode;
+  res = ReadFirstKey("CustCode",IVr,1,true);
+  if (res) then begin
+    goto LTransactionForCustomerExists;
+  end;
+  IVCashr.CustCode = custcode;
+  res = ReadFirstKey("CustCode",IVCashr,1,true);
+  if (res) then begin
+    goto LTransactionForCustomerExists;
+  end;
+  ORr.CustCode = custcode;
+  res = ReadFirstKey("CustCode",ORr,1,true);
+  if (res) then begin
+    goto LTransactionForCustomerExists;
+  end;
+  QTr.CustCode = custcode;
+  res = ReadFirstKey("CustCode",QTr,1,true);
+  if (res) then begin
+    goto LTransactionForCustomerExists;
+  end;
+LTransactionForCustomerExists:;  
+  TransactionForCustomerExists = res;
+  return;
+end;
+
+global
+function Integer CountryRecordExists(string countryname)
+begin
+  Integer errcode;
+  record CountryVc Countryr;
+
+  Countryr.Comment = countryname;
+  if (ReadFirstKey("Comment",Countryr,1,true)==false) then begin
+    errcode = 20277;
+    goto LCountryRecordExists;
+  end;
+  
+LCountryRecordExists:;  
+  CountryRecordExists = errcode;
+  return;
+end;
+
+global
+updating procedure RemoteSubscriptionInvitationMn(record RcVc RepSpec)
+begin
+  SubscriptionInvitationMn(RepSpec);
+  return;
+end;
+
+global
+updating function Integer StandardPersonalIDWClassSaveRemote(string UserID,string PersonalID)
+begin
+  record UserVc Userr,UserrOld;
+  integer res;
+  
+  res = 0;
+  Userr.Code = UserID;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    RecordCopy(UserrOld,Userr);
+    Userr.IDCode = PersonalID;
+    if (RecordUpdate(UserrOld,Userr,false)==0) then begin
+      res = 1;
+    end;
+  end;
+  StandardPersonalIDWClassSaveRemote = res;
+  return;
+end;
+
+global
+function integer TestEinvoiceQueueRemote(LongInt IVserNr)
+begin
+  integer res;
+  record EInvoiceQueVc EInvoiceQuer;
+  
+  res = 0;
+  if (UserCanAction("AllowPrintEInvoicesFromIV",false)==false) then begin
+    EInvoiceQuer.FileName = "IVVc";
+    EInvoiceQuer.RecSerNr = IVserNr;
+    if (ReadFirstKey("FileName",EInvoiceQuer,2,true)) then begin
+      res = 20672;
+    end;
+    if (res==0) then begin
+      EInvoiceQuer.FileName = "ArgIVVc";
+      EInvoiceQuer.RecSerNr = IVserNr;
+      if (ReadFirstKey("FileName",EInvoiceQuer,2,true)) then begin
+        res = 20672;
+      end;
+    end;
+    if (res==0) then begin
+      EInvoiceQuer.FileName = "estIVVc";
+      EInvoiceQuer.RecSerNr = IVserNr;
+      if (ReadFirstKey("FileName",EInvoiceQuer,2,true)) then begin
+        res = 20672;
+      end;
+    end;
+  end;
+  
+  TestEinvoiceQueueRemote = res;
+  return;
+end;
+
+global
+updating procedure StoreeShipTaxAuthReply(string filename,LongInt transnr,string officialsernr,string TaxAdminServSeal)
+begin
+  record eShipTaxAuthReplyVc eSTARr;
+  
+  RecordNew(eSTARr);
+  eSTARr.FileName = filename;
+  eSTARr.TransNr = transnr;
+  eSTARr.TransDate = CurrentDate;
+  eSTARr.OfficialSerNr = officialsernr;
+  eSTARr.TaxAdminServSeal = TaxAdminServSeal;
+  eSTARr.SerNr = NextSerNr("eShipTaxAuthReplyVc",eSTARr.TransDate,-1,false,"");
+  if (eSTARr.SerNr>0) then begin
+    RecordStore(eSTARr,false);
+  end;
+  return;
+end;
+
+global
+updating procedure StoreeShipTaxAuthReplyRecord(record eShipTaxAuthReplyVc eSTARr,Boolean sentoked)
+begin
+  eSTARr.SerNr = NextSerNr("eShipTaxAuthReplyVc",eSTARr.TransDate,-1,false,"");
+  if (eSTARr.SerNr>0) then begin
+    RecordStore(eSTARr,false);
+  end;
+  return;
+end;
+
+global  
+function string 255 ReturnItemCodeFromBarCode(string BarCode)
+begin
+  record INVc INr;  
+  record BarcodeVc Barcoder;
+  string 255 res;  
+  
+  INr.BarCode = BarCode;
+  if (ReadFirstKey("BarCode",INr,1,true)) then begin
+    res = INr.Code;
+  end else begin
+    Barcoder.Barcode = BarCode;
+    if (ReadFirstMain(Barcoder,1,true)) then begin
+      res = Barcoder.Itemcode;
+    end else begin
+      res = BarCode;
+      res = "";
+    end;
+  end;
+  //DA start
+  if (blank(res)) then begin 
+    INr.Code = BarCode;
+    if (ReadFirstKey("Code",INr,1,true)) then begin
+      res = INr.Code;
+    end;
+  end;
+  //DA end
+  ReturnItemCodeFromBarCode = res;
+  return;
+end;
+
+global 
+updating function Boolean DelActivity(LongInt ActSerNr,var string mesg,var LongInt error)
+begin
+  boolean res;
+  record ActVc Actr;
+  record ActVc fakeActr;  
+
+  Actr.SerNr = ActSerNr;
+  ReadFirstMain(Actr,1,true);
+  if (ActVcRecordRemoveTest(Actr,fakeActr,0,0)!=0) then begin
+    RecordDelete(Actr);
+    res = true;
+  end else begin
+    mesg = "";
+    error = 1560;  // May not be removed
+  end;
+  DelActivity = res;
+  return;
+end;
+
+global 
+updating function Boolean CheckEShipPRTItems(record RcVc RepSpec,var LongInt error,var string errorstr,var integer rownr,var string fieldstr)
+begin
+  boolean res;
+  
+  res = false;
+  error = 0;
+  errorstr = "";
+  switch (RepSpec.f5) begin
+    case "SHVc": res = CheckEShipPRTItems_SHVc(RepSpec,error,errorstr,rownr,fieldstr);
+    case "StockMovVc": res = CheckEShipPRTItems_StockMovVc(RepSpec,error,errorstr,rownr,fieldstr);
+    case "RetPUVc": res = CheckEShipPRTItems_RetPUVc(RepSpec,error,errorstr,rownr,fieldstr);
+  end;
+  
+  CheckEShipPRTItems = res;
+  return;
+end;
+
+global
+function Boolean RemotePopulateSkill(var record HRMSEVc HRMSEr,string CurUser)
+begin
+  Boolean res,found;
+  record HRMSEVc HRMSE2r;
+  string 255 ContactCode;
+  record UserVc Userr;
+
+  Userr.Code = CurUser;
+  if (FindTheUser(Userr)==false) then begin 
+    goto LLRemotePopulateSkill;
+  end;
+
+  HRMSE2r.TransDate = AddYear(CurrentDate,1);
+  found = true;
+  while (LoopBackKey("TransDate",HRMSE2r,1,found)) begin
+    if (HRMSE2r.Employee==Userr.CustCode) then begin 
+      res = true;
+      found = false;
+    end;   
+  end;
+  if (res) then begin 
+    RecordCopy(HRMSEr,HRMSE2r);
+    DoHRMSEVcRecordDuplicate(HRMSEr,HRMSE2r,Rs_insert,-1);
+    HRMSEr.TransDate = CurrentDate;
+  end;
+LLRemotePopulateSkill:;
+  RemotePopulateSkill = res;
+  return;
+end;
+
+global
+updating function Boolean AddCompanyCompaniesTsmRemote(var record RcVc RepSpec)
+begin
+  Boolean res;
+  record CompaniesBlock Comp;
+  row CompaniesBlock Comp1rw;
+  Integer rwcnt;
+  row CompaniesBlock newComprw;
+  
+  BlockLoad(Comp);
+  rwcnt = MatRowCnt(Comp);
+  if (rwcnt>0) then begin
+    MatRowGet(Comp,0,Comp1rw);
+    // ClearRow(Comp,newComprw,1);
+    newComprw.CompCode = rwcnt + 1;
+    newComprw.CompName = RepSpec.f1;
+    newComprw.ShortName = RepSpec.f2;
+    newComprw.TCPIP = Comp1rw.TCPIP;
+    newComprw.Port = Comp1rw.Port;
+    newComprw.EnqKey = Comp1rw.EnqKey;
+    MatRowPut(Comp,rwcnt,newComprw);
+    BlockStore(Comp);
+    BlockLoad(Comp);
+    if (rwcnt<MatRowCnt(Comp)) then begin
+      res = true;
+    end;
+    RepSpec.f1 = newComprw.CompName;
+    RepSpec.f2 = newComprw.ShortName;
+    RepSpec.f5 = newComprw.EnqKey;
+    RepSpec.f6 = newComprw.CompCode;
+  end;
+  AddCompanyCompaniesTsmRemote = res;
+  return;
+end;
+
+global
+updating procedure StartRemoteBackup()
+begin
+  CreateDBTextBackup("");
+end;
+
+global
+procedure RemoteQTPaste(var record QTVc QTp,var string warntext,var LongInt errocode)
+begin
+  string 255 efstr;
+  
+  QTVc_PasteSalesMan(QTp,"");
+  if (PasteCustInQT(QTp,QTp.CustCode,efstr,warntext,true)) then begin end;
+  return;
+end;
+
+global
+function Boolean ProgramTypeShouldUseStandardServer(Integer ptyp)
+begin
+  boolean res;
+
+  res = true;
+  if (ptyp==typHansaWorld or ptyp==typPurplesoftERP or ptyp==typOBSHousing or ptyp==typPAYYAPERP or ptyp==typStandardERP) then begin
+    res = false;
+  end;
+
+  ProgramTypeShouldUseStandardServer = res;
+  return;
+end;
+
+function Boolean VersionShouldBeExcluded(string code)
+begin
+  Boolean res;
+
+  res = false;
+
+  //this is actually test version that was created wrongly
+  if (right(code,19)=="8.3-2016-04-27-0000") then begin
+    res = true;
+  end;
+
+  VersionShouldBeExcluded = res;
+  return;
+end;
+
+global
+function Boolean GetLatestReleaseVersion(Integer type,var record HansaVersionVc nHVr)
+begin
+  record HansaVersionVc HVr;
+  Boolean TrHs,testf,res;
+  string 255 pcode;
+  Integer ptyp;
+
+  if (ProgramTypeShouldUseStandardServer(type)) then begin
+    ptyp = typStdAccountsServer;
+    pcode = "StandardServer";
+    LogText2(0,"FindProductHansaVersion Using product code StandardServer",kVerbosityDebugDetailed);
+  end else begin
+    ptyp = typStandardERP;
+    pcode = "StandardERP";
+    LogText2(0,"FindProductHansaVersion Using product code StandardERP",kVerbosityDebugDetailed);
+  end;
+
+  HVr.Version = 1000;
+  //HVr.ProgramType = ptyp;
+  //HVr.ProductCode = pcode;
+  TrHs = true;
+  while (LoopBackKey("DbVersion",HVr,1,TrHs)) begin
+    testf = true;
+    if (IsNumeric(right(HVr.Code,2))==false) then begin
+      testf = false;
+    end;
+    if (HVr.ProgramType!=ptyp) then begin
+      testf = false;
+    end;
+    if (HVr.ProductCode!=pcode) then begin
+      testf = false;
+    end;
+    if (VersionShouldBeExcluded(HVr.Code)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      TrHs = false;
+      RecordCopy(nHVr,HVr);
+      res = true;
+    end;
+  end;
+
+  GetLatestReleaseVersion = res;
+  return;
+end;
+
+global
+updating procedure AddToEditFieldsAccess(record RcVc RepSpec)
+begin
+  record EditFieldAccessVc EFAr;
+  row EditFieldAccessVc EFArw;
+  Integer i,rwcnt,rownr;
+  
+  EFAr.WindowClass = RepSpec.f1;
+  EFAr.AccessGroup = RepSpec.f2;
+  EFAr.VcName = RepSpec.f4;
+  if (ReadFirstMain(EFAr,2,true)) then begin
+    rwcnt = MatRowCnt(EFAr);
+    rownr = rwcnt;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(EFAr,i,EFArw);
+      if (EFArw.Field==RepSpec.f3) then begin
+        rownr = i;
+        i = rwcnt;
+      end;
+    end;
+  end else begin
+    EFAr.WindowClass = RepSpec.f1;
+    EFAr.AccessGroup = RepSpec.f2;
+    EFAr.VcName = RepSpec.f4;
+  end;
+  ClearRow(EFAr,EFArw,1);
+  EFArw.Field = RepSpec.f3;
+  EFArw.Hide = RepSpec.ArtMode;
+  EFArw.Type = RepSpec.Custf;
+  EFArw.Rowf = RepSpec.sm1;
+  EFArw.Label = RepSpec.f5;
+  MatRowPut(EFAr,rownr,EFArw);
+  RecordStore(EFAr,true);
+  return;
+end;
+
+global
+function date AccPeriodDueDate(date InvDate)
+begin
+  record AccPeriodVc AccPeriodr;
+  row AccPeriodVc AccPeriodrw;
+  integer rwcnt,i;
+  date res;
+
+  res = CurrentDate;
+  if (nonblank(InvDate)) then begin 
+    if (FindAccPeriod(InvDate,AccPeriodr)) then begin 
+      rwcnt = MatRowCnt(AccPeriodr);
+      for (i=0; i<rwcnt; i=i+1) begin
+        MatRowGet(AccPeriodr,i,AccPeriodrw);
+        if (DateInRange(InvDate,AccPeriodrw.StartDate,AccPeriodrw.EndDate)) then begin
+          if (nonblankdate(AccPeriodrw.DueDate)) then begin 
+            res = AccPeriodrw.DueDate;
+            i = rwcnt;     
+          end;  
+        end;
+      end;
+    end;  
+  end;
+  AccPeriodDueDate = res;
+  return;
+end;

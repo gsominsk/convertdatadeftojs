@@ -1,0 +1,18 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fAccNumber: { public: true, type: 'TEXT' },
+     fAccName: { public: true, type: 'TEXT' },
+     fObjects: { public: true, type: 'TEXT' },
+     fDC: { public: true, type: 'INTEGER' },
+     fToAccNumber: { public: true, type: 'TEXT' },
+     fToAccName: { public: true, type: 'TEXT' },
+     fToObjects: { public: true, type: 'TEXT' },
+     fToRefStr: { public: true, type: 'TEXT' },
+     fToCompany: { public: true, type: 'INTEGER' },
+     fCorAccNumber: { public: true, type: 'TEXT' },
+     fCorAccName: { public: true, type: 'TEXT' },
+     fCorObjects: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fIntYc: { public: true, type: 'INTEGER' } },
+  indexes: { SerNrIndex862: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

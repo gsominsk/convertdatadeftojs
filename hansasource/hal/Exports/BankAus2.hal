@@ -1,0 +1,201 @@
+external function Boolean GetPMRow(string,var row PMBlock);
+external procedure NewLineExport();
+
+global
+procedure BankExpAustralia2Begin(record RcVc RepSpec,record OPVc OPr)
+begin
+  row PMBlock PMrw;
+  record BankVc Bankr;
+
+  GetPMRow(OPr.PayMode,PMrw);
+  Bankr.Code = PMrw.BankCode;
+  ReadFirstMain(Bankr,1,true);
+  ExportPadString("0",1," ",false);
+  ExportPadString(" ",17," ",false);
+  ExportPadString("01",2," ",false);
+  ExportPadString(PMrw.BankCode,3," ",false);
+  ExportPadString(" ",7," ",false);
+  ExportPadString(PMrw.BankName,26," ",false);
+  ExportPadString(Bankr.Sorting,6,"0",true);
+  ExportPadString(OPr.PayNumber,12," ",false);
+  ExportPadString(DateToString(OPr.TransDate,"DDMMYY"),6," ",false);
+  ExportPadString(" ",40," ",false);
+  NewLineExport;
+  return;
+end;
+
+global
+procedure BankExpAustralia2OwnLine(record RcVc RepSpec,record OPVc OPr,var val PGSum,var LongInt betcount)
+begin
+  row PMBlock PMrw;
+  record BankVc Bankr;
+  string 255 tstr,sortcode;
+  
+  GetPMRow(OPr.PayMode,PMrw);
+  Bankr.Code = PMrw.BankCode;
+  ReadFirstMain(Bankr,1,true);
+  ExportPadString("1",1," ",false);
+  if (nonblank(OPr.SortCode)) then begin
+    sortcode = OPr.SortCode;
+    if (len(sortcode)==6) then begin
+      sortcode = left(sortcode,3) & "-" & Right(sortcode,3);
+    end;
+  end;
+  ExportPadString(sortcode,7," ",false);     
+  ExportPadString(OPr.BankAcc,9," ",true);
+  ExportPadString(" ",1," ",false);
+  ExportPadString("13",2," ",false);
+  tstr = ValToString(PGSum*100,M4UVal,"","",0);
+  ExportPadString(tstr,10,"0",true);
+  ExportPadString(PMrw.BankName,32," ",false);
+  ExportPadString(OPr.PayNumber,18," ",false);
+  ExportPadString(sortcode,7," ",false);     
+  ExportPadString(OPr.BankAcc,9," ",false);     
+  ExportPadString(PMrw.BankName,16," ",false);
+  ExportPadString("0",8,"0",true);
+  NewLineExport;
+  betcount = betcount + 1;
+  return;
+end;
+
+procedure AddToVEArray(row OPVc OPrw,var Array string avecode,var Array string acurcode,var Array string abankacc,var Array string abankref,var Integer avecnt)
+begin
+  Boolean res;
+  Integer i;
+  
+  for (i=0;i<avecnt;i=i+1) begin
+    if ((avecode[i]==OPrw.VECode) and (acurcode[i])==OPrw.BankCurncy) and (abankacc[i]==OPrw.BankAcc) and (abankref[i]==OPrw.BankRefStr) then begin
+      goto LAddToVEArray;
+    end;
+  end;
+  avecode[avecnt] = OPrw.VECode;
+  acurcode[avecnt] = OPrw.BankCurncy;
+  abankacc[avecnt] = OPrw.BankAcc;
+  abankref[avecnt] = OPrw.BankRefStr;
+  avecnt = avecnt + 1;
+LAddToVEArray:;  
+  return;
+end;
+
+function Boolean VEPaymentAlreadyDone(row OPVc OPrw,var Array string avecode,var Array string acurcode,var Array string abankacc,var Array string abankref,var Integer avecnt)
+begin
+  Boolean res;
+  Integer i;
+  
+  for (i=0;i<avecnt;i=i+1) begin
+    if ((avecode[i]==OPrw.VECode) and (acurcode[i])==OPrw.BankCurncy) and (abankacc[i]==OPrw.BankAcc) and (abankref[i]==OPrw.BankRefStr) then begin
+      res = true;
+      goto LVEPaymentAlreadyDone;
+    end;
+  end;
+LVEPaymentAlreadyDone:;
+  VEPaymentAlreadyDone = res;  
+  return;
+end;
+
+global
+procedure BankExpAustralia2Payment(record RcVc RepSpec,record OPVc OPr,var val PGSum,var LongInt betcount)
+begin
+  record VIVc VIr;
+  record CUVc CUr;
+  Integer i,j,rwcnt;
+  row OPVc OPrw;
+  row OPVc OP2rw;
+  Boolean testf;
+  string 255 tstr,comment,sortcode;
+  Array string 50 avecode;
+  Array string 20 acurcode;
+  Array string 60 abankacc;
+  Array string 60 abankref;
+  Integer avecnt;
+  val bankval;
+  row PMBlock PMrw;
+
+  GetPMRow(OPr.PayMode,PMrw);
+  rwcnt = MatRowCnt(OPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPr,i,OPrw);
+    if ((OPrw.stp==1) and (OPrw.ovst==0)) then begin
+      if (blank(OPr.BankAcc)) or (blank(OPrw.BankAcc)) then begin goto LSKIPROW1; end;
+      if (VEPaymentAlreadyDone(OPrw,avecode,acurcode,abankacc,abankref,avecnt)==false) then begin        
+        comment = OPrw.Comment;
+        bankval = OPrw.BankVal;
+        for (j=i+1;j<rwcnt;j=j+1) begin
+          MatRowGet(OPr,j,OP2rw);
+          if ((OP2rw.stp==1) and (OP2rw.ovst==0)) then begin
+            if ((OP2rw.VECode==OPrw.VECode) and (OP2rw.BankCurncy==OPrw.BankCurncy) and (OP2rw.BankAcc==OPrw.BankAcc) and (OP2rw.BankRefStr==OPrw.BankRefStr)) then begin
+              bankval = bankval + OP2rw.BankVal;
+            end;
+          end;
+        end;
+        CUr.Code = OPrw.VECode;
+        if (ReadFirstMain(CUr,1,true)) then begin end;
+        ExportPadString("1",1," ",false);
+        if (nonblank(OPrw.SortCode)) then begin
+          sortcode = OPrw.SortCode;
+        end else begin
+          sortcode = CUr.SortCode;
+        end;
+        if (len(sortcode)==6) then begin
+          sortcode = left(sortcode,3) & "-" & Right(sortcode,3);
+        end;
+        ExportPadString(sortcode,7," ",true);
+        if (blank(OPrw.BankAcc)) then begin
+          ExportPadString(CUr.BankAccount,9," ",true);
+        end else begin
+          ExportPadString(OPrw.BankAcc,9," ",true);
+        end;
+        ExportPadString(" ",1," ",false);
+        ExportPadString("50",2," ",false);
+        tstr = ValToString(bankval*100,M4UVal,"","",0);
+        ExportPadString(tstr,10,"0",true);
+        if (nonblank(CUr.AccOperator)) then begin
+          ExportPadString(CUr.AccOperator,32," ",false);
+        end else begin
+          ExportPadString(CUr.Name,32," ",false);
+        end;
+        if (nonblank(OPrw.BankRefStr)) then begin
+          ExportPadString(OPrw.BankRefStr,18," ",false);
+        end else begin
+          ExportPadString(OPr.PayNumber,18," ",false);
+        end;
+        if (nonblank(OPr.SortCode)) then begin
+          sortcode = OPr.SortCode;
+          if (len(sortcode)==6) then begin
+            sortcode = left(sortcode,3) & "-" & Right(sortcode,3);
+          end;
+        end;
+        ExportPadString(sortcode,7," ",false);     
+        ExportPadString(OPr.BankAcc,9," ",false);     
+        ExportPadString(PMrw.BankName,16," ",false);
+        ExportPadString("0",8,"0",true);
+        NewLineExport;
+
+        betcount = betcount + 1;
+        PGSum = PGSum + bankval;
+        AddToVEArray(OPrw,avecode,acurcode,abankacc,abankref,avecnt);
+LSKIPROW1:;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure BankExpAustralia2End(val PGSum,LongInt betcount)
+begin
+  string 255 tstr;
+  
+  ExportPadString("7",1," ",false);
+  ExportPadString("999-999",7," ",false);
+  ExportPadString(" ",12," ",false);
+  ExportPadString("0",10,"0",true);
+  tstr = ValToString(PGSum*100,M4UVal,"","",0);
+  ExportPadString(tstr,10,"0",true);
+  ExportPadString(tstr,10,"0",true);
+  ExportPadString(" ",24," ",false);
+  ExportPadString(betcount,6,"0",true);
+  ExportPadString(" ",40," ",false);
+  NewLineExport;
+  return;
+end;

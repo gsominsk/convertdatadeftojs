@@ -1,0 +1,243 @@
+external procedure OutAddress(string,string,string,string,string,string,string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure CommonDocumentFields(record RcVc);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure ItemBCEAN(string,var string);
+external procedure ItemBCEAN13(string,var string);
+external procedure ItemBC39(string,var string);
+external procedure BC39(string,var string);
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+
+procedure PrintDeliveryLabel(string shnr,var Boolean formisopen,Integer palletcnt,string formcode)
+BEGIN
+  record SHVc SHr;
+  record ForkLiftQueVc ForkLiftQuer;
+  Boolean TrHs;
+  record INVc INr;
+  
+  SHr.SerNr = StringToLongInt(shnr);
+  if (ReadFirstMain(SHr,1,true)) then begin
+    OUTFORMFIELD("F_ORDNUMMER",SHr.OrderNr);
+    OUTFORMFIELD("F_KUNDNR",SHr.CustCode);
+    OUTFORMFIELD("F_KUNDNAMN",SHr.Addr0);
+    OutAddress("F_ADRESS",SHr.Addr0,SHr.Addr1,SHr.Addr2,SHr.Addr3,SHr.DelAddr3,SHr.DelAddr4);
+    OUTFORMFIELD("F_ADRESS",SHr.DelAddr4);
+    OUTFORMFIELD("F_ROWNR",palletcnt);
+    TrHs = true;
+    ForkLiftQuer.QueType = 0;
+    ForkLiftQuer.Status = 2;    
+    ForkLiftQuer.SHNr = SHr.SerNr;
+    while (LoopKey("QueTypeStatusSH",ForkLiftQuer,3,TrHs)) begin
+      if (ForkLiftQuer.SHNr!=SHr.SerNr) then begin TrHs = false; end;
+      if (ForkLiftQuer.QueType!=0) then begin TrHs = false; end;
+      if (ForkLiftQuer.Status!=2) then begin TrHs = false; end;
+      if (TrHs) then begin
+        OUTFORMFIELD("F_ARTNR",ForkLiftQuer.ArtCode);
+        INr.Code = ForkLiftQuer.ArtCode;
+        if (ReadFirstMain(INr,1,true)) then begin end;
+        OUTFORMFIELD("F_SPECRIMPAC",INr.Name);
+        EndFormRow;
+      end;
+    end;
+  end;
+LPrintDeliveryLabel:;
+  RETURN;
+END;
+
+procedure PalletLab(record RcVc RepSpec,record StockMovVc StockMovr,record DocVc Docr,record LangNrVc LangNrr,record SysFormatBlock SysFormatRec)
+BEGIN
+  string 255 tstr;
+  row DocVc Docrw;
+  record PosVc Posr;
+  Integer rwcnt,i;
+  row StockMovVc StockMovrw;
+  record INVc INr;
+    
+  BC39(StockMovr.SerNr,tstr);    
+ // StopAlert("tstr " & tstr);
+  OUTFORMFIELD("X_SERNR_CODE39",tstr);
+  OUTFORMFIELD("F_SERNR",StockMovr.SerNr);
+
+  ItemBC39(StockMovr.SerNr,tstr);
+  OUTFORMFIELD("F_ARTNRBC39",tstr);
+  ItemBCEAN(StockMovr.SerNr,tstr);
+  OUTFORMFIELD("F_ARTNRBCEAN",tstr);
+  ItemBCEAN13(StockMovr.SerNr,tstr);
+  OUTFORMFIELD("F_ARTNRBCEAN13",tstr);
+  OUTFORMFIELD("F_BESKRIVNING",StockMovr.SerNr);  
+  if (MatRowCnt(StockMovr)>0) then begin
+    MatRowGet(StockMovr,0,StockMovrw);
+    PrintValue("F_ANTAL",StockMovrw.Quant,M40Val,LangNrr,SysFormatRec,false);
+    OUTFORMFIELD("F_ARTNR",StockMovrw.ArtCode);
+    OUTFORMFIELD("F_ARTNR2",StockMovrw.ArtCode);
+    if (ReadFirstItem(StockMovrw.ArtCode,INr,true,true)) then begin end;
+    OUTFORMFIELD("F_SPECIFIKATION",INr.Name);
+   // StopAlert("StockMovrw.ToPosCode " & StockMovrw.ToPosCode);
+    OUTFORMFIELD("X_PALLETTOPOS",StockMovrw.ToPosCode);
+    Posr.Code = StockMovrw.ToPosCode;
+    if (ReadFirstMain(Posr,1,true)) then begin     
+      PrintValue("X_PALLHEIGHT",Posr.Height,M40Val,LangNrr,SysFormatRec,false);
+     //StopAlert("Posr.Height " & Posr.Height);
+     OUTFORMFIELD("X_STOCKAREA",Posr.LocArea);
+     // StopAlert("Posr.LocArea " & Posr.LocArea);
+    end;
+  end;
+/*  
+  rwcnt = MatRowCnt(Docr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Docr,i,Docrw);
+    if (Docrw.fieldSetNr==0) then begin
+      OUTFORMFIELD(Docrw.unitText,Docrw.unitText);
+    end;
+  end;  
+*/  
+  RETURN;  
+END;
+
+procedure DoPalletLabFormPrint(record RcVc RepSpec,string formcode,string printer)
+BEGIN
+  record StockMovVc StockMovr;
+  LongInt snum;
+  Boolean TrHs;
+  Integer i,rwcnt;
+  Boolean testf;
+  record SysFormatBlock SysFormatRec;
+  record LangNrVc LangNrr;
+  Integer lbls,lblYstep,palletcnt;
+  record DocVc Docr;
+  Boolean formisopen;
+  string 20 keys,fname;
+
+  if (OpenForm(formcode)==false) then begin goto LDoPalletLabFormPrint; end;
+  SetPrinter(printer);  
+  Docr.Code = formcode;
+  if (ReadFirstMain(Docr,1,true)) then begin end;
+  formisopen = true;
+  if (nonblank(RepSpec.f4)) then begin
+    PrintDeliveryLabel(RepSpec.f4,formisopen,RepSpec.long1,formcode);
+    goto LDoPalletLabFormPrint98;
+  end;
+  palletcnt = 0;
+  switch (RepSpec.ArtMode) begin
+    case 0: lblYstep = 1;
+    case 1: lblYstep = 98;
+    case 2: lblYstep = 98;
+  end;
+  switch (RepSpec.ArtMode) begin
+    case 0: FormLabelGrid(1,1,1,lblYstep); lbls = 1;
+    case 1: FormLabelGrid(2,280,8,lblYstep); lbls = 16;
+    case 2: FormLabelGrid(3,195,8,lblYstep); lbls = 24;
+  end;
+  if (RepSpec.long2!=-1) then begin 
+    palletcnt = RepSpec.long2-1; 
+    for (i=0;i<palletcnt;i=i+1) begin
+      EndFormLabel;   
+    end;  
+  end;
+  GetLangNr("",LangNrr);
+  BlockLoad(SysFormatRec);
+  if (nonblank(RepSpec.f2)) then begin
+    snum = FirstInRange(RepSpec.f2,20);
+    StockMovr.TransNr = snum;
+    StockMovr.FileName = "PUVc";
+    fname = "PUVc";
+    goto LPrint;
+  end;
+  if (nonblank(RepSpec.f3)) then begin
+    snum = FirstInRange(RepSpec.f3,20);
+    StockMovr.TransNr = snum;
+    StockMovr.FileName = "StockMovVc";
+    fname = "StockMovVc";
+    goto LPrint;
+  end;
+LPrint:;
+  if (snum<=0) then begin goto LDoPalletLabFormPrint98; end;
+  TrHs = true;
+  while (LoopKey("FileName",StockMovr,2,TrHs)) begin  
+    if (StockMovr.FileName!=fname) then begin TrHs = false; end;
+    if (StockMovr.TransNr!=snum) then begin TrHs = false; end;
+    testf = true;
+    if (TrHs and testf) then begin
+      if (formisopen==false) then begin
+        if (OpenForm(formcode)==false) then begin goto LDoPalletLabFormPrint; end;
+        SetPrinter(printer);  
+        switch (RepSpec.ArtMode) begin
+          case 0: FormLabelGrid(1,1,1,lblYstep); lbls = 1;
+          case 1: FormLabelGrid(2,280,8,lblYstep); lbls = 16;
+          case 2: FormLabelGrid(3,195,8,lblYstep); lbls = 24;
+        end;
+        formisopen = true;
+      end;
+      palletcnt = palletcnt + 1;
+      PalletLab(RepSpec,StockMovr,Docr,LangNrr,SysFormatRec);
+      EndFormLabel;
+      if (palletcnt>=lbls) then begin
+        CloseForm;
+        formisopen = false;
+        palletcnt = 0;
+      end;
+    end;
+  end;
+LDoPalletLabFormPrint98:;  
+  if (formisopen) then begin
+    CloseForm;
+  end;
+LDoPalletLabFormPrint:;
+  RETURN;
+END;  
+
+global
+procedure DoPalletLabForm(record RcVc Dummyr,record RcVc RepSpec)
+BEGIN
+  Integer i,rwcnt;  
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoPalletLabForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,-1,"",
+                      RepSpec.Language,intdocnr,"",formcode)) then
+      begin
+        goto LBREAKPalletLab;
+      end;
+    end;
+LBREAKPalletLab:;
+    if (nonblank(formcode)) then begin
+      DoPalletLabFormPrint(RepSpec,formcode,FDrw.PrintGroupCode);
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoPalletLabForm:;  
+  RETURN;
+END;  
+
+global
+procedure PalletLabForm(record RcVc RepSpec)
+BEGIN
+  Boolean tmpf;
+  
+  if ((nonblank(RepSpec.f2)) or (nonblank(RepSpec.f3))) then begin
+    tmpf = PrintDocument(RepSpec,"PalletLabForm",false);
+  end;
+  RETURN;
+END;

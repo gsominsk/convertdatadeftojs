@@ -1,0 +1,221 @@
+external function roundmode DefaultRoundMode();
+/*
+external function Integer TRVc_AddRoundOffRow(var record TRVc,val,val,string,Boolean,Boolean,Boolean,val,var val);
+external procedure GetITStockAcc(string,var string);
+external procedure GetITCostAcc(string,var string);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Boolean GetAccName(string,var string,Integer);
+external function Boolean ExpandStructItem(string,string,val,var record SHVc);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean TransInFiscal(Date);
+
+procedure GetResStockAcc(Integer ItemGroupAccounts,string rowlocation,string location,string MainStock,string itgroup,string arstockacc,var string res)
+BEGIN
+  record LocationVc LocRec;
+
+  res = "";
+  if (nonblank(rowlocation)) then begin
+    LocRec.Code = rowlocation;
+  end else begin
+    LocRec.Code = location;
+  end;
+  if (blank(LocRec.Code)) then begin
+    LocRec.Code = MainStock;
+  end;
+  if (ReadFirstMain(LocRec,1,true)) then begin
+    if (nonblank(LocRec.StockAcc)) then begin
+      res = LocRec.StockAcc;
+    end;    
+  end;
+  if (nonblank(res)) then begin
+    goto LGetResStockAcc;
+  end;
+  if (ItemGroupAccounts!=0) then begin
+    GetITStockAcc(itgroup,res);
+    if (nonblank(res)) then begin
+      goto LGetResStockAcc;
+    end;
+  end;
+  res = arstockacc;
+  if (nonblank(res)) then begin
+    goto LGetResStockAcc;
+  end;
+LGetResStockAcc:;  
+  RETURN;
+END;
+
+procedure GetResCostAcc(Integer ItemGroupAccounts,string sdcostacc,string sdrowcostacc,string incostacc,string itgroup,var string res)
+BEGIN
+  res = "";
+  res = sdrowcostacc;
+  if (nonblank(res)) then begin
+    goto LGetResCostAcc;
+  end;
+  res = sdcostacc;
+  if (nonblank(res)) then begin
+    goto LGetResCostAcc;
+  end;
+  res = incostacc;
+  if (nonblank(res)) then begin
+    goto LGetResCostAcc;
+  end;
+  if (ItemGroupAccounts!=0) then begin
+    GetITCostAcc(itgroup,res);
+    if (nonblank(res)) then begin
+      goto LGetResCostAcc;
+    end;
+  end;
+LGetResCostAcc:;
+  RETURN;
+END;
+
+function Integer AddResShopBask(record TRVc gTRp,record MainStockBlock MainStockRec,record CostAccBlock CostAccRec,record AccBlock ARAccRec,
+                                       record ResVc Resp,row ResVc Resrw,
+                                       string location,Boolean dc1,Boolean dc2,val baserate1,val baserate2,var val TotSum)
+BEGIN
+  Integer res;
+  string 10 sdcostacc,stockacc;
+  val t1;
+  string 255 tstr,objstr;
+  record INVc INr;
+
+  sdcostacc = Resp.CostAcc;
+  if (nonblank(Resrw.CostAcc)) then begin
+    sdcostacc = Resrw.CostAcc;
+  end;
+  INr.Code = Resrw.ArtCode;
+  if (ReadFirstMain(INr,1,true)==false) then begin
+    INr.Objects = "";
+    tstr = "";
+  end;  
+
+  t1 = Resrw.Quant*Resrw.FIFO;
+  t1 = Round(t1,DefaultRoundMode);
+  objstr = "";
+  tstr = INr.Name;
+  if (nonblank(Resp.Objects)) then begin
+    if (nonblank(objstr)) then begin
+      objstr = objstr & ",";
+    end;
+    objstr = objstr & Resp.Objects;
+  end;
+  if (nonblank(Resrw.Objects)) then begin
+    if (nonblank(objstr)) then begin
+      objstr = objstr & ",";
+    end;
+    objstr = objstr & Resrw.Objects;
+  end;
+  GetResCostAcc(CostAccRec.ItemGroupAccounts,Resp.CostAcc,Resrw.CostAcc,INr.CostAcc,INr.Group,sdcostacc);
+  if (GetAccName(sdcostacc,tstr,60)==false) then begin
+    res = 1947;
+    goto LAddResShopBask;
+  end;
+  AddEuroTrRow(gTRp,sdcostacc,objstr,"",tstr,t1,baserate1,baserate2,true,dc1,TotSum,false,"","","");
+
+  GetResStockAcc(CostAccRec.ItemGroupAccounts,"",location,MainStockRec.MainStock,INr.Group,ARAccRec.StockAcc,stockacc);
+  if (GetAccName(stockacc,tstr,60)==false) then begin
+    res = 2120;
+    goto LAddResShopBask;
+  end;
+  AddEuroTrRow(gTRp,stockacc,"","",tstr,t1,baserate1,baserate2,true,dc2,TotSum,false,"","","");
+LAddResShopBask:;  
+  AddResShopBask = res;
+  RETURN;
+END;
+
+global
+function Integer MakeTransFromRes(record TRVc gTRp,record ResVc Resp,Boolean rpt)
+BEGIN
+  Integer res;
+  record MainStockBlock MainStockRec;
+  record CostAccBlock CostAccRec;
+  record TRGenBlock TRGenRec;
+  record AccBlock ARAccRec;
+  record LocationVc LocRec;
+  record INVc INr;
+  record ITVc ITr;
+  record TRVc locTRr;
+  row ResVc Resrw;
+  row SHVc SH2rw;
+  Integer rwcnt,rwcnt2;
+  Integer i,j;
+  string 255 ftxt,tstr;
+  val t1,VATSum,TotSum;
+  val t,rs,structrs;
+  val baserate1,baserate2,temp;
+  Boolean dc1,dc2;
+  Boolean isstruct,infound;
+  string 5 orobjstr;
+  string 255 objstr;
+  string 10 location;
+  string 20 curncy;
+          
+  BlockLoad(MainStockRec);
+  BlockLoad(CostAccRec);
+  BlockLoad(ARAccRec);
+  BlockLoad(TRGenRec);
+  location = Resp.FrLocation;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  RecordNew(gTRp);
+  if (rpt==false) then begin
+    if (TRGenRec.ResGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromRes;
+    end;
+  end;  
+  if (rpt==false) then begin
+    if ((nonblankdate(TRGenRec.ResStartDate)) and
+        (Resp.TransDate<TRGenRec.ResStartDate)) then begin
+      res = 0;
+      goto LMakeTransFromRes;
+    end;
+  end;
+  if (true) then begin
+    gTRp.IntYc = ResYc;
+    gTRp.Number = Resp.SerNr;
+    gTRp.RefStr = "";
+  end;
+  if (rpt==false) then begin
+    locTRr.IntYc = gTRp.IntYc;
+    locTRr.Number = gTRp.Number;
+    if (ReadFirstMain(locTRr,0,true)) then begin
+      res = 0;
+      goto LMakeTransFromRes;
+    end; 
+  end;
+  objstr = "";
+  orobjstr = "";  
+  gTRp.RegDate = CurrentDate;
+  gTRp.RegTime = CurrentTime;
+  gTRp.TransDate = Resp.TransDate;
+  if (TransInFiscal(gTRp.TransDate)==false) then begin
+    res = 1075;
+    goto LMakeTransFromRes;
+  end;
+  curncy = "";
+  GetFullCurncyRate(curncy,gTRp.TransDate,temp,temp,temp,baserate1,baserate2);
+  ftxt = Resp.Comment;
+  gTRp.Comment = ftxt;
+  TotSum = 0;
+  VATSum = 0;
+  dc1 = true;
+  dc2 = false;
+  rwcnt = MatRowCnt(Resp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Resp,i,Resrw);
+    res = AddResShopBask(gTRp,MainStockRec,CostAccRec,ARAccRec,Resp,Resrw,location,dc1,dc2,baserate1,baserate2,TotSum);
+    if (res!=0) then begin
+      goto LMakeTransFromRes;
+    end;
+  end;
+  res = TRVc_AddRoundOffRow(gTRp,baserate1,baserate2,"",false,false,false,TotSum,TotSum);
+  if (res!=0) then begin
+    goto LMakeTransFromRes;
+  end;
+LMakeTransFromRes:;
+  MakeTransFromRes = res;
+  RETURN;
+END;
+*/

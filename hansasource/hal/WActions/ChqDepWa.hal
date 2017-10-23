@@ -1,0 +1,394 @@
+remote function Boolean GetFullCurncyRateDate(var string,Date,var val,var val,var val,var val,var val,var Date);
+
+global
+procedure GetPMObjCta(String i,var String obj,var String cta,Var Integer PayType)
+  Begin
+  Record PMBlock PayModes;
+  Row PMBlock PayModesrw;
+  Integer j,rows;
+
+   Blockload(PayModes);
+   rows = MatRowCnt(PayModes);
+   for (j=0;j<rows;j=j+1) begin
+       MatRowGet(PayModes,j,PayModesrw);
+       if (PayModesrw.Code == i) then begin
+         obj     = PayModesrw.Objects;
+         cta     = PayModesrw.AccNr;
+         PayType = PayModesrw.CheckType;
+       end;
+   end;
+   Return;
+End;
+
+global
+function boolean CheckifAlreadyEnteredChq(Record ChqDepVc Chqd,Integer rownr,LongInt SerNr)
+begin
+  Boolean res;
+  Integer rows,j;
+  Row ChqDepVc Chqdrw;
+  
+  res = false;
+  rows = MatRowCnt(Chqd);
+  for (j=0;j<rows;j=j+1) begin
+    if (j<>rownr) then begin
+      MatRowGet(Chqd,j,Chqdrw);
+      if (SerNr==Chqdrw.ChqNr) then begin
+        res = true;
+        goto LCheckifAlreadyEnteredChq;
+      end;
+    end;
+  end;
+LCheckifAlreadyEnteredChq:;  
+  CheckifAlreadyEnteredChq = res;
+  return;
+end;
+
+global 
+procedure ChqdepSumUp( var record ChqdepVc r1 )  
+begin
+ Row ChqdepVc TBrw;
+ Record CheckVc Chq;
+ Integer i,rwcnt;
+ Val Amount;
+  
+  Amount = 0;
+  rwcnt= MatRowCnt(r1);
+  for(i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(r1,i,TBrw);
+    Amount = Amount + TBrw.Amount;    
+  end;        
+  Amount = Amount + r1.Cash;
+  Amount = Amount - r1.Commision;
+  r1.Sum = Amount; 
+  return;
+end;
+
+global
+procedure UpdateCurrencyChqdep(var Record ChqdepVc Chqd) 
+begin
+  Val to1,to2,fr,br1,br2;
+  Date ed;
+  string 20 crncycode;
+  
+  crncycode = Chqd.CurncyCode;
+  if (GetFullCurncyRateDate(crncycode,Chqd.TransDate,fr,to1,to2,br1,br2,ed)) then begin end; // if non base currency
+  Chqd.CurncyCode = crncycode;
+
+/*
+  if (GetFullCurncyRateDate(Chqd.CurncyCode,Chqd.TransDate,fr,to1,to2,br1,br2,ed)) then begin end; // if non base currency
+  */
+  Chqd.FrRate = fr;
+  Chqd.ToRate1 = to1; 
+  Chqd.ToRate2 = to2;
+  Chqd.BaseRate1 = br1;
+  Chqd.BaseRate2 = br2;
+  return;
+end;
+
+// III. The window Actions
+
+function Boolean ChqDepDClassChqNrEFAfter(Integer wn,Integer fn,Integer rownr,integer changedf)
+begin
+  record ChqDepVc Chqd;
+  Row ChqDepVc Chqdrw;
+  Record CheckVc Chq;
+  Boolean res,cond;
+  Integer err;
+  string 255 errstr;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Chqd);
+    cond = false;
+    
+    MatRowGet(Chqd,rownr,Chqdrw);
+    Chq.SerNr = Chqdrw.ChqNr;
+    if ReadFirstMain(Chq,1,true) then begin
+      cond = true;
+      // 1. check temp account
+      if blank(Chqd.TempAccNr) then begin  // Compiler error use TBr
+        Chqd.TempAccNr = Chq.TempAccNr;    // Compiler error use TBr
+      end;
+      if blank(Chqd.CurncyCode) then begin  
+        Chqd.CurncyCode = Chq.CurncyCode;   
+      end;
+      if (Chqd.TempAccNr<>Chq.TempAccNr) then begin  // Compiler error use TBr
+        err = 23083;         
+      end;
+      if (Chqd.CurncyCode<>Chq.CurncyCode) then begin 
+        err = 23084;
+      end;
+      if (Chq.Openf<>1) then begin   
+        err = 1292;          
+      end; 
+      // EVTB - Si el comentario empieza con & permite cheques con fecha posterior a la fecha transaccion      
+      if (Chqd.Type==0) then begin
+        if (Chq.EffectDate>Chqd.TransDate) then begin
+          err = 1390; 
+          errstr = Chq.EffectDate;
+        end; 
+      end;
+      if (CheckifAlreadyEnteredChq(Chqd,rownr,Chqdrw.ChqNr)) then begin  //LO
+        err = 23085;          
+      end;
+    end;
+    if (err!=0) then begin
+      Chqdrw.ChqNr = -1;
+      MatRowPut(Chqd,rownr,Chqdrw);
+      PutWindowRecord(wn,Chqd);
+      MessageBox(err," " & errstr);
+    end else begin
+      Chqdrw.Amount = Chq.Amount;
+      MatRowPut(Chqd,rownr,Chqdrw);
+      ChqdepSumUp(Chqd);
+      PutWindowRecord(wn,Chqd);
+    end;     
+  end;
+  res = true;
+  ChqDepDClassChqNrEFAfter = res;
+  return;
+end;
+
+function Boolean ChqDepDClassPayModeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record ChqDepVc Chqd;
+  record AccVc Accr;
+  Record BaseCurBlock MonBlock;
+  String 60 cta,obj;
+  Val to1,to2,fr,br1,br2;
+  Date ed;
+  Integer paytype;
+  Boolean res;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Chqd);
+    GetPMObjCta(Chqd.PayMode,obj,cta,paytype);
+    Chqd.DepAccNr = cta;
+    Accr.AccNumber = cta;
+    if ReadFirstMain(Accr,1,true) then begin
+       if blank(Accr.Curncy) then begin
+         Blockload(MonBlock);
+         Chqd.CurncyCode = MonBlock.BaseCur1;
+       end else begin 
+         Chqd.CurncyCode = Accr.Curncy;
+       end;  
+       UpdateCurrencyChqdep(Chqd);
+    end;
+    PutWindowRecord(wn,Chqd);
+  end;
+  res = true;
+  ChqDepDClassPayModeEFAfter = res;
+  return;
+end;
+
+function Boolean ChqDepDClassCashEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record ChqDepVc Chqd;
+  Boolean res;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Chqd);
+    ChqdepSumUp(Chqd);
+    PutWindowRecord(wn,Chqd);
+  end;
+  res = true;
+  ChqDepDClassCashEFAfter = res;
+  return;
+end;
+
+function Boolean ChqDepDClassCommisionEFAfter(Integer wn,Integer changedf)
+begin
+  record ChqDepVc Chqd;
+  Boolean res;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Chqd);
+    ChqdepSumUp(Chqd);
+    PutWindowRecord(wn,Chqd);
+  end;
+  res = true;
+  ChqDepDClassCommisionEFAfter = res;
+  return;
+end;
+
+function Boolean ChqDepDClassCurncyCodeEFAfter(integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record ChqDepVc Chqd;
+  Boolean res;
+
+  if (changedf!=0) then begin
+    Getwindowrecord(wn,Chqd);
+    UpdateCurrencyChqdep(Chqd);
+    Putwindowrecord(wn,Chqd);
+  end;
+  res = true;
+  ChqDepDClassCurncyCodeEFAfter = res;
+  return;
+end;  
+
+function Boolean ChqdepDClassTransDateEFAfter(integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  Record ChqdepVc Chqd;
+  Boolean res;
+
+  if (changedf!=0) then begin
+    Getwindowrecord(wn,Chqd);
+    UpdateCurrencyChqdep(Chqd);
+    Putwindowrecord(wn,Chqd);
+  end;
+  res = true;
+  ChqdepDClassTransDateEFAfter = res;
+  return;
+end;  
+
+
+global
+function Boolean ChqDepDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "CurncyCode": res = ChqDepDClassCurncyCodeEFAfter(wn,fn,rownr,changed);
+    case "Cash": res = ChqDepDClassCashEFAfter(wn,fn,rownr,changed);
+    case "Commision": res = ChqDepDClassCommisionEFAfter(wn,changed);
+    case "PayMode": res = ChqDepDClassPayModeEFAfter(wn,fn,rownr,changed);
+    case "ChqNr": res = ChqDepDClassChqNrEFAfter(wn,fn,rownr,changed);
+    case "TransDate": res = ChqdepDClassTransDateEFAfter(wn,fn,rownr,changed);
+  end;
+  ChqDepDClassAfterEditField = res;
+  RETURN;
+END;
+
+/* Please finnish this */
+global 
+procedure ChqDepTransDsm()
+BEGIN
+  record ChqDepVc ChqDepr;
+  record TRVc TRr;
+  Integer wn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,ChqDepr);
+  TRr.Number = ChqDepr.SerNr;
+  RETURN;
+END;
+
+global
+function Boolean ChqDepDClassOverStrikeTest(Integer wn,Integer rownr)
+BEGIN
+  record ChqDepVc ChqDepr;
+  Boolean res;
+
+  res = true;
+  switch (WindowState(wn)) begin
+    case Rs_update:
+      GetPrevWindowRecord(wn,ChqDepr);
+    otherwise  
+      GetWindowRecord(wn,ChqDepr);
+  end;
+  if (ChqDepr.OKFlag!=0) then begin
+    res = false;
+  end;
+  ChqDepDClassOverStrikeTest = res;
+  Return; 
+END;
+
+global 
+function Boolean ChqDepDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record ChqDepVc ChqDepr;
+  Boolean res;
+
+  res = true;
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,ChqDepr);    
+    if (ChqDepr.OKFlag!=0) then begin res = false; end;
+  end;
+LChqDepDClassDeleteRowTest:;  
+  ChqDepDClassDeleteRowTest = res;
+  return;
+end;
+
+global 
+function Boolean ChqDepDClassInsertRowTest(Integer wn,Integer rownr)
+begin
+  record ChqDepVc ChqDepr;
+  Boolean res;
+
+  res = true;
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,ChqDepr);    
+    if (ChqDepr.OKFlag!=0) then begin res = false; end;
+  end;
+LChqDepDClassInsertRowTest:;  
+  ChqDepDClassInsertRowTest = res;
+  return;
+end;
+
+global
+function Boolean ChqDepDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record ChqDepVc Chqd;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,Chqd);    
+    ChqdepSumUp(Chqd);
+    PutWindowRecord(wn,Chqd);    
+  end;
+  res = true;
+  ChqDepDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global
+function Boolean ChqDepDClassOKFlagButtonAction(Integer wn,Integer value)
+Begin
+  record ChqDepVc ChqDepr;
+  record ChqDepVc ChqDepr2;
+  Boolean res;
+  Integer updatemode,normalmode;
+
+  res = true;
+  normalmode = 0;
+  updatemode = 2;
+  if (UserCanAction("UnOKAll",false)) then begin
+    res = true;
+    goto LChqDepDClassOKFlagButtonAction;
+  end;
+  GetWindowRecord(wn,ChqDepr);  
+  GetPrevWindowRecord(wn,ChqDepr2);    
+
+  if (WindowState(wn)==updatemode) then begin
+    if (ChqDepr2.OKFlag!=0) then begin
+      res = false; 
+    end;
+  end;   
+  if (WindowState(wn)==normalmode) then begin
+    if (ChqDepr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;        
+LChqDepDClassOKFlagButtonAction:;  
+  ChqDepDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+
+global
+function Boolean ChqDepDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record ChqDepVc ChqDepr;
+  
+  switch (wnst) begin
+    case Rs_update:
+      GetPrevWindowRecord(wn,ChqDepr);
+    otherwise  
+      GetWindowRecord(wn,ChqDepr);
+  end;
+  if (ChqDepr.OKFlag==0) then begin
+    res = true;
+  end;
+  ChqDepDClassActiveEditField = res;
+  RETURN;
+END;

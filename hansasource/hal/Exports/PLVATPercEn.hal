@@ -1,0 +1,110 @@
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure GetWORMDocumentInfo(Integer,string,var string,var string,var string,var string);
+external procedure NewLineExport();
+external function Integer VATType(string);
+external procedure GetVATCodeRow(string,row VATCodeBlock);
+
+procedure GroupVIbyTAXCode(var record VIVc VIr)
+begin
+  record VIVc GrVIr;
+  row VIVc VIrw,GrVIrw;
+  Integer i,rwcnt,j,grrwcnt;
+  Boolean foundf;
+  row VATCodeBlock VATCbrw;
+  record TaxRulesVc TaxRr;
+  record TaxRulesVc GRTaxRr;
+  
+  rwcnt = MatRowCnt(VIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIr,i,VIrw);
+    if (VIrw.stp==kInvoiceRowTypeNormal) then begin
+      GetVATCodeRow(VIrw.VATCode,VATCbrw);
+      TaxRr.Code = VATCbrw.TaxRules;
+      ReadFirstMain(TaxRr,1,true);
+      foundf = false;
+      grrwcnt = MatRowCnt(GrVIr);
+      for (j=0;j<grrwcnt;j=j+1) begin
+        MatRowGet(GrVIr,j,GrVIrw);
+        GetVATCodeRow(GrVIrw.VATCode,VATCbrw);
+        GRTaxRr.Code = VATCbrw.TaxRules;
+        ReadFirstMain(GRTaxRr,1,true);
+        if (GRTaxRr.TaxCode==TaxRr.TaxCode) then begin
+          GrVIrw.qty = GrVIrw.qty + VIrw.qty;
+          GrVIrw.Sum = GrVIrw.Sum + VIrw.Sum;
+          MatRowPut(GrVIr,j,GrVIrw);
+          foundf = true;
+          j = grrwcnt;
+        end;
+      end;
+      if (!foundf) then begin
+        MatRowPut(GrVIr,grrwcnt,VIrw);
+      end;
+    end;
+  end;
+  
+  rwcnt = MatRowCnt(VIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowDelete(VIr,0);
+  end;
+  
+  rwcnt = MatRowCnt(GrVIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(GrVIr,i,VIrw);
+    MatRowPut(VIr,i,VIrw);
+  end;  
+  return;
+end;
+
+global
+procedure PLVATPercEn(record RcVc RepSpec)
+begin
+  record VIVc VIr;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  row VATCodeBlock VATCbrw;
+  record TaxRulesVc TaxRr;
+  string 255 tstr,branch,type,docnrstart,docnrend;
+  val t;
+  
+  found = true;
+  VIr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",VIr,1,found)) begin
+    if (DateInRange(VIr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+      found = false;
+    end;
+    if (found) then begin
+      testf = true;
+      if (VIr.OKFlag==0) then begin testf = false; end;
+      if (testf) then begin
+        GetWORMDocumentInfo(VIr.InvType,VIr.InvoiceNr,type,branch,docnrstart,docnrend);
+        GroupVIbyTAXCode(VIr);
+        rwcnt = MatRowCnt(VIr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VIr,i,VIrw);
+          GetVATCodeRow(VIrw.VATCode,VATCbrw);
+          TaxRr.Code = VATCbrw.TaxRules;
+          ReadFirstMain(TaxRr,1,true);
+          switch (TaxRr.VATType) begin
+            case kVATTypeVATPerceptions:
+              ExportPadString(TaxRr.TaxCode,3," ",false);  //1
+              ExportPadString(VIr.VATNr,13," ",false);
+              ExportPadString(DateToString(VIr.InvDate,"DD/MM/YYYY"),10," ",false);
+              ExportPadString(branch,8,"0",true);
+              ExportPadString(docnrstart,8,"0",true);
+              t = MulRateToBase1(VIr.CurncyCode,VIrw.Sum,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+              tstr = ValToString(t,M4Val,"",",",0);
+              if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                M4PadString(tstr,15,"0",true,tstr);
+                tstr = "-" & tstr;
+              end;
+              ExportPadString(tstr,16,"0",true);
+              NewLineExport;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;

@@ -1,0 +1,557 @@
+external updating procedure StoreeShipTaxAuthReply(string,LongInt,string,string);
+external procedure CalculateStockMovArrival(date,time,integer,time,var date,var time);
+external function string 20 FindCustRouteByLocation(string,string,string);
+external function Boolean BulkSerialNos_CalculateQuantityAndSerialNr(record SerNrTrackBlock,Boolean,string,var string,var val);
+external updating function Integer CheckStockMovRecord(var record StockMovVc,record StockMovVc,LongInt,LongInt,Boolean,
+                                                      var LongInt,var string,var integer,var string,boolean);
+external function string 255 FindPositionWithSerialNr(string,string,string,string);
+external function Boolean SerialNrForOneItem(string,var record SerBalVc);
+external function val CalculateSerialNrQuantity(string,string,string,Boolean,val,val,val,val);
+external function Integer CheckSerialStatus(string,string,var string);
+external procedure SerialNrDimensions(string,string,var val,var val,var val);
+external function Integer PasteProdInStockMov(var record StockMovVc,var record ProdVc,Boolean);
+external function string 255 FindINObjects(string,string);
+external procedure StockMovSumUp(var record StockMovVc);
+external function Boolean GetFirstItem(var string,var record INVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean FindItemVAR(string,var string,var string,var string,var string);
+external updating function Boolean UpdateForkLiftQueue(record StockMovVc,Boolean);
+external updating procedure StockMovUpdateItemHist(record StockMovVc,record StockMovVc);
+external updating procedure StockMovUpdateStock(record StockMovVc,record StockMovVc,Boolean,Boolean,Boolean);
+external updating procedure SetPositionStatus(string,Integer);
+external procedure AddToStrArray(string,var array string);
+
+global
+function Boolean StockMovVc_PasteArtCode(var record StockMovVc StockMovp,Integer rownr,Integer changed,var array string aWarning)
+BEGIN
+  Boolean res;
+  record INVc INr;
+  row StockMovVc StockMovrw;
+  string 60 sz,msk,mskrep;
+  string 200 varsubset;
+  Boolean itemfound;
+
+  MatRowGet(StockMovp,rownr,StockMovrw);  
+  if ((changed!=0) or ((blank(StockMovrw.Spec)) and (nonblank(StockMovrw.ArtCode)))) then begin
+    res = true;
+    itemfound = GetFirstItem(StockMovrw.ArtCode,INr);
+    if (itemfound==false) then begin
+      itemfound = ReadFirstItem(StockMovrw.ArtCode,INr,true,true);
+      if (FindItemVAR(INr.Code,sz,msk,mskrep,varsubset)) then begin
+        INr.Code = StockMovrw.ArtCode;
+      end;
+    end;
+    if (itemfound) then begin
+      StockMovrw.Coefficient = INr.UnitCoefficient;
+      StockMovrw.ArtCode = INr.Code;
+      StockMovrw.Spec = INr.Name;
+      StockMovrw.BasePrice = INr.UPrice1;
+      StockMovrw.Objects = FindINObjects(INr.Objects,INr.Group);
+      StockMovrw.UnitXval = INr.Width;
+      StockMovrw.UnitYval = INr.Height;
+      StockMovrw.UnitZval = INr.Depth;
+      MatRowPut(StockMovp,rownr,StockMovrw);
+      AddToStrArray(INr.WarnText1,aWarning);
+      if (INr.ItemType!=kItemTypeStocked) then begin
+        AddToStrArray(USetStr(1301),aWarning);
+      end;      
+    end else begin
+      if (nonblank(StockMovrw.ArtCode)) then begin
+        AddToStrArray(USetStr(1120) & StockMovrw.ArtCode,aWarning);
+      end;
+    end;
+  end;
+  StockMovVc_PasteArtCode = res;
+  RETURN;
+END;
+    
+global
+function Boolean StockMovVc_PasteQuant(var record StockMovVc StockMovr,Integer rownr)
+begin
+  Boolean res;
+  row StockMovVc StockMovrw,orgStockMovrw;
+  row StockMovVc toStockMovrw;
+  val p,s;
+  Boolean chsum,testf,itemfoundf;
+  record INVc INr;
+  val orgquant;
+  string 255 tstr,tstr2;
+  Integer lrownr;
+  record LocationVc LocToRec;
+  array string 255 aWarning;
+  record SerNrTrackBlock SNrb;
+
+  BlockLoad(SNrb);
+  LocToRec.Code = StockMovr.ToLocation;
+  if (ReadFirstMain(LocToRec,1,true)) then begin end;
+  lrownr = rownr;
+  res = true;
+  MatRowGet(StockMovr,lrownr,StockMovrw);    
+  itemfoundf = ReadFirstItem(StockMovrw.ArtCode,INr,true,true);
+  if (nonblank(StockMovrw.ArtCode)) and (INr.SerNrf==1) then begin
+    if (BulkSerialNos_CalculateQuantityAndSerialNr(SNrb,false,StockMovrw.ArtCode,StockMovrw.SerialNr,StockMovrw.Quant)) then begin
+      MatRowPut(StockMovr,lrownr,StockMovrw);
+      MatRowGet(StockMovr,lrownr,StockMovrw);
+    end;
+  end;
+
+  CopyRow(StockMovr,StockMovrw,orgStockMovrw);
+  orgquant = orgStockMovrw.Quant;
+LStockMovVc_PasteQuantAGAIN:;  
+  
+  if (LocToRec.RequirePos!=0) then begin    
+    if (itemfoundf) then begin
+      if (nonblank(INr.DefPalletItem)) then begin
+        if ((StockMovrw.Quant/INr.QtyonPallet)>100) then begin 
+          res = false;
+          goto LStockMovVc_PasteQuant;
+        end;
+        if (INr.QtyonPallet>0) then begin
+          if (StockMovrw.Quant>INr.QtyonPallet) then begin
+            StockMovrw.Quant = INr.QtyonPallet;
+          end;
+        end;
+      end;
+    end;
+  end;
+  MatRowPut(StockMovr,lrownr,StockMovrw);      
+  if (res) then begin
+    if (LocToRec.RequirePos!=0) then begin
+      if (nonblank(INr.DefPalletItem)) then begin        
+        lrownr = lrownr + 1;
+        MatRowGet(StockMovr,lrownr,toStockMovrw);    
+        if (toStockMovrw.ArtCode!=INr.DefPalletItem) then begin
+          ClearRow(StockMovr,toStockMovrw,1);
+          toStockMovrw.FrPosCode = StockMovrw.FrPosCode;
+          toStockMovrw.ArtCode = INr.DefPalletItem;
+          toStockMovrw.Quant = 1;
+          MatRowInsert(StockMovr,lrownr,toStockMovrw); 
+          testf = StockMovVc_PasteArtCode(StockMovr,lrownr,1,aWarning);       
+        end;
+      end;
+        lrownr = lrownr + 1;
+        orgquant = orgquant - StockMovrw.Quant;
+        if (orgquant>0) then begin
+          CopyRow(StockMovr,orgStockMovrw,StockMovrw);
+          StockMovrw.Quant = orgquant;
+          goto LStockMovVc_PasteQuantAGAIN;
+        end;
+    end;
+  end;  
+LStockMovVc_PasteQuant:;  
+  StockMovSumUp(StockMovr);    
+  StockMovVc_PasteQuant = res;
+  return;
+end;
+      
+global
+updating function Boolean RecordAction_rlStockMovLOK(var record StockMovVc StockMovp,Boolean readf)
+BEGIN
+  Boolean res;
+  record StockMovVc oldStockMovp;
+  
+  if (IsRecordLocked(StockMovp)==false) then begin
+    if (readf) then begin
+      if (ReadFirstMain(StockMovp,0,true)) then begin end;  
+    end;
+    if (StockMovp.OKFlag==0) then begin
+      RecordCopy(oldStockMovp,StockMovp);
+      StockMovp.OKFlag = 1;
+      if (RecordUpdate(oldStockMovp,StockMovp,true)==0) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  RecordAction_rlStockMovLOK = res;
+  RETURN;
+END;
+
+
+global
+function Boolean StockMovVc_PasteToPosCode(var record StockMovVc StockMovr,string poscode,string artcode,val quant,Integer rownr,var string deflocarea)
+BEGIN
+  Boolean res;
+  record PosVc Posr;
+  record INVc INr;
+  row StockMovVc nextStockMovrw;
+  record LocationVc Locr;
+  record MainStockBlock MainStock;
+  Boolean testf;
+
+  res = true;
+  if (ReadFirstItem(artcode,INr,true,true)) then begin
+    if (nonblank(INr.LocArea)) then begin
+      deflocarea = INr.LocArea;
+      Posr.Code = poscode;
+      if (ReadFirstMain(Posr,1,true)) then begin
+        if (Posr.LocArea!=INr.LocArea) then begin
+          res = false;
+        end;
+      end;
+    end;
+    if (INr.QtyonPallet>0) and (nonblank(INr.DefPalletItem)) then begin
+      BlockLoad(MainStock);
+      testf = true;
+      Locr.Code = StockMovr.ToLocation;
+      if (blank(Locr.Code)) then begin
+        Locr.Code = MainStock.MainStock;
+      end;
+      ReadFirstMain(Locr,1,true);
+      if (Locr.RequirePos==0) then begin testf = false; end;
+      if (testf) then begin//quant==INr.QtyonPallet
+        if ((rownr+1)<MatRowCnt(StockMovr)) then begin
+          MatRowGet(StockMovr,rownr+1,nextStockMovrw);
+          if (nextStockMovrw.ArtCode==INr.DefPalletItem) then begin
+            nextStockMovrw.ToPosCode = poscode;
+            MatRowPut(StockMovr,rownr+1,nextStockMovrw);
+          end;
+        end;
+      end;
+    end;
+  end;
+LStockMovVc_PasteToPosCode:;  
+  StockMovVc_PasteToPosCode = res;
+  RETURN;
+END;
+
+global
+updating procedure OkAllStockMovementsSHr(record RcVc RepSpec)
+begin
+  record StockMovVc StockMovr;
+  record StockMovVc OldStockMovr;
+  record ForkLiftQueVc ForkLiftQuer;
+  boolean TrHs, testf;
+  integer cnt,res;
+  LongInt shipment;
+  LongInt error;
+  string 255 errorstr,fieldstr;
+  Integer rownr;
+  Boolean UnOKedCheckSerialf;
+    
+  TrHs = true;
+  ForkLiftQuer.SHNr = RepSpec.long1;
+  while (LoopKey("SHNr",ForkLiftQuer,1,TrHs)) begin
+    if (TrHs) then begin
+      if (ForkliftQuer.SHNr!=RepSpec.long1) then begin
+        TrHs = false;  
+      end;
+    end;
+    if (TrHs) then begin
+      StockMovr.SerNr = ForkLiftQuer.StockMovNr;
+      if (ReadFirstMain(StockMovr,1,true)) then begin 
+        if (StockMovr.OKFlag==0) then begin
+          RecordCopy(oldStockMovr,StockMovr);
+          StockMovr.OrdTransDate = CurrentDate;
+          StockMovr.TransDate = CurrentDate;
+          StockMovr.OKFlag = 1;    
+          UnOKedCheckSerialf = false;
+          SetRecordCheckVc("StockMovVc");
+          res = CheckStockMovRecord(StockMovr,oldStockMovr,1,1,true,error,errorstr,rownr,fieldstr,UnOKedCheckSerialf);
+          if (res!=0) then begin
+            if (error>0) then begin 
+              RecordCheckError(error,errorstr,rownr,fieldstr);
+            end;  
+            TrHs = false;
+          end else begin
+            if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin end;
+          end;
+          
+         
+/*          
+          StockMovUpdateItemHist(StockMovr,OldStockMovr);
+          StockMovUpdateStock(StockMovr,oldStockMovr,true,false,false);
+          if (UpdateForkLiftQueue(StockMovr,true)) then begin end;
+          if (RecordUpdate(oldStockMovr,StockMovr,false)==0) then begin end;
+*/          
+          StepBack(ForkLiftQuer);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure OkAllStockMovementsPUr(record RcVc RepSpec)
+begin
+  record StockMovVc StockMovr;
+  record StockMovVc OldStockMovr;
+  row StockMovVc StockMovrw;
+  boolean TrHs, testf;
+  integer cnt,res;
+  LongInt gr;
+  LongInt error;
+  string 255 errorstr,fieldstr;
+  Integer rownr;
+  Boolean UnOKedCheckSerialf;
+  
+  gr = FirstInRange(RepSpec.f1,11);
+  TrHs = true;
+  StockMovr.FileName = "PUVc";
+  StockMovr.TransNr = gr;
+  while (LoopKey("FileName",StockMovr,2,TrHs)) begin
+    if (TrHs) then begin
+      if (StockMovr.FileName!="PUVc") then begin
+        TrHs = false;  
+      end;
+      if (StockMovr.TransNr!=gr) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      if (StockMovr.OKFlag==0) then begin
+        RecordCopy(oldStockMovr,StockMovr);
+        StockMovr.OrdTransDate = CurrentDate;
+        StockMovr.TransDate = CurrentDate;
+        StockMovr.OKFlag = 1;    
+        SetRecordCheckVc("StockMovVc");
+        res = CheckStockMovRecord(StockMovr,oldStockMovr,1,1,true,error,errorstr,rownr,fieldstr,UnOKedCheckSerialf);
+        if (res!=0) then begin
+          if (error>0) then begin 
+            RecordCheckError(error,errorstr,rownr,fieldstr);
+          end;  
+          TrHs = false;
+        end else begin
+          if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin end;
+        end;
+/*        
+        MatRowGet(StockMovr,0,StockMovrw);
+        SetPositionStatus(StockMovrw.ToPosCode,1);
+        StockMovUpdateItemHist(StockMovr,OldStockMovr);
+        StockMovUpdateStock(StockMovr,oldStockMovr,true,false,false);
+        if (RecordUpdate(oldStockMovr,StockMovr,false)==0) then begin end;
+*/        
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure PasteStockMovProdSerNr(var record StockMovVc StockMovr)
+begin
+  record ProdVc Prodr;
+  
+  Prodr.SerNr = StockMovr.ProdSerNr;
+  
+  if (ReadFirstMain(Prodr,1,true)) then begin
+    PasteProdInStockMov(StockMovr,Prodr,false);
+  end;
+  return;
+end;
+
+global
+procedure StockMovVc_PasteSerialNr(var record StockMovVc StockMovr,Integer rownr,var array string aWarning)
+begin
+  row StockMovVc StMrw;
+  val UnitXval,UnitYval,UnitZval,oldquant;
+  string 255 tstr;
+  Boolean chsum;
+  string 255 inwarn;
+  Boolean serialfound;
+  record SerBalVc SBr;
+  record INVc INr;
+  record SerNrTrackBlock SNrb;
+
+  BlockLoad(SNrb);
+  MatRowGet(StockMovr,rownr,StMrw);
+  oldquant = StMrw.Quant;
+  if (blank(StMrw.ArtCode)) then begin 
+    if (nonblank(StMrw.SerialNr)) then begin 
+      if (SerialNrForOneItem(StMrw.SerialNr,SBr)) then begin
+        StMrw.ArtCode = SBr.Item;
+        if blank(StockMovr.FrLocation) then begin 
+          StockMovr.FrLocation = SBr.Location;
+        end;
+        if (StockMovr.FrLocation<>SBr.Location) then begin 
+          AddToStrArray(USetStr(1240),aWarning);
+        end;  
+        StMrw.FrPosCode = FindPositionWithSerialNr(StockMovr.FrLocation,StMrw.ArtCode,StMrw.SerialNr,"");
+        MatRowPut(StockMovr,rownr,StMrw);
+        if (StockMovVc_PasteArtCode(StockMovr,rownr,1,aWarning)) then begin
+        end;   
+        MatRowGet(StockMovr,rownr,StMrw);
+      end;
+    end;
+  end else begin
+    ReadFirstItem(StMrw.ArtCode,INr,true,true);
+    if (nonblank(StMrw.ArtCode)) and (INr.SerNrf==1) then begin
+      if (BulkSerialNos_CalculateQuantityAndSerialNr(SNrb,true,StMrw.ArtCode,StMrw.SerialNr,StMrw.Quant)) then begin
+        MatRowPut(StockMovr,rownr,StMrw);
+        MatRowGet(StockMovr,rownr,StMrw);
+      end;
+    end;
+  end;
+  if ((SNrb.BulkSerialNos==0) or (InString(StMrw.SerialNr,":")==0)) then begin
+    SerialNrDimensions(StMrw.ArtCode,StMrw.SerialNr,UnitXval,UnitYval,UnitZval);
+    if (UnitXval!=0) then begin StMrw.UnitXval = UnitXval; end;
+    if (UnitYval!=0) then begin StMrw.UnitYval = UnitYval; end;
+    if (UnitZval!=0) then begin StMrw.UnitZval = UnitZval; end;
+    tstr = "";
+    if (CheckSerialStatus(StMrw.ArtCode,StMrw.SerialNr,tstr)==1) then begin
+    end;
+    AddToStrArray(tstr,aWarning);
+    if (serialfound==false) then begin 
+      StMrw.Quant = CalculateSerialNrQuantity(StMrw.ArtCode,StMrw.SerialNr,StockMovr.FrLocation,true,StMrw.UnitXval,StMrw.UnitYval,StMrw.UnitZval,StMrw.Quant);    
+    end;
+  end;
+  if (StMrw.Quant!=oldquant) then begin
+    chsum = true;
+  end;
+  MatRowPut(StockMovr,rownr,StMrw);
+  if (chsum) then begin
+    StockMovSumUp(StockMovr);
+  end;
+  return;
+end;
+
+global
+procedure StockMovVc_PasteSentQuant(var record StockMovVc StockMovr,Integer rownr)
+begin
+  row StockMovVc StockMovrw;
+  record INVc INr;
+  record SerNrTrackBlock SNrb;
+
+  BlockLoad(SNrb);
+  MatRowGet(StockMovr,rownr,StockMovrw);
+  ReadFirstItem(StockMovrw.ArtCode,INr,true,true);
+  if (nonblank(StockMovrw.ArtCode)) and (INr.SerNrf==1) then begin
+    if (BulkSerialNos_CalculateQuantityAndSerialNr(SNrb,true,StockMovrw.ArtCode,StockMovrw.SerialNr,StockMovrw.SentQuant)) then begin
+      MatRowPut(StockMovr,rownr,StockMovrw);
+      MatRowGet(StockMovr,rownr,StockMovrw);
+    end;
+  end;
+  StockMovSumUp(StockMovr);
+  return;
+end;
+
+global
+procedure StockMovVc_PasteToLocation(var record StockMovVc StockMovr)
+begin
+  record DurationVc Durationr;
+  string 255 tstr;
+  record LocationVc Locr;
+
+  Durationr.FromLocation = StockMovr.FrLocation;
+  Durationr.ViaLocation  = StockMovr.ThrouLocation;
+  Durationr.ToLocation  = StockMovr.ToLocation;
+  if ReadFirstMain(Durationr,3,true) then begin
+    StockMovr.PlanDurationDays = Durationr.DurationDays;
+    StockMovr.PlanDurationTime = Durationr.DurationTime;
+    CalculateStockMovArrival(StockMovr.PlanSendDate,StockMovr.PlanSendTime,StockMovr.PlanDurationDays,StockMovr.PlanDurationTime,StockMovr.PlanArrDate,StockMovr.PlanArrTime);
+  end else begin
+    StockMovr.PlanDurationDays = 0;
+    StockMovr.PlanDurationTime = "";
+    StockMovr.PlanArrDate = "";
+    StockMovr.PlanArrTime = "";
+  end;
+  tstr = FindCustRouteByLocation(StockMovr.FrLocation,StockMovr.ThrouLocation,StockMovr.ToLocation);
+  if (nonblank(tstr)) then begin
+    StockMovr.Sorting = tstr;
+  end;
+  Locr.Code = StockMovr.ToLocation;
+  ReadFirstMain(Locr,1,true);
+  if (nonblank(Locr.ThrouLocation)) then begin
+    StockMovr.ThrouLocation = Locr.ThrouLocation;
+  end;
+  Locr.Code = StockMovr.ToLocation;
+  ReadFirstMain(Locr,1,true);
+  StockMovr.ToAddr0 = Locr.Addr0;
+  StockMovr.ToAddr1 = Locr.Addr1;
+  StockMovr.ToAddr2 = Locr.Addr2;
+  StockMovr.ToAddr3 = Locr.Addr3;
+  StockMovr.ToAddr4 = Locr.Addr4;
+  return;
+end;
+
+global
+procedure StockMovVc_PasteFromLocation(var record StockMovVc StockMovr)
+begin
+  record DurationVc Durationr;
+  string 255 tstr;
+  record LocationVc Locr;
+
+  Durationr.FromLocation = StockMovr.FrLocation;
+  Durationr.ViaLocation  = StockMovr.ThrouLocation;
+  Durationr.ToLocation  = StockMovr.ToLocation;
+  if (ReadFirstMain(Durationr,3,true)) then begin
+    StockMovr.PlanDurationDays = Durationr.DurationDays;
+    StockMovr.PlanDurationTime = Durationr.DurationTime;
+    CalculateStockMovArrival(StockMovr.PlanSendDate,StockMovr.PlanSendTime,StockMovr.PlanDurationDays,StockMovr.PlanDurationTime,StockMovr.PlanArrDate,StockMovr.PlanArrTime);
+  end else begin
+    StockMovr.PlanDurationDays = 0;
+    StockMovr.PlanDurationTime = "";
+    StockMovr.PlanArrDate = "";
+    StockMovr.PlanArrTime = "";
+  end;
+  tstr = FindCustRouteByLocation(StockMovr.FrLocation,StockMovr.ThrouLocation,StockMovr.ToLocation);
+  if (nonblank(tstr)) then begin
+    StockMovr.Sorting = tstr;
+  end;
+  Locr.Code = StockMovr.FrLocation;
+  ReadFirstMain(Locr,1,true);
+  StockMovr.FrAddr0 = Locr.Addr0;
+  StockMovr.FrAddr1 = Locr.Addr1;
+  StockMovr.FrAddr2 = Locr.Addr2;
+  StockMovr.FrAddr3 = Locr.Addr3;
+  StockMovr.FrAddr4 = Locr.Addr4;
+  return;
+end;
+
+global
+procedure StockMovVc_PasteThrouLocation(var record StockMovVc StockMovr)
+begin
+  record DurationVc Durationr;
+  string 255 tstr;
+  record LocationVc Locr;
+
+  Durationr.FromLocation = StockMovr.FrLocation;
+  Durationr.ViaLocation  = StockMovr.ThrouLocation;
+  Durationr.ToLocation  = StockMovr.ToLocation;
+  if (ReadFirstMain(Durationr,3,true)) then begin
+    StockMovr.PlanDurationDays = Durationr.DurationDays;
+    StockMovr.PlanDurationTime = Durationr.DurationTime;
+    CalculateStockMovArrival(StockMovr.PlanSendDate,StockMovr.PlanSendTime,StockMovr.PlanDurationDays,StockMovr.PlanDurationTime,StockMovr.PlanArrDate,StockMovr.PlanArrTime);
+  end else begin
+    StockMovr.PlanDurationDays = 0;
+    StockMovr.PlanDurationTime = "";
+    StockMovr.PlanArrDate = "";
+    StockMovr.PlanArrTime = "";
+  end;
+  tstr = FindCustRouteByLocation(StockMovr.FrLocation,StockMovr.ThrouLocation,StockMovr.ToLocation);
+  if (nonblank(tstr)) then begin
+    StockMovr.Sorting = tstr;
+  end;
+  Locr.Code = StockMovr.ThrouLocation;
+  ReadFirstMain(Locr,1,true);
+  StockMovr.ThrouAddr0 = Locr.Addr0;
+  StockMovr.ThrouAddr1 = Locr.Addr1;
+  StockMovr.ThrouAddr2 = Locr.Addr2;
+  StockMovr.ThrouAddr3 = Locr.Addr3;
+  StockMovr.ThrouAddr4 = Locr.Addr4;
+  return;
+end;
+
+global
+updating procedure SetStockMovementPrntdf(LongInt sernr)
+begin
+  record StockMovVc StockMovr;
+  record StockMovVc oldStockMovr;
+
+  StockMovr.SerNr = sernr;
+  if (ReadFirstMain(StockMovr,1,true)) then begin
+    RecordCopy(oldStockMovr,StockMovr);
+    StockMovr.Prntdf = 1;
+    RecordUpdate(oldStockMovr,StockMovr,false);
+  end;
+  return;
+end;
+
+global
+updating procedure StockMovVcRecordUpdateClientRemote(record StockMovVc StockMovr,record StockMovVc StockMov2r,string TaxAdminServSeal)
+begin
+  if (HasLocalization("PRT")) then begin
+    StoreeShipTaxAuthReply("StockMovVc",StockMovr.SerNr,StockMovr.OfficialSerNr,TaxAdminServSeal);
+  end;
+  return;
+end;

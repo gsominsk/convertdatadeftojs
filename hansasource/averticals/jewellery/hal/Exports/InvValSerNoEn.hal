@@ -1,0 +1,438 @@
+external inner procedure NewLineExport();
+external inner function roundmode SetRoundModeD(Integer);
+external inner function val FindCostPrice(string,string,string,val,val,Boolean);
+external inner function LongInt DateDiff(Date,Date);
+external inner function val GetStockQty(string,string,Date,Boolean);
+external inner function Boolean SetInSet2(string,string);
+external inner function Boolean GetPurchaseItem(string,string,var record PIVc);
+
+//external  procedure GetCostPrice(record RcVc, record INVc, record INVc, Boolean ,Boolean ,record CostAccBlock,Integer ,Integer ,val ,val ,val ,var val ,var val);
+
+
+procedure ExportOneBatch(string location,val qtp,record RcVc RepSpec, record INVc INr,string serialnr,val qp,string location)
+BEGIN
+  record BatchTextVc btr;
+  Boolean batchfound;
+  record PIVc PIr;
+  record PUVc PUr;
+  row PUVc PUrw;
+  record IVVc IVr;
+  row IVVc IVrw;
+  record ItemHistVc IHr;
+  string 20 suppl;
+  record CUVc VEr;
+  record INVc orgINr;
+  record CostAccBlock CAb;
+  record RoundBlock RoundRec;
+  val t,t2,instockwithconsig,orginstock,price;
+  string 20 oldlocation;
+
+  BlockLoad(RoundRec);
+  BlockLoad(CAb);
+  
+  btr.ArtCode = INr.Code;
+  btr.SerialNr = serialnr;
+  if (ReadFirstMain(btr,2,true)) then begin
+    batchfound = true;
+    if (RepSpec.flags[12]==1) then begin     
+      if (btr.ConsigStock==1) then begin 
+        goto LExportOneBatch;
+      end;
+    end;
+    if (RepSpec.flags[12]==2) then begin 
+      if (btr.ConsigStock==0) then begin 
+        goto LExportOneBatch;
+      end;
+    end;  
+  end else begin
+    if (RepSpec.flags[12]==2) then begin 
+      goto LExportOneBatch;
+    end;
+  end;
+  
+  if nonblank(serialnr) then begin
+    IHr.ArtCode = INr.Code;
+    IHr.SerialNr = serialnr;
+    IHr.FileName = "PUVc";
+    if ReadFirstKey("ArtCodeSerialNr",IHr,3,true) then begin 
+      PUr.SerNr = IHr.TransNr;
+      if ReadFirstMain(PUr,1,true) then begin 
+        suppl = PUr.VECode;
+        if (IHr.Row<>-1) then begin 
+          MatRowGet(PUr,IHr.Row,PUrw);
+          price = PUrw.UPrice;          
+        end;
+      end;
+    end else begin
+      IHr.ArtCode = INr.Code;
+      IHr.SerialNr = serialnr;
+      IHr.FileName = "IVVc";
+      if ReadFirstKey("ArtCodeSerialNr",IHr,3,true) then begin 
+        IVr.SerNr = IHr.TransNr;
+        if ReadFirstMain(IVr,1,true) then begin 
+          suppl = IVr.CustCode;
+          if (IHr.Row<>-1) then begin 
+            MatRowGet(IVr,IHr.Row,IVrw);
+            price = IVrw.FIFO;            
+          end;
+          PUr.TransDate = IVr.TransDate;
+        end;
+      end;
+    end;
+  end;
+  if nonblank(RepSpec.LastAcc) then begin 
+    if (suppl<>RepSpec.LastAcc) then begin
+      goto LExportOneBatch;
+    end;
+  end;
+
+
+  if nonblank(suppl) then begin 
+    ExportString(suppl);
+    VEr.Code = suppl;
+    if ReadFirstMain(VEr,1,true) then begin 
+      ExportString(VEr.Name);
+    end else begin
+      ExportString("");
+    end;  
+  end else begin
+    if (GetPurchaseItem(INr.Code,"",PIr)) then begin
+      ExportString(PIr.VECode);
+      VEr.Code = PIr.VECode;
+      if ReadFirstMain(VEr,1,true) then begin 
+        ExportString(VEr.Name);
+      end else begin
+        ExportString("");
+      end;  
+    end else begin
+      ExportString("");
+      ExportString("");
+    end;
+  end;
+  if (GetPurchaseItem(INr.Code,"",PIr)) then begin
+    ExportString(PIr.VEItemCode);
+  end else begin 
+    ExportString("");
+  end;
+LogText(0,"INr.Code " & INr.Code & " PIr.VEItemCode " & PIr.VEItemCode);  
+  if (batchfound==true) then begin 
+    if (nonblank(btr.SuppSerialNr)) then begin 
+      ExportString(btr.SuppSerialNr);
+    end else begin
+      ExportString("");
+    end;
+  end else begin 
+    ExportString("");
+  end;
+  ExportString(INr.Code);
+  if nonblank(serialnr) then begin 
+    ExportString(serialnr);
+  end else begin  
+    ExportString("");
+  end;  
+
+  if (batchfound==true) then begin 
+    if (btr.ConsigStock!=0) then begin
+      ExportString("(*)");
+    end else begin
+      ExportString("");
+    end;
+  end else begin 
+    ExportString("");
+  end;
+  ExportString(INr.Group);
+  ExportString(INr.DispGroups);
+  ExportString(INr.Name);
+  ExportString(INr.Unittext);
+  ExportVal(qp,M4Val);
+
+  if (RepSpec.flags[11]==1) then begin 
+    ExportVal(price,M45Val);
+    ExportVal(Round(price*qp,SetRoundModeD(2)),M4Val);
+  end else begin
+    oldlocation = RepSpec.f2;
+    RepSpec.f2 = location;
+
+//    GetCostPrice(RepSpec,INr,orgINr,false,false,CAb,0,RoundRec.RndFIFO,qtp,instockwithconsig,orginstock,t2,t); 
+
+    t2 = FindCostPrice(INr.Code,location,serialnr,1,0,false);
+
+      RepSpec.f2 = oldlocation;
+    ExportVal(t2,M45Val);
+    ExportVal(Round(t2*qp,SetRoundModeD(2)),M4Val);
+  end;
+
+  ExportVal(INr.UPrice1,M423Val);
+  ExportVal(Round(INr.UPrice1*qp,SetRoundModeD(2)),M4Val);
+  RecordCopy(orgINr,INr);
+  instockwithconsig = qtp;
+  orginstock = 0;
+  ExportDate(PUr.TransDate);
+  if (blankdate(RepSpec.d1)) then begin
+    ExportLongInt(DateDiff(CurrentDate,PUr.TransDate));
+  end else begin
+    ExportLongInt(DateDiff(RepSpec.d1,PUr.TransDate));
+  end;
+  ExportString(location);
+  UserTrace(INr.Code,0);      
+  NewLine;
+ LExportOneBatch:;
+  RETURN;
+END;
+//12
+function val FindSerialNrBalance(string ArtCode,string SerialNr,string location,Date dp)
+begin
+  val res;
+  record ItemHistVc IHr;
+  Boolean found;
+  val soldqty;
+  Boolean testf;
+  Integer keys;
+  string 255 ckey;
+
+  IHr.ArtCode = artcode;
+  IHr.TransDate = dp;
+  keys = 2;
+  ckey = "ArtCode";
+  if (nonblank(location)) then begin
+    IHr.Location = location;
+    keys = 3;
+    ckey = "ArtCodeLoc";
+  end;
+  found = true;
+  while (LoopBackKey(ckey,IHr,keys,found)) begin
+    if (IHr.ArtCode!=artcode) then begin found = false; end;
+    if (nonblank(location)) then begin
+      if (IHr.Location!=location) then begin found = false; end;
+    end;
+    if (IHr.TransDate>dp) then begin found = false; end;
+    if (found) then begin 
+      testf = true;
+      if (IHr.SerialNr!=serialnr) then begin testf = false; end;
+      if (IHr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        switch (IHr.FileName) begin
+          case "PUVc":
+            res = res + IHr.Qty;
+          case "RetVc":
+            res = res + IHr.Qty;
+          case "IVVc":
+            res = res + IHr.Qty;
+          case "SDVc":
+            res = res + IHr.Qty;
+          case "SHVc":
+            res = res + IHr.Qty;
+          case "INTransferVc":
+            res = res + IHr.Qty;
+          case "WSVc":
+            res = res + IHr.Qty;
+          case "RetPUVc":
+            res = res + IHr.Qty;
+          case "InternMovAVc":
+            res = res + IHr.Qty;
+          case "ProdVc":
+            res = res + IHr.Qty;
+          case "StockMovVc":
+            res = res + IHr.Qty;              
+        end;
+      end;
+    end;
+  end;
+  FindSerialNrBalance = res;
+  return;
+end;
+
+
+
+global
+procedure FindSerialNumbers_Export(record RcVc RepSpec,record INVc INr,val qtp,Date dp,string location)
+BEGIN
+
+  record BatchTextVc btr;
+  record SerBalVc SBr;
+  record ItemHistVc IHr;
+  Boolean found;
+  val q,rem,snrbal;
+  Boolean first,testf;
+  string 200 thelocation;
+  Integer keys;
+  string 255 ckey;
+  array string 255 aserialnrs;
+  LongInt i,acnt;
+
+  if (blankdate(dp)) then begin
+    SBr.Item = INr.Code;
+    found = true;
+    q = 0.00001;
+    while (LoopMain(SBr,1,found)) begin
+      if (left(SBr.Item,len(INr.Code))==INr.Code) then begin
+        if (SBr.Quant>=q) then begin
+          if (blank(location) or (location==SBr.Location)) then begin
+            ExportOneBatch(location,qtp,RepSpec,INr,SBr.Serial,SBr.Quant,SBr.Location);
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    rem = Round(qtp,SetRoundModeD(0));
+    if (rem<=0) then begin goto LExportSerialNumbers; end;
+    IHr.ArtCode = INr.Code;
+    IHr.TransDate = dp;
+    keys = 2;
+    ckey = "ArtCode";
+    if (nonblank(location)) then begin
+      IHr.Location = location;
+      keys = 3;
+      ckey = "ArtCodeLoc";
+    end;
+    found = true;
+    while (LoopBackKey(ckey,IHr,keys,found)) begin
+      if (IHr.ArtCode!=INr.Code) then begin found = false; end;
+      if (nonblank(location)) then begin
+        if (IHr.Location!=location) then begin found = false; end;
+      end;
+      if (IHr.TransDate>dp) then begin found = false; end;
+      if (found) then begin 
+        testf = true;
+        if (IHr.Invalid!=0) then begin testf = false; end;
+        if (testf) then begin 
+          switch (IHr.FileName) begin
+            case "PUVc":
+              snrbal = FindSerialNrBalance(IHr.ArtCode,IHr.SerialNr,location,dp);
+              if (snrbal>0) then begin
+                  ExportOneBatch(location,qtp,RepSpec,INr,IHr.SerialNr,snrbal,IHr.Location);
+                rem = rem - IHr.Qty; 
+                if (rem<=0) then begin goto LExportSerialNumbers; end;
+              end;
+            case "RetVc":
+              snrbal = FindSerialNrBalance(IHr.ArtCode,IHr.SerialNr,location,dp);
+              if (snrbal>0) then begin
+                  ExportOneBatch(location,qtp,RepSpec,INr,IHr.SerialNr,snrbal,IHr.Location);
+                rem = rem - IHr.Qty; 
+                if (rem<=0) then begin goto LExportSerialNumbers; end;
+              end;
+            case "StockMovVc":
+              if (IHr.Qty>0) then begin
+                snrbal = FindSerialNrBalance(IHr.ArtCode,IHr.SerialNr,location,dp);
+                if (snrbal>0) then begin
+                    ExportOneBatch(location,qtp,RepSpec,INr,IHr.SerialNr,snrbal,IHr.Location);
+                  rem = rem - IHr.Qty; 
+                  if (rem<=0) then begin goto LExportSerialNumbers; end;
+                end;
+              end;
+            case "ProdVc":
+              if (IHr.Qty>0) then begin
+                snrbal = FindSerialNrBalance(IHr.ArtCode,IHr.SerialNr,location,dp);
+                if (snrbal>0) then begin
+                    ExportOneBatch(location,qtp,RepSpec,INr,IHr.SerialNr,snrbal,IHr.Location);
+                  rem = rem - IHr.Qty; 
+                  if (rem<=0) then begin goto LExportSerialNumbers; end;
+                end;
+              end;
+          end;
+        end;
+      end;
+    end;
+LExportSerialNumbers:;
+  end;
+  return;
+end;
+
+
+global
+procedure InvValSerNoEn(record RcVc RepSpec)
+begin
+  record INVc INr;
+  record LocationVc Locr;
+  string 255 frcc,tocc;
+  string 20 fromart,toart;
+  boolean TrHs,TrHs2,testf,testf2;
+  val instock;
+  val value, salesp, costp;
+    
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart = LastInRange(RepSpec.f1,20);
+  frcc = FirstInRange(RepSpec.f3,20);
+  tocc = LastInRange(RepSpec.f3,20);
+  
+  if (RepSpec.flags[3]==1) then begin
+    ExportString("Supplier");
+    ExportString("Supp. Name");
+    ExportString("Supp. Item Code");
+    ExportString("Supp. Serial No.");
+    ExportString("Item Code");
+    ExportString("Serial No.");
+    ExportString("Stock Type");
+    ExportString("Item Group");
+    ExportString("Item Class");
+    ExportString("Item Description");
+    ExportString("Unit");
+    ExportString("Balance");
+    ExportString("Unit Cost");
+    ExportString("Cost Value");
+    ExportString("Base Price");
+    ExportString("Base Value");
+    ExportString("GR Date");
+    ExportString("Age");
+    ExportString("Location");
+    NewLineExport;
+  end;
+  
+  TrHs = true;
+  INr.Code = fromart;
+  while (LoopMain(INr,1,TrHs))   begin
+    instock = 0;
+    testf = true;
+    if (nonblank(RepSpec.f3)) then begin
+      if (INr.Group <> RepSpec.f3) then begin
+        testf = false;
+      end;
+    end;
+    if (nonblank(toart)) then begin
+      if (INr.Code>toart) then begin
+        TrHs = false;
+        testf = false;
+      end;
+    end;
+    if (nonblank(RepSpec.f4)) then begin
+      if (SetInSet2(RepSpec.f4,INr.DispGroups)==false) then begin 
+        testf = false;
+      end;
+    end;    
+    if (INr.ItemType<>1) then begin
+      testf = false;
+    end;  
+    if (testf==true) then begin 
+      Locr.Code = RepSpec.f2;
+      TrHs2 = true;
+      ResetLoop(Locr);
+      while (LoopMain(Locr,1,TrHs2)) begin
+        testf2 = true;
+        if (nonblank(RepSpec.f2)) then begin
+          if (RepSpec.f2 <> Locr.Code) then begin
+            TrHs2 = false;
+            testf2 = false;
+          end;
+        end;
+        if (testf2==true) then begin 
+          instock = GetStockQty(INr.Code,Locr.Code,RepSpec.d1,false);
+          if (RepSpec.UsedOnly==1) then begin
+            if (instock==0) then begin
+              testf2 = false;
+            end;  
+          end;
+          if (testf2) then begin   
+            if (INr.SerNrf>0) then begin 
+              FindSerialNumbers_Export(RepSpec,INr,instock,RepSpec.d1,Locr.Code);
+            end else begin
+              if blank(RepSpec.LastAcc) and (RepSpec.flags[12]==0) then begin 
+                ExportOneBatch(Locr.Code,instock,RepSpec,INr,"",instock,Locr.Code);
+              end;  
+            end;  
+          end;  
+        end;  
+      end;
+    end;
+  end;
+  return;
+END;

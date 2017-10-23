@@ -1,0 +1,351 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass2(string,string,string,string,string,string,string);
+external function roundmode GetTotalRoundMode(record RoundBlock);
+external function roundmode SetRoundModeD(Integer);
+external procedure HT2Per(Date, Date , var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure HTSupplier(string, var string);
+external procedure HTLevCat(string, var string);
+external procedure HTDetailLevel(Integer, var string);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+
+function
+Boolean IncludeInSales(string vatcode)
+begin
+  record VATCodeBlock VATr;
+  row VATCodeBlock VATrw;
+  Integer i,rwcnt;
+  Boolean res;
+ 
+  res = true;
+  BlockLoad(VATr);
+  rwcnt = MatRowCnt(VATr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw);
+    if (vatcode==VATrw.VATCode) then begin
+      if (VATrw.ExcludeFromOfficial<>0) then begin //LO was 1
+        res = false;
+      end;
+      i = rwcnt;
+    end;
+  end;
+  IncludeInSales = res;
+  return;
+end;
+
+procedure FindRealPurch(Date from,Date to,string orgsupp,string supp,var val sum, var val vat, var val tot,Boolean printf,Integer notation)
+begin
+  record VIVc VIr;
+  row VIVc VIrw;
+  record RoundBlock RoundRec;
+  Integer i,rwcnt;
+  roundmode rndline,rndtotal,roundvat;
+  roundmode roundlines;
+  Boolean ivtestf;
+  Boolean found;
+  Boolean partsales;
+  val ivsum,ivvat,ivtot;
+  Integer typ;
+  val vatval;
+  LongInt ivsuml,ivvatl,ivtotl;
+
+  switch (notation) begin
+    case 0:
+      typ = M4UVal;
+    case 2:
+      typ = M4UVal;
+    otherwise
+      typ = M4Val;
+  end;
+  BlockLoad(RoundRec);
+  partsales = false;
+  found = true;
+  VIr.VECode = supp;
+  while (LoopKey("VECode",VIr,1,found)) begin
+    found = true;
+    if (VIr.VECode<>supp) then begin
+      found = false;
+    end;
+    ivtestf = true;
+    if (VIr.OKFlag==0) then begin ivtestf = false; end;
+    if (VIr.Invalid<>0) then begin ivtestf = false; end;
+    if (VIr.InvDate<from) then begin ivtestf = false; end;
+    if (VIr.InvDate>to) then begin ivtestf = false; end;
+    if (found==false) then begin
+      ivtestf = false;
+    end;
+    if (ivtestf) then begin
+      rwcnt = MatRowCnt(VIr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(VIr,i,VIrw);
+        if ((IncludeInSales(VIrw.VATCode)==false) and (VIrw.Sum>0)) then begin
+          partsales = true;
+        end;
+      end;
+      vatval = VIr.VATVal;
+      if (vatval==0) then begin
+        vatval = VIr.CalcVATVal;
+      end;
+      if (partsales) then begin
+        roundlines = SetRoundModeD(0);
+        roundvat = SetRoundModeD(0);
+        rndtotal = GetTotalRoundMode(RoundRec);
+        ivsum = 0;
+        ivvat = 0;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VIr,i,VIrw);
+          if ((IncludeInSales(VIrw.VATCode)) and (VIrw.Sum>0)) then begin
+            if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              ivsum = ivsum - VIrw.Sum;
+              if (vatval==0) then begin
+                ivvat = ivvat - FindVAT(VIrw.VATCode,VIrw.Sum,0,0);
+              end;
+            end else begin
+              ivsum = ivsum + VIrw.Sum;
+              if (vatval==0) then begin
+                ivvat = ivvat + FindVAT(VIrw.VATCode,VIrw.Sum,0,0);
+              end;
+            end;
+          end;
+        end;
+        if (vatval>0) then begin
+          if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+            ivvat = -vatval;
+          end else begin
+            ivvat = vatval;
+          end;
+        end;
+        GetCurncyRoundoff(VIr.CurncyCode,VIr.PayDeal,"VIVc",rndtotal,rndline,roundvat);
+        ivvat = Round(ivvat,roundvat);
+        ivtot = ivsum + ivvat;
+        ivtot = Round(ivtot,rndtotal);
+      end else begin
+        ivsum = VIr.PayVal-vatval;
+        ivvat = vatval;
+        ivtot = VIr.PayVal;
+        if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+          ivsum = -ivsum;
+          ivvat = -ivvat;
+          ivtot = -ivtot;
+        end;
+      end;
+      ivsum = MulRateToBase1(VIr.CurncyCode,ivsum,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff); 
+      ivvat = MulRateToBase1(VIr.CurncyCode,ivvat,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff); 
+      ivtot = MulRateToBase1(VIr.CurncyCode,ivtot,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff); 
+        sum = sum + ivsum;
+        vat = vat + ivvat;
+        tot = tot + ivtot;
+      if (printf) then begin
+        switch (notation) begin
+          case 0:
+            ivsum = Round(ivsum / 1000,SetRoundModeD(0));
+            ivvat = Round(ivvat / 1000,SetRoundModeD(0));
+            ivtot = Round(ivtot / 1000,SetRoundModeD(0));
+          case 2:
+            ivsuml = ivsum; ivsum = ivsuml;
+            ivvatl = ivvat; ivvat = ivvatl;
+            ivtotl = ivtot; ivtot = ivtotl;
+        end;
+        StartFormat(15);
+        if (orgsupp<>supp) then begin
+          OutString(0,0,supp,false);
+        end;
+        OutString(2,0,VIr.SerNr,false);
+        OutDate(4,0,VIr.InvDate,false);
+        OutVal(8,0,ivsum,typ,true);
+        OutVal(9,0,ivvat,typ,true);
+        OutVal(1,0,ivtot,typ,true);
+        EndFormat;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure RealSuppRn(record RcVc RepSpec)
+begin
+  record CUVc VEr;
+  record CUVc VE2r;
+  Boolean testf;
+  Boolean TrHs,TrHs2;
+  String 20 fromsupp;
+  String 20 tosupp;
+  String 255 tstr;
+  string 60 prevvatno;
+  Integer rw;
+  val sum,vat,tot;
+  val tsum,tvat,ttot;
+  val limit;
+  Integer typ;
+  LongInt suml,vatl,totl;
+
+  switch (RepSpec.flags[1]) begin
+    case 0:
+      typ = M4UVal;
+    case 2:
+      typ = M4UVal;
+    otherwise
+      typ = M4Val;
+  end;
+  rw = 1;
+  limit = RepSpec.vals0;
+  if (limit<=0) then begin
+    limit = 0.01;
+  end;
+  tsum = 0 ; tvat = 0; ttot = 0;
+  fromsupp = FirstInRange(RepSpec.f1,20);
+  tosupp = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(9366));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTDetailLevel(RepSpec.flags[0],tstr);
+  Header(rw,tstr,0);
+  HTSupplier(RepSpec.f1,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (HasCategories) then begin
+    HTLevCat(RepSpec.f3,tstr);
+    if (tstr<>"") then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f2,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;    
+  EndHeader;
+  SetRepCol(2,50);
+  SetRepCol(3,200);
+  SetRepCol(4,100);
+  SetRepCol(5,130);
+  SetRepCol(8,320);
+  SetRepCol(9,400);
+  if (RepSpec.flags[0]==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(9368),false);
+    OutString(3,0,USetStr(9362),false);
+    OutString(1,0,USetStr(9365),true);
+    EndFormat;
+  end;
+  if ((RepSpec.flags[0]==1) or (RepSpec.flags[0]==2)) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(9368),false);
+    OutString(3,0,USetStr(9362),false);
+    OutString(8,0,USetStr(9363),true);
+    OutString(9,0,USetStr(9364),true);
+    OutString(1,0,USetStr(9365),true);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  TrHs = true;
+  VEr.Code = fromsupp;
+  while (LoopKey("VATNr",VEr,1,TrHs)) begin
+    TrHs = true;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(prevvatno)) then begin
+        if (VEr.VATNr==prevvatno) then begin
+          testf = false;
+        end;
+      end;
+      prevvatno = VEr.VATNr;
+      if (nonblank(fromsupp)) then begin
+        if (VEr.Code<fromsupp) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(tosupp)) then begin
+        if (VEr.Code>tosupp) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        testf = ContactInGroupClass2("",RepSpec.f3,RepSpec.f2,"","SUPP",VEr.VECat,VEr.Classification);
+      end;
+      if (VEr.VEType==0) then begin testf = false; end;
+      if (testf) then begin
+        sum = 0; vat = 0; tot = 0;
+        VE2r.VATNr = VEr.VATNr;
+        ResetLoop(VE2r);
+        TrHs2 = true;
+        while (LoopKey("VATNr",VE2r,1,TrHs2)) begin
+          if (VE2r.VATNr<>VEr.VATNr) then begin TrHs2 = false; end;
+          if (TrHs2) then begin
+            FindRealPurch(RepSpec.sStartDate,RepSpec.sEndDate,VEr.Code,VE2r.Code,sum,vat,tot,false,RepSpec.flags[1]);
+          end;
+        end;
+        switch (RepSpec.flags[1]) begin
+          case 0:
+            sum = Round(sum / 1000,SetRoundModeD(0));
+            vat = Round(vat / 1000,SetRoundModeD(0));
+            tot = Round(tot / 1000,SetRoundModeD(0));
+          case 2:
+            suml = sum; sum = suml;
+            vatl = vat; vat = vatl;
+            totl = tot; tot = totl;
+        end;
+        if (tot>=limit) then begin
+          tsum = tsum + sum;
+          tvat = tvat + vat;
+          ttot = ttot + tot;
+          if (RepSpec.flags[0]==0) then begin
+            StartFormat(15);
+            OutString(0,0,VEr.Name,false);
+            OutString(3,0,VEr.VATNr,false);
+            OutVal(1,0,tot,typ,true);
+            EndFormat;
+          end;
+          if ((RepSpec.flags[0]==1) or (RepSpec.flags[0]==2)) then begin
+            StartFormat(15);
+            OutString(0,0,VEr.Code,false);
+            OutString(2,0,VEr.Name,false);
+            OutString(3,0,VEr.VATNr,false);
+            OutVal(8,0,sum,typ,true);
+            OutVal(9,0,vat,typ,true);
+            OutVal(1,0,tot,typ,true);
+            EndFormat;
+            if (RepSpec.flags[0]==2) then begin
+              sum = 0; vat = 0; tot = 0;
+              VE2r.VATNr = VEr.VATNr;
+              ResetLoop(VE2r);
+              TrHs2 = true;
+              while (LoopKey("VATNr",VE2r,1,TrHs2)) begin
+                if (VE2r.VATNr<>VEr.VATNr) then begin TrHs2 = false; end;
+                if (TrHs2) then begin
+                  FindRealPurch(RepSpec.sStartDate,RepSpec.sEndDate,VEr.Code,VE2r.Code,sum,vat,tot,true,RepSpec.flags[1]);
+                end;
+              end;
+            end;
+          end;
+        end;
+        if (tot>=limit) then begin
+          if (RepSpec.flags[0]==2) then begin
+            Gray_Divider(0,1);
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (ttot>=limit) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    if ((RepSpec.flags[0]==1) or (RepSpec.flags[0]==2)) then begin
+      OutVal(8,0,tsum,typ,true);
+      OutVal(9,0,tvat,typ,true);
+    end;
+    OutVal(1,0,ttot,typ,true);
+    EndFormat;
+  end;
+  EndJob;
+  return;
+end;

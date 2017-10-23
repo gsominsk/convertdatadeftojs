@@ -1,0 +1,1498 @@
+external function roundmode DefaultRoundMode();
+external function val FindCostPrice(string,string,string,val,val,Boolean);
+external function Boolean ExpandStructItem(string,string,val,var record SHVc);
+external function Boolean HasMultiLocations();
+external function Boolean IsEnterprise();
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean ShouldInvoiceRowUpdateStock(record IVVc,row IVVc);
+external procedure HT2Per(Date,Date ,var string);
+external function string 255 CreateInvoiceNumber(LongInt,string);
+external procedure HTDetailLevel(Integer,var string);
+external procedure HTOKF(Integer,Integer,var string);
+
+function val FindStructItemCost(record SHVc SHr,integer i)
+begin
+  record ItemHistVc IHr;
+  boolean TrHs;
+  val cost;
+  
+  IHr.FileName = "SHVc";
+  IHr.TransNr = SHr.SerNr;
+  IHr.Row = i;
+  TrHs = true;
+  while (LoopKey("FNTransNr",IHr,3,TrHs)) begin
+    if (IHr.FileName!="SHVc") then begin
+      TrHs = false;
+    end;
+    if (IHr.TransNr!=SHr.SerNr) then begin 
+      TrHs = false;
+    end;
+    if (IHr.Row!=i) then begin 
+      TrHs = false;
+    end;
+    if (TrHs==true) then begin 
+      cost = cost + IHr.CPTotCost;
+    end;
+  end;
+  FindStructItemCost = cost;
+  return;
+end;  
+
+procedure TotRepStockMov(record StockMovVc SMp,var val totp,Boolean purchf,Integer qty2,Integer unitconvcalc,record RcVc RepSpec)
+begin
+  Integer i,rwcnt;
+  row StockMovVc SMrw;
+  val  total,rowval,t;
+  Boolean testf;
+  record INVc INr;
+
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(5012),false);
+  if (HasMultiLocations) then begin
+    if (purchf) then begin
+      OutString(2,0,SMp.ToLocation,false);
+    end else begin
+      OutString(2,0,SMp.FrLocation,false);
+    end;   
+  end;
+  OutLongInt(130,"DblStockMov",SMp.SerNr,false);
+  OutDate(200,0,SMp.TransDate,false);
+  if (HasMultiLocations) then begin
+    if (purchf) then begin
+      OutString(300,0,SMp.FrLocation,false);
+    end else begin
+      OutString(300,0,SMp.ToLocation,false);
+    end;  
+  end;
+  EndFormat;
+
+  total = 0;
+  rwcnt = MatRowCnt(SMp);
+  for (i=0;i<rwcnt;i=i+1) begin
+   MatRowGet(SMp,i,SMrw);
+   testf = true;
+   if (SMrw.Quant==0) then begin
+     testf = false;
+   end;
+   if (testf) then begin
+     if (RepSpec.flags[11]!=0) then begin
+       ReadFirstItem(SMrw.ArtCode,INr,true,false);
+       if (INr.ItemType!=kItemTypeStocked) then begin
+         testf = false;
+       end;
+     end;
+   end;     
+   if (testf) then begin
+     StartFormat(15);
+     OutString(15,0,SMrw.ArtCode,false);
+     OutString(95,0,SMrw.Spec,false);
+     if (qty2==1) then begin
+       if (unitconvcalc==0) then begin
+         t = SMrw.Quant * SMrw.Coefficient;
+       end else begin
+         t = SMrw.Quant / SMrw.Coefficient;
+       end;
+       OutVal(320,0,t,M4Val,true);
+     end;          
+     OutVal(420,0,SMrw.Quant,M4Qty,true);
+     if (purchf) then begin
+       rowval = SMrw.Quant * SMrw.NewPrice;
+       OutVal(480,0,rowval,M4Val,true);
+     end else begin
+       OutVal(480,0,SMrw.FIFORowVal,M4Val,true);
+     end;
+     EndFormat;
+     if (purchf) then begin
+       total = total + rowval;
+     end else begin
+       total = total + SMrw.FIFORowVal;
+     end;   
+   end;
+  end;
+  StartFormat(15);
+  OutString(350,0,USetStr(2355),false);
+  OutVal(480,0,total,M4Val,true);
+  totp = totp + total;
+  EndFormat;
+  return;
+end;
+
+procedure TotRepProd(record ProdVc Prodp,var val totp,Boolean purchf,Integer qty2,Integer unitconvcalc,record RcVc RepSpec)
+begin
+  Integer i,rwcnt;
+  row ProdVc PDrw;
+  val  total,rowval,recqty,fifoval,t;
+  Boolean testf;
+  record INVc INr;
+
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(5016),false);
+  if (HasMultiLocations) then begin
+    OutString(2,0,Prodp.Location,false);
+  end;
+  OutLongInt(130,"DblProd",Prodp.SerNr,false);
+  OutDate(200,0,Prodp.ProdDate,false);
+  EndFormat;
+
+  total = 0;
+  rwcnt = MatRowCnt(Prodp);
+  for (i=0;i<rwcnt;i=i+1) begin
+   MatRowGet(Prodp,i,PDrw);
+   testf = true;
+   if (purchf) then begin
+    if (PDrw.OutQty==0) then begin testf = false; end;
+   end else begin
+    if (PDrw.InQty==0) then begin testf = false; end;
+   end;
+   if (purchf==false) then begin
+     if (PDrw.FIFORowVal==0) then begin testf = false; end;
+   end;    
+   if (testf) then begin
+     if (RepSpec.flags[11]!=0) then begin
+       ReadFirstItem(PDrw.Item,INr,true,false);
+       if (INr.ItemType!=kItemTypeStocked) then begin
+         testf = false;
+       end;
+     end;
+   end;     
+   if (testf) then   begin
+     StartFormat(15);
+     OutString(15,0,PDrw.Item,false);
+     OutString(95,0,PDrw.Comment,false);
+     if (purchf) then begin
+       if (qty2==1) then begin
+         if (unitconvcalc==0) then begin
+           t = PDrw.OutQty * PDrw.Coefficient;
+         end else begin
+           t = PDrw.OutQty / PDrw.Coefficient;
+         end;
+         OutVal(320,0,t,M4Val,true);
+       end;               
+       switch (Prodp.RowsHoldActualQty) begin
+         case 1: recqty = PDrw.OutQty;
+         otherwise recqty = PDrw.OutQty * Prodp.Qty;
+       end;      
+       rowval = recqty * PDrw.ItemCost;
+       OutVal(420,0,recqty,M4Qty,true);
+       OutVal(480,0,rowval,M4Val,true);
+     end else begin
+       if (qty2==1) then begin
+         if (unitconvcalc==0) then begin
+           t = PDrw.InQty * PDrw.Coefficient;
+         end else begin
+           t = PDrw.InQty / PDrw.Coefficient;
+         end;
+         OutVal(320,0,t,M4Val,true);
+       end;                    
+       switch (Prodp.RowsHoldActualQty) begin
+         case 1: recqty = PDrw.InQty;
+         otherwise recqty = PDrw.InQty * Prodp.Qty;
+       end;
+       fifoval = PDrw.ItemCost * recqty;       
+       OutVal(420,0,recqty,M4Qty,true);
+       OutVal(480,0,fifoval,M4Val,true);
+     end;
+     EndFormat;
+     if (purchf) then begin
+       total = total + rowval;
+     end else begin
+       total = total + fifoval;
+     end;  
+   end;
+  end;
+  StartFormat(15);
+  OutString(350,0,USetStr(2355),false);
+  OutVal(480,0,total,M4Val,true);
+  totp = totp + total;
+  EndFormat;
+  return;
+end;
+
+procedure TotRepStockDepr(record RcVc RepSpec,record SDVc SDp,var val totp,Integer qty2,Integer unitconvcalc)
+begin
+  Integer i,rwcnt;
+  row SDVc SDrw;
+  val  total,t;
+  string 255 tstr;
+  string 255 frloc,toloc;
+  Boolean testf,prntedf;
+  record INVc INr;
+
+  frloc = FirstInRange(RepSpec.LastAcc,10);
+  toloc = LastInRange(RepSpec.LastAcc,10);
+
+  total = 0;
+  rwcnt = MatRowCnt(SDp);
+  for (i=0;i<rwcnt;i=i+1) begin
+   MatRowGet(SDp,i,SDrw);
+   testf = true;
+   if (SDrw.Qty==0) then begin testf = false; end;
+    if (nonblank(RepSpec.LastAcc)) then begin
+      tstr = SDrw.Location;
+      if (blank(tstr)) then begin
+        tstr = SDp.Location;
+      end; 
+      if (tstr<frloc) then begin testf = false; end;
+      if (tstr>toloc) then begin testf = false; end;
+    end;
+   if (testf) then begin
+     if (RepSpec.flags[11]!=0) then begin
+       ReadFirstItem(SDrw.ArtCode,INr,true,false);
+       if (INr.ItemType!=kItemTypeStocked) then begin
+         testf = false;
+       end;
+     end;
+   end;     
+   if (testf) then begin
+     if (prntedf==false) then begin
+       Gray_Divider(0,1);
+       StartFormat(15);
+       OutString(0,0,USetStr(5020),false);
+       if (HasMultiLocations) then begin
+         OutString(2,0,SDp.Location,false);
+       end;
+       OutLongInt(130,"DblSD",SDp.SerNr,false);
+       OutDate(200,0,SDp.TransDate,false);
+       EndFormat;
+       prntedf = true;
+     end;
+     StartFormat(15);
+     OutString(15,0,SDrw.ArtCode,false);
+     OutString(95,0,SDrw.Spec,false);
+     if (qty2==1) then begin
+       if (unitconvcalc==0) then begin
+         t = SDrw.Qty * SDrw.Coefficient;
+       end else begin
+         t = SDrw.Qty / SDrw.Coefficient;
+       end;
+       OutVal(320,0,t,M4Val,true);
+     end;                    
+     OutVal(420,0,SDrw.Qty,M4Qty,true);
+     OutVal(480,0,SDrw.FIFORowVal,M4Val,true);
+     EndFormat;
+     total = total + SDrw.FIFORowVal;
+   end;
+  end;
+  if (prntedf) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);
+    totp = totp + total;
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure TotRepShip(record SHVc SHp,var val totp,Integer qty2,Integer unitconvcalc,string frloc,string toloc,record RcVc RepSpec)
+begin
+  Integer i,j,rwcnt,shrwcnt;
+  row SHVc SHrw,SH2rw;
+  val  total,t;
+  Boolean testf,prntedf,stockedf;
+  string 10 location;
+  record INVc INr;
+  record SHVc recSHr;
+  boolean isstruct;
+  record MainStockBlock MSb;
+  val t1;
+  
+  BlockLoad(MSb);
+  total = 0;
+  rwcnt = MatRowCnt(SHp);
+  for (i=0;i<rwcnt;i=i+1) begin
+   MatRowGet(SHp,i,SHrw);
+   testf = true;
+   location = SHrw.Location;
+   if (blank(location)) then begin
+     location = SHp.Location;
+   end;
+   if (nonblank(frloc)) then begin
+     if (location<frloc) then begin testf = false; end;
+   end;   
+   if (nonblank(toloc)) then begin
+     if (location>toloc) then begin testf = false; end;
+   end;   
+   if (testf) then begin
+     //if (RepSpec.flags[11]!=0) then begin
+       ReadFirstItem(SHrw.ArtCode,INr,true,false);
+       if (INr.ItemType==kItemTypeStocked) then begin
+         stockedf = true;
+       end else begin
+         if (INr.ItemType==kItemTypeStructured) then begin
+           RecordNew(recSHr);
+           isstruct = ExpandStructItem(SHrw.ArtCode,SHrw.Recepy,SHrw.Ship,recSHr);
+           if (isstruct==false) then begin
+             testf = false;
+           end;  
+           stockedf = true;
+         end else begin  
+           testf = false;
+         end;  
+       end;
+     //end;
+     if (RepSpec.flags[11]!=0) and (stockedf==false) then begin
+       testf = false;
+     end;  
+   end;     
+   if (SHrw.Ship==0) then begin
+    testf = false;
+   end;
+   if (RepSpec.ArtMode==1 and testf) then begin
+     if (prntedf==false) then begin
+       Gray_Divider(0,1);
+       StartFormat(15);
+       OutString(0,0,USetStr(5003),false);
+       if (HasMultiLocations) then begin
+         OutString(2,0,SHp.Location,false);
+       end;
+       OutLongInt(130,"DblSHVc",SHp.SerNr,false);
+       OutDate(200,0,SHp.ShipDate,false);
+       OutString(300,0,SHp.CustCode,false);
+       OutString(350,0,SHp.Addr0,false);
+       EndFormat;
+       prntedf = true;
+     end;
+     StartFormat(15);
+     OutString(15,0,SHrw.ArtCode,false);
+     OutString(95,0,SHrw.Spec,false);
+     if (qty2==1) then begin
+       if (unitconvcalc==0) then begin
+         t = SHrw.Ship * SHrw.Coefficient;
+       end else begin
+         t = SHrw.Ship / SHrw.Coefficient;
+       end;
+       OutVal(320,0,t,M4Val,true);
+     end;
+     if (isstruct==true) then begin
+       if (SHrw.FIFORowVal==0) then begin
+         if (SHp.OKFlag==1) then begin 
+           SHrw.FIFORowVal = FindStructItemCost(SHp,i);
+         end else begin
+           t1 = blankval;
+           shrwcnt = MatRowCnt(RecSHr);
+           for (j=0;j<shrwcnt;j=j+1) begin
+             MatRowGet(RecSHr,j,SH2rw);
+             if (qty2==1) then begin
+               if (unitconvcalc==0) then begin
+                 t = SH2rw.Ship * SH2rw.Coefficient;
+               end else begin
+                 t = SH2rw.Ship / SH2rw.Coefficient;
+               end;
+             end;
+             location = SH2rw.Location;
+             if (blank(location)) then begin
+               location = recSHr.Location;
+             end;
+             if (blank(location)) then begin
+               location = MSb.MainStock;
+             end;
+             SHrw.FIFORowVal = SHrw.FIFORowVal + FindCostPrice(SH2rw.ArtCode,location,SH2rw.SerialNr,SH2rw.Ship,0,false);
+           end;  
+           SHrw.FIFORowVal = Round(SHrw.FIFORowVal,DefaultRoundMode);
+           total = total + t1;
+         end;
+       end;
+     end;
+     OutVal(420,0,SHrw.Ship,M4Qty,true);
+     OutVal(480,0,SHrw.FIFORowVal,M4Val,true);
+     EndFormat;
+     total = total + SHrw.FIFORowVal;
+   end;
+  end;
+  if (prntedf) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);    
+    EndFormat;
+  end;
+  totp = totp + total;
+  if (RepSpec.ArtMode==0 and testf) then begin
+//    if (RepSpec.flags[11]==0 or stockedf) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(5003),false);
+      if (HasMultiLocations) then begin
+        OutString(2,0,SHp.Location,false);
+      end;
+      OutLongInt(130,"DblSHVc",SHp.SerNr,false);
+      OutDate(200,0,SHp.ShipDate,false);
+      OutString(300,0,SHp.CustCode,false);
+      OutString(350,0,SHp.Addr0,false);
+      EndFormat;
+//    end;
+  end;
+  return;
+end;
+
+procedure TotRepRetPU(record RetPUVc RetPUp,var val totp,Integer qty2,Integer unitconvcalc,string frloc,string toloc,record RcVc RepSpec)
+begin
+  Integer i,rwcnt;
+  row RetPUVc RetPUrw;
+  val  total,t;
+  Boolean testf,prntedf;
+  string 10 location;
+  record INVc INr;
+
+  total = 0;
+  rwcnt = MatRowCnt(RetPUp);
+  for (i=0;i<rwcnt;i=i+1) begin
+   MatRowGet(RetPUp,i,RetPUrw);
+   testf = true;
+   location = RetPUrw.Location;
+   if (blank(location)) then begin
+     location = RetPUp.Location;
+   end;
+   if (nonblank(frloc)) then begin
+     if (location<frloc) then begin testf = false; end;
+   end;   
+   if (nonblank(toloc)) then begin
+     if (location>toloc) then begin testf = false; end;
+   end;   
+   if (testf) then begin
+     if (RepSpec.flags[11]!=0) then begin
+       ReadFirstItem(RetPUrw.ArtCode,INr,true,false);
+       if (INr.ItemType!=kItemTypeStocked) then begin
+         testf = false;
+       end;
+     end;
+   end;     
+   if ((RetPUrw.Quant<>0) and (testf)) then begin
+     if (prntedf==false) then begin
+       Gray_Divider(0,1);
+       StartFormat(15);
+       OutString(0,0,USetStr(5058),false);
+       if (HasMultiLocations) then begin
+         OutString(2,0,RetPUp.Location,false);
+       end;
+       OutLongInt(130,"DblRetPUVc",RetPUp.SerNr,false);
+       OutDate(200,0,RetPUp.TransDate,false);
+       OutString(300,0,RetPUp.VECode,false);
+       OutString(350,0,RetPUp.VEName,false);
+       EndFormat;
+       prntedf = true;
+     end;
+     StartFormat(15);
+     OutString(15,0,RetPUrw.ArtCode,false);
+     OutString(95,0,RetPUrw.Spec,false);
+     if (qty2==1) then begin
+       if (unitconvcalc==0) then begin
+         t = RetPUrw.Quant * RetPUrw.Coefficient;
+       end else begin
+         t = RetPUrw.Quant / RetPUrw.Coefficient;
+       end;
+       OutVal(320,0,t,M4Val,true);
+     end;                         
+     OutVal(420,0,RetPUrw.Quant,M4Qty,true);
+     OutVal(480,0,RetPUrw.FIFORowVal,M4Val,true);
+     EndFormat;
+     total = total + RetPUrw.FIFORowVal;
+   end;
+  end;
+  if (prntedf) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);
+    totp = totp + total;
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure TotRepInv(record RcVc RepSpec,record IVVc IVp,var val totp,Integer qty2,Integer unitconvcalc)
+begin
+  Integer i,rwcnt;
+  row IVVc IVrw;
+  val total,t;
+  string 255 tstr,location;
+  string 255 frloc,toloc;
+  Boolean testf,prntedf;
+  record INVc INr;
+
+  frloc = FirstInRange(RepSpec.LastAcc,10);
+  toloc = LastInRange(RepSpec.LastAcc,10);
+  total = 0;
+  rwcnt = MatRowCnt(IVp);
+  for (i=0;i<rwcnt;i=i+1) begin
+   MatRowGet(IVp,i,IVrw);
+   if ((IVrw.Quant<>0) and (IVrw.NotUpdStockFlag<>1)) then begin
+     testf = true;
+     location = IVrw.Location;
+     if (blank(location)) then begin
+       location = IVp.Location;
+     end;
+     if (nonblank(RepSpec.LastAcc)) then begin
+       if (location<frloc) then begin testf = false; end;
+       if (location>toloc) then begin testf = false; end;
+     end;
+     if (testf) then begin
+       if (RepSpec.flags[11]!=0) then begin
+         ReadFirstItem(IVrw.ArtCode,INr,true,false);
+         if (INr.ItemType!=kItemTypeStocked) then begin
+           testf = false;
+         end;
+       end;
+     end;     
+     if (testf) then begin
+       if (prntedf==false) then begin
+         Gray_Divider(0,1);
+         StartFormat(15);
+         OutString(0,0,USetStr(5004),false);
+         if (HasMultiLocations) then begin
+           OutString(2,0,IVp.Location,false);
+         end;
+         tstr = CreateInvoiceNumber(IVp.SerNr,IVp.OfficialSerNr);
+         OutString(130,"DblIVVc",tstr,false);
+         OutDate(200,0,IVp.TransDate,false);
+         OutString(300,0,IVp.CustCode,false);
+         OutString(350,0,IVp.Addr0,false);
+         EndFormat;
+         prntedf = true;
+       end;
+       if (IVp.InvType==kInvoiceTypeCredit or IVp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+         IVrw.Quant = -IVrw.Quant;
+         IVrw.FIFORowVal = -IVrw.FIFORowVal;
+       end;
+       StartFormat(15);
+       OutString(15,0,IVrw.ArtCode,false);
+       OutString(95,0,IVrw.Spec,false);
+       if (qty2==1) then begin
+         if (unitconvcalc==0) then begin
+           t = IVrw.Quant * IVrw.Coefficient;
+         end else begin
+           t = IVrw.Quant / IVrw.Coefficient;
+         end;
+         OutVal(320,0,t,M4Val,true);
+       end;                         
+       OutVal(420,0,IVrw.Quant,M4Qty,true);
+       OutVal(480,0,IVrw.FIFORowVal,M4Val,true);
+       EndFormat;
+       total = total + IVrw.FIFORowVal;
+     end;
+   end;
+  end;
+  if (prntedf) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);
+    totp = totp + total;
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure TotRepWorkSheet(record WSVc WSr,var val totp,Integer qty2,Integer unitconvcalc,string frloc,string toloc,record RcVc RepSpec)
+begin
+  Integer i,rwcnt;
+  row WSVc WSrw;
+  val total,t;
+  Boolean testf,prntedf;
+  record INVc INr;
+  
+  total = 0;
+  rwcnt = MatRowCnt(WSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(WSr,i,WSrw);
+    if (WSrw.Quant<>0) then begin
+      testf = true;
+      if (nonblank(RepSpec.LastAcc)) then begin
+        if (WSr.Location<frloc) then begin testf = false; end;
+        if (WSr.Location>toloc) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if (RepSpec.flags[11]!=0) then begin
+          ReadFirstItem(WSrw.ArtCode,INr,true,false);
+          if (INr.ItemType!=kItemTypeStocked) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        if (prntedf==false) then begin
+          Gray_Divider(0,1);
+          StartFormat(15);
+          OutString(0,0,USetStr(7650),false);
+          if (HasMultiLocations) then begin
+            OutString(2,0,WSr.Location,false);
+          end;
+          OutString(130,"DblWSVc",WSr.SerNr,false);
+          OutDate(200,0,WSr.TransDate,false);
+          OutString(300,0,WSr.CustCode,false);
+          OutString(350,0,WSr.Addr0,false);
+          EndFormat;
+          prntedf = true;
+        end;
+        StartFormat(15);
+        OutString(15,0,WSrw.ArtCode,false);
+        OutString(95,0,WSrw.Spec,false);
+        if (qty2==1) then begin
+          if (unitconvcalc==0) then begin
+            t = WSrw.Quant * WSrw.Coefficient;
+          end else begin
+            t = WSrw.Quant / WSrw.Coefficient;
+          end;
+          OutVal(320,0,t,M4Val,true);
+        end;                         
+        OutVal(420,0,WSrw.Quant,M4Qty,true);
+        OutVal(480,0,WSrw.FIFORowVal,M4Val,true);
+        EndFormat;
+        total = total + WSrw.FIFORowVal;
+      end;
+    end;
+  end;
+  if (prntedf) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);
+    totp = totp + total;
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure TotRepINTransfer(record INTransferVc INTransferr,var val totp,Integer qty2,Integer unitconvcalc,string frloc,string toloc,record RcVc RepSpec)
+begin
+  Integer i,rwcnt;
+  row INTransferVc INTransrw;
+  val total,t;
+  string 255 location;
+  Boolean testf,prntedf;
+  record INVc INr;
+  
+  total = 0;
+  rwcnt = MatRowCnt(INTransferr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INTransferr,i,INTransrw);
+    if (INTransrw.Quant<>0) then begin
+      testf = true;
+      location = INTransrw.Location;
+      if (blank(location)) then begin
+        location = INTransferr.Location;
+      end;
+      if (nonblank(RepSpec.LastAcc)) then begin
+        if (location<frloc) then begin testf = false; end;
+        if (location>toloc) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if (RepSpec.flags[11]!=0) then begin
+          ReadFirstItem(INTransrw.ArtCode,INr,true,false);
+          if (INr.ItemType!=kItemTypeStocked) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        if (prntedf==false) then begin
+          Gray_Divider(0,1);
+          StartFormat(15);
+          OutString(0,0,USetStr(4999),false);
+          if (HasMultiLocations) then begin
+            OutString(2,0,INTransferr.Location,false);
+          end;
+          OutString(130,"DblINTransferVc",INTransferr.SerNr,false);
+          OutDate(200,0,INTransferr.TransDate,false);
+          EndFormat;
+          prntedf = true;
+        end;
+        StartFormat(15);
+        OutString(15,0,INTransrw.ArtCode,false);
+        OutString(95,0,INTransrw.Spec,false);
+        if (qty2==1) then begin
+          if (unitconvcalc==0) then begin
+            t = INTransrw.Quant * INTransrw.Coefficient;
+          end else begin
+            t = INTransrw.Quant / INTransrw.Coefficient;
+          end;
+          OutVal(320,0,t,M4Val,true);
+        end;
+        OutVal(420,0,INTransrw.Quant,M4Qty,true);
+        OutVal(480,0,INTransrw.FIFORowVal,M4Val,true);
+        EndFormat;
+        total = total + INTransrw.FIFORowVal;
+      end;
+    end;
+  end;
+  if (prntedf) then begin
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);
+    totp = totp + total;
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure TotRepProdOperation(record ProdOperationVc ProdOperationr,var val totp,Boolean purchf,Integer qty2,Integer unitconvcalc,record RcVc RepSpec)
+begin
+  Integer i,rwcnt;
+  row ProdOperationVc PDOprw;
+  val total,rowval,recqty,fifoval,t;
+  Boolean testf;
+  record INVc INr;
+  
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(16461),false);
+  if (HasMultiLocations) then begin
+    OutString(2,0,ProdOperationr.Location,false);
+  end;
+  OutLongInt(130,"DblProdOperationVc",ProdOperationr.SerNr,false);
+  OutDate(200,0,ProdOperationr.ProdDate,false);
+  EndFormat;
+  
+  total = 0;
+  rwcnt = MatRowCnt(ProdOperationr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdOperationr,i,PDOprw);
+    testf = true;
+    if (purchf) then begin
+      if (PDOprw.OutQty==0) then begin testf = false; end;
+    end else begin
+      if (PDOprw.InQty==0) then begin testf = false; end;
+    end;
+    if (purchf==false) then begin
+      if (PDOprw.FIFORowVal==0) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      if (RepSpec.flags[11]!=0) then begin
+        ReadFirstItem(PDOprw.Item,INr,true,false);
+        if (INr.ItemType!=kItemTypeStocked) then begin
+          testf = false;
+        end;
+      end;
+    end;     
+    if (testf) then begin
+      StartFormat(15);
+      OutString(15,0,PDOprw.Item,false);
+      OutString(95,0,PDOprw.Comment,false);
+      if (purchf) then begin
+        if (qty2==1) then begin
+          if (unitconvcalc==0) then begin
+            t = PDOprw.OutQty * PDOprw.Coefficient;
+          end else begin
+            t = PDOprw.OutQty / PDOprw.Coefficient;
+          end;
+          OutVal(320,0,t,M4Val,true);
+        end;               
+        switch (ProdOperationr.RowsHoldActualQty) begin
+          case 1: recqty = PDOprw.OutQty;
+          otherwise recqty = PDOprw.OutQty * ProdOperationr.Qty;
+        end;      
+        rowval = recqty * PDOprw.ItemCost;
+        OutVal(420,0,recqty,M4Qty,true);
+        OutVal(480,0,rowval,M4Val,true);
+      end else begin
+        if (qty2==1) then begin
+          if (unitconvcalc==0) then begin
+            t = PDOprw.InQty * PDOprw.Coefficient;
+          end else begin
+            t = PDOprw.InQty / PDOprw.Coefficient;
+          end;
+          OutVal(320,0,t,M4Val,true);
+        end;
+        switch (ProdOperationr.RowsHoldActualQty) begin
+          case 1: recqty = PDOprw.InQty;
+          otherwise recqty = PDOprw.InQty * ProdOperationr.Qty;
+        end;
+        fifoval = PDOprw.ItemCost * recqty;
+        OutVal(420,0,recqty,M4Qty,true);
+        OutVal(480,0,fifoval,M4Val,true);
+      end;
+      EndFormat;
+      if (purchf) then begin
+        total = total + rowval;
+      end else begin
+        total = total + fifoval;
+      end;
+    end;
+  end;
+  StartFormat(15);
+  OutString(350,0,USetStr(2355),false);
+  OutVal(480,0,total,M4Val,true);
+  totp = totp + total;
+  EndFormat;
+  return;
+end;
+
+global
+procedure StockOutRn(record RcVc RepSpec)
+begin
+  record SHVc SHr;
+  record SDVc SDr;
+  record IVVc IVr;
+  record StockMovVc SMr;
+  record ProdVc Prodr;
+  record RetPUVc RetPUr;
+  record WSVc WSr;
+  record INTransferVc INTransferr;
+  record ProdOperationVc ProdOperationr;
+  Boolean firstloopf;
+  Boolean foundIV,foundSM,foundProd,foundSH,foundSD,foundRetPU,foundWS,foundINTrans,foundProdOp;
+  Boolean foundIVIV,foundSMSM,foundProdProd,foundSHSH,foundSDSD,foundRetPURetPU,foundWSWS,foundINTransINTrans,foundProdOpProdOp;
+  Boolean testf,purchf,tmpf;
+  string 255 frloc,toloc,tstr;
+  Date curDate,tmpDate;
+  val total;
+  string 255 t2;
+  Integer rw;
+  record MainStockBlock MSb;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(MSb);
+  firstloopf = true;
+  purchf = false;
+  tmpf = false;
+  frloc = FirstInRange(RepSpec.LastAcc,10);
+  toloc = LastInRange(RepSpec.LastAcc,10);
+  StartReportJob(USetStr(7580));
+  begin
+  rw = 1;
+    
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTDetailLevel(RepSpec.ArtMode,tstr);
+  Header(rw,tstr,0);
+  HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;        
+  if (nonblank(RepSpec.LastAcc)) then begin
+    Header(rw,RepSpec.LastAcc,1);
+    rw = rw + 1;
+  end;
+  if (RepSpec.flags[11]!=0) then begin
+    Header(rw,USetStr(11690),0);
+  end;
+  if (RepSpec.flags[3]==1) then begin
+    tstr = USetStr(3249);
+  end;
+  if (RepSpec.flags[4]==1) then begin
+    t2 = USetStr(1334);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  if (RepSpec.flags[5]==1) then begin
+    t2 = USetStr(14565);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  if (RepSpec.flags[6]==1) then begin
+    t2 = USetStr(14143);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  if (RepSpec.flags[7]==1) then begin
+    t2 = USetStr(5016);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  if (RepSpec.flags[12]==1) then begin
+    t2 = USetStr(7650);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  if (RepSpec.flags[13]==1) then begin
+    t2 = USetStr(4999);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  if (RepSpec.flags[14]==1) then begin
+    t2 = USetStr(16461);
+    tstr = tstr & ",";
+    tstr = tstr & t2;
+  end;
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  end;
+  EndHeader;
+  SetRepCol(2,65);  
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(7581),false);
+    if (HasMultiLocations) then begin
+      OutString(2,0,USetStr(7582),false);
+    end;
+    OutString(130,0,USetStr(7583),false);
+    OutString(200,0,USetStr(7584),false);
+    OutString(300,0,USetStr(7587),false);
+    OutString(350,0,USetStr(7586),false);
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(7581),false);
+    if (HasMultiLocations) then begin
+      OutString(2,0,USetStr(7582),false);
+    end;
+    OutString(130,0,USetStr(7583),false);
+    OutString(200,0,USetStr(7584),false);
+    OutString(300,0,USetStr(7587),false);
+    OutString(350,0,USetStr(7586),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(15,0,USetStr(7588),false);
+    OutString(95,0,USetStr(7589),false);
+    if (RepSpec.flags[8]==1) then begin
+      OutString(320,0,USetStr(7593),true);
+    end;
+    OutString(420,0,USetStr(7590),true);
+    OutString(480,0,USetStr(7591),true);
+    EndFormat;
+  end;
+
+  curDate = RepSpec.sStartDate;
+  tmpDate = RepSpec.sStartDate;
+  
+  SHr.ShipDate = curDate;
+  SDr.TransDate = curDate;
+  IVr.TransDate = curDate;
+  SMr.TransDate = curDate;
+  Prodr.ProdDate = curDate;
+  RetPUr.TransDate = curDate;
+  WSr.TransDate = curDate;
+  INTransferr.TransDate = curDate;
+  ProdOperationr.ProdDate = curDate;
+
+  if (RepSpec.flags[3]==1) then begin
+    foundIVIV = true;
+  end else begin
+    foundIVIV = false;
+  end;
+  if (RepSpec.flags[4]==1) then begin
+    foundSHSH = true;
+  end else begin
+    foundSHSH = false;
+  end;
+  if (RepSpec.flags[5]==1) then begin
+    foundSDSD = true;
+  end else begin
+    foundSDSD = false;
+  end;
+  if (RepSpec.flags[6]==1) then begin
+    foundSMSM = true;
+  end else begin
+    foundSMSM = false;
+  end;
+  if (RepSpec.flags[7]==1) then begin
+    foundProdProd = true;
+  end else begin
+    foundProdProd = false;
+  end;
+  if (RepSpec.flags[9]==1) then begin
+    foundRetPURetPU = true;
+  end else begin
+    foundRetPURetPU = false;
+  end;
+  if (RepSpec.flags[12]==1) then begin
+    foundWSWS = true;
+  end else begin
+    foundWSWS = false;
+  end;
+  if (RepSpec.flags[13]==1) then begin
+    foundINTransINTrans = true;
+  end else begin
+    foundINTransINTrans = false;
+  end;
+  if (RepSpec.flags[14]==1) then begin
+    foundProdOpProdOp = true;
+  end else begin
+    foundProdOpProdOp = false;
+  end;
+  if (RepSpec.ArtMode==0) then begin
+    Gray_Divider(0,1);
+  end;
+  
+  while ((curDate<=RepSpec.sEndDate) and (foundIVIV or foundSHSH or foundSDSD or foundSMSM or foundProdProd or foundRetPURetPU or foundWSWS or foundINTransINTrans or foundProdOpProdOp)) begin
+    if (foundIVIV) then begin
+      foundIV = true;
+      while (LoopKey("TransDate",IVr,2,foundIV)) begin
+        testf = true;
+        if (curDate<>IVr.TransDate) then begin   
+          if (firstloopf) then   begin
+            tmpDate = IVr.TransDate;
+            tmpf = true;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) then begin
+            if (nonblank(RepSpec.LastAcc)) then begin    
+              if (IVr.Location<frloc) then begin testf = false; end;
+              if (IVr.Location>toloc) then begin testf = false; end;
+            end;
+          end;
+          if (IVr.UpdStockFlag==0) then begin 
+            testf = false; 
+          end else begin
+            if (IVr.OrderNr>0) then begin
+              testf = false;
+              rwcnt = MatRowCnt(IVr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(IVr,i,IVrw);
+                if (ShouldInvoiceRowUpdateStock(IVr,IVrw)) then begin
+                  testf = true;
+                  i = rwcnt;
+                end;
+              end;
+            end;
+          end;
+
+          if ((RepSpec.flags[1]==0) and (IVr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (IVr.OKFlag<>0)) then begin testf = false; end;
+          if (IVr.Invalid<>0) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepInv(RepSpec,IVr,total,RepSpec.flags[8],MSb.UnitConvCalc);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(5004),false);
+              if (HasMultiLocations) then begin
+                OutString(2,0,IVr.Location,false);
+              end;
+              tstr = CreateInvoiceNumber(IVr.SerNr,IVr.OfficialSerNr);
+              OutString(130,"DblIVVc",tstr,false);
+              OutDate(200,0,IVr.TransDate,false);
+              OutString(300,0,IVr.CustCode,false);
+              OutString(350,0,IVr.Addr0,false);
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundIV = false; 
+          if (RepSpec.sEndDate<IVr.TransDate) then begin
+            foundIVIV = false;
+          end;
+        end; 
+      end;
+    end;
+    if (blankdate(IVr.TransDate)) then begin
+      foundIVIV = false;
+    end;
+    if (foundIV==false) then begin
+      StepBack(IVr);
+    end;
+
+
+    if (foundSHSH) then begin
+      foundSH = true;
+      while (LoopKey("ShipDate",SHr,2,foundSH)) begin
+        testf = true;
+        if (curDate<>SHr.ShipDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>SHr.ShipDate) or (tmpf==false)) then begin
+              tmpDate = SHr.ShipDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) then begin
+            if (nonblank(RepSpec.LastAcc)) then begin
+              if (SHr.Location<frloc) then begin testf = false; end;
+              if (SHr.Location>toloc) then begin testf = false; end;
+            end;
+          end;
+          if ((RepSpec.flags[1]==0) and (SHr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (SHr.OKFlag<>0)) then begin testf = false; end;
+          if (testf) then  begin
+            TotRepShip(SHr,total,RepSpec.flags[8],MSb.UnitConvCalc,frloc,toloc,RepSpec);
+          end;
+        end else begin
+          foundSH = false;
+          if (RepSpec.sEndDate<SHr.ShipDate) then begin
+            foundSHSH = false;
+          end;
+        end;
+      end;
+    end;
+    if (blankdate(SHr.ShipDate)) then begin
+      foundSHSH = false;
+    end;
+    if (foundSH==false) then begin
+      StepBack(SHr); 
+    end;
+
+    if (foundSDSD) then begin
+      foundSD = true;
+      while (LoopKey("TransDate",SDr,2,foundSD)) begin
+        testf = true;
+        if (curDate<>SDr.TransDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>SDr.TransDate) or (tmpf==false)) then begin
+              tmpDate = SDr.TransDate;
+              tmpf = true;
+            end;
+          end;
+          testf = false;
+        end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) then begin
+            if (nonblank(RepSpec.LastAcc)) then begin
+              if (SDr.Location<frloc) then begin testf = false; end;
+              if (SDr.Location>toloc) then begin testf = false; end;
+            end;
+          end;
+          if ((RepSpec.flags[1]==0) and (SDr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (SDr.OKFlag<>0)) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepStockDepr(RepSpec,SDr,total,RepSpec.flags[8],MSb.UnitConvCalc);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(5020),false);
+              if (HasMultiLocations) then begin
+                OutString(2,0,SDr.Location,false);
+              end;
+              OutLongInt(130,"DblSD",SDr.SerNr,false);
+              OutDate(200,0,SDr.TransDate,false);
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundSD = false;
+          if (RepSpec.sEndDate<SDr.TransDate) then begin
+            foundSDSD = false;
+          end;
+        end;  
+      end;
+    end;
+    if (blankdate(SDr.TransDate)) then begin
+      foundSDSD = false;
+    end;
+    if (foundSD==false) then begin
+      StepBack(SDr); 
+    end;
+
+    if (foundSMSM) then begin
+      foundSM = true;
+      while (LoopKey("TransDate",SMr,2,foundSM)) begin
+        testf = true;
+        if (curDate<>SMr.TransDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>SMr.TransDate) or (tmpf==false)) then begin
+              tmpDate = SMr.TransDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (SMr.FrLocation<frloc) then begin testf = false; end;
+            if (SMr.FrLocation>toloc) then begin testf = false; end;
+          end;
+          if ((RepSpec.flags[1]==0) and (SMr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (SMr.OKFlag<>0)) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepStockMov(SMr,total,purchf,RepSpec.flags[8],MSb.UnitConvCalc,RepSpec);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(5012),false);
+              if (HasMultiLocations) then begin
+                OutString(2,0,SMr.FrLocation,false);
+              end;
+              OutLongInt(130,"DblStockMov",SMr.SerNr,false);
+              OutDate(200,0,SMr.TransDate,false);
+              if (HasMultiLocations) then begin
+                OutString(300,0,SMr.ToLocation,false);
+              end;
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundSM = false;
+          if (RepSpec.sEndDate<SMr.TransDate) then begin
+            foundSMSM = false;
+          end;
+        end;
+      end;
+    end;
+    if (blankdate(SMr.TransDate)) then begin
+      foundSMSM = false;
+    end;
+    if (foundSM==false) then begin
+      StepBack(SMr);
+    end;
+
+    if (foundProdProd) then begin
+      foundProd = true;
+      while (LoopKey("ProdDate",Prodr,2,foundProd)) begin
+        testf = true;   
+        if (curDate<>Prodr.ProdDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>Prodr.ProdDate) or (tmpf==false)) then begin
+              tmpDate = Prodr.ProdDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (Prodr.Location<frloc) then begin testf = false; end;
+            if (Prodr.Location>toloc) then begin testf = false; end;
+          end;
+          if ((RepSpec.flags[1]==0) and ((Prodr.PRStatusFlag<>3) and (Prodr.PRStatusFlag<>5))) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and ((Prodr.PRStatusFlag==3) or (Prodr.PRStatusFlag==5))) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepProd(Prodr,total,purchf,RepSpec.flags[8],MSb.UnitConvCalc,RepSpec);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(5016),false);
+              if (HasMultiLocations) then begin
+                OutString(2,0,Prodr.Location,false);
+              end;
+              OutLongInt(130,"DblProd",Prodr.SerNr,false);
+              OutDate(200,0,Prodr.ProdDate,false);
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundProd = false;
+          if (RepSpec.sEndDate<Prodr.ProdDate) then begin
+            foundProdProd = false;
+          end;
+        end;
+      end;
+    end;
+    if (blankdate(Prodr.ProdDate)) then begin
+      foundProdProd = false;
+    end;
+    if (foundProd==false) then begin
+      StepBack(Prodr);
+    end;
+    
+    if (foundRetPURetPU) then begin
+      foundRetPU = true;
+      while (LoopKey("TransDate",RetPUr,2,foundRetPU)) begin
+        testf = true;
+        if (curDate<>RetPUr.TransDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>RetPUr.TransDate) or (tmpf==false)) then begin
+              tmpDate = RetPUr.TransDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (RetPUr.Location<frloc) then begin testf = false; end;
+            if (RetPUr.Location>toloc) then begin testf = false; end;
+          end;
+          if ((RepSpec.flags[1]==0) and (RetPUr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (RetPUr.OKFlag<>0)) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepRetPU(RetPUr,total,RepSpec.flags[8],MSb.UnitConvCalc,frloc,toloc,RepSpec);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(5058),false);
+              OutString(65,0,RetPUr.Location,false);
+              OutLongInt(130,"DblRetPUVc",RetPUr.SerNr,false);
+              OutDate(200,0,RetPUr.TransDate,false);
+              OutString(300,0,RetPUr.VECode,false);
+              OutString(350,0,RetPUr.VEName,false);
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundRetPU = false;
+          if (RepSpec.sEndDate<RetPUr.TransDate) then begin
+            foundRetPURetPU = false;
+          end;
+        end;
+      end;
+    end;
+    if (blankdate(RetPUr.TransDate)) then begin
+      foundRetPURetPU = false;
+    end;
+    if (foundRetPU==false) then begin
+      StepBack(RetPUr); 
+    end;
+    
+    if (foundWSWS) then begin
+      foundWS = true;
+      while (LoopKey("TransDate",WSr,1,foundWS)) begin
+        testf = true;
+        if (curDate<>WSr.TransDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>WSr.TransDate) or (tmpf==false)) then begin
+              tmpDate = WSr.TransDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) then begin
+            if (nonblank(RepSpec.LastAcc)) then begin
+              if (WSr.Location<frloc) then begin testf = false; end;
+              if (WSr.Location>toloc) then begin testf = false; end;
+            end;
+          end;
+          if ((RepSpec.flags[1]==0) and (WSr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (WSr.OKFlag<>0)) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepWorkSheet(WSr,total,RepSpec.flags[8],MSb.UnitConvCalc,frloc,toloc,RepSpec);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(7649),false);
+              if (HasMultiLocations) then begin
+                OutString(2,0,WSr.Location,false);
+              end;
+              OutLongInt(130,"DblWSVc",WSr.SerNr,false);
+              OutDate(200,0,WSr.TransDate,false);
+              OutString(300,0,WSr.CustCode,false);
+              OutString(350,0,WSr.Addr0,false);
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundSH = false;
+          if (RepSpec.sEndDate<WSr.TransDate) then begin
+            foundWSWS = false;
+          end;
+        end;
+      end;
+    end;
+    if (blankdate(WSr.TransDate)) then begin
+      foundWSWS = false;
+    end;
+    if (foundWS==false) then begin
+      StepBack(WSr); 
+    end;
+    
+    if (foundINTransINTrans) then begin
+      foundINTrans = true;
+      while (LoopKey("TransDate",INTransferr,1,foundINTrans)) begin
+        testf = true;
+        if (curDate<>INTransferr.TransDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>INTransferr.TransDate) or (tmpf==false)) then begin
+              tmpDate = INTransferr.TransDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) then begin
+            if (nonblank(RepSpec.LastAcc)) then begin
+              if (INTransferr.Location<frloc) then begin testf = false; end;
+              if (INTransferr.Location>toloc) then begin testf = false; end;
+            end;
+          end;
+          if ((RepSpec.flags[1]==0) and (INTransferr.OKFlag==0)) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and (INTransferr.OKFlag<>0)) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepINTransfer(INTransferr,total,RepSpec.flags[8],MSb.UnitConvCalc,frloc,toloc,RepSpec);
+            end;
+            if (RepSpec.ArtMode==0) then begin
+              StartFormat(15);
+              OutString(0,0,USetStr(4999),false);
+              if (HasMultiLocations) then begin
+                OutString(2,0,INTransferr.Location,false);
+              end;
+              OutLongInt(130,"DblINTransferVc",INTransferr.SerNr,false);
+              OutDate(200,0,INTransferr.TransDate,false);
+              EndFormat;
+            end;
+          end;
+        end else begin
+          foundINTrans = false;
+          if (RepSpec.sEndDate<INTransferr.TransDate) then begin
+            foundINTransINTrans = false;
+          end;
+        end;
+      end;
+    end;
+    if (blankdate(INTransferr.TransDate)) then begin
+      foundINTransINTrans = false;
+    end;
+    if (foundINTrans==false) then begin
+      StepBack(INTransferr); 
+    end;
+    
+    if (foundProdOpProdOp) then begin
+      foundProdOp = true;
+      while (LoopKey("ProdDate",ProdOperationr,2,foundProdOp)) begin
+        testf = true;   
+        if (curDate<>ProdOperationr.ProdDate) then begin
+          if (firstloopf) then begin
+            if ((tmpDate>ProdOperationr.ProdDate) or (tmpf==false)) then begin
+              tmpDate = ProdOperationr.ProdDate;
+              tmpf = true;
+            end;
+          end; 
+          testf = false;
+        end;
+        if (testf) then begin
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (ProdOperationr.Location<frloc) then begin testf = false; end;
+            if (ProdOperationr.Location>toloc) then begin testf = false; end;
+          end;
+          if ((RepSpec.flags[1]==0) and ((ProdOperationr.PRStatusFlag<>3) and (ProdOperationr.PRStatusFlag<>5))) then begin testf = false; end;
+          if ((RepSpec.flags[2]==0) and ((ProdOperationr.PRStatusFlag==3) or (ProdOperationr.PRStatusFlag==5))) then begin testf = false; end;
+          if (testf) then  begin
+            if (RepSpec.ArtMode==1) then begin
+              TotRepProdOperation(ProdOperationr,total,purchf,RepSpec.flags[8],MSb.UnitConvCalc,RepSpec);
+            end;
+          if (RepSpec.ArtMode==0) then begin
+            StartFormat(15);
+            OutString(0,0,USetStr(16461),false);
+            if (HasMultiLocations) then begin
+              OutString(2,0,ProdOperationr.Location,false);
+            end;
+            OutLongInt(130,"DblProdOperationVc",ProdOperationr.SerNr,false);
+            OutDate(200,0,ProdOperationr.ProdDate,false);
+            EndFormat;
+          end;
+        end;
+      end else begin
+        foundProdOp = false;
+        if (RepSpec.sEndDate<ProdOperationr.ProdDate) then begin
+          foundProdOpProdOp = false;
+        end;
+      end;
+    end;
+  end;
+  if (blankdate(ProdOperationr.ProdDate)) then begin
+    foundProdOpProdOp = false;
+  end;
+  if (foundProdOp==false) then begin
+    StepBack(ProdOperationr);
+  end;
+    
+    if (firstloopf) then begin
+      curDate = AddDay(tmpDate,-1);
+      firstloopf=false;
+    end;
+    curDate = AddDay(curDate,1);
+  end;
+  
+  if (RepSpec.ArtMode==1) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(350,0,USetStr(2355),false);
+    OutVal(480,0,total,M4Val,true);
+    EndFormat;
+  end;
+  
+  EndJob;
+  return;
+end;

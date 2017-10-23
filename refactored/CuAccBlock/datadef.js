@@ -1,0 +1,25 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     CuAccBlockMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fObjType: { public: true, type: 'TEXT' },
+           fComment: { public: true, type: 'TEXT' },
+           fInterestAcc: { public: true, type: 'TEXT' },
+           fInstallmentAcc: { public: true, type: 'TEXT' },
+           fTopayLoanAcc: { public: true, type: 'TEXT' },
+           fTopayInterestAcc: { public: true, type: 'TEXT' },
+           fTopayLoanDebAcc: { public: true, type: 'TEXT' },
+           fTmpAcc: { public: true, type: 'TEXT' },
+           fVATCode: { public: true, type: 'TEXT' },
+           fCheckObj: { public: true, type: 'INTEGER' },
+           fYearDays: { public: true, type: 'INTEGER' },
+           fARInstallmentAcc: { public: true, type: 'TEXT' },
+           fARInterestAcc: { public: true, type: 'TEXT' },
+           fToRoyalty: { public: true, type: 'TEXT' },
+           fFromRoyalty: { public: true, type: 'TEXT' },
+           fToStock: { public: true, type: 'TEXT' },
+           fLosses: { public: true, type: 'TEXT' } } } } }

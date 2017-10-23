@@ -1,0 +1,201 @@
+//tools
+external procedure UpdateWebLanguage(string);
+external procedure UpdateWebCountry(string);
+external procedure ShowRedirectHtml(string,boolean);
+external function string 255 FormatLink(string,string,boolean,boolean);
+external function string 255 FormatSimpleLink(string,boolean);
+external function string 255 FormatSimpleLinkWithArg(string,string,boolean);
+external function boolean LoginState();
+//livechat
+external procedure LiveChatAction(string,string);
+//register new cu
+external procedure QueueForgotPasswordRequest();
+//download app
+external procedure StoreDownloadRegistration();
+//shop
+external updating procedure MoveShoppingBasket(string,string);
+external procedure ShopPaymentPayServerAborted(string);
+external procedure ShopPaymentPayServerCompleted(string,string,string);
+external procedure LoadWebshopObjects(string,string,string);
+external procedure LoadWebshopConnectedItems(string);
+//university
+external procedure UniversityActionUpdateGroup();
+external procedure UniversityActionApplyCourse();
+external procedure UniversityAfterCCPaymentPage();
+external procedure UniversityAbortCreditCardPayment();
+//webng
+external procedure RedirectToURL(string);
+external procedure RedirectToRequestedPage();
+external procedure RedirectToStartPage();
+external procedure RedirectToLoginPage();
+//std
+external function string 255 ConvertXml(string);
+external procedure SendForumMessage();
+external procedure MyAccountSendInvoice(Longint,string);
+external procedure RollbackOneRequestURL();
+external function string 255 removenextnode(var string);
+external function string 10 CurrentWebLang();
+
+procedure ChangeLanguage()
+begin
+  string 255 langcode,mpath,path,node;
+  record WebNGShopBlock WSbl;
+  record WebNGLanguageVc WLr;
+
+  langcode = WebGetArg("langcode");
+  UpdateWebLanguage(langcode);
+  mpath = WebGetArg("path");
+  BlockLoad(WSbl);
+  if (WSbl.ForceLanguage==1) then begin
+    if (left(mpath,1)=="/") then begin
+      node = removenextnode(mpath);
+    end;
+    node = removenextnode(mpath);
+    WLr.Code = node;
+    if (ReadFirstMain(WLr,1,true)) then begin
+      path = "/" & LowerCase(langcode) & "/" & mpath;
+    end else begin
+      path = "/" & LowerCase(langcode) & WebGetArg("path");
+    end;
+  end else begin
+    path = mpath;
+  end;
+
+  ShowRedirectHtml(FormatSimpleLink(path,true),WebSecureMode);
+  return;
+end;
+
+global
+procedure ChangeCountry()
+begin
+  string 255 country,region,path;
+  
+  country = WebGetArg("country");
+  if (nonblank(country)) then begin
+    UpdateWebCountry(country);
+    if (GetSessionString("wantedtologin")=="true") then begin
+      RedirectToLoginPage;
+    end else begin
+      if (GetSessionString("wantedtorequestedpage")=="true") then begin
+        PutSessionString("wantedtorequestedpage","");
+        RedirectToRequestedPage;
+      end else begin
+        RollbackOneRequestURL;
+        RedirectToRequestedPage;//We have different behaviour for hansaworld.com
+      end;
+    end;
+    goto LChangeCountry;
+  end else begin
+    region = WebGetArg("region");
+  end;
+
+  ShowRedirectHtml(FormatSimpleLinkWithArg(WebGetArg("path"),"region=" & region,true),WebSecureMode);
+  
+LChangeCountry:;
+  return;
+end;
+
+global
+updating procedure StoreTheMessageMail(record MailVc Mailr,LongInt fromlink,LongInt tolink)
+begin
+  record MailVc Mail2r;
+  
+  Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+  if (RecordInsert(Mailr,false)) then begin
+  end;
+  if (tolink>0) then begin
+    Mail2r.SerNr = tolink;
+    if (ReadFirstMain(Mail2r,1,true)) then begin
+      CreateRecordLink(Mailr,CurrentCompany,Mail2r,CurrentCompany);
+    end;
+  end;
+  if (fromlink>0) then begin
+    Mail2r.SerNr = fromlink;
+    if (ReadFirstMain(Mail2r,1,true)) then begin
+      CreateRecordLink(Mail2r,CurrentCompany,Mailr,CurrentCompany);
+    end;
+  end;
+  return;
+end;
+
+procedure SendMessage()
+begin
+  record MailVc Mailr;
+  row MailVc Mailrw;
+  
+  RecordNew(Mailr);
+  Mailr.HtmlTranslation = 1;
+  Mailr.SendFlag = 1;
+  Mailrw.RowTyp = 1;
+  Mailrw.AddrCode = WebGetArg("from_field");
+  MatRowPut(Mailr,0,Mailrw);
+  Mailrw.RowTyp = 0;
+  Mailrw.AddrCode = WebGetArg("to_field");
+  MatRowPut(Mailr,1,Mailrw);
+  Mailr.Header = WebGetArg("subject_field");
+  WebGetText("mail_body",Mailr);
+  queued.StoreTheMessageMail(Mailr,StringToLongInt(WebGetArg("add_from_link")),StringToLongInt(WebGetArg("add_to_link")));
+  ShowRedirectHtml(FormatSimpleLink(WebGetArg("path"),true),WebSecureMode);
+  return;
+end;
+
+procedure AfterLogin()
+begin
+  record WebNGShopBasketVc WSBr;
+  string 255 args;
+  
+  args = "action=afterlogin&failed=" & ConvertXml(WebGetArg("failed"));
+  if (nonblank(WebGetArg("cust"))) then begin
+    args = args & "&cust=" & ConvertXml(WebGetArg("cust"));
+  end;
+  if (nonblank(WebGetArg("user"))) then begin
+    args = args & "&user=" & ConvertXml(WebGetArg("user"));
+  end;
+  RedirectToURL(FormatLink("/WebUpdatingAction.hal",args,true,true));
+  
+  return;
+end;
+
+global webpublic
+procedure WebAction()
+begin
+  string 255 action;
+  action = WebGetArg("action");
+  switch (action) begin
+    case "afterlogin":
+      AfterLogin;
+    case "changelanguage":
+      ChangeLanguage;
+    case "changecountry":
+      ChangeCountry;
+    case "sendmessage":
+      SendForumMessage;
+    case "request_newpasswd":
+      QueueForgotPasswordRequest;
+    case "university_updategroup":
+      UniversityActionUpdateGroup;
+    case "university_applycourse":
+      UniversityActionApplyCourse;
+    case "university_returnfromcc":
+      UniversityAfterCCPaymentPage; 
+    case "university_abortcc":
+      UniversityAbortCreditCardPayment;
+    case "payserverabort":
+      ShopPaymentPayServerAborted(WebGetArg("txnumber"));
+    case "payserverdone":
+      ShopPaymentPayServerCompleted(WebGetArg("txnumber"),WebGetArg("ccnumber"),WebGetArg("cctype"));
+    case "registerdownload":
+      StoreDownloadRegistration;
+    case "chataction":
+      LiveChatAction(WebGetArg("type"),WebGetArg("args"));
+    case "loadshopobjects":
+      LoadWebshopObjects(WebGetArg("objects"),WebGetArg("cat"),WebGetArg("path"));
+    case "loadconnecteditems":
+      LoadWebshopConnectedItems(WebGetArg("item"));
+    case "sendwebinvoice":
+      MyAccountSendInvoice(StringToLongInt(WebGetArg("invoice")),WebGetArg("email"));
+    otherwise
+      RedirectToStartPage;
+  end;
+  return;
+end;

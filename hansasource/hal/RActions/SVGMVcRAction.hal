@@ -1,0 +1,346 @@
+external procedure SwapM4Val(var val,var val);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external function Integer CheckRates(string,val,val,val,val,val,var string);
+external procedure SetSVOFlags(record SVOVc);
+external updating procedure UpdateSVOSerStock(string,string,string,string,string,string,string,val,val,Date,Date,val,string);
+external updating procedure UpdateSVOSerHist(string,string,string,LongInt,Date,string,string);
+external function Boolean SerNrTestSVGMVc(LongInt,Date,var Boolean);
+
+global
+function LongInt SVGMVcRecordRemoveTest(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 1;
+  if (SVGMr.OKFlag!=0) then begin
+    res = 0;
+  end;
+  SVGMVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+function LongInt SVGMVcRecordDefaults(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+      
+  SVGMr.SerNr = -1;
+  SVGMr.TransDate = CurrentDate;  
+  if (SingleUserMode) then begin
+    SVGMr.SerNr = NextSerNr("SVGMVc",SVGMr.TransDate,-1,false,"");
+  end;
+  SVGMVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt SVGMVcRecordDuplicate(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc Userr;
+      
+  SVGMr.SerNr = -1;
+  SVGMr.OKFlag = 0;
+  SVGMr.TransDate = CurrentDate;  
+  if (SingleUserMode) then begin
+    SVGMr.SerNr = NextSerNr("SVGMVc",SVGMr.TransDate,-1,false,"");
+  end;
+  SVGMVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+updating procedure CreateReplItemsRec(record SVGMVc SVGMp,row SVGMVc SVGMrwp)
+BEGIN
+  record ReplItemsVc RIr;
+  record ReplItemsVc oldRIr;
+  
+  RIr.SerNr = NextSerNr("ReplItemsVc",CurrentDate,-1,false,"");
+  RIr.VECode = SVGMrwp.VECode;
+  RIr.OldArtCode = SVGMrwp.ArtCode;
+  RIr.OldSerialNr = SVGMrwp.SerialNr;
+  RIr.OldDesc = SVGMrwp.Spec;
+  RIr.OldQty = SVGMrwp.OutQuant;
+  RIr.ArtCode = "";
+  RIr.SerialNr = "";
+  RIr.Desc = "";
+  RIr.Qty = blankval; 
+  RIr.Comment1 = SVGMp.Comment1;
+  RIr.Comment2 = SVGMp.Comment2;
+  RIr.Comment3 = SVGMp.Comment3;
+  RIr.Comment4 = SVGMp.Comment4;
+  RecordCopy(oldRIr,RIr);
+  if (ReadFirstMain(oldRIr,0,true)==false) then begin
+    if (RecordStore(RIr,false)) then begin end;
+  end;
+  RETURN;
+END;
+
+updating procedure SVGMOk(record SVGMVc SVGMp)
+BEGIN
+  row SVGMVc SVGMrw;
+  record INVc INr;
+  Integer rwcnt,i;
+  val inqty;
+  
+  rwcnt = MatRowCnt(SVGMp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVGMp,i,SVGMrw);
+    if (nonblank(SVGMrw.ArtCode)) then begin
+      INr.Code = SVGMrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+        if ((INr.ItemType==1) and (INr.SerNrf==1)) then begin
+          inqty = SVGMrw.InQuant - SVGMrw.OutQuant;
+          if (inqty>0) then begin inqty = 0; end;
+          UpdateSVOSerStock(SVGMrw.ArtCode,SVGMrw.Spec,SVGMrw.SerialNr,"","",SVGMp.CustCode,SVGMp.Addr0,
+                            SVGMrw.CostPrice,SVGMrw.SalesPrice,SVGMrw.SoldDate,SVGMrw.WarrantyUntil,inqty,SVGMrw.VECode);
+        end;
+        UpdateSVOSerHist(SVGMrw.ArtCode,SVGMrw.SerialNr,"SVGMVc",SVGMp.SerNr,SVGMp.TransDate,SVGMp.CustCode,SVGMrw.VECode);
+        if (nonblank(SVGMrw.VECode) and ((SVGMrw.OutQuant!=0) and (SVGMrw.InQuant==0))) then begin
+          CreateReplItemsRec(SVGMp,SVGMrw);
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+updating procedure UpdateSVOFromSVGM(record SVGMVc SVGMp,record SVGMVc SVGM2p)
+BEGIN
+  Integer rwcnt,orcnt;
+  row SVGMVc SVGMrw;
+  Integer i,j;
+  record SVOVc oldSVOr;
+  record SVOVc SVOr;
+  row SVOVc SVOrw;
+  
+  if (SVGMp.OKFlag==0) then begin goto LUpdateSVOFromSVGM; end;
+  if (RecordValid(SVGM2p)) then begin
+    if (SVGM2p.OKFlag!=0) then begin goto LUpdateSVOFromSVGM; end;
+  end;
+  if (ReadFirstMain(SVOr,1,true)) then begin
+    RecordCopy(oldSVOr,SVOr);
+    orcnt = MatRowCnt(SVOr);
+    rwcnt = MatRowCnt(SVGMp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SVGMp,i,SVGMrw);
+      for (j=0;j<orcnt;j=j+1) begin
+        MatRowGet(SVOr,j,SVOrw);
+        if (blank(SVGMrw.VECode)) then begin
+          if (SVGMrw.OutQuant>0) then begin
+            if (SVGMrw.SerialNr==SVOrw.SerialNr) then begin        
+              SVOrw.PlanShiprw = SVGMp.TransDate;
+              MatRowPut(SVOr,j,SVOrw);
+              goto L22UpdateSVOFromSVGM;
+            end;
+          end;
+        end;
+      end;
+L22UpdateSVOFromSVGM:;    
+    end;
+    SetSVOFlags(SVOr);
+    if (RecordUpdate(oldSVOr,SVOr,false)==0) then begin end;
+  end;        
+LUpdateSVOFromSVGM:;      
+  RETURN;
+END;
+
+global
+updating function LongInt SVGMVcRecordSaveAfter(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (SVGMr.OKFlag!=0) then begin
+    SVGMOk(SVGMr);
+    if (SVGMr.SVONr!=-1) then begin
+      UpdateSVOFromSVGM(SVGMr,SVGM2r);
+    end;
+  end;
+  SVGMVcRecordSaveAfter = res; 
+  RETURN;
+END;
+
+procedure SVGMVcConvertB1ToB2(record SVGMVc SVGMr,var val to1p,var val to2p,var val br1p,var val br2p)
+BEGIN    
+  val t;
+  
+  SwapM4Val(br1p,br2p);
+  SwapM4Val(to1p,to2p);
+  RETURN;
+END;
+
+global
+updating function LongInt SVGMVcRecordImport(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val t,fr,to1,to2,br1,br2;
+  string 5 curncy;
+  Boolean gToDualBase,gBase1ToBase2;
+  record ConvMasterBlock cvm;
+  
+  if (SVGMr.OKFlag!=0) then begin
+    SVGMOk(SVGMr);
+  end;
+  BlockLoad(cvm);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (gToDualBase) then begin
+    curncy = SVGMr.CurncyCode;
+    fr = SVGMr.FrRate;
+    to1 = SVGMr.ToRateB1;
+    to2 = SVGMr.ToRateB2;
+    br1 = SVGMr.BaseRate1;
+    br2 = SVGMr.BaseRate2;
+    ConvertToDualBase(curncy,SVGMr.TransDate,fr,to1,to2,br1,br2,t,true);
+    SVGMr.CurncyCode = curncy;
+    SVGMr.FrRate = fr;
+    SVGMr.ToRateB1 = to1;
+    SVGMr.ToRateB2 = to2;
+    SVGMr.BaseRate1 = br1;
+    SVGMr.BaseRate2 = br2;
+  end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    curncy = SVGMr.CurncyCode;
+    to1 = SVGMr.ToRateB1;
+    to2 = SVGMr.ToRateB2;
+    br1 = SVGMr.BaseRate1;
+    br2 = SVGMr.BaseRate2;
+    SVGMVcConvertB1ToB2(SVGMr,to1,to2,br1,br2);
+    SVGMr.ToRateB1 = to1;
+    SVGMr.ToRateB2 = to2;
+    SVGMr.BaseRate1 = br1;
+    SVGMr.BaseRate2 = br2;
+  end;  
+  SVGMVcRecordImport = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt SVGMVcRecordUpdateAfter(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((SVGMr.OKFlag!=0) and (SVGM2r.OKFlag==0)) then begin
+    SVGMOk(SVGMr);
+    if (SVGM2r.SVONr!=-1) then begin
+      UpdateSVOFromSVGM(SVGMr,SVGM2r);
+    end;
+  end;
+  SVGMVcRecordUpdateAfter = res; 
+  RETURN;
+END;
+
+function Integer CheckSVORow(string artcode,string serialnr,val qtyp,Boolean qtyf,record SVOVc SVOp)
+BEGIN
+  Integer res;
+  row SVOVc SVOrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(SVOp);  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVOp,i,SVOrw);
+    if ((SVOrw.ArtCode!=artcode) or (SVOrw.SerialNr!=serialnr)) then begin
+      res = 1;
+    end else begin
+      if (qtyf) then begin
+        if (qtyp!=SVOrw.Quant) then begin
+          res = 2;
+          goto LCheckSVORow;
+        end;
+      end;
+      res = 0;
+      goto LCheckSVORow;
+    end;    
+  end;  
+  res = 3;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVOp,i,SVOrw);
+    if ((SVOrw.ArtCode!=artcode) and (SVOrw.SerialNr==serialnr)) then begin
+      res = 0;
+      goto LCheckSVORow;
+    end;      
+  end;     
+LCheckSVORow:; 
+  CheckSVORow = res;
+  RETURN;
+END;
+
+global
+function LongInt SVGMVcRecordCheck(var record SVGMVc SVGMr,record SVGMVc SVGM2r,LongInt stat,LongInt check)
+BEGIN
+  LongInt res;
+  row SVGMVc SVGMrw;
+  record INVc INr;
+  Integer rwcnt,i,errnr;
+  LongInt oldnr;
+  Boolean found,gentrans;
+  record SVOVc SVOr;  
+  record COVc COr;  
+  val t;
+  string 255 tstr;
+    
+  res = 0;
+  if (stat==2) then begin
+    if (SVGMr.SerNr<=0) and (SVGM2r.OKFlag==0) then begin
+      SVGMr.SerNr = SVGM2r.SerNr;
+    end;
+  end;      
+  oldnr = SVGMr.SerNr;
+  if (SVGMr.SerNr<=0) then begin
+    SVGMr.SerNr = NextSerNr("SVGMVc",SVGMr.TransDate,-1,false,"");
+  end;
+  if (SerNrTestSVGMVc(SVGMr.SerNr,SVGMr.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto LSVGMVcRecordCheck;
+  end;
+  SVOr.SerNr = SVGMr.SVONr;
+  if (ReadFirstMain(SVOr,1,true)==false) then begin
+    RecordCheckError(1252,"",-1,"SVONr");      
+    res = -1;
+    goto LSVGMVcRecordCheck;  
+  end;
+  errnr = CheckRates(SVGMr.CurncyCode,SVGMr.FrRate,SVGMr.ToRateB1,SVGMr.ToRateB2,SVGMr.BaseRate1,SVGMr.BaseRate2,tstr);
+  if (errnr!=0) then begin
+    RecordCheckError(errnr,"",-1,tstr);      
+    res = -1; 
+    goto LSVGMVcRecordCheck;
+  end;            
+  rwcnt = MatRowCnt(SVGMr);  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVGMr,i,SVGMrw);
+    if (nonblank(SVGMrw.ArtCode)) then begin
+      INr.Code = SVGMrw.ArtCode;
+      found = ReadFirstMain(INr,1,true);
+      if (found==false) then begin
+        RecordCheckError(1120,SVGMrw.ArtCode,i,"ArtCode");      
+        res = -1;
+        goto LSVGMVcRecordCheck;
+      end;
+      if (INr.ItemType==0) then begin
+        RecordCheckError(1301,SVGMrw.ArtCode,i,"ArtCode");      
+        res = -1;
+        goto LSVGMVcRecordCheck;
+      end;
+      if (INr.ItemType==2) then begin
+        RecordCheckError(1826,SVGMrw.ArtCode,i,"ArtCode");      
+        res = -1;
+        goto LSVGMVcRecordCheck;
+      end;
+      if (INr.ItemType==3) then begin
+        RecordCheckError(1954,"",i,"ContractNr");      
+        res = -1;
+        goto LSVGMVcRecordCheck;
+      end;
+      errnr = CheckSVORow(SVGMrw.ArtCode,SVGMrw.SerialNr,t,false,SVOr);                
+      if (errnr!=0) then begin
+        RecordCheckError(1972+errnr,"",i,"ArtCode");      
+        res = -1;
+        goto LSVGMVcRecordCheck;
+      end;                      
+    end;
+  end;
+LSVGMVcRecordCheck:;
+  if (res!=0) then begin SVGMr.SerNr = oldnr; end;
+  SVGMVcRecordCheck = res;
+  RETURN;
+END;

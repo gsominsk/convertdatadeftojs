@@ -1,0 +1,420 @@
+global
+function val GetLCardStartBalance(string card,string location,date tilldate)
+begin 
+  record PointsHistVc PHr;
+  record IVVc IVr;
+  record IVCashVc IVCashr;
+  boolean TrHs,test,testf;
+  val bal;
+  
+  TrHs = true;
+  PHr.LMCardNr = card;
+  bal = 0;
+  while (LoopKey("CardDate",PHr,1,TrHs)) begin 
+    if (PHr.LMCardNr!=card) then begin 
+      TrHs = false;
+    end;
+    if (PHr.TransDate>=tilldate) then begin 
+      TrHs = false;
+    end;
+    if (TrHs) then begin 
+      testf = true;
+      switch (PHr.FileName) begin
+        case "IVVc": 
+          IVr.SerNr = PHr.TransNr;
+          if (ReadFirstMain(IVr,1,true)) begin 
+            if (nonblank(location)) then begin
+              if (IVr.Location!=location) then begin
+                testf = false;
+              end;
+            end;
+            if (testf) then begin
+              if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin 
+                bal = bal - IVr.Points;
+              end else begin 
+                bal = bal + IVr.Points;
+              end;
+            end;
+          end;
+        case "IVCashVc":  
+          IVCashr.SerNr = PHr.TransNr;
+          if (ReadFirstMain(IVCashr,1,true)) begin 
+            if (nonblank(location)) then begin
+              if (IVCashr.Location!=location) then begin
+                testf = false;
+              end;
+            end;
+            if (testf) then begin
+              bal = bal + IVCashr.Points;
+            end;
+          end;
+      end;    
+    end;
+  end;
+  GetLCardStartBalance = bal;
+  return;
+end; 
+
+global
+function string 20 NextLCMLevel(val points)
+begin
+  record LCMLevelSetBlock LCMLevelSetBl;
+  row LCMLevelSetBlock LCMLevelSetrw;
+  Integer i,rwcnt;
+  string 20 level;
+  
+  BlockLoad(LCMLevelSetBl);
+  rwcnt = MatRowCnt(LCMLevelSetBl);
+  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LCMLevelSetBl,i,LCMLevelSetrw);
+    if ((points>=LCMLevelSetrw.FromPoints) and (points<=LCMLevelSetrw.ToPoints)) then begin
+      level = LCMLevelSetrw.LCMLevel;
+      i = rwcnt;
+    end;
+    if ((points>=LCMLevelSetrw.FromPoints) and (LCMLevelSetrw.ToPoints==0)) then begin
+      level = LCMLevelSetrw.LCMLevel;
+      i = rwcnt;
+    end;
+  end; 
+  NextLCMLevel = level;
+  return;
+end;  
+
+global
+updating procedure DeletePointsHist(LongInt transnr,string filename)
+begin 
+  record PointsHistVc PHr;
+  record LoyaltyCardVc LoyaltyCardr,oldLoyaltyCardr;
+  string 20 cardnr,nextlevel;
+  val points;
+
+  PHr.TransNr = transnr;
+  PHr.FileName = filename;
+  if (ReadFirstMain(PHr,2,true)) then begin 
+    points = PHr.Points;
+    cardnr = PHr.LMCardNr;
+    RecordDelete(PHr);
+    LoyaltyCardr.SerNr = cardnr;
+    if (ReadFirstMain(LoyaltyCardr,1,true)) then begin 
+    if (LoyaltyCardr.Closed==0) then begin
+      RecordCopy(oldLoyaltyCardr,LoyaltyCardr);
+      LoyaltyCardr.PointsBalance = LoyaltyCardr.PointsBalance - points;
+      if (oldLoyaltyCardr.PointsBalance<LoyaltyCardr.PointsBalance) then begin
+        nextlevel = NextLCMLevel(LoyaltyCardr.PointsBalance);
+        if (nonblank(nextlevel)) then begin 
+          LoyaltyCardr.LCMLevel = nextlevel;
+        end;
+      end;  
+      if (RecordUpdate(oldLoyaltyCardr,LoyaltyCardr,false)==0) then begin
+      end;
+    end;
+    end;
+  end;
+  return;
+end; 
+ 
+global 
+updating procedure TransferPointsHist(record LoyaltyCardVc LCr,Boolean negf)
+begin 
+  record PointsHistVc PHr;
+  record LoyaltyCardVc newLCr,oldLCr;
+  string 20 nextlevel;
+
+  if (nonblank(LCr.PointsTo)) then begin
+    newLCr.SerNr = LCr.PointsTo;
+    if (ReadFirstMain(newLCr,1,true)) then begin
+      PHr.TransNr = StringToLongInt(LCr.SerNr);
+      PHr.FileName = "LoyaltyCardVc";
+      PHr.TransDate = CurrentDate;
+      PHr.CustCode = LCr.CustCode;
+      PHr.Location = "";  
+      PHr.LMCardNr = LCr.PointsTo;
+      PHr.PointsFrom = LCr.SerNr;
+      if (negf) then begin
+        PHr.FWBalance = LCr.PointsBalance - newLCr.PointsBalance;
+        PHr.Points = -LCr.PointsBalance;
+      end else begin
+        PHr.FWBalance = LCr.PointsBalance + newLCr.PointsBalance;
+        PHr.Points = LCr.PointsBalance;
+      end;
+      PHr.SerNr = NextSerNr("PointsHistVc",PHr.TransDate,-1,false,"");
+      RecordStore(PHr,false); 
+      
+      RecordCopy(oldLCr,newLCr);
+      if (negf) then begin
+        newLCr.PointsBalance = newLCr.PointsBalance - LCr.PointsBalance;
+      end else begin
+        newLCr.PointsBalance = newLCr.PointsBalance + LCr.PointsBalance;
+      end;
+      if (oldLCr.PointsBalance<newLCr.PointsBalance) then begin
+        nextlevel = NextLCMLevel(newLCr.PointsBalance);
+        if (nonblank(nextlevel)) then begin 
+          newLCr.LCMLevel = nextlevel;
+        end;
+      end;  
+      RecordUpdate(oldLCr,newLCr,false);
+    end;
+  end;
+  return;
+end; 
+ 
+global 
+updating procedure AddPointsHist(LongInt transnr,string filename, integer invtype)
+begin 
+  record PointsHistVc PHr;
+  record LoyaltyCardVc LoyaltyCardr,LoyaltyCard2r,oldLoyaltyCardr,LCr;
+  record IVVc IVr;
+  record IVCashVc IVCashr;
+  record RestAccVc RestAccr;
+  val qty;
+  boolean testf;
+  string 20 nextlevel;
+  
+  RecordNew(PHr);
+  qty = 0;
+  PHr.TransNr  = transnr;
+  PHr.FileName = filename;
+  switch (filename) begin
+    case "IVVc": 
+      IVr.SerNr = transnr;
+      if (ReadFirstMain(IVr,1,true)) begin end;
+      PHr.TransDate = IVr.TransDate;
+      PHr.CustCode = IVr.CustCode;
+      PHr.Location = IVr.Location;
+      LoyaltyCardr.SerNr = IVr.LoyaltyCardNr;
+      if (ReadFirstMain(LoyaltyCardr,1,true)) then begin end;
+      
+      PHr.LMCardNr = IVr.LoyaltyCardNr;
+      PHr.FWBalance = LoyaltyCardr.PointsBalance;
+      
+      if (nonblank(LoyaltyCardr.PointsTo)) then begin
+        PHr.LMCardNr = LoyaltyCardr.PointsTo;
+        PHr.PointsFrom = IVr.LoyaltyCardNr;
+        LoyaltyCard2r.SerNr = LoyaltyCardr.PointsTo;
+        if (ReadFirstMain(LoyaltyCard2r,1,true)) then begin 
+          PHr.FWBalance = LoyaltyCard2r.PointsBalance;
+          PHr.CustCode = LoyaltyCard2r.CustCode;
+        end;
+      end;  
+      if (invtype==kInvoiceTypeCredit or invtype==kInvoiceTypeCreditSpecialSales) then begin 
+        qty = -IVr.Points;
+      end else begin 
+        qty = IVr.Points;
+      end;  
+      PHr.Points = qty;
+      PHr.SerNr = NextSerNr("PointsHistVc",PHr.TransDate,-1,false,"");
+      testf = RecordStore(PHr,false); 
+      if (blank(LoyaltyCardr.PointsTo)) then begin
+        RecordCopy(oldLoyaltyCardr,LoyaltyCardr);
+        LoyaltyCardr.PointsBalance = LoyaltyCardr.PointsBalance + qty;
+        if (oldLoyaltyCardr.PointsBalance<LoyaltyCardr.PointsBalance) then begin
+          nextlevel = NextLCMLevel(LoyaltyCardr.PointsBalance);
+          if (nonblank(nextlevel)) then begin 
+            LoyaltyCardr.LCMLevel = nextlevel;
+          end;
+        end;  
+        if (RecordUpdate(oldLoyaltyCardr,LoyaltyCardr,false)==0) then begin end;
+      end else begin 
+        // which card level to update ??
+        RecordCopy(oldLoyaltyCardr,LoyaltyCard2r);
+        LoyaltyCard2r.PointsBalance = LoyaltyCard2r.PointsBalance + qty;
+        if (oldLoyaltyCardr.PointsBalance<LoyaltyCard2r.PointsBalance) then begin
+          nextlevel = NextLCMLevel(LoyaltyCard2r.PointsBalance);
+          if (nonblank(nextlevel)) then begin 
+            LoyaltyCard2r.LCMLevel = nextlevel;
+          end;
+        end;  
+        if (RecordUpdate(oldLoyaltyCardr,LoyaltyCard2r,false)==0) then begin end;
+      end;
+    case "IVCashVc": 
+      IVCashr.SerNr = transnr;
+      if (ReadFirstMain(IVCashr,1,true)) begin end;
+      PHr.TransDate = IVCashr.TransDate;
+      PHr.CustCode = IVCashr.CustCode;
+      LoyaltyCardr.SerNr = IVCashr.LoyaltyCardNr;
+      if (ReadFirstMain(LoyaltyCardr,1,true)) then begin end;
+      
+      PHr.Location = IVCashr.Location;
+      PHr.LMCardNr = IVCashr.LoyaltyCardNr;
+      PHr.FWBalance = LoyaltyCardr.PointsBalance;
+      
+      if (nonblank(LoyaltyCardr.PointsTo)) then begin
+        PHr.LMCardNr = LoyaltyCardr.PointsTo;
+        PHr.PointsFrom = IVCashr.LoyaltyCardNr;
+        LoyaltyCard2r.SerNr = LoyaltyCardr.PointsTo;
+        if (ReadFirstMain(LoyaltyCard2r,1,true)) then begin 
+          PHr.FWBalance = LoyaltyCard2r.PointsBalance;
+          PHr.CustCode = LoyaltyCard2r.CustCode;
+        end;
+      end;  
+      qty = IVCashr.Points;
+      if (IVCashr.InvType==kPOSInvoiceTypeCredit) then begin
+        qty = -qty;
+      end;
+      PHr.Points = qty;
+      PHr.SerNr = NextSerNr("PointsHistVc",PHr.TransDate,-1,false,"");
+      testf = RecordStore(PHr,false); 
+      if (blank(LoyaltyCardr.PointsTo)) then begin
+        RecordCopy(oldLoyaltyCardr,LoyaltyCardr);
+        LoyaltyCardr.PointsBalance = LoyaltyCardr.PointsBalance + qty;
+        if (oldLoyaltyCardr.PointsBalance<LoyaltyCardr.PointsBalance) then begin
+          nextlevel = NextLCMLevel(LoyaltyCardr.PointsBalance);
+          if (nonblank(nextlevel)) then begin 
+            LoyaltyCardr.LCMLevel = nextlevel;
+          end;
+        end;  
+        if (RecordUpdate(oldLoyaltyCardr,LoyaltyCardr,false)==0) then begin end;
+      end else begin 
+        // which card level to update ??
+        RecordCopy(oldLoyaltyCardr,LoyaltyCard2r);
+        LoyaltyCard2r.PointsBalance = LoyaltyCard2r.PointsBalance + qty;
+        if (oldLoyaltyCardr.PointsBalance<LoyaltyCard2r.PointsBalance) then begin
+          nextlevel = NextLCMLevel(LoyaltyCard2r.PointsBalance);
+          if (nonblank(nextlevel)) then begin 
+            LoyaltyCard2r.LCMLevel = nextlevel;
+          end;
+        end;  
+        if (RecordUpdate(oldLoyaltyCardr,LoyaltyCard2r,false)==0) then begin end;
+      end;
+    case "RestAccVc":
+      RestAccr.SerNr = transnr;
+      if (ReadFirstMain(RestAccr,1,true)) begin end;
+      PHr.TransDate = RestAccr.TransDate;
+      PHr.CustCode = RestAccr.CUCode;
+      LoyaltyCardr.SerNr = RestAccr.LoyaltyCardNr;
+      if (ReadFirstMain(LoyaltyCardr,1,true)) then begin end;
+      
+      PHr.Location = "";
+      PHr.LMCardNr = RestAccr.LoyaltyCardNr;
+      PHr.FWBalance = LoyaltyCardr.PointsBalance;
+      
+      if (nonblank(LoyaltyCardr.PointsTo)) then begin
+        PHr.LMCardNr = LoyaltyCardr.PointsTo;
+        PHr.PointsFrom = RestAccr.LoyaltyCardNr;
+        LoyaltyCard2r.SerNr = LoyaltyCardr.PointsTo;
+        if (ReadFirstMain(LoyaltyCard2r,1,true)) then begin 
+          PHr.FWBalance = LoyaltyCard2r.PointsBalance;
+          PHr.CustCode = LoyaltyCard2r.CustCode;
+        end;
+      end;  
+      qty = RestAccr.Points;
+      PHr.Points = qty;
+      PHr.SerNr = NextSerNr("PointsHistVc",PHr.TransDate,-1,false,"");
+      testf = RecordStore(PHr,false); 
+      if (blank(LoyaltyCardr.PointsTo)) then begin
+        RecordCopy(oldLoyaltyCardr,LoyaltyCardr);
+        LoyaltyCardr.PointsBalance = LoyaltyCardr.PointsBalance + qty;
+        if (oldLoyaltyCardr.PointsBalance<LoyaltyCardr.PointsBalance) then begin
+          nextlevel = NextLCMLevel(LoyaltyCardr.PointsBalance);
+          if (nonblank(nextlevel)) then begin 
+            LoyaltyCardr.LCMLevel = nextlevel;
+          end;
+        end;  
+        if (RecordUpdate(oldLoyaltyCardr,LoyaltyCardr,false)==0) then begin end;
+      end else begin 
+        // which card level to update ??
+        RecordCopy(oldLoyaltyCardr,LoyaltyCard2r);
+        LoyaltyCard2r.PointsBalance = LoyaltyCard2r.PointsBalance + qty;
+        if (oldLoyaltyCardr.PointsBalance<LoyaltyCard2r.PointsBalance) then begin
+          nextlevel = NextLCMLevel(LoyaltyCard2r.PointsBalance);
+          if (nonblank(nextlevel)) then begin 
+            LoyaltyCard2r.LCMLevel = nextlevel;
+          end;
+        end;  
+        if (RecordUpdate(oldLoyaltyCardr,LoyaltyCard2r,false)==0) then begin end;
+      end;
+  end;  
+  return;
+end; 
+
+updating procedure LoyaltyCardPointsRedemption(string LoyaltyCardNr,val Points,Boolean negf)
+begin
+  record LoyaltyCardVc LCr,oldLCr;
+
+  LCr.SerNr = LoyaltyCardNr;
+  if (ReadFirstMain(LCr,1,true)) then begin 
+    RecordCopy(oldLCr,LCr);
+    if (negf) then begin
+      LCr.PointsBalance = LCr.PointsBalance + Points;
+    end else begin
+      LCr.PointsBalance = LCr.PointsBalance - Points;
+    end;
+    RecordUpdate(oldLCr,LCr,true);
+  end;
+  return;
+end; 
+
+updating procedure UpdatePointHistory(string filename,LongInt transnr,string CustCode,Date TransDate,string Location,string LoyaltyCardNr,val Points)
+begin
+  record PointsHistVc PHr;
+
+  PHr.FileName = filename;
+  PHr.TransNr = transnr;
+  PHr.CustCode = CustCode;
+  PHr.TransDate = TransDate;
+
+  
+  PHr.Location = Location;
+  PHr.LMCardNr = LoyaltyCardNr;
+//  PHr.FWBalance = LoyaltyCardr.PointsBalance;
+  
+  PHr.Points = -Points;
+  PHr.SerNr = NextSerNr("PointsHistVc",PHr.TransDate,-1,false,"");
+  RecordStore(PHr,false); 
+  return;
+end; 
+
+global
+updating procedure IVCashVc_LoyaltyCardPointsRedemption(record IVCashVc IVCashp,Boolean negf)
+begin
+  Integer i,rwcnt;
+  row IVCashVc IVCashrw;
+  
+  rwcnt = MatRowCnt(IVCashp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVCashp,i,IVCashrw);
+    switch (IVCashrw.stp) begin
+      case kInvoiceRowTypeLoyaltyPointsPayment:
+        LoyaltyCardPointsRedemption(IVCashp.LoyaltyCardNr,IVCashrw.Points,negf);
+        UpdatePointHistory("IVCashVc",IVCashp.SerNr,IVCashp.CustCode,IVCashp.TransDate,IVCashp.Location,IVCashp.LoyaltyCardNr,IVCashrw.Points);
+    end;
+  end;
+  return;
+end; 
+
+global
+updating procedure RestAccVc_LoyaltyCardPointsRedemption(record RestAccVc RestAccp,Boolean negf)
+begin
+  Integer i,rwcnt;
+  row RestAccVc RestAccrw;
+  
+  rwcnt = MatRowCnt(RestAccp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RestAccp,i,RestAccrw);
+    switch (RestAccrw.stp) begin
+      case kInvoiceRowTypeLoyaltyPointsPayment:
+        LoyaltyCardPointsRedemption(RestAccp.LoyaltyCardNr,RestAccrw.Points,negf);
+        UpdatePointHistory("RestAccVc",RestAccp.SerNr,RestAccp.CustCode,RestAccp.TransDate,RestAccp.Location,RestAccp.LoyaltyCardNr,RestAccrw.Points);
+    end;
+  end;
+  return;
+end; 
+
+global
+updating procedure IVVc_LoyaltyCardPointsRedemption(record IVVc IVp,Boolean negf)
+begin
+  Integer i,rwcnt;
+  row IVVc IVrw;
+  
+  rwcnt = MatRowCnt(IVp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVp,i,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeLoyaltyPointsPayment:
+        LoyaltyCardPointsRedemption(IVp.LoyaltyCardNr,IVrw.Points,negf);
+        UpdatePointHistory("IVVc",IVp.SerNr,IVp.CustCode,IVp.TransDate,IVp.Location,IVp.LoyaltyCardNr,IVrw.Points);
+    end;
+  end;
+  return;
+end; 

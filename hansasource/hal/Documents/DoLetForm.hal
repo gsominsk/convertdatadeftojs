@@ -1,0 +1,579 @@
+external procedure PortugueseFormFields(Integer);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external procedure OutAddress(string,string,string,string,string,string,string);
+external function Boolean FindFormcode(Integer,Integer);
+external function LongInt DateDiff(Date,Date);
+external procedure GetFieldArgument(record DocVc,Integer,var string);
+external procedure SetFaxInfo(string,string,string,string);
+external procedure CUGetStartBalance(record CUVc,string,string,Date,var val,Boolean);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure CommonDocumentFields(record RcVc);
+external procedure GetDateMonthInWords(Date,var string);
+external procedure GetUserEmail(string,var string);
+external procedure LetSetFax(record CUVc,record LetVc);
+external procedure CustAged(record CUVc,Date,Date,Date,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val,boolean);
+
+// These need new F_ ones...but not in 5.1.
+procedure PrintContactRows(record CUVc CUr)
+BEGIN
+  boolean foundf;
+  record ContactRelVc CRr;
+  record CUVc CU2r;
+  string 255 tstr;
+  string 60 jobDesc;
+  
+  foundf = true;
+  CRr.CustCode = CUr.Code;
+  while (LoopMain(CRr, 1, foundf)) begin
+    if (CRr.CustCode != CUr.Code) then begin
+      foundf = false;      
+    end;
+    if (foundf) then begin
+      CU2r.Code = CRr.ContactCode;
+      jobDesc = "";
+      if (ReadFirstMain(CU2r, 1, true)) then begin
+        jobDesc = CU2r.JobDesc;
+      end;
+      if (CU2r.blockedFlag == 0) then begin
+        OUTFORMFIELD(F_CONTACTNAME,CRr.ContactName);
+        OUTFORMFIELD(F_CONTACTJOBDESC,jobDesc);          
+        OUTFORMFIELD(F_CONTACTPHONE,CRr.ContactPhone);          
+        OUTFORMFIELD(F_CONTACTMAIL,CRr.ContacteMail);
+      end;
+    end;
+  end;
+
+  RETURN;
+END;
+
+function Integer BackToLastSpace(var string tstr)
+BEGIN
+  Integer i,l;
+  Integer res;
+  Integer cnt;
+  string 1 c;
+  
+  l = len(tstr);
+  for(i=(l-1);i>=0;i=i-1) begin
+    c = Mid(tstr,i,1);
+    if ((c==" ") or (c==chr(13))) then begin
+      res = cnt;
+      tstr = Left(tstr,len(tstr)-cnt+1);
+      goto LBackToLastSpace;
+    end;
+    cnt = cnt + 1;
+  end;
+LBackToLastSpace:;
+  BackToLastSpace = res;
+  RETURN;
+END;
+
+function Boolean GetTextFieldLine(record LetVc Letr,string fld2,var string rstr,var LongInt from)
+BEGIN
+  string 255 tstr;
+  LongInt size;
+  LongInt i;
+  Integer cnt;
+  LongInt rownr;
+  Integer printedchar;
+  Boolean res;
+  string 1 c;
+  
+  printedchar = 90;
+  if (nonblank(fld2)) then begin
+    printedchar = StringToInt(fld2);
+  end;
+  if (printedchar==0) then begin printedchar = 200; end;
+  size = SizeTextCnt(Letr);
+  rstr = "";
+  cnt = 1;
+  rownr = 0;
+  for (i=from;i<size;i=i+1) begin
+    c = StringFromText(Letr,i,1);
+    if ((c==chr(13)) or (cnt>=printedchar)) then begin
+      tstr = Left(tstr,cnt);
+      if ((c!=chr(13)) and (c!=" ")) then begin
+        cnt = cnt - 1;
+// Why was this not in? Performance, or functional reasons? ::lvg
+//        i = i - BackToLastSpace(tstr);
+//        tstr = Left(tstr,i);
+// This way it works. I don't know about perf. ::lvg
+        cnt = cnt - BackToLastSpace(tstr);
+        tstr = Left(tstr,cnt);
+      end;
+      rstr = tstr;      
+      from = from + cnt;//(i-from)
+      cnt = 0;
+      if (nonblank(rstr)) then begin
+        res = true;
+      end;
+      goto L88GetTextFieldLine;
+    end else begin
+      if (c!=chr(10)) then begin
+        tstr = tstr & c;
+        cnt = cnt + 1;
+      end;
+    end;
+  end;
+  if (cnt>0) then begin
+    tstr = Left(tstr,cnt);
+    rstr = tstr;
+    if (nonblank(rstr)) then begin
+      res = true;
+    end;
+    from = from + cnt;
+    goto L88GetTextFieldLine;
+  end;
+L88GetTextFieldLine:;
+  if (from<size) then begin res = true; end;
+  GetTextFieldLine = res;
+  RETURN;
+END;
+
+procedure PrintLetText(string formcode,record LetVc Letr)
+BEGIN
+//other solution is to add to LineTextCnt and LineTextGet nr of chars per row
+  Integer i,rwcnt;
+  string 255 tstr,fldarg;
+  LongInt from;
+  record DocVc Docr;
+  string 255 tstr2;
+  
+  Docr.Code = formcode;
+  if (ReadFirstMain(Docr,1,true)) then begin
+    GetFieldArgument(Docr,F_TEXT,fldarg);
+  end;
+  from = 0;
+  rwcnt = 1;
+  while (GetTextFieldLine(Letr,fldarg,tstr,from)) begin
+    OUTFORMFIELD("F_TEXT",tstr);    
+    EndFormRow;    
+    rwcnt = rwcnt + 1;
+  end;
+  RETURN;
+END;
+
+
+/*
+procedure PrintLetText(record LetVc Letr)
+BEGIN
+  Integer i,rwcnt;
+  string 255 tstr;
+  
+  rwcnt = LineTextCnt(Letr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    tstr = LineTextGet(Letr,i);
+    OUTFORMFIELD("F_TEXT",tstr);    
+    EndFormRow;    
+  end;  
+  RETURN;
+END;
+*/
+/*
+procedure CopyProfileInfoToCust(var record ProfileVc Profiler,var record CUVc CUr)
+begin
+  RecordClear(CUr);
+  CUr.Code = Profiler.Code;
+  CUr.Name = Profiler.FirstName & Profiler.LastName;
+  CUr.Person = Profiler.FirstName & Profiler.LastName;
+  CUr.InvAddr0 = Profiler.Addr0;
+  CUr.InvAddr1 = Profiler.Addr1;
+  CUr.InvAddr2 = Profiler.Addr2;
+  CUr.Phone = Profiler.Phone;
+  CUr.Fax = Profiler.Fax;
+  CUr.JobDesc = Profiler.Profesion;
+  CUr.LangCode = Profiler.LangCode;
+  CUr.CountryCode = Profiler.CountryCode;
+  CUr.eMail = Profiler.Email;
+  CUr.Mobile = Profiler.Mobile;
+  CUr.CustCat = Profiler.Cat
+  CUr.AllowLogin = Profiler.AllowLogin;
+  CUr.OnAccount = Profiler.OnAccount;
+  CUr.SalesMan = Profiler.SalesMan;
+  CUr.WarnText1 = Profiler.WarnText1;
+  CUr.Classification = Profiler.Classification;
+  CUr.DateChanged = Profiler.DateChanged;
+  CUr.BankAccount = Profiler.BankAccount;
+// Wierd I know.. I make the delivery address the normal account address for guests
+  CUr.DelAddr0 = Profiler.CUCode;
+  CUr.DelAddr1 = Profiler.Company;
+  CUr.DelAddr2 = Profiler.ComAddr1;
+  CUr.DelAddr3 = Profiler.ComAddr2;
+  CUr.DelAddr4 = Profiler.ComAddr3;
+//  Fields left
+Nationality
+PassportNr
+Addr5
+Incognito
+Children
+Smoker
+EatHabit
+DrinkHabit
+VIP
+Miles
+MilesCat
+BreakfCom
+LunchCom
+DinnerCom
+NrPlate
+Blacklist
+Password
+DocType
+Gender
+MarStatus
+BirthDate
+Age
+Newspaper
+CUCode
+Wages
+ComDepartment
+WorkYears
+PersReferences
+CreditCard
+  return
+end;
+*/
+
+global
+updating procedure DoLetForm(record RcVc RepSpec,record LetVc Letr)
+BEGIN
+  record CSVc CSr;
+  record CUVc CUr;
+  record UserVc USr;
+  record CUVc ContactCUr;
+//  record ProfileVc Profiler;
+  record BankVc Bankr;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  val t;
+  Boolean printf,langf;
+  Integer intdocnr;
+  string 30 formcode,langcode;
+  val ARSum,sact,s0,s1,s16,s31,s61,s91,s121,s151;
+  val StartBal,v;
+  record ModuleBlock MBr;
+  record LetVc oldLetr;  
+  string 255 name,a0,a1,a2,a3,a4,a5,a6;
+
+  RecordCopy(oldLetr,Letr);
+  BlockLoad(MBr);
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoLetForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  if (nonblank(RepSpec.Language)) then begin
+    langcode = RepSpec.Language;
+  end else begin
+    langcode = Letr.LangCode;
+  end;
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;
+  intdocnr = 1;
+  printf = true;
+  CUr.Code = Letr.CustCode;
+  if (ReadFirstMain(CUr,1,true)==false) then begin
+    RecordClear(CUr);
+  end;
+/*
+  if (nonblank(Letr.GuestCode)) then begin // Shouldn't be able to have both Customer and a Guest.
+    Profiler.Code = Letr.GuestCode;
+    if (ReadFirstMain(Profiler,1,true)) then begin
+      CopyProfileInfoToCust(Profiler,CUr);
+    end;
+  end;
+*/
+  Bankr.Code = CUr.AccOperator;
+  if (ReadFirstMain(Bankr,1,true)==false) then begin
+    RecordClear(Bankr);
+  end;
+  if (FindCustomerRelation(Letr.CustCode,Letr.Contact,ContactCUr)==false) then begin
+    RecordClear(ContactCUr);
+  end;
+  USr.Code = Letr.ShortSign;
+  if (ReadFirstMain(USr,1,true)==false) then begin
+    USr.Code = "";
+    USr.Job = "";
+  end;
+
+  CSr.CustCode = CUr.Code;
+  if (ReadFirstMain(CSr,1,true)) then begin
+    CUGetStartBalance(CUr,"salesinclvat",RepSpec.CurncyCode,RepSpec.sStartDate,StartBal,true);
+    CUGetStartBalance(CUr,"paidvalue",RepSpec.CurncyCode,RepSpec.sStartDate,v,true);
+    StartBal = StartBal + v;
+  end else begin
+    StartBal = 0;
+  end;
+  SetFaxInfo(Letr.Contact,Letr.Name,Letr.Fax,USetStr(1838));
+  CustAged(CUr,CurrentDate,RepSpec.sStartDate,RepSpec.sEndDate,ARSum,sact,s0,s1,s16,s31,s61,s91,s121,s151,false);
+  while (printf) begin  
+    formcode = Letr.DocName;
+    if (blank(formcode)) then begin
+      for (i=rwcnt-1;i>=0;i=i-1) begin
+        MatRowGet(FDr,i,FDrw);
+        if (FindFormcode(Letr.OKFlag,FDrw.Typ)) then begin 
+          if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,Letr.SerNr,FDrw.PrintGroupCode,
+                          langcode,intdocnr,"LetVc",formcode)) then
+          begin
+            goto LBREAK;
+          end;
+        end;
+      end;
+    end else begin
+      printf = false;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin  
+        if (Letr.OKFlag==0) then begin
+          if (MBr.NoTestprintEnabler==0) then begin
+            FormWaterMark(1117,-1);
+            printf = false;
+          end;
+        end;
+          CommonDocumentFields(RepSpec);
+          NumberofDocumentPages(formcode,LineTextCnt(Letr));
+          if (HasLocalization("PRT")) then begin
+            PortugueseFormFields(1838);
+          end;  
+          OUTFORMFIELD("F_SERNR",Letr.SerNr);
+          OUTFORMFIELD("F_HEADER",Letr.Header);
+          OUTFORMFIELD("F_TRANSDATE",Letr.TransDate);
+          OUTFORMFIELD("F_TRANSDATUM",Letr.TransDate);
+          OUTFORMFIELD("F_GREETING",Letr.Greet);
+          PrintContactRows(CUr);
+          OUTFORMFIELD("F_SIGNATURE",Letr.Signature);
+          GetDateMonthInWords(Letr.TransDate,tstr);
+          OUTFORMFIELD("F_DATEMONTHINWORDS",tstr);
+          OUTFORMFIELD("F_DATEDAY",GetDay(Letr.TransDate));
+          OUTFORMFIELD("F_DATEMONTH",GetMonth(Letr.TransDate));
+          OUTFORMFIELD("F_DATEYEAR",GetYear(Letr.TransDate));
+//          OUTFORMFIELD("F_TRANSDATE",Letr.TransDate);
+          OUTFORMFIELD("F_TRANSTID",Letr.TransTime);
+          OUTFORMFIELD("F_PERSON",USr.Name); //Letr.ShortSign);
+          OUTFORMFIELD("F_KUNDMOMSNR",CUr.VATNr);
+          OUTFORMFIELD("F_BANKCODE",CUr.AccOperator);
+          OUTFORMFIELD("F_BANKCLEARING",Bankr.Nr1);
+          OUTFORMFIELD("F_BANKACC",Bankr.Nr2);
+          OUTFORMFIELD("F_BANKNAME",Bankr.Name);
+          OUTFORMFIELD("F_BANKSWIFT",Bankr.SWIFT);
+          OUTFORMFIELD("F_BANKSORTING",Bankr.Sorting);
+          OUTFORMFIELD("F_BANKCORRPACC",Bankr.CorrspAcc);
+          OUTFORMFIELD("F_BANKADDRESS0",Bankr.Address0);
+          OUTFORMFIELD("F_BANKADDRESS1",Bankr.Address1);
+          OUTFORMFIELD("F_BANKADDRESS2",Bankr.Address2);
+          OUTFORMFIELD("F_BANKADDRESS3",Bankr.Address3);
+          OUTFORMFIELD("F_BANKADDRESS4",Bankr.Address4);
+          OUTFORMFIELD("F_BANKADDRESS",Bankr.Address0);
+          OUTFORMFIELD("F_BANKADDRESS",Bankr.Address1);
+          OUTFORMFIELD("F_BANKADDRESS",Bankr.Address2);
+          OUTFORMFIELD("F_BANKADDRESS",Bankr.Address3);
+          OUTFORMFIELD("F_BANKADDRESS",Bankr.Address4);
+          tstr = ContactCUr.Fax;
+          if (blank(tstr)) then begin tstr = CUr.Fax; end;
+          OUTFORMFIELD("F_CONTACTFAX",tstr);
+          tstr = ContactCUr.Phone;
+          if (blank(tstr)) then begin tstr = CUr.Phone; end;
+          OUTFORMFIELD("F_CONTACTTEL",tstr);
+          tstr = ContactCUr.JobDesc;
+          if (blank(tstr)) then begin tstr = CUr.JobDesc; end;
+          OUTFORMFIELD("F_JOBDESCRIPTION",tstr);
+          tstr = ContactCUr.InvAddr0;
+          if (blank(tstr)) then begin tstr = CUr.InvAddr0; end;
+          OUTFORMFIELD("F_CONTACTADDRESS",tstr);
+          tstr = ContactCUr.InvAddr1;
+          if (blank(tstr)) then begin tstr = CUr.InvAddr1; end;
+          OUTFORMFIELD("F_CONTACTADDRESS",tstr);
+          tstr = ContactCUr.InvAddr2;
+          if (blank(tstr)) then begin tstr = CUr.InvAddr2; end;
+          OUTFORMFIELD("F_CONTACTADDRESS",tstr);
+          tstr = ContactCUr.InvAddr3;
+          if (blank(tstr)) then begin tstr = CUr.InvAddr3; end;
+          OUTFORMFIELD("F_CONTACTADDRESS",tstr);
+          tstr = ContactCUr.InvAddr4;
+          if (blank(tstr)) then begin tstr = CUr.InvAddr4; end;
+          OUTFORMFIELD("F_CONTACTADDRESS",tstr);
+          OUTFORMFIELD("F_TITLE",ContactCUr.Title);
+          OUTFORMFIELD("F_SALUTATION1",ContactCUr.Salutation1);
+          OUTFORMFIELD("F_SALUTATION2",ContactCUr.Salutation2);
+          OUTFORMFIELD("F_SALUTATION3",ContactCUr.Salutation3);
+          OUTFORMFIELD("F_SALUTATIONCU1",CUr.Salutation1);
+          OUTFORMFIELD("F_SALUTATIONCU2",CUr.Salutation2);
+          OUTFORMFIELD("F_SALUTATIONCU3",CUr.Salutation3);
+          if (nonblank(ContactCUr.Department)) then begin
+            OUTFORMFIELD("F_DEPARTMENT",ContactCUr.Department);
+          end else begin
+            OUTFORMFIELD("F_DEPARTMENT",CUr.Department);
+          end;
+          OUTFORMFIELD("F_KUNDNR",CUr.Code);
+          OUTFORMFIELD("F_NAMN",CUr.Name);
+          OUTFORMFIELD("F_KUNDFAX",CUr.Fax);
+          OUTFORMFIELD("F_KUNDTEL",CUr.Phone);
+          OUTFORMFIELD("F_SEARCHKEY",CUr.SearchKey);
+          OUTFORMFIELD("F_COUNTRYCODE",CUr.CountryCode);
+          OUTFORMFIELD("F_LEVADDR1",CUr.DelAddr0);
+          OUTFORMFIELD("F_LEVADDR2",CUr.DelAddr1);
+          OUTFORMFIELD("F_LEVADDR3",CUr.DelAddr2);
+          OUTFORMFIELD("F_DELADDR3",CUr.DelAddr3);
+          OUTFORMFIELD("F_DELADDR4",CUr.DelAddr4);
+          OUTFORMFIELD("F_LEVADRESS",CUr.DelAddr0);
+          OUTFORMFIELD("F_LEVADRESS",CUr.DelAddr1);
+          OUTFORMFIELD("F_LEVADRESS",CUr.DelAddr2);
+          OUTFORMFIELD("F_LEVADRESS",CUr.DelAddr3);
+          OUTFORMFIELD("F_LEVADRESS",CUr.DelAddr4);
+          OUTFORMFIELD("F_JOBDESC",Letr.JobDesc);
+          OUTFORMFIELD("F_KONTAKT",Letr.Contact);
+          OUTFORMFIELD("F_EMAIL",Letr.emailAddr);
+          GetUserEmail(USr.Code,tstr);
+          OUTFORMFIELD("F_SALESMANEMAIL",tstr);
+          OUTFORMFIELD("F_PROFESSION",USr.Job);
+          OUTFORMFIELD("F_AGEDTOTAL",ARSum);
+          OUTFORMFIELD("F_AGED0",s0);
+          OUTFORMFIELD("F_AGED1",s1);
+          OUTFORMFIELD("F_AGED2",s16);
+          OUTFORMFIELD("F_AGED3",s31);
+          OUTFORMFIELD("F_AGED4",s61);
+          OUTFORMFIELD("F_AGED5",s91);
+          OUTFORMFIELD("F_AGED6",s121);
+          OUTFORMFIELD("F_AGED7",s151);
+
+          if (nonblank(Letr.Name)) then begin
+            name = Letr.Name;
+          end else begin
+            name = CUr.Name;
+          end;
+          if (nonblank(Letr.Addr0)) then begin
+            a0 = Letr.Addr0;
+          end else begin
+            if (nonblank(ContactCUr.InvAddr0)) then begin
+              a0 = ContactCUr.InvAddr0;
+            end else begin
+              a0 = CUr.InvAddr0;
+            end;
+          end;
+          if (nonblank(Letr.Addr0)) then begin
+            a1 = Letr.Addr1;
+          end else begin
+            if (nonblank(ContactCUr.InvAddr0)) then begin
+              a1 = ContactCUr.InvAddr1;
+            end else begin
+              a1 = CUr.InvAddr1;
+            end;
+          end;
+          if (nonblank(Letr.Addr0)) then begin
+            a2 = Letr.Addr2;
+          end else begin
+            if (nonblank(ContactCUr.InvAddr0)) then begin
+              a2 = ContactCUr.InvAddr2;
+            end else begin
+              a2 = CUr.InvAddr2;
+            end;
+          end;
+          if (nonblank(Letr.Addr0)) then begin
+            a3 = Letr.Addr3;
+          end else begin
+            if (nonblank(ContactCUr.InvAddr0)) then begin
+              a3 = ContactCUr.InvAddr3;
+            end else begin
+              a3 = CUr.InvAddr3;
+            end;
+          end;
+          if (nonblank(Letr.Addr0)) then begin
+            a4 = Letr.Addr4;
+          end else begin
+            if (nonblank(ContactCUr.InvAddr0)) then begin
+              a4 = ContactCUr.InvAddr4;
+            end else begin
+              a4 = CUr.InvAddr4;
+            end;
+          end;
+          OutAddress("F_ADRESS",name,a0,a1,a2,a3,a4);
+          if (nonblank(Letr.Addr0)) then begin
+            tstr = Letr.Addr0;
+          end else begin
+            if (RepSpec.flags[0]==0) then begin
+              tstr = CUr.InvAddr0;
+            end else begin
+              tstr = ContactCUr.InvAddr0;
+            end;
+          end;
+          OUTFORMFIELD("F_ADDR1",tstr); 
+          if (nonblank(Letr.Addr0)) then begin
+            tstr = Letr.Addr1;
+          end else begin
+            if (RepSpec.flags[0]==0) then begin
+              tstr = CUr.InvAddr1;
+            end else begin
+              tstr = ContactCUr.InvAddr1;
+            end;
+          end;
+          OUTFORMFIELD("F_ADDR2",tstr); 
+          if (nonblank(Letr.Addr0)) then begin
+            tstr = Letr.Addr2;
+          end else begin
+            if (RepSpec.flags[0]==0) then begin
+              tstr = CUr.InvAddr2;
+            end else begin
+              tstr = ContactCUr.InvAddr2;
+            end;
+          end;
+          OUTFORMFIELD("F_ADDR3",tstr); 
+          if (nonblank(Letr.Addr0)) then begin
+            tstr = Letr.Addr3;
+          end else begin
+            if (RepSpec.flags[0]==0) then begin
+              tstr = CUr.InvAddr3;
+            end else begin
+              tstr = ContactCUr.InvAddr3;
+            end;
+          end;
+          OUTFORMFIELD("F_ADDR4",tstr); 
+          if (nonblank(Letr.Addr0)) then begin
+            tstr = Letr.Addr4;
+          end else begin
+            if (RepSpec.flags[0]==0) then begin
+              tstr = CUr.InvAddr4;
+            end else begin
+              tstr = ContactCUr.InvAddr4;
+            end;
+          end;
+          OUTFORMFIELD("F_INVADDR3",tstr); 
+          PrintLetText(formcode,Letr);
+          LetSetFax(CUr,Letr);
+          if ((Letr.Printdf==0) and (RepSpec.IncDaughter==0)) then begin
+            Letr.Printdf = 1;
+// We can't update the letter from here, the letter was changed before calling this procedure and should therefore NOT be updated.
+// This can potentially crash the database and will cause major cofusion among users.
+// Another problem, even if this was fixed, it won't print the next printout (is the same print job but they are seperate printouts).
+// The RecordActionLet_Print is doing the correct thing, I will leave the code there.
+//            if (RecordUpdate(oldLetr,Letr,true)==0) then begin
+//            end;
+          end;              
+          CloseForm;        
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoLetForm:;  
+  RETURN;  
+END;     
+ 

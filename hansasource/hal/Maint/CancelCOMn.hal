@@ -1,0 +1,185 @@
+external procedure CheckFlush(var Integer,Integer);
+external function LongInt DateDiff(Date,Date);
+external updating procedure CreateSummaryActivity(string,string,string);
+
+updating procedure CCreateActivity(record COVc COr,string codes,string comment,string curuser,Integer curcomp,var Integer flushcnt)
+BEGIN
+  record ActVc Actr;
+  
+  RecordNew(Actr);
+  Actr.TransDate = CurrentDate;
+  Actr.Comment = codes & "   " & comment;
+  Actr.MainPersons = COr.SalesMan;
+  Actr.CCPersons = curuser;
+  Actr.TodoFlag = 1;
+  Actr.CalTimeFlag = 0;
+  Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");
+  if (RecordStore(Actr,false)) then begin 
+    CreateRecordLink(Actr,curcomp,COr,curcomp);  
+  end;
+  CheckFlush(flushcnt,10);
+  RETURN;
+END;
+
+updating procedure InvalidateCOInvoice(record COIVVc COIVr,var Integer flushcnt)
+BEGIN
+  record IVVc IVr;
+  record IVVc oldIVr;
+  Integer error;
+  
+  if (COIVr.Type==0) then begin
+    IVr.SerNr = COIVr.IVNr;
+    if (ReadFirstMain(IVr,1,true)) then begin
+      if (IVr.Invalid==0) then begin
+        RecordCopy(oldIVr,IVr);      
+        IVr.Invalid = 1;
+        error = RecordUpdate(oldIVr,IVr,true);
+        CheckFlush(flushcnt,10);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure CancelDueCOMn(record RcVc RepSpec)
+BEGIN
+  record COVc COr;
+  record COVc oldCOr;
+  record ARVc ARr;
+  record IVVc IVr;
+  record IVVc oldIVr;
+  record COIVVc COIVr;
+  Boolean TrHs,testf;
+  LongInt diff;
+  Date curdate;
+  Integer error;
+  LongInt cocnt;
+  string 20 curuser;
+  Integer curcomp;
+  string 255 tstr;
+  record DBLockBlock DBLockRec;
+  Integer flushcnt;
+  
+  BlockLoad(DBLockRec);
+  curcomp = CurrentCompany;
+  curuser = CurrentUser;
+  cocnt = 0;
+  curdate = CurrentDate;
+  TrHs = true;
+  while (LoopMain(ARr,1,TrHs)) begin
+    testf = true;
+    COIVr.IVNr = ARr.InvoiceNr;
+    COIVr.Type = 0;
+    if (ReadFirstKey("IVNr",COIVr,2,true)==false) then begin 
+//      CreateSummaryActivity(ARr.InvoiceNr," contracts for the invoice doesn't exist",curuser) ;       
+      testf = false; 
+    end;
+    IVr.SerNr = ARr.InvoiceNr;
+    if (ReadFirstMain(IVr,1,true)==false) then begin 
+      testf = false; 
+    end;
+    if (RepSpec.long2!=-1) then begin
+      if (IVr.LastRemndr!=RepSpec.long2) then begin
+        testf = false; 
+      end;
+    end;  
+    if (IVr.Sum4<=0.00) then begin
+      testf = false; 
+    end;
+    if (ARr.RVal<0) then begin
+      testf = false;    
+    end;
+    if (testf) then begin      
+      COr.SerNr = COIVr.CONr;
+      COr.ChildSerNr = COIVr.COChildNr;
+      if (ReadFirstMain(COr,2,true)==false) then begin testf = false; end;    
+      if (nonblankdate(COr.CancelDate)) then begin
+//        testf = false; if there is more then one, only first gets invalidated
+      end;
+      if (testf) then begin
+        diff = DateDiff(curdate,ARr.DueDate);
+        if (diff>=RepSpec.long1) then begin
+          RecordCopy(oldCOr,COr);
+          COr.CancelDate = curdate;
+          error = RecordUpdate(oldCOr,COr,true);
+          CheckFlush(flushcnt,10);
+          if (error!=0) then begin //error
+             CCreateActivity(oldCOr,oldCOr.SerNr," update failed",curuser,curcomp,flushcnt);
+          end else begin
+            if (IVr.TransDate>DBLockRec.SLLock) then begin
+              if (RepSpec.flags[1]==1) then begin
+                if (IVr.Sum4==ARr.RVal) then begin
+                  InvalidateCOInvoice(COIVr,flushcnt);
+                  StepBack(ARr);
+                end else begin
+                  tstr = "";
+                  tstr = tstr & IVr.SerNr;
+                  tstr = tstr & " partly paid/paid";
+                  CreateSummaryActivity("Invoice no. ",tstr,curuser);      
+                  CheckFlush(flushcnt,10);
+                end;  
+              end;
+            end;
+            cocnt = cocnt + 1;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (RepSpec.flags[0]==1) then begin
+    TrHs = true;  
+  end else begin
+    TrHs = false;
+  end;
+  IVr.OKFlag = 0;
+  IVr.SerNr = -1;
+  ResetLoop(IVr);
+  while (LoopKey("OKFlag",IVr,1,TrHs)) begin
+    if (IVr.OKFlag!=0) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      COIVr.IVNr = IVr.SerNr;
+      if (ReadFirstKey("IVNr",COIVr,1,true)==false) then begin 
+        CreateSummaryActivity(IVr.SerNr," contracts for the invoice doesn't exist",curuser);      
+        CheckFlush(flushcnt,10);
+        testf = false; 
+      end;
+      if (nonblankdate(COr.CancelDate)) then begin
+//        testf = false; if there is more then one, only first gets invalidated
+      end;
+      if (testf) then begin  
+        COr.SerNr = COIVr.CONr;
+        COr.ChildSerNr = COIVr.COChildNr;
+        if (ReadFirstMain(COr,2,true)==false) then begin testf = false; end;    
+        if (testf) then begin
+          diff = DateDiff(curdate,IVr.PayDate);
+          if (diff>=RepSpec.long1) then begin
+            RecordCopy(oldCOr,COr);
+            COr.CancelDate = curdate;
+            error = RecordUpdate(oldCOr,COr,true);
+            CheckFlush(flushcnt,10);
+            if (error!=0) then begin //error
+              CCreateActivity(oldCOr,oldCOr.SerNr," update failed",curuser,curcomp,flushcnt);
+            end else begin
+              if (nonblank(RepSpec.TransStr)) then begin//for Forbrugeradet only
+                RecordCopy(oldIVr,IVr);
+                IVr.LangCode = RepSpec.TransStr;
+                error = RecordUpdate(oldIVr,IVr,true);              
+                CheckFlush(flushcnt,10);
+              end else begin
+                RecordDelete(IVr);
+                StepBack(IVr);
+                CheckFlush(flushcnt,10);
+              end;           
+              cocnt = cocnt + 1;
+            end;
+          end;
+        end;          
+      end;  
+    end;
+  end;
+  CreateSummaryActivity(cocnt," contracts have been cancelled",curuser) ;
+  RETURN;
+END;
+

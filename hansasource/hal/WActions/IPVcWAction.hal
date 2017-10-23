@@ -1,0 +1,942 @@
+external procedure AutomatedSalesOrderly(string);
+remote procedure IPPasteRowPayMode3(var row IPVc,string,string);
+external function string 40 ObjSClassPasteSpecialWindowClass(string);
+remote function Boolean IPVc_PasteInvoiceOfficialSerNr(var record IPVc,Integer,var val,var Boolean);
+remote procedure IPVc_PasteTaxTemplateCode(var record IPVc,Integer);
+remote function Boolean IPVc_PasteToRateB1BankVal(var record IPVc,Integer);
+external function roundmode DefaultRoundMode();
+remote function string 255 CurDrawerCode(string);
+remote procedure IPVc_PasteBankVal(var record IPVc,Integer);
+external procedure FindOTforAcc(string,var string);
+external function Boolean GetPM(string,var string,var string);
+external function Integer PMCheckType(string,var string,var string);
+remote function Boolean PasteInvInIPr(var record IPVc,row IPVc,Integer,Integer);
+remote function Boolean IPVc_PasteChequeNr(var record IPVc,Integer);
+remote procedure IPVc_PasteVATCode(var record IPVc,Integer);
+remote procedure IPVc_PasteRecVal(var record IPVc,Integer);
+remote procedure IPVc_PasteRecCurncy(var record IPVc,Integer);
+remote procedure IPVc_PastePayDate(var record IPVc,Integer);
+remote function Boolean IPVc_PasteCustCode(var record IPVc,Integer,var LongInt);
+remote procedure IPVc_PasteOrderNr(var record IPVc,Integer);
+remote procedure IPVc_PasteCUPNr(var record IPVc,Integer);
+remote procedure IPVc_PastePayCurCode(var record IPVc);
+remote procedure IPPastePayMode2(var record IPVc,string);
+remote procedure IPVc_PasteTransDate(var record IPVc);
+remote procedure IPVc_PasteBankCurncy(var record IPVc,Integer);
+external updating procedure RecLAction_rlIPDPrint(record RcVc,var record IPVc,Boolean);
+remote function Boolean PasteInvIn2IPr(var record IPVc,Integer,Date,var val,Boolean,var Boolean);
+
+global
+procedure IPSumup(var record IPVc IPr)
+BEGIN
+  row IPVc IPrw;
+  Integer i,rwcnt;
+  val curval,bv;
+  Boolean onecurncy;
+  string 5 curncy;  
+  record BaseCurBlock BCb;
+  
+  BlockLoad(BCb);
+  onecurncy = false;
+  rwcnt = MatRowCnt(IPr);
+  for (i=0;i<rwcnt ;i=i+1) begin
+    MatRowGet(IPr,i,IPrw);
+    if (IPrw.ovst==0) then begin
+      if ((IPrw.stp==5) or (IPrw.stp==6)) then begin
+      end else begin
+        if ((nonblank(IPrw.CustCode)) or (IPrw.InvoiceNr!=-1) or (IPrw.InvVal!=0)) then begin
+          if (i==0) then begin
+            curncy = IPrw.BankCurncy;
+            onecurncy = true;
+          end;
+          if (curncy!=IPrw.BankCurncy) then begin onecurncy = false; end;
+          bv = IPrw.BankVal;
+          if (IPrw.stp==7) then begin
+            curval = curval - bv;
+          end else begin
+            curval = curval + bv;
+          end;  
+        end;
+      end;
+    end;
+  end;
+  if (onecurncy==false) then begin
+    curncy = "";
+    curval = blankval;
+  end;
+  IPr.CurPayVal = curval;
+  IPr.PayCurCode = curncy;
+  RETURN;
+END;
+
+procedure ChangeIPTotPay(var record IPVc IPp,val totvalp)
+BEGIN
+  row IPVc IPrw;
+  Integer rwcnt,i;
+  val oldbtot,sumt,incr,diff;
+  
+  rwcnt = MatRowCnt(IPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IPp,i,IPrw);
+    if (IPrw.stp==1) then begin
+      oldbtot = oldbtot + IPrw.BankVal;
+    end;
+  end;
+  diff = totvalp - oldbtot;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IPp,i,IPrw);
+    if (IPrw.stp==1) then begin
+      if (IPrw.BankVal!=0) then begin
+        sumt = totvalp/oldbtot;
+        IPrw.BankVal = IPrw.BankVal*sumt;
+        IPrw.BankVal = Round(IPrw.BankVal,DefaultRoundMode);
+        if (IPrw.BankVal==0) then begin IPrw.BankVal = blankval; end;
+        incr = incr + IPrw.BankVal;
+        MatRowPut(IPp,i,IPrw);
+      end;
+    end;
+  end;
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(IPp,i,IPrw);
+    if (IPrw.stp==1) then begin
+      if (IPrw.BankVal!=0) then begin
+        sumt = totvalp - incr;
+        IPrw.BankVal = IPrw.BankVal + sumt;
+        if (IPrw.BankVal==0) then begin IPrw.BankVal = blankval; end;
+        MatRowPut(IPp,i,IPrw);
+        goto LChangeIPTotPay;
+      end;
+    end;
+  end;
+LChangeIPTotPay:;
+  RETURN;
+END;
+
+global
+procedure IPVc_PasteCurPayVal(var record IPVc IPp)
+BEGIN
+  ChangeIPTotPay(IPp,IPp.CurPayVal);
+  IPSumup(IPp);
+  RETURN;
+END;
+
+//ROWS
+function Boolean IPDClassInvoiceNrEFAfter(Integer wn, Integer rownr,Integer changed,Integer fn)
+BEGIN
+  Boolean res,testf,installmentf;
+  record IPVc IPr;
+  row IPVc IPrw;
+  val chk;
+
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,IPr);
+    if (rownr>-1) then begin
+      MatRowGet(IPr,rownr,IPrw);
+      switch (IPrw.stp) begin
+        case 1: 
+          testf = PasteInvIn2IPr(IPr,rownr,IPr.TransDate,chk,false,installmentf);
+          if (installmentf) then begin
+            MessageBox(20772,"");
+          end;
+        case 5: testf = PasteInvInIPr(IPr,IPrw,rownr,5);
+        case 6: testf = PasteInvInIPr(IPr,IPrw,rownr,6);
+        case 7: testf = PasteInvInIPr(IPr,IPrw,rownr,7);
+      end;
+      if (testf) then begin
+        PutWindowRecord(wn,IPr);    
+      end else begin
+        Beep;
+      end;
+    end;
+  end;
+  IPDClassInvoiceNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassInvoiceOfficialSerNrEFAfter(Integer wn, Integer rownr,Integer changed)
+begin
+  Boolean res,testf,installmentf;
+  record IPVc IPr;
+  row IPVc IPrw;
+  val chk;
+
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,IPr);
+    testf = IPVc_PasteInvoiceOfficialSerNr(IPr,rownr,chk,installmentf);
+    if (testf) then begin
+      PutWindowRecord(wn,IPr);    
+    end else begin
+      Beep;
+    end;
+  end;
+  IPDClassInvoiceOfficialSerNrEFAfter = res;
+  return;
+end;
+
+
+function Boolean IPDClassInstNrEFAfter(Integer wn, Integer rownr,Integer changed,Integer fn)
+BEGIN
+  Boolean res,testf,installmentf;
+  record IPVc IPr;
+  row IPVc IPrw;
+  val chk;
+
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,IPr);
+    if (rownr>-1) then begin
+      MatRowGet(IPr,rownr,IPrw);
+      switch (IPrw.stp) begin
+        case 1: 
+          testf = PasteInvIn2IPr(IPr,rownr,IPr.TransDate,chk,true,installmentf);
+          if (installmentf) then begin
+            MessageBox(20772,"");
+          end;
+      end;
+      if (testf) then begin
+        PutWindowRecord(wn,IPr);    
+      end else begin
+        Beep;
+      end;
+    end;
+  end;
+  IPDClassInstNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassBankCurncyEFAfter(Integer wn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if ((changed!=0) and (rownr>-1)) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteBankCurncy(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassBankCurncyEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassTransDateEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteTransDate(IPr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassTransDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassPayModeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  row IPVc IPrw;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    if (rownr<0) then begin
+      IPPastePayMode2(IPr,WindEFstr(wn));
+    end else begin
+      MatRowGet(IPr,rownr,IPrw);
+      IPPasteRowPayMode3(IPrw,IPr.PayMode,WindEFstr(wn));
+      MatRowPut(IPr,rownr,IPrw);
+    end;
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassPayModeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassPayCurCodeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PastePayCurCode(IPr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassPayCurCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassCurPayValEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteCurPayVal(IPr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassCurPayValEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassCoefEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  row IPVc IPrw;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    MatRowGet(IPr,rownr,IPrw);
+    IPrw.BankVal = IPrw.RecVal/IPrw.Coef;
+    MatRowPut(IPr,rownr,IPrw);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassCoefEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassCUPNrEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteCUPNr(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassCUPNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassOrderNrEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteOrderNr(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassOrderNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassCustCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  LongInt error;
+  row IPVc IPrw;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    if (IPVc_PasteCustCode(IPr,rownr,error)) then begin
+      PutWindowRecord(wn,IPr);
+    end else begin
+      if (error > 0) then begin 
+        MessageBox(error,"");
+        if (error==19124) then begin   // Multiple Customers Not allowed
+          IPrw.CustCode = "";
+          MatRowPut(IPr,rownr,IPrw);
+          PutWindowRecord(wn,IPr);
+        end;
+      end;
+      Beep;
+    end;
+  end;
+  IPDClassCustCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassPayDateEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PastePayDate(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassPayDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassRecCurncyEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteRecCurncy(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassRecCurncyEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassRecValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteRecVal(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassRecValEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassChequeNrEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    if (IPVc_PasteChequeNr(IPr,rownr)) then begin
+      PutWindowRecord(wn,IPr);
+    end else begin
+      Beep;
+    end;
+  end;
+  IPDClassChequeNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassBankValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteBankVal(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassBankValEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassB1BankValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record IPVc IPr;
+  row IPVc IPrw;
+  record BaseCurBlock BCb;
+
+  res = true;
+  if (changedf) then begin
+    BlockLoad(BCb);
+    
+    GetWindowRecord(wn,IPr);
+    MatRowGet(IPr,rownr,IPrw);
+    if (IPrw.BankCurncy==BCb.BaseCur1) then begin
+      IPrw.BankVal = IPrw.B1BankVal;
+      MatRowPut(IPr,rownr,IPrw);
+      PutWindowRecord(wn,IPr);
+    end;
+  end;
+  IPDClassB1BankValEFAfter = res;
+  return;
+end;
+
+function Boolean IPDClassVATCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    IPVc_PasteVATCode(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassVATCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassToRateB1BankValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);
+    if (IPVc_PasteToRateB1BankVal(IPr,rownr)) then begin
+      PutWindowRecord(wn,IPr);
+    end;
+  end;
+  IPDClassToRateB1BankValEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean IPDClassCustNameEFAfter(Integer wn,Integer rownr,Integer fn,Boolean changedf)
+begin  
+  Boolean res,installmentf;
+  record IPVc IPr;
+  row IPVc IPrw;
+  record OffSerNrIVVc OffSNIVr;  
+  val chk;
+
+  if (changedf) then begin  
+    GetWindowRecord(wn,IPr);
+    DeselectWindow(wn,false);
+    MatRowGet(IPr,rownr,IPrw);
+    switch (IPrw.stp) begin
+      case 1:
+        OffSNIVr.OfficialSerNr = IPrw.CustName;
+        if (ReadFIrstKey("OfficialSerNr",OffSNIVr,1,true)) then begin
+          IPrw.InvoiceNr = OffSNIVr.IVNr;
+          MatRowPut(IPr,rownr,IPrw);
+          res = PasteInvIn2IPr(IPr,rownr,IPr.TransDate,chk,false,installmentf);
+          PutWindowRecord(wn,IPr);
+        end;
+    end;
+  end;
+  IPDClassCustNameEFAfter = res;
+  return;
+end;
+
+function Boolean IPDClassMachineNameEFAfter(Integer wn,Boolean  changedf)
+begin  
+  record IPVc IPr;
+
+  if (changedf) then begin  
+    GetWindowRecord(wn,IPr);
+    IPr.DrawerCode = CurDrawerCode(IPr.MachineName);
+    PutWindowRecord(wn,IPr);
+  end;  
+  IPDClassMachineNameEFAfter = true;
+  return;
+end;
+
+function Boolean IPDClassTaxTemplateCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  record IPVc IPr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,IPr);    
+    IPVc_PasteTaxTemplateCode(IPr,rownr);
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassTaxTemplateCodeEFAfter = true;
+  return;
+end;
+
+function Boolean IPDClassStatusEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+
+  res = true;
+  if (changedf and HasLocalization("PRT")) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,IPr);
+    if (IPr.Status==kRecordStatusNone) then begin 
+      IPr.OfficialSerNr2 = "";
+    end;
+    PutWindowRecord(wn,IPr);
+  end;
+  IPDClassStatusEFAfter = res;
+  RETURN;
+END;
+
+function Boolean IPDClassSerNrEFAfter(Integer wn,Boolean changedf)
+begin  
+  record IVVc IVr;
+
+  if (changedf) then begin  
+    AutomatedSalesOrderly("HasNumberSeries");
+  end;
+  IPDClassSerNrEFAfter = true;
+  return;
+end;
+
+global
+function Boolean IPDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "SerNr": res = IPDClassSerNrEFAfter(wn,changed!=0);
+    case "InstNr": res = IPDClassInstNrEFAfter(wn,rownr,changed,fn);
+    case "InvoiceNr": res = IPDClassInvoiceNrEFAfter(wn,rownr,changed,fn);
+    case "InvoiceOfficialSerNr": res = IPDClassInvoiceOfficialSerNrEFAfter(wn,rownr,changed);
+    case "BankCurncy": res = IPDClassBankCurncyEFAfter(wn,rownr,changed);
+    case "TransDate": res = IPDClassTransDateEFAfter(wn,changed!=0);
+    case "PayMode": res = IPDClassPayModeEFAfter(wn,rownr,changed!=0);
+    case "PayCurCode": res = IPDClassPayCurCodeEFAfter(wn,changed!=0);
+    case "CurPayVal": res = IPDClassCurPayValEFAfter(wn,changed!=0);
+    
+    case "Coef": res = IPDClassCoefEFAfter(wn,rownr,changed!=0);
+//    case "CUPNr": res = IPDClassCUPNrEFAfter(wn,rownr,changed!=0);//we have Order No. field , Mladen didnt like it
+    case "OrderNr": res = IPDClassOrderNrEFAfter(wn,rownr,changed!=0);
+    case "CustCode": res = IPDClassCustCodeEFAfter(wn,rownr,changed!=0);
+    case "PayDate": res = IPDClassPayDateEFAfter(wn,rownr,changed!=0);
+    case "RecCurncy": res = IPDClassRecCurncyEFAfter(wn,rownr,changed!=0);
+    case "RecVal": res = IPDClassRecValEFAfter(wn,rownr,changed!=0);
+    case "ChequeNr": res = IPDClassChequeNrEFAfter(wn,rownr,changed!=0);
+    case "BankVal": res = IPDClassBankValEFAfter(wn,rownr,changed!=0);
+    case "B1BankVal": res = IPDClassB1BankValEFAfter(wn,rownr,changed!=0);
+    case "VATCode": res = IPDClassVATCodeEFAfter(wn,rownr,changed!=0);
+    case "ToRateB1BankVal": res = IPDClassToRateB1BankValEFAfter(wn,rownr,changed!=0);
+    case "CustName": res = IPDClassCustNameEFAfter(wn,rownr,fn,changed!=0);
+    case "MachineName": res = IPDClassMachineNameEFAfter(wn,changed!=0);
+    case "TaxTemplateCode": res = IPDClassTaxTemplateCodeEFAfter(wn,rownr,changed!=0);
+    case "FrRateBankVal": res = IPDClassToRateB1BankValEFAfter(wn,rownr,changed!=0);
+    case "ToRateB1BankVal": res = IPDClassToRateB1BankValEFAfter(wn,rownr,changed!=0);
+    case "ToRateB2BankVal": res = IPDClassToRateB1BankValEFAfter(wn,rownr,changed!=0);
+    case "BaseRate1BankVal": res = IPDClassToRateB1BankValEFAfter(wn,rownr,changed!=0);
+    case "BaseRate2BankVal": res = IPDClassToRateB1BankValEFAfter(wn,rownr,changed!=0);
+    case "Status": res = IPDClassStatusEFAfter(wn,changed!=0);
+  end;
+  IPDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean IPDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,IPr);
+    if (IPr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,IPr);
+    if (IPr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+//if (IPButActSpec(IPp,IP2p,WindowState(wn),*(Integer*)ap2)==false) then res = false;//I think it is not needed
+  IPDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean IPDClassUpdateTest(Integer wn)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  
+  res = true;
+  GetWindowRecord(wn,IPr);
+  if (IPr.OKFlag!=0) then begin
+    res = false;
+    if (UserCanAction("UnOKAll",false)) then begin
+      res = true;
+    end;    
+  end;
+  IPDClassUpdateTest = res;
+  RETURN;
+END;
+
+global
+updating function Boolean IPDClassPrint(Integer wn,Boolean previewf)
+BEGIN
+  Boolean res,testf;
+  record IPVc IPr;
+  record RcVc RepSpec;
+  
+  DeselectWindow(wn,false);
+  if (HasLocalization("PRT")) then begin
+    switch (WindowState(wn)) begin
+      case Rs_normal:
+        GetWindowRecord(wn,IPr);
+      case Rs_update:
+        GetPrevWindowRecord(wn,IPr);
+    end;
+    if (IPr.OKFlag==0) then begin
+      MessageBox(12556,"");
+      goto LIPDClassPrint;
+    end;
+  end;
+  GetWindowRecord(wn,IPr);
+  if ((WindowState(wn)==Rs_normal) and (previewf==false)) then begin
+    RecLAction_rlIPDPrint(RepSpec,IPr,true);
+  end else begin
+    testf = PrintDocument(IPr,"IPDForm",true);
+  end;  
+  res = true;
+LIPDClassPrint:;
+  IPDClassPrint = res;
+  RETURN;
+END;
+
+global
+function Boolean IPDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record IPVc IPr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,IPr);    
+    IPSumUp(IPr);
+    PutWindowRecord(wn,IPr);    
+  end;
+  IPDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global 
+function Boolean IPDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record IPVc IPr;
+  Boolean res;
+  Integer updatemode;
+
+  res = true;
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,IPr);
+    if (IPr.ReceivedFlag!=0) then begin res = false; end;
+    if (IPr.OKFlag!=0) then begin res = false; end;
+  end;
+  IPDClassDeleteRowTest = res;
+  return;
+end;
+
+global 
+function Boolean IPDClassOverStrikeTest(Integer wn,Integer rownr)
+begin
+  record IPVc IPr;
+  Boolean res;
+  Integer updatemode;
+
+  res = true;
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,IPr);
+    if (IPr.ReceivedFlag!=0) then begin res = false; end;
+    if (IPr.OKFlag!=0) then begin res = false; end;
+  end;
+  IPDClassOverStrikeTest = res;
+  return;
+end;
+
+global
+function Boolean IPDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  record CYBlock CYRec;
+  
+  res = true;
+  if (rownr>=0) then begin
+    switch (fieldname) begin
+      case "PayDate": 
+        BlockLoad(CYRec);
+        if (CYRec.AllowTransDateEdit==0) then begin
+          res = false;
+        end;
+    end;
+    switch (fieldname) begin
+      case "InvCurncy": res = false;
+      case "InvVal": res = false;
+      case "InvOutstand": res = false;
+    end;
+  end;
+  if (res) then begin 
+    GetWindowRecord(wn,IPr);
+    switch (fieldname) begin
+      case "OfficialSerNr2": 
+        if (HasLocalization("PRT")) then begin
+          res = IPr.Status==kRecordStatusManual or IPr.Status==kRecordStatusRecovered;
+        end;
+    end;
+  end;
+  if (wnst!=Rs_update) then begin
+    GetWindowRecord(wn,IPr);
+  end else begin
+    GetPrevWindowRecord(wn,IPr);    
+    if (IPr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;
+LIPDClassActiveEditField:;  
+  IPDClassActiveEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean IPDClassOnEnterKey(Integer wn,string fieldname,Integer fn,Integer rownr)
+BEGIN
+  Boolean res;
+  LongInt newf;
+  
+  res = true;
+  newf = -1;
+  if (rownr>=0) then begin
+    switch (fieldname) begin
+//      case "InvoiceNr": newf = sf+nfr*(row+1)-1;
+    end;
+  end;
+  if (newf!=-1) then begin
+//    if (EFGoto(wn,newf,true)) then begin res = false; end;
+  end;
+  IPDClassOnEnterKey = true;
+  RETURN;
+END;
+
+function string 40 IPDClassSpecPasteNameObjects(Integer wn)
+BEGIN
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer rownr;
+  string 200 typ,tstr;
+  string 255 psname,accnr;
+
+  GetWindowRecord(wn,IPr);
+  rownr = WindowActiveRow(wn);
+  typ="";
+  if (rownr>=0) then begin
+    MatRowGet(IPr,rownr,IPrw);
+    tstr = IPrw.PayMode;
+    if (blank(tstr)) then begin
+      tstr = IPr.PayMode;
+    end;
+    if (GetPM(tstr,accnr,tstr)==false) then begin
+    end;    
+    FindOTforAcc(accnr,typ);
+  end;
+  if (nonblank(typ)) then begin
+    psname = "TRObjSClass";
+  end else begin    
+    psname = ObjSClassPasteSpecialWindowClass("ObjSClass");
+  end;
+  IPDClassSpecPasteNameObjects = psname;
+  RETURN;
+END;
+
+function string 40 IPDClassSpecPasteNameInstNr(Integer wn)
+begin
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer rownr;
+  string 200 typ,tstr;
+  string 255 psname,accnr;
+
+  GetWindowRecord(wn,IPr);
+  rownr = WindowActiveRow(wn);
+  if (rownr>=0) then begin
+    MatRowGet(IPr,rownr,IPrw);
+  end;
+  if (IPrw.InvoiceNr>0) then begin
+    psname = "ARInstSClass";
+  end else begin    
+    psname = "ARInstallSClass";
+  end;
+  IPDClassSpecPasteNameInstNr = psname;
+  return;
+end;
+
+global
+function string 40 IPDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 255 psname;
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer rownr,cht;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "ChequeNr":
+      GetWindowRecord(wn,IPr);
+      rownr = WindowActiveRow(wn);
+      if (rownr>=0) then begin
+        MatRowGet(IPr,rownr,IPrw);
+      end;
+      if (nonblank(IPrw.PayMode)) then begin
+        cht = PMCheckType(IPrw.PayMode,psname,psname);
+      end else begin
+        cht = PMCheckType(IPr.PayMode,psname,psname);
+      end;    
+      switch (cht) begin
+        case 0: psname = "";
+        case 1: psname = "RegCheckSClass";
+        case 3: psname = "CouponSClass";
+        otherwise psname = "";
+      end;
+    case "Objects": psname = IPDClassSpecPasteNameObjects(wn);
+    case "InstNr": psname = IPDClassSpecPasteNameInstNr(wn);
+  end;
+  IPDClassSpecPasteName = psname;
+  return;
+end;
+
+global
+function Boolean IPDClassOpenRecord(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer nwn,cht;
+  string 255 tstr,thepm;
+  record CheckVc Checkr;
+  record OwnCheckVc OwnCheckr;
+  
+  switch (fieldname) begin
+    case "ChequeNr":
+      GetWindowRecord(wn,IPr);  
+      MatRowGet(IPr,rownr,IPrw);
+      if (IPrw.ChequeNr!=-1) then begin
+        thepm = IPrw.PayMode;
+        if (blank(thepm)) then begin
+          thepm = IPr.PayMode; 
+        end;
+        cht = PMCheckType(thepm,tstr,tstr);
+        switch (cht) begin
+          case kPayModeTypeCheque:
+            Checkr.SerNr = IPrw.ChequeNr;
+            if (ReadFirstMain(Checkr,1,true)) then begin
+              nwn = OpenWindow("CheckDClass",0,0,"","",Checkr);    
+            end;
+          case kPayModeTypeOwnCheque:
+            OwnCheckr.SerNr = IPrw.ChequeNr;
+            if (ReadFirstMain(OwnCheckr,1,true)) then begin
+              nwn = OpenWindow("OwnCheckDClass",0,0,"","",OwnCheckr);    
+            end;
+        end;        
+      end;
+  end;
+  IPDClassOpenRecord = res;
+  return;
+end;

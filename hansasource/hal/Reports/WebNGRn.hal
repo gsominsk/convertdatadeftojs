@@ -1,0 +1,269 @@
+external function string 255 FormatLinkToStructForBrowser(longint,boolean,string,boolean);
+external function string 255 removenextnode(var string);
+external function Integer InString2(string,string);
+
+procedure AddNodeToArray(longint sernr,var array longint nodelist)
+begin
+  integer i;
+  for (i=1;i<=nodelist[0];i=i+1) begin
+    if (nodelist[i]==sernr) then begin
+      goto LAddNodeToArray;
+    end;
+  end;
+  nodelist[0] = nodelist[0]+1;
+  nodelist[nodelist[0]] = sernr;
+
+LAddNodeToArray:;
+  return;
+end;
+
+procedure AddPageToArray(string page,var array string pagelist)
+begin
+  integer i,cnt;
+  cnt = StringToInt(pagelist[0]);
+  for (i=1;i<=cnt;i=i+1) begin
+    if (pagelist[i]==page) then begin
+      goto LAddPageToArray;
+    end;
+  end;
+  cnt = cnt+1;
+  pagelist[0] = cnt;
+  pagelist[cnt] = page;
+
+LAddPageToArray:;
+  return;
+end;
+
+procedure FindNodesShowingWebPage(string page,var array longint nodelist)
+begin
+  record WebNGStructVc WSr;
+  boolean testf;
+  
+  //TODO: also consider how to handle template pages
+  testf = true;
+  WSr.WebPage = page;
+  while (LoopKey("WebPage",WSr,1,testf)) begin
+    if (WSr.WebPage!=page) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      AddNodeToArray(WSr.SerNr,nodelist);
+    end;
+  end;
+  return;
+end;
+
+//TODO: extend function to show elements which are not directly linked to web pages
+//TODO: also consider indexes to search
+procedure FindPagesShowingWebElement(string element,var array string pagelist,integer level)
+begin
+  record WebNGPageVc WPr;
+  row WebNGPageVc WPrw;
+  integer i,cnt;
+  string 255 ckey;
+  record WebNGElementVc WEr;
+  
+  while (LoopMain(WPr,0,true)) begin
+    cnt = MatRowCnt(WPr);
+    for (i=0;i<cnt;i=i+1) begin
+      MatRowGet(WPr,i,WPrw);
+      if (WPrw.WebElement==element) then begin
+        AddPageToArray(WPr.Code,pagelist);
+        i=cnt;
+      end;
+    end;
+  end;
+  
+  if (level<=10) then begin //TODO: bad way to handle link-loops
+    ckey = "SubElements:" & element;
+    while (LoopKey(ckey,WEr,1,true)) begin
+      FindPagesShowingWebElement(WEr.Code,pagelist,level+1);
+    end;
+  end;
+  
+  return;
+end;
+
+global
+procedure NodeLinkListFromWebElementRn(record RcVc RepSpec)
+begin
+  array string 255 pagelist;
+  array longint nodelist;
+  integer i,j,cnt;
+  string 255 element,strid;
+  string 255 forcelang;
+  
+  pagelist[0] = 0;
+  element = removenextnode(RepSpec.f1);
+  forcelang = removenextnode(RepSpec.f1);
+  
+  StartReportJob(USetStr(17715));
+  Header(1,USetStr(17716) & " " & element,1);
+  EndHeader;
+
+  StartFormat(15);
+  OutString(0,0,USetStr(17718),false);
+  EndFormat;
+  Black_Divider(0,1);
+
+  FindPagesShowingWebElement(element,pagelist,0);
+  
+  cnt = StringToInt(pagelist[0]);
+  if (cnt==0) then begin
+  end else begin
+    for (i=1;i<=cnt;i=i+1) begin
+      nodelist[0] = 0;
+      FindNodesShowingWebPage(pagelist[i],nodelist);
+  
+      if (nodelist[0]!=0) then begin
+        StartFormat(15);
+        OutString(0,0,USetStr(17717) & " " & pagelist[i],false);
+        EndFormat;
+        Gray_Divider(0,1);
+        
+        for (j=1;j<=nodelist[0];j=j+1) begin
+          StartFormat(15);
+          if (nonblank(forcelang)) then begin
+            strid = nodelist[j] & "/" & forcelang;
+          end;
+          OutStringID(0,"DblOpenNodeInWeb",FormatLinkToStructForBrowser(nodelist[j],false,"",false),false,strid);
+          EndFormat;
+        end;
+        
+        StartFormat(15);
+        EndFormat;
+      end;
+    end;
+  end;
+  
+  EndJob;
+  return;
+end;
+
+global
+procedure NodeLinkListFromWebPageRn(record RcVc RepSpec)
+begin
+  string 255 page;
+  array longint nodelist;
+  integer i;
+  
+  nodelist[0] = 0;
+  page = RepSpec.f1;
+  
+  StartReportJob(USetStr(17719));
+  Header(1,USetStr(17717) & " " & page,1);
+  EndHeader;
+
+  StartFormat(15);
+  OutString(0,0,USetStr(17718),false);
+  EndFormat;
+  Black_Divider(0,1);
+
+  FindNodesShowingWebPage(page,nodelist);
+  
+  if (nodelist[0]==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(17720),false);
+    EndFormat;
+  end else begin
+    for (i=1;i<=nodelist[0];i=i+1) begin
+      StartFormat(15);
+      OutStringID(0,"DblOpenNodeInWeb",FormatLinkToStructForBrowser(nodelist[i],false,"",false),false,nodelist[i]);
+      EndFormat;
+    end;
+  end;
+  
+  EndJob;
+  return;
+end;
+
+procedure RunTranslations(string code,string searchstr)
+begin
+  record WebNGTranslateVc WebNGTranslater;
+  string 255 tstr;
+  Boolean foundf,testf;
+  
+  foundf = true;
+  WebNGTranslater.Code = code;
+  while (LoopMain(WebNGTranslater,1,foundf)) begin
+    if (nonblank(code)) then begin
+      if (WebNGTranslater.Code!=code) then begin
+        foundf = false;
+      end;
+    end;
+    if (foundf) then begin
+      testf = false;
+      if (InString2(WebNGTranslater.Comment,searchstr)>=0) then begin
+        testf = true;
+      end;
+      if (StringInText(searchstr,WebNGTranslater)) then begin
+        testf = true;
+      end;
+      if (testf) then begin
+        tstr = WebNGTranslater.Comment;
+        if (blank(tstr)) then begin
+          tstr = USetStr(17721);
+        end;
+        StartFormat(15);
+        OutString(0,0,USetStr(17722),false);
+        OutString(70,0,WebNGTranslater.LangCode,false);
+        OutStringID(100,"DblWebNGTranslateVc",tstr,false,WebNGTranslater.Code & ":" & WebNGTranslater.LangCode);
+        EndFormat;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure RunContent(string searchstr)
+begin
+  record WebNGContentVc WebNGContentr;
+  string 255 tstr;
+  Boolean foundf,testf;
+  
+  foundf = true;
+  WebNGContentr.SerNr = -1;
+  while (LoopMain(WebNGContentr,1,foundf)) begin
+    testf = false;
+    if (InString2(WebNGContentr.Comment,searchstr)>=0) then begin
+      testf = true;
+    end;
+    if (testf) then begin
+      tstr = WebNGContentr.Comment;
+      if (blank(tstr)) then begin
+        tstr = USetStr(17721);
+      end;
+      StartFormat(15);
+      OutString(0,0,USetStr(17723),false);
+      OutString(70,0,WebNGContentr.DefLangCode,false);
+      OutStringID(100,"DblWebNGContentVc",tstr,false,WebNGContentr.SerNr);
+      EndFormat;
+    end;
+    RunTranslations(WebNGContentr.SerNr,searchstr);
+  end;
+  return;
+end;
+
+global
+procedure ToolWebNGSearchRn(record RcVc RepSpec)
+BEGIN
+  switch (RepSpec.flags[1]) begin
+    case 1: StartReportJob(USetStr(17710));
+    case 2: StartReportJob(USetStr(17711));
+    case 3: StartReportJob(USetStr(17712));
+    case 4: StartReportJob(USetStr(17713));
+  end;
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(17714) & " " & RepSpec.f1,false);
+  EndFormat;
+  Gray_Divider(0,1);
+  switch (RepSpec.flags[1]) begin
+    case 1: RunContent(RepSpec.f1);
+    case 2: RunTranslations("",RepSpec.f1);
+//    case 3: RunWebPage(RepSpec.f1);
+//    case 4: RunElements(RepSpec.f1);
+  end;
+  EndJob;
+  RETURN;
+END;

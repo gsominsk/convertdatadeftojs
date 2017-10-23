@@ -1,0 +1,2256 @@
+external procedure SugarCRM_DELETE_CUVc(record CUVc);
+external procedure SugarCRM_PUT_CUVc(record CUVc);
+external procedure SugarCRM_POST_CUVc(record CUVc);
+external procedure GetVATproc(string,Integer,var val);
+external procedure AutomatedSales(string,Integer);
+external function Boolean HasCategories();
+external function Boolean ValidateVATNr(string,string,Integer);
+external function string 60 AddStringToStringList(string,string);
+external function Boolean IsMarketplaceServer();
+external function Boolean InterNetAddrTest(string);
+external function string 60 RemoveObjectFromObjectList(string,string);
+external updating procedure CreateCUObject(var record CUVc,Boolean);
+external function integer CheckAddressForLocalisation(string,string,string,string,string,string,string,string,string,string,string,var string);
+external function Boolean HasJewelleryInterface();
+external function boolean ValidateIBAN(string);
+external function Boolean SerNrTestCUVc(LongInt,Date,var Boolean);
+external procedure ExtractObj(string,var Integer,var string);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external function Boolean IsDigit(string);
+external function Boolean CurencyCodeIsISO(string);
+external function Boolean CountryCodeIsISO(string);
+external function Boolean EInvoiceForCustomer(Integer,string,record CUVc);
+external function Boolean IsControlAccount(string,Boolean,Boolean);
+external function Boolean CurncyCodeRegistered(string);
+external function Boolean GetPM(string,var string,var string);
+external function Boolean GetPD(var record PDVc);
+external function Integer CheckVATNrMask(string,string,Integer,var string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure NextM4Number(string,var string);
+external function Boolean CheckMultipleIndexField(string,Integer,Integer);
+external function Integer CountObjects(string);
+external procedure ExtractElemFromSet(string,integer,var string);
+external function Boolean IsVATCodeDefined(string);
+external function Boolean ValidateBrazilianVATNr(string,string,Integer);
+external procedure AutoMails_StoreAct(string,string,string,var Longint);
+external procedure UpdateCustomerOnCC(record CUVc,record CUVc,Boolean);
+
+updating procedure AddToNumberLookupRegister(string phoneno,Integer compno,string custcode)
+begin
+  record NormPhoneNumVc NormPhoneNumr;
+
+  if (phoneno=="") then begin
+    goto LAddToNumberLookupRegister;
+  end;
+  RecordNew(NormPhoneNumr);
+  NormPhoneNumr.NormNum = phoneno;
+  NormPhoneNumr.CompCode = compno;
+  NormPhoneNumr.CustCode = custcode;
+  if (RecordStore(NormPhoneNumr,true)) then begin end;;
+LAddToNumberLookupRegister:;
+  return;
+end;
+
+updating procedure AddNormalizedNumber(string phoneno,Integer compno,string custcode)
+begin
+  String 255 normphoneno;
+
+  if (phoneno=="") then begin
+    goto LAddNormalizedNumber;
+  end;
+  normphoneno = NormalizePhoneNumber(phoneno);
+  AddToNumberLookupRegister(normphoneno,compno,custcode);
+LAddNormalizedNumber:;
+  return;
+end;
+
+updating procedure RemoveNormalizedNumbers(record CUVc CUp)
+begin
+  record NormPhoneNumVc NormPhoneNumr;
+  Boolean found;
+  Integer compcode;
+
+  NormPhoneNumr.CompCode = CurrentCompany;
+  NormPhoneNumr.CustCode = CUp.Code;
+  found = true;
+  while (LoopKey("CustCode",NormPhoneNumr,2,found)) begin
+    if ((StringToLongInt(NormPhoneNumr.CompCode)!=CurrentCompany) or
+       (NormPhoneNumr.CustCode!=CUp.Code)) then begin
+       found = false;
+    end;
+    if (found) then begin
+      RecordDelete(NormPhoneNumr);
+      StepBack(NormPhoneNumr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure StoreNormalizedNumbers(record CUVc CUp,Integer compno)
+begin
+  AddNormalizedNumber(CUp.Mobile,compno,CUp.Code);
+  AddNormalizedNumber(CUp.Phone,compno,CUp.Code);
+  AddNormalizedNumber(CUp.AltPhone,compno,CUp.Code);
+  AddNormalizedNumber(CUp.Fax,compno,CUp.Code);
+  AddNormalizedNumber(CUp.Extension,compno,CUp.Code);
+  AddToNumberLookupRegister(CUp.SIPCode,compno,CUp.Code);
+  AddToNumberLookupRegister(CUp.SkypeName,compno,CUp.Code);
+  return;
+end;
+
+global
+function Boolean GetNextCustNr(var string custnr)
+BEGIN
+  Boolean res;
+  record CUVc CUr;
+  record SRBlock SRRec;
+
+  BlockLoad(SRRec);
+  NextM4Number(SRRec.LastCustCode,custnr);
+  if (nonblank(custnr)) then begin
+    CUr.Code = custnr;
+    if (ReadFirstMain(CUr,1,true)==false) then begin
+      SRRec.LastCustCode = custnr;
+    end else begin
+      CUr.Code = "ZZZZZZZZZZZZZZZZZZZ";
+      if (ReadLastMain(CUr,1,false)) then begin
+        NextM4Number(CUr.Code,custnr);
+        if (nonblank(custnr)) then begin
+          SRRec.LastCustCode = custnr; 
+        end else begin
+          custnr = "1";
+        end;
+      end;
+    end;
+  end;
+  GetNextCustNr = res;
+  RETURN;
+END;
+
+global
+function LongInt CUVcRecordDefaults(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  string 255 tstr;
+  record UserVc Userr;
+  record CustomerSettingBlock CSb;
+
+  BlockLoad(CSb);
+  CUr.DateCreated = CurrentDate;
+  if (SingleUserMode) then begin
+    if (GetNextCustNr(tstr)) then begin end;
+    CUr.Code = tstr;
+  end else begin
+    CUr.Code = "";
+  end;
+  CUr.InterestFlag = 1;
+  CUr.RemndrFlag = 1;
+  CUr.CreditLimit = blankval;
+  CUr.VECreditLimit = blankval;
+  CUr.IntRate = blankval;
+  CUr.Password = 0;
+  CUr.CustCat = CSb.DefCustCat;
+  CUr.PayDeal = CSb.DefPayDeal;
+  CUr.Region = CSb.Region;
+  CUr.CreditLimit = CSb.CreditLimit;
+  CUr.CreditLimitDays = CSb.CreditLimitDays;
+  CUr.NoLetterPosting = CSb.NoLetterPosting;
+  CUr.NoMailPosting = CSb.NoMailPosting;
+  CUr.OnAccount = CSb.OnAccount;
+  CUr.AllowLogin = CSb.AllowLogin;
+  CUr.eInvPostage = 2;
+  CUr.TaxCondition = 2;
+  if (IsBooks==false) or (ValuePack(1)) then begin
+    if (CSb.CurrentUserasSalesman!=0) then begin
+      Userr.Code = CurrentUser;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        CUr.SalesMan = Userr.Code;
+        CUr.SalesGroup = Userr.SalesGroup;
+      end;
+    end;
+  end;
+  CUr.CUType = 1;
+  CUVcRecordDefaults = res; 
+  return;
+end;
+
+global
+function LongInt CUVcRecordDuplicate(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  string 255 tstr;
+  record CustomerSettingBlock CSb;
+
+  BlockLoad(CSb);
+  if (CSb.AutSalesObject!=0) then begin 
+    CUr.Objects = RemoveObjectFromObjectList(CUr.Objects,CUr.Code);
+  end;
+  if (CSb.AutPurchObject!=0) then begin 
+    CUr.VEObjects = RemoveObjectFromObjectList(CUr.VEObjects,CUr.Code);
+  end;
+  if (SingleUserMode) then begin
+    if (GetNextCustNr(tstr)) then begin end;
+    CUr.Code = tstr;
+  end else begin
+    CUr.Code = "";
+  end;  
+  CUr.IntRate = blankval;
+  CUr.DateCreated = CurrentDate;
+  CUr.CreditLimit = CSb.CreditLimit;
+  CUr.CreditLimitDays = CSb.CreditLimitDays;
+  CUVcRecordDuplicate = res; 
+  return;
+end;
+
+global
+function LongInt CUVcRecordInIndex(record CUVc CUr,string indexname)
+BEGIN
+  LongInt res;
+  
+  res = 1;
+  if (CUr.blockedFlag!=0) or (CUr.CUType!=0) or (CUr.VEType!=0) or (CUr.CUType!=0) or (CUr.GuestType!=0) or (CUr.DealerType!=0) or (CUr.EmployeeType!=0) then begin 
+    if (indexname=="ContactActCode") then begin res = 0; end;
+    if (indexname=="ContactActName") then begin res = 0; end;
+  end;
+  if ((CUr.blockedFlag!=0) or (CUr.CUType==0)) then begin 
+    if (indexname=="ActCode")  then begin res = 0; end;
+    if (indexname=="ActName")  then begin res = 0; end;
+    if (indexname=="ActGroup")  then begin res = 0; end;
+    if (indexname=="ActSearchKey")  then begin res = 0; end;
+    if (indexname=="ActDepartment")  then begin res = 0; end;
+    if (indexname=="ActVATNr")  then begin res = 0; end;
+    if (indexname=="ActPhone")  then begin res = 0; end;
+    if (indexname=="ActRegNr1")  then begin res = 0; end;
+    if (indexname=="ActRegNr2")  then begin res = 0; end;
+  end;
+  if ((CUr.blockedFlag!=0) or (CUr.VEType==0)) then begin 
+    if (indexname=="VEActCode")  then begin res = 0; end;
+    if (indexname=="VEActName")  then begin res = 0; end;
+    if (indexname=="VEActGroup")  then begin res = 0; end;
+    if (indexname=="VEActSearchKey")  then begin res = 0; end;
+    if (indexname=="VEActDepartment")  then begin res = 0; end;
+    if (indexname=="VEActVATNr")  then begin res = 0; end;
+    if (indexname=="VEActPhone")  then begin res = 0; end;
+    if (indexname=="VEActRegNr1")  then begin res = 0; end;
+    if (indexname=="ActBankAccount")  then begin res = 0; end;
+    if (indexname=="ActIBAN")  then begin res = 0; end;
+  end;
+  if ((CUr.blockedFlag!=0) or (CUr.GuestType==0)) then begin 
+    if (indexname=="GuestActCode")  then begin res = 0; end;
+    if (indexname=="GuestActName")  then begin res = 0; end;
+    if (indexname=="GuestActPassport")  then begin res = 0; end;
+  end;
+  if ((CUr.blockedFlag!=0) or (CUr.DealerType==0)) then begin 
+    if (indexname=="DealerActCode")  then begin res = 0; end;
+    if (indexname=="DealerActName")  then begin res = 0; end;
+    if (indexname=="DealerActSearchKey")  then begin res = 0; end;
+    if (indexname=="DealerActDepartment")  then begin res = 0; end;
+    if (indexname=="DealerActVATNr")  then begin res = 0; end;
+    if (indexname=="DealerActPhone")  then begin res = 0; end;
+    if (indexname=="DealerActRegNr1")  then begin res = 0; end;
+  end;
+  if ((CUr.blockedFlag!=0) or (CUr.EmployeeType==0)) then begin 
+    if (indexname=="EmployeeActCode")  then begin res = 0; end;
+    if (indexname=="EmployeeActName")  then begin res = 0; end;
+    if (indexname=="EmployeeActSearchKey")  then begin res = 0; end;
+    if (indexname=="EmployeeActDepartment")  then begin res = 0; end;
+    if (indexname=="EmployeeActPhone")  then begin res = 0; end;
+  end;
+  if ((CUr.blockedFlag!=0) or (CUr.LeadType==0)) then begin 
+    if (indexname=="LeadActCode")  then begin res = 0; end;
+    if (indexname=="LeadActName")  then begin res = 0; end;
+    if (indexname=="LeadActSearchKey")  then begin res = 0; end;
+    if (indexname=="LeadActPhone")  then begin res = 0; end;
+  end;
+  CUVcRecordInIndex = res;
+  RETURN;
+END;
+
+global
+function string 255 RegisterSharedInCompanies(string filename)
+begin
+  string 255 res;
+  record ShareVcSetBlock SVSb;
+  row ShareVcSetBlock SVSbbrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(SVSb);
+  rwcnt = MatRowCnt(SVSb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVSb,i,SVSbbrw);
+    if (filename==StringSetFromString(-1,SVSbbrw.VcName)) then begin
+      res = SVSbbrw.ForCompanies;
+    end;
+  end;
+  RegisterSharedInCompanies = res;
+  return;
+end;
+
+global
+function string 255 RegisterSharedFromCompany(string filename)
+begin
+  string 255 res;
+  record ShareVcSetBlock SVSb;
+  row ShareVcSetBlock SVSbbrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(SVSb);
+  rwcnt = MatRowCnt(SVSb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVSb,i,SVSbbrw);
+    if (filename==StringSetFromString(-1,SVSbbrw.VcName)) then begin
+      res = SVSbbrw.InCompany;
+    end;
+  end;
+  RegisterSharedFromCompany = res;
+  return;
+end;
+
+global
+function string 255 RegisterInSharedSetting(string filename)
+begin
+  string 255 res;
+  record ShareVcSetBlock SVSb;
+  row ShareVcSetBlock SVSbbrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(SVSb);
+  rwcnt = MatRowCnt(SVSb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVSb,i,SVSbbrw);
+    if (filename==StringSetFromString(-1,SVSbbrw.VcName)) then begin
+      res = AddStringToStringList(res,SVSbbrw.InCompany);
+      res = AddStringToStringList(res,SVSbbrw.ForCompanies);
+    end;
+  end;
+  RegisterInSharedSetting = res;
+  return;
+end;
+
+
+function Boolean TestCSVcExists(string cucode,Boolean orf)
+BEGIN
+  Boolean res;
+  record CSVc CSr;  
+  record ORVc ORr;  
+
+  CSr.CustCode = cucode;
+  res = ReadFirstMain(CSr,1,true);
+  if (res==false) then begin
+    if (orf) then begin
+      ORr.CustCode = cucode;
+      res = ReadFirstKey("CustCode",ORr,1,true);
+    end;
+  end;
+  TestCSVcExists = res; 
+  return;
+end;
+
+function Boolean CSVcExists(string cucode,Boolean orf)
+BEGIN
+  Boolean res;
+  string 255 sharedincomp,comp;
+  Integer curcomp;
+  Integer pos;
+
+  if (RegisterIsShared("CUVc")) then begin
+    sharedincomp = RegisterInSharedSetting("CUVc");
+    if (nonblank(sharedincomp)) then begin
+      curcomp = CurrentCompany;
+      pos = 0;
+      ExtractObj(sharedincomp,pos,comp);
+      while (nonblank(comp)) begin
+        if (SetCompany(StringToInt(comp),false)) then begin
+//       if (SetCompanyCode(comp,false)) then begin
+          res = TestCSVcExists(cucode,orf);
+          if (res) then begin
+            ResetCompany(curcomp);
+            goto LCSVcExists;
+          end;
+        end;
+        ExtractObj(sharedincomp,pos,comp);
+      end;
+      ResetCompany(curcomp);
+    end;
+  end;
+  res = TestCSVcExists(cucode,orf);
+LCSVcExists:;  
+  CSVcExists = res; 
+  return;
+end;
+
+function Boolean TestVSVcExists(string cucode,Boolean pof)
+begin
+  Boolean res;
+  record VSVc VSr;
+  record POVc POr;
+  record PUVc PUr;
+
+  VSr.VECode = cucode;
+  res = ReadFirstMain(VSr,1,true);
+  if (res==false) then begin
+    if (pof) then begin
+      POr.VECode = cucode;
+      res = ReadFirstKey("VECode",POr,1,true);
+      if (res==false) then begin
+        PUr.VECode = cucode;
+        res = ReadFirstKey("VECode",PUr,1,true);
+      end;
+    end;
+  end;
+  TestVSVcExists = res;
+  return;
+end;
+
+function Boolean VSVcExists(string cucode,Boolean pof)
+BEGIN
+  Boolean res;
+  string 255 sharedincomp,comp;
+  Integer curcomp;
+  Integer pos;
+
+  if (RegisterIsShared("CUVc")) then begin
+    sharedincomp = RegisterInSharedSetting("CUVc");
+    if (nonblank(sharedincomp)) then begin
+      curcomp = CurrentCompany;
+      pos = 0;
+      ExtractObj(sharedincomp,pos,comp);
+      while (nonblank(comp)) begin
+        if (SetCompany(StringToInt(comp),false)) then begin
+//       if (SetCompanyCode(comp,false)) then begin
+          res = TestVSVcExists(cucode,pof);
+          if (res) then begin
+            ResetCompany(curcomp);
+            goto LVSVcExists;
+          end;
+        end;
+        ExtractObj(sharedincomp,pos,comp);
+      end;
+      ResetCompany(curcomp);
+    end;
+  end else begin
+  end;
+  res = TestVSVcExists(cucode,pof);
+LVSVcExists:;  
+  VSVcExists = res; 
+  return;
+end;
+
+function Boolean TestActVcExists(string cucode)
+begin
+  Boolean res;
+  record ActVc Actr;
+
+  Actr.CUCode = cucode;
+  res = ReadFirstKey("CUCode",Actr,1,true);
+  TestActVcExists = res;
+  return;
+end;
+
+function Boolean ActVcExists(string cucode)
+BEGIN
+  Boolean res;
+  string 255 sharedincomp,comp;
+  Integer curcomp;
+  Integer pos;
+
+  if (RegisterIsShared("CUVc")) then begin
+    sharedincomp = RegisterInSharedSetting("CUVc");
+    if (nonblank(sharedincomp)) then begin
+      curcomp = CurrentCompany;
+      pos = 0;
+      ExtractObj(sharedincomp,pos,comp);
+      while (nonblank(comp)) begin
+        if (SetCompany(StringToInt(comp),false)) then begin
+//       if (SetCompanyCode(comp,false)) then begin
+          res = TestActVcExists(cucode);
+          if (res) then begin
+            ResetCompany(curcomp);
+            goto LActVcExists;
+          end;
+        end;
+        ExtractObj(sharedincomp,pos,comp);
+      end;
+      ResetCompany(curcomp);
+    end;
+  end else begin
+  end;
+  res = TestActVcExists(cucode);
+LActVcExists:;  
+  ActVcExists = res; 
+  return;
+end;
+
+function Boolean TestQTVcExists(string cucode)
+begin
+  Boolean res;
+  record QTVc QTr;
+
+  QTr.CustCode = cucode;
+  res = ReadFirstKey("CustCode",QTr,1,true);
+  TestQTVcExists = res;
+  return;
+end;
+
+function Boolean QTVcExists(string cucode)
+BEGIN
+  Boolean res;
+  string 255 sharedincomp,comp;
+  Integer curcomp;
+  Integer pos;
+
+  if (RegisterIsShared("CUVc")) then begin
+    sharedincomp = RegisterInSharedSetting("CUVc");
+    if (nonblank(sharedincomp)) then begin
+      curcomp = CurrentCompany;
+      pos = 0;
+      ExtractObj(sharedincomp,pos,comp);
+      while (nonblank(comp)) begin
+        if (SetCompany(StringToInt(comp),false)) then begin
+//       if (SetCompanyCode(comp,false)) then begin
+          res = TestQTVcExists(cucode);
+          if (res) then begin
+            ResetCompany(curcomp);
+            goto LQTVcExists;
+          end;
+        end;
+        ExtractObj(sharedincomp,pos,comp);
+      end;
+      ResetCompany(curcomp);
+    end;
+  end else begin
+  end;
+  res = TestQTVcExists(cucode);
+LQTVcExists:;  
+  QTVcExists = res; 
+  return;
+end;
+
+global
+function LongInt CUVcRecordRemoveTest(var record CUVc CUr,record CUVc CU2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record QTVc QTr;
+
+  res = 1;
+  if (CUr.CUType!=0) then begin
+    if (CSVcExists(CUr.Code,true)) then begin
+      if (long3>0) then begin
+        MessageBox(1121,"");
+      end;
+      res = 0;
+      goto LCUVcRecordRemoveTest;
+    end;
+  end;
+  if (CUr.VEType!=0) then begin
+    if (VSVcExists(CUr.Code,true)) then begin
+      if (long3>0) then begin
+        MessageBox(2175,"");
+      end;
+      res = 0;
+      goto LCUVcRecordRemoveTest;
+    end;
+  end;
+  if (nonblank(CUr.Code)) then begin
+    if (ActVcExists(CUr.Code)) then begin
+      if (long3>0) then begin
+        MessageBox(1121,"");
+      end;
+      res = 0;
+      goto LCUVcRecordRemoveTest;
+    end;
+  end;
+  if (QTVcExists(CUr.Code)) then begin
+    if (long3>0) then begin
+      MessageBox(1121,"");
+    end;
+    res = 0;
+    goto LCUVcRecordRemoveTest;
+  end;  
+LCUVcRecordRemoveTest:;
+  CUVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+updating procedure RemoveContactRelations(record CUVc CUp)
+begin
+  record ContactRelVc ContactRelr;
+  record ContactRelVc oldContactRelr;
+  Boolean TrHs;
+
+  TrHs = true;
+  ContactRelr.CustCode = CUp.Code;
+  while (LoopKey("CompKey",ContactRelr,1,TrHs)) begin
+    if (ContactRelr.CustCode!=CUp.Code) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      RecordDelete(ContactRelr);
+      StepBack(ContactRelr);
+    end;
+  end;
+  ResetLoop(ContactRelr);
+  TrHs = true;
+  ContactRelr.ContactCode = CUp.Code;
+  while (LoopKey("ContactCode",ContactRelr,1,TrHs)) begin
+    if (ContactRelr.ContactCode!=CUp.Code) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      RecordDelete(ContactRelr);
+      StepBack(ContactRelr);
+    end;
+  end;
+  return;
+end;
+
+updating procedure UpdateContactPersons(record CUVc CUp,record CUVc CU2p)
+BEGIN
+  record ASTBlock ActSubRec;
+  record ContactRelVc ContactRelr;
+  record ContactRelVc oldContactRelr;
+  Boolean TrHs;
+  record CUVc ContactCUr;
+  Integer cnt;
+
+  TrHs = true;
+  if (RecordValid(CU2p)) then begin
+    if ((CU2p.Name==CUp.Name) and
+        (CU2p.Phone==CUp.Phone) and
+        (CU2p.Mobile==CUp.Mobile) and
+        (CU2p.AltPhone==CUp.AltPhone) and
+        (CU2p.eMail==CUp.eMail) and
+        (CU2p.Title==CUp.Title) and
+        (CU2p.JobDesc==CUp.JobDesc) and
+        (CU2p.blockedFlag==CUp.blockedFlag)) then begin goto LUpdateContactPersons; end;
+  end;
+  TrHs = true;
+  ContactRelr.CustCode = CUp.Code;
+  while (LoopKey("CompKey",ContactRelr,1,TrHs)) begin
+    if (ContactRelr.CustCode!=CUp.Code) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      RecordCopy(oldContactRelr,ContactRelr);
+      ContactRelr.CustName = CUp.Name;
+      ContactCUr.Code = ContactRelr.ContactCode;
+      if (ReadFirstMain(ContactCUr,1,true)) then begin end;
+      if (RecordUpdate(oldContactRelr,ContactRelr,true)==0) then begin end;
+    end;
+  end;
+  cnt = 0;
+  ResetLoop(ContactRelr);
+  RecordClear(ContactRelr);
+  TrHs = true;
+  ContactRelr.ContactCode = CUp.Code;
+  while (LoopKey("ContactCode",ContactRelr,1,TrHs)) begin
+    if (ContactRelr.ContactCode!=CUp.Code) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      cnt = cnt + 1;
+      if (cnt>1) then begin
+        TrHs = false;
+      end;
+    end;
+  end;
+  
+  ResetLoop(ContactRelr);
+  RecordClear(ContactRelr);
+  TrHs = true;
+  ContactRelr.ContactCode = CUp.Code;
+  while (LoopKey("ContactCode",ContactRelr,1,TrHs)) begin
+    if (ContactRelr.ContactCode!=CUp.Code) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      RecordCopy(oldContactRelr,ContactRelr);
+      ContactRelr.ContactName = CUp.Name;
+//      if (cnt==1) then begin //why changing data on Contact should NOT update Contact Relation ? 
+      if (true) then begin
+        ContactRelr.ContactPhone = CUp.Phone;
+        ContactRelr.ContactMobile = CUp.Mobile;
+        ContactRelr.ContactAltPhone = CUp.AltPhone;
+        if (cnt==1) then begin //Contact person may have diffrent email and title in difrent companies
+          ContactRelr.ContacteMail = CUp.eMail;
+          ContactRelr.ContactTitle = CUp.Title;
+          ContactRelr.JobTitle = CUp.JobDesc;
+        end;
+        if (CUp.blockedFlag!=0) then begin//1 person is contact for 2 comapnies, updating mobile cannot change invalid box on relation
+          ContactRelr.Invalid = CUp.blockedFlag;
+        end;
+        if (CUp.blockedFlag==0) then begin//1 person is contact for 2 comapnies, updating mobile cannot change invalid box on relation
+          if (ContactRelr.Invalid!=0) then begin
+            ContactRelr.Invalid = CUp.blockedFlag;
+          end;
+        end;
+      end;
+      if (RecordUpdate(oldContactRelr,ContactRelr,false)==0) then begin end;
+    end;
+  end;
+LUpdateContactPersons:;  
+  RETURN;
+END;
+
+updating procedure UpdateContracts(record CUVc CUp)
+BEGIN
+  record ContractSetBlock ConSetRec;
+  record COVc COr; 
+  Boolean TrHs;
+  
+  BlockLoad(ConSetRec);
+  if (ConSetRec.UpdateContracts!=0) then begin
+    COr.CustCode = CUp.Code;
+    TrHs = true;
+    while (LoopKey("CustCode",COr,1,TrHs)) begin
+      if (COr.CustCode!=CUp.Code) then begin
+        TrHs = false;
+      end;
+      if (TrHs) then begin
+        COr.Addr0 = CUp.Name;
+        COr.Addr1 = CUp.InvAddr0;
+        COr.Addr2 = CUp.InvAddr1;
+        COr.Addr3 = CUp.InvAddr2;
+        COr.InvAddr3 = CUp.InvAddr3;
+        COr.InvAddr4 = CUp.InvAddr4;
+        if (RecordStore(COr,true)) then begin end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt CUVcRecordRemove(var record CUVc CUr,record CUVc CU2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  RemoveContactRelations(CUr);      
+  RemoveNormalizedNumbers(CUr);
+  threadasync.SugarCRM_DELETE_CUVc(CUr);
+  CUVcRecordRemove = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt CUVcRecordSave(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  CUr.DateChanged = CurrentDate;
+  if (nonblankdate(CUr.BirthDate)) then begin
+    CUr.Birthday = DateToString(CUr.BirthDate,"MM/DD");
+  end;
+  UpdateContactPersons(CUr,CU2r);
+  UpdateContracts(CUr);
+  CreateCUObject(CUr,true);
+  CUVcRecordSave = res;
+  RETURN;
+END;
+
+global
+procedure SplitAlphaDigit(string cucode,var string str,var LongInt l)
+begin
+  Integer i,j;
+  Boolean blankallf;
+  string 1 c;
+  string 255 lstr;
+  
+  str = "";
+  l = -1;
+  for (i=0;i<len(cucode);i=i+1) begin
+    c = Mid(cucode,i,1);
+    if (IsDigit(c)==false) then begin
+      str = str & c; 
+    end else begin
+      j = i;
+      i = len(cucode);
+    end;
+  end;
+  for (i=j;i<len(cucode);i=i+1) begin
+    c = Mid(cucode,i,1);
+    if (IsDigit(c)) then begin
+      lstr = lstr & c; 
+    end else begin
+      blankallf = true;
+      i = len(cucode);
+    end;
+  end;
+  l = StringToLongInt(lstr);
+  if (blankallf) then begin
+    str = cucode;
+    l = -1;
+  end;
+  return;
+end;
+
+updating procedure CreateAutoMailAct(record CUVc CUr)
+begin
+  record AutoMailBlock AMb;
+  Longint sernr;
+
+  if (CUr.CUType==1) then begin
+    BlockLoad(AMb);
+    if (AMb.CreateAutoMails==1) then begin
+      AutoMails_StoreAct(AMb.NewActType,CUr.Code,AMb.ActText,sernr);
+    end;
+  end;
+
+  return;
+end;
+
+global
+updating function LongInt CUVcRecordSaveAfter(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record SRBlock SRRec;
+  string 255 lastcustr,curcustr;
+  LongInt lastcunr,curcunr;
+  Boolean testf;
+  record IVTBlock IVb;
+  string 255 autmsgfunciontags;
+  val t;
+  
+  testf = true;
+  if (IsStandardProduct) then begin 
+    BlockLoad(IVb);
+    testf = ((CUr.Code==IVb.DefCustCode)==false);
+  end; 
+  if (testf) then begin
+    BlockLoad(SRRec);
+    SplitAlphaDigit(SRRec.LastCustCode,lastcustr,lastcunr);
+    SplitAlphaDigit(CUr.Code,curcustr,curcunr);
+    if (curcustr==lastcustr) then begin
+      if (curcunr!=lastcunr) then begin
+        SRRec.LastCustCode = CUr.Code;
+        BlockStore(SRRec);
+      end;
+    end else begin
+      SRRec.LastCustCode = CUr.Code;
+      BlockStore(SRRec);
+    end;  
+  end; 
+
+//  RemoveNormalizedNumbers(CUr); // No need when saving...
+  StoreNormalizedNumbers(CUr,CurrentCompany);
+//  CreateAutoMailAct(CUr);
+
+  if (IsStandardProduct) then begin 
+    if (nonblank(CUr.CountryCode)) then begin
+      record CYBlock CYb;
+    
+      BlockLoad(CYb);
+      if (CUr.CountryCode!=CYb.CountryCode) then begin
+        autmsgfunciontags = AddStringToStringList(autmsgfunciontags,"HasVATZone+OK_CUVc");
+      end;
+    end;
+    if (nonblank(CUr.VATCode)) then begin
+      GetVATproc(CUr.VATCode,0,t);
+      if (t==0) then begin
+        autmsgfunciontags = AddStringToStringList(autmsgfunciontags,"HasVATZone+OK_CUVc");
+      end;
+    end;
+    autmsgfunciontags = AddStringToStringList(autmsgfunciontags,"HasModCRM+OK_CUVc");
+  end;
+
+  autmsgfunciontags = AddStringToStringList(autmsgfunciontags,"HasPriceLists+OK_CUVc,HasCategories+OK_CUVc");
+  AutomatedSales(autmsgfunciontags,kAutomatedSalesTagRandom);
+
+  threadasync.UpdateCustomerOnCC(CUr,CU2r,true);
+  threadasync.SugarCRM_POST_CUVc(CUr);
+  CUVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt CUVcRecordUpdateAfter(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  string 255 autmsgfunciontags;
+  val t;
+
+  RemoveNormalizedNumbers(CUr);
+  StoreNormalizedNumbers(CUr,CurrentCompany);
+  if (IsStandardProduct) then begin 
+    if (nonblank(CUr.CountryCode)) then begin
+      record CYBlock CYb;
+    
+      BlockLoad(CYb);
+      if (CUr.CountryCode!=CYb.CountryCode) then begin
+        autmsgfunciontags = AddStringToStringList(autmsgfunciontags,"HasVATZone+OK_CUVc");
+      end;
+    end;
+    if (nonblank(CUr.VATCode)) then begin
+      GetVATproc(CUr.VATCode,0,t);
+      if (t==0) then begin
+        autmsgfunciontags = AddStringToStringList(autmsgfunciontags,"HasVATZone+OK_CUVc");
+      end;
+    end;
+  end;
+  AutomatedSales(autmsgfunciontags,kAutomatedSalesTagRandom);
+  
+  threadasync.UpdateCustomerOnCC(CUr,CU2r,false);
+  threadasync.SugarCRM_PUT_CUVc(CUr);
+  CUVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+function Boolean NumCheck(string tstr)
+BEGIN
+  Boolean res;
+  Integer i;
+  
+  res = true;
+  for (i=0;i<len(tstr);i=i+1) begin
+    if ((asc(Mid(tstr,i,1))<asc("0")) or (asc(Mid(tstr,i,1))>asc("9"))) then begin
+      res = false;
+    end;
+  end;
+  NumCheck = res;
+  RETURN;
+END;
+
+global
+updating function LongInt CUVcRecordUpdate(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  CUr.DateChanged = CurrentDate;
+  if (nonblankdate(CUr.BirthDate)) then begin
+    CUr.Birthday = DateToString(CUr.BirthDate,"MM/DD");
+  end;
+  UpdateContactPersons(CUr,CU2r);
+  UpdateContracts(CUr);
+  CUVcRecordUpdate = res;
+  return;
+end;
+
+global
+function LongInt CUVcRecordImport(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Boolean gBase1ToBase2;
+  record ConvMasterBlock CMb;
+  val t,fr,to1,to2,br1,br2;
+  string 5 curncy;
+      
+  BlockLoad(CMb);
+  if (CMb.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    GetFullCurncyRate(curncy,CurrentDate,fr,to1,to2,br1,br2);
+    B1ToB2Val(CUr.CreditLimit,br1,br2,t);
+    CUr.CreditLimit = t;
+    B1ToB2Val(CUr.VECreditLimit,br1,br2,t);
+    CUr.VECreditLimit = t;
+  end;
+  if (nonblankdate(CUr.BirthDate)) then begin
+    CUr.Birthday = DateToString(CUr.BirthDate,"MM/DD");
+  end;
+//if importing HANSAVERSION  
+//CUr.eInvStop = 1;
+  CUVcRecordImport = res;
+  return;
+end;
+
+global
+function LongInt CUVcRecordImportTest(var record CUVc CUr,record CUVc CU2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  string 255 class;
+  Integer pos;
+  
+  res = 1;
+  if (CheckMultipleIndexField(CUr.Classification,10,10)==false) then begin
+    CUr.Classification = "";
+  end;
+  CUVcRecordImportTest = res;
+  RETURN;
+END;
+
+global
+function boolean CheckClassInCUVc(record CUVc CUr,record CCatVc CCatr,var string wctype)
+begin
+  boolean res,found;
+  record CClassVc CClassr;
+  integer typeam,i,clam,j;
+  string 5 ctype,cclass;
+  
+  res = true;
+  wctype = "";
+  if (true) then begin
+    if (nonblank(CCatr.ClassType)) then begin
+      typeam = CountObjects(CCatr.ClassType); 
+      clam = CountObjects(CUr.Classification); 
+      for (i=1;i<=typeam;i=i+1) begin
+        ExtractElemFromSet(CCatr.ClassType,i,ctype);
+        found = false;
+        for (j=1;j<=clam;j=j+1) begin
+          ExtractElemFromSet(CUr.Classification,j,cclass);
+          ResetLoop(CClassr);
+          CClassr.Code = cclass;
+          if (ReadFirstMain(CClassr,1,true)) then begin
+            if (CClassr.CType==ctype) then begin
+              found = true;
+              j = clam+1;
+            end;
+          end;
+        end;
+        if (not (found)) then begin
+          res = false;
+          wctype = ctype;
+          i = typeam + 1;
+        end;
+      end;
+    end;
+  end;
+  CheckClassInCUVc = res;
+  return;
+end;
+
+function Boolean ValidEInvoiceCUData(record CUVc CUr,var Integer errcode,var string gotofield)
+begin
+  Boolean res;
+  record InternetEnablerBlock IEb;
+  
+  res = true;
+  if (EInvoiceForCustomer(0,CUr.CurncyCode,CUr)) then begin
+    if (IEb.RegInCountry==3) then begin
+      if (CountryCodeIsISO(CUr.CountryCode)==false) then begin
+        errcode = 20590;
+        gotofield = "CustCode";
+      end;
+      if (nonblank(CUr.CurncyCode)) then begin
+        if (CurencyCodeIsISO(CUr.CurncyCode)==false) then begin
+          errcode = 20591;
+          gotofield = "CurncyCode";
+        end;
+      end;
+    end;
+  end;
+  ValidEInvoiceCUData = res;
+  return;
+end;
+
+global
+function Boolean CustomerWithNameExists(string cucode,string Name)
+begin
+  Boolean res;
+  record CUVc CUr;
+  record WebControlBlock WCb;
+  Boolean TrHs;
+
+  BlockLoad(WCb);
+  CUr.Name = Name;
+  TrHs = true;
+  while (LoopKey("Name",CUr,1,TrHs)) begin
+    if (CUr.Name!=Name) then begin TrHs = false; end;
+    if (TrHs) then begin
+      if ((blank(cucode)) or (cucode<>CUr.Code)) then begin
+        res = true; 
+        goto LCustomerWithNameExists;
+      end;
+    end;
+  end;
+LCustomerWithNameExists:;
+  CustomerWithNameExists = res;
+  return;
+end;
+
+global
+function Boolean CustomerWithEmailExists(string cucode,string eMail)
+begin
+  Boolean res;
+  record CUVc CUr;
+  record MyAccountBlock MyAccountRec;
+  Boolean TrHs;
+
+  BlockLoad(MyAccountRec);
+  if (MyAccountRec.RegUniqueeMail!=0) then begin    
+    CUr.eMail = eMail;
+    TrHs = true;
+    while (LoopKey("eMail",CUr,1,TrHs)) begin
+      if (CUr.eMail!=eMail) then begin TrHs = false; end;
+      if (TrHs) then begin
+        if ((blank(cucode)) or (cucode<>CUr.Code)) then begin
+          res = true; 
+          goto LCustomerWithEmailExists;
+        end;
+      end;
+    end;
+  end;
+LCustomerWithEmailExists:;
+  CustomerWithEmailExists = res;
+  return;
+end;
+
+global
+function Boolean CustomerWithRegNr1Exists(string cucode,string RegNr1)
+begin
+  Boolean res;
+  record CUVc CUr;
+  record WebControlBlock WCb;
+  Boolean TrHs;
+
+  BlockLoad(WCb);
+  CUr.RegNr1 = RegNr1;
+  TrHs = true;
+  while (LoopKey("RegNr1",CUr,1,TrHs)) begin
+    if (CUr.RegNr1!=RegNr1) then begin TrHs = false; end;
+    if (TrHs) then begin
+      if ((blank(cucode)) or (cucode<>CUr.Code)) then begin
+        res = true; 
+        goto LCustomerWithRegNr1Exists;
+      end;
+    end;
+  end;
+LCustomerWithRegNr1Exists:;
+  CustomerWithRegNr1Exists = res;
+  return;
+end;
+
+global
+function Boolean CustomerWithVATNrExists(string cucode,string VATNr)
+begin
+  Boolean res;
+  record CUVc CUr;
+  record WebControlBlock WCb;
+  Boolean TrHs;
+
+  BlockLoad(WCb);
+  CUr.VATNr = VATNr;
+  TrHs = true;
+  while (LoopKey("VATNr",CUr,1,TrHs)) begin
+    if (CUr.VATNr!=VATNr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      if ((blank(cucode)) or (cucode<>CUr.Code)) then begin
+        res = true; 
+        goto LCustomerWithVATNrExists;
+      end;
+    end;
+  end;
+LCustomerWithVATNrExists:;
+  CustomerWithVATNrExists = res;
+  return;
+end;
+
+function Boolean CheckHealthStatus(string HealthStatus,var string errstr)
+begin
+  Boolean res;
+  string 255 hs;
+  vector Boolean vhsf;
+  Integer pos;
+  record HealthStatusBlock HSb;
+  row HealthStatusBlock HSbrw;
+  Integer i,rwcnt;
+  
+  errstr = "";
+  BlockLoad(HSb);
+  rwcnt = MatRowCnt(HSb);
+  ExtractObj(HealthStatus,pos,hs);
+  while (nonblank(hs)) begin
+    res = false;
+    if (vhsf[hs]) then begin
+      errstr = hs;
+      goto LCheckHealthStatus;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(HSb,i,HSbrw);
+      if (hs==HSbrw.HealthStatus) then begin
+        res = true;
+      end;
+    end;
+    if (res==false) then begin
+      errstr = hs;
+      goto LCheckHealthStatus;
+    end;
+    vhsf[hs] = true;
+    ExtractObj(HealthStatus,pos,hs);
+  end;
+LCheckHealthStatus:;  
+  CheckHealthStatus = res;
+  return;
+end;
+
+global
+function Boolean CheckClassification(string Classification,var string errstr)
+begin
+  Boolean res;
+  string 255 class;
+  vector Boolean vclassf;
+  Integer pos;
+  record CClassVc CClassr;
+  
+  errstr = "";
+  ExtractObj(Classification,pos,class);
+  while (nonblank(class)) begin
+    res = false;
+    if (vclassf[class]) then begin
+      errstr = class;
+      goto LCheckClassification;
+    end;
+    CClassr.Code = class;
+    res = ReadFirstMain(CClassr,1,true);
+    if (res==false) then begin
+      errstr = class;
+      goto LCheckClassification;
+    end;
+    vclassf[class] = true;
+    ExtractObj(Classification,pos,class);
+  end;
+LCheckClassification:;  
+  CheckClassification = res;
+  return;
+end;
+
+
+global
+function Boolean IsPostcodeFormatCorrect(string postcode)
+begin
+  Boolean res;
+  
+  res = true;
+  if (HasLocalization("PRT")) then begin
+    if (len(postcode)!=8) then begin
+      res = false;
+      goto LIsPostcodeFormatCorrect;
+    end;
+    if (Mid(postcode,4,1)!="-") then begin
+      res = false;
+      goto LIsPostcodeFormatCorrect;
+    end;
+  end;
+LIsPostcodeFormatCorrect:;  
+  IsPostcodeFormatCorrect = res;
+  return;
+end;
+
+function Integer MaskOK(string regnr,string mask)
+begin
+  Integer vatlen,i;
+  Integer res;
+
+  res = 1714;
+  vatlen = len(regnr);
+  if (vatlen!=len(mask)) then begin goto LMaskOK; end;
+  for (i=0;i<vatlen;i=i+1) begin
+    switch (asc(Mid(mask,i,1))) begin
+      case 35:
+        if ((asc(Mid(regnr,i,1))<asc("0")) or (asc(Mid(regnr,i,1)))>asc("9")) then begin
+          goto LMaskOK;
+        end;
+      case 63:
+      case 94:
+//        if (Mid(regnr,i,1)!=UpperCase(Mid(regnr,i,1))) then begin, hal does not recognize small chars
+        if (asc(Mid(regnr,i,1))<=64 or asc(Mid(regnr,i,1))>=97) then begin
+          goto LMaskOK;
+        end;
+      otherwise
+        if (Mid(mask,i,1)!=Mid(regnr,i,1)) then begin
+          goto LMaskOK;
+        end;  
+    end;
+  end;
+  res = 0;
+LMaskOK:;
+  MaskOK = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Argentinean(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+  if (CUr.CUType!=0 or CUr.VEType!=0) then begin
+    switch (CUr.TaxCondition) begin
+      case 2:
+      otherwise
+        if (blank(CUr.RegNr1)) then begin
+          res = 1058;
+          gotofield = "RegNr1";
+          goto LValidCUDataForVATLaw_Argentinean;
+        end;
+    end;
+    switch (CUr.TaxCondition) begin
+      case 0:
+        res = MaskOK(CUr.RegNr1,"########-##");
+        if (res!=0) then begin
+          gotofield = "RegNr1";
+          errstr = "########-##";
+          goto LValidCUDataForVATLaw_Argentinean;
+        end;
+      case 1:
+        res = MaskOK(CUr.RegNr1,"###-######-#");
+        if (res!=0) then begin
+          gotofield = "RegNr1";
+          errstr = "###-######-#";
+          goto LValidCUDataForVATLaw_Argentinean;
+        end;
+      case 3:
+        res = MaskOK(CUr.RegNr1,"##-########-#");
+        if (res!=0) then begin
+          gotofield = "RegNr1";
+          errstr = "##-########-#";
+          goto LValidCUDataForVATLaw_Argentinean;
+        end;
+    end;
+  end;
+LValidCUDataForVATLaw_Argentinean:;  
+  ValidCUDataForVATLaw_Argentinean = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Italian(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+  if (CUr.CUType!=0 or CUr.VEType!=0) then begin
+//     if (BuildProductCode=="StandardAccounts") then begin
+//       if (CUr.CUType!=0) then begin 
+//         res = MaskOK(CUr.VATNr,"^^^^^^##^##^###?");
+//         if (res!=0) then begin
+//           res = MaskOK(CUr.VATNr,"###########");
+//         end;
+//         if (res!=0) then begin  
+//           gotofield = "VATNr";
+//           errstr = "LLLLLLNNLNNLNNN* or ###########";
+//           goto LValidCUDataForVATLaw_Italian;
+//         end;        
+//       end;
+//       if (CUr.VEType!=0) then begin 
+//         res = MaskOK(CUr.VATNr,"###########");
+//         if (res!=0) then begin
+//           gotofield = "VATNr";
+//           errstr = "NNNNNNNNNNN";
+//           goto LValidCUDataForVATLaw_Italian;
+//         end;
+//         res = MaskOK(CUr.RegNr1,"###########");
+//         if (res!=0) then begin
+//           gotofield = "RegNr1";
+//           errstr = "NNNNNNNNNNN";
+//           goto LValidCUDataForVATLaw_Italian;
+//         end;            
+//       end;
+//     end else begin
+      switch (CUr.CustType) begin
+        case 0: //Company
+          if (nonblank(CUr.RegNr1)) then begin 
+            res = MaskOK(CUr.RegNr1,"###########");
+            if (res!=0) then begin
+              gotofield = "RegNr1";
+              errstr = "NNNNNNNNNNN";
+              goto LValidCUDataForVATLaw_Italian;
+            end;          
+          end; 
+          if (nonblank(CUr.VATNr)) then begin 
+            res = MaskOK(CUr.VATNr,"###########");
+            if (res!=0) then begin
+              gotofield = "VATNr";
+              errstr = "NNNNNNNNNNN";
+              goto LValidCUDataForVATLaw_Italian;
+            end;         
+          end;             
+          if (ValidateVATNr(CUr.VATNr,CUr.CountryCode,CUr.CustType)==false) then begin
+            res = 21444;
+            gotofield = "VATNr";
+            goto LValidCUDataForVATLaw_Italian;
+          end;
+        case 1: //Person 
+          if (nonblank(CUr.RegNr1)) then begin 
+            res = MaskOK(CUr.RegNr1,"^^^^^^##^##^###?");
+            if (res!=0) then begin
+              gotofield = "RegNr1";
+              errstr = "LLLLLLNNLNNLNNN*";
+              goto LValidCUDataForVATLaw_Italian;
+            end;          
+          end; 
+          if (nonblank(CUr.VATNr)) then begin 
+            res = MaskOK(CUr.VATNr,"###########");
+            if (res!=0) then begin
+              gotofield = "VATNr";
+              errstr = "NNNNNNNNNNN";
+              goto LValidCUDataForVATLaw_Italian;
+            end;          
+          end;             
+      end;
+//     end;
+  end;
+LValidCUDataForVATLaw_Italian:;  
+  ValidCUDataForVATLaw_Italian = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Brazilian(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+  if (CUr.CountryCode=="1058" and nonblank(CUr.VATNr)) then begin
+    if (ValidateBrazilianVATNr(CUr.VATNr,CUr.CountryCode,CUr.CustType)==false) then begin
+      res = 21444;
+      gotofield = "VATNr";
+      goto LValidCUDataForVATLaw_Brazilian;
+    end;
+  end;
+  if ((CUr.CUType!=0 or CUr.VEType!=0) and (CUr.CountryCode=="1058" or blank(CUr.CountryCode))) then begin 
+    res = CheckAddressForLocalisation("BRA",CUr.InvAddr0,"InvAddr0",CUr.InvAddr1,"InvAddr1",CUr.InvAddr2,"InvAddr2",CUr.InvAddr3,"InvAddr3",CUr.InvAddr4,"InvAddr4",gotofield);
+    if (res!=0) then begin 
+      goto LValidCUDataForVATLaw_Brazilian;      
+    end;  
+  end;
+LValidCUDataForVATLaw_Brazilian:;  
+  ValidCUDataForVATLaw_Brazilian = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Croatian(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+
+  if (CUr.GuestType!=0) then begin
+    if (blank(CUr.CountryCode)) then begin
+      res = 1058;
+      gotofield = "CountryCode";
+      goto LValidCUDataForVATLaw_Croatian;
+    end;
+    if (blank(CUr.DocType)) then begin
+      res = 1058;
+      gotofield = "DocType";
+      goto LValidCUDataForVATLaw_Croatian;
+    end;
+    if (blank(CUr.PassportNr)) then begin
+      res = 1058;
+      gotofield = "PassportNr";
+      goto LValidCUDataForVATLaw_Croatian;
+    end;
+    if (blank(CUr.BirthDate)) then begin
+      res = 1058;
+      gotofield = "BirthDate";
+      goto LValidCUDataForVATLaw_Croatian;
+    end;
+    if (blank(CUr.BirthPlace)) then begin
+      res = 1058;
+      gotofield = "BirthPlace";
+      goto LValidCUDataForVATLaw_Croatian;
+    end;
+    if (blank(CUr.BirthCountry)) then begin
+      res = 1058;
+      gotofield = "BirthCountry";
+      goto LValidCUDataForVATLaw_Croatian;
+    end;
+  end;
+LValidCUDataForVATLaw_Croatian:;  
+  ValidCUDataForVATLaw_Croatian = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Finnish(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+
+  if (CUr.CUType!=0) then begin
+    if (NumCheck(CUr.Code)==false) then begin
+      gotofield = "Code";
+      res = 1703; 
+      goto LValidCUDataForVATLaw_Finnish;
+    end;
+    if (len(CUr.Code)>8) then begin
+      gotofield = "Code";
+      res = 1704; 
+      goto LValidCUDataForVATLaw_Finnish;
+    end;
+  end;
+LValidCUDataForVATLaw_Finnish:;  
+  ValidCUDataForVATLaw_Finnish = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Norwegian(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+
+  if (CUr.CUType!=0) then begin
+    if (NumCheck(CUr.Code)==false) then begin
+      gotofield = "Code";
+      res = 1703; 
+      goto LValidCUDataForVATLaw_Norwegian;
+    end;
+    if (len(CUr.Code)>8) then begin
+      gotofield = "Code";
+      res = 1704; 
+      goto LValidCUDataForVATLaw_Norwegian;
+    end;
+  end;
+LValidCUDataForVATLaw_Norwegian:;  
+  ValidCUDataForVATLaw_Norwegian = res;
+  return;
+end;
+
+function LongInt ValidCUDataForVATLaw_Portuguese(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  string 255 tstr;
+  record CUUserLabelBlock CUUerLb;
+  record CountryVc Countryr;
+
+  res = 0;
+  errstr = "";
+  gotofield = "";
+  BlockLoad(CUUerLb);
+  tstr = "";
+  switch (CUUerLb.CountryAddrLine) begin
+    case kCountryAddrLineUserAddr0: tstr = CUr.DelAddr0; gotofield = "DelAddr0";
+    case kCountryAddrLineUserAddr1: tstr = CUr.DelAddr1; gotofield = "DelAddr1";
+    case kCountryAddrLineUserAddr2: tstr = CUr.DelAddr2; gotofield = "DelAddr2";
+    case kCountryAddrLineUserAddr3: tstr = CUr.DelAddr3; gotofield = "DelAddr3";
+    case kCountryAddrLineUserAddr4: tstr = CUr.DelAddr4; gotofield = "DelAddr4";
+  end;
+  if (nonblank(tstr)) then begin
+    Countryr.Comment = tstr;
+    if (ReadFirstKey("Comment",Countryr,1,true)==false) then begin
+      res = 1120; 
+      errstr = tstr;
+      goto LValidCUDataForVATLaw_Portuguese;
+    end;
+  end;
+  if (blank(CUr.CountryCode)) or (CUr.CountryCode=="PT") then begin
+    if (nonblank(CUr.InvAddr2)) then begin
+      if (IsPostcodeFormatCorrect(CUr.InvAddr2)==false) then begin
+        res = 24620; 
+        errstr = tstr;
+        gotofield = "InvAddr2";
+        goto LValidCUDataForVATLaw_Portuguese;
+      end;
+    end;
+    if (nonblank(CUr.DelAddr2)) then begin
+      if (IsPostcodeFormatCorrect(CUr.DelAddr2)==false) then begin
+        res = 24620; 
+        errstr = tstr;
+        gotofield = "DelAddr2";
+        goto LValidCUDataForVATLaw_Portuguese;
+      end;
+    end;
+  end;
+  if (CUr.VEType!=0) then begin
+    if (blank(CUr.InvAddr0) and blank(CUr.InvAddr1)) then begin
+      res = 1058; 
+      errstr = tstr;
+      gotofield = "InvAddr0";
+      goto LValidCUDataForVATLaw_Portuguese;
+    end;
+    if (blank(CUr.InvAddr2)) then begin
+      res = 1058; 
+      errstr = tstr;
+      gotofield = "InvAddr2";
+      goto LValidCUDataForVATLaw_Portuguese;
+    end;
+    if (blank(CUr.InvAddr3)) then begin
+      res = 1058; 
+      errstr = tstr;
+      gotofield = "InvAddr3";
+      goto LValidCUDataForVATLaw_Portuguese;
+    end;
+    if (blank(CUr.InvAddr4)) then begin
+      res = 1058; 
+      errstr = tstr;
+      gotofield = "InvAddr4";
+      goto LValidCUDataForVATLaw_Portuguese;
+    end;
+  end;
+  if (CUr.CUType!=0) then begin
+    if (nonblank(CUr.DelAddr0) or nonblank(CUr.DelAddr1) or nonblank(CUr.DelAddr2) or nonblank(CUr.DelAddr3) or nonblank(CUr.DelAddr4)) then begin
+      if (blank(CUr.DelAddr0) and blank(CUr.DelAddr1)) then begin
+        res = 1058; 
+        errstr = tstr;
+        gotofield = "DelAddr0";
+        goto LValidCUDataForVATLaw_Portuguese;
+      end;
+      if (blank(CUr.DelAddr2)) then begin
+        res = 1058; 
+        errstr = tstr;
+        gotofield = "DelAddr2";
+        goto LValidCUDataForVATLaw_Portuguese;
+      end;
+      if (blank(CUr.DelAddr3)) then begin
+        res = 1058; 
+        errstr = tstr;
+        gotofield = "DelAddr3";
+        goto LValidCUDataForVATLaw_Portuguese;
+      end;
+      if (blank(CUr.DelAddr4)) then begin
+        res = 1058; 
+        errstr = tstr;
+        gotofield = "DelAddr4";
+        goto LValidCUDataForVATLaw_Portuguese;
+      end;
+    end;
+  end;
+LValidCUDataForVATLaw_Portuguese:;  
+  ValidCUDataForVATLaw_Portuguese = res;
+  return;
+end;
+    
+global
+function LongInt ValidCUDataForVATLaw_Latvian(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  string 255 tstr;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+
+  if (CUr.VEType!=0 or CUr.CUType!=0) then begin
+    if (blank(CUr.RegNr1)) then begin
+      res = 1058;
+      gotofield = "RegNr1";
+      goto LValidCUDataForVATLaw_Latvian;
+    end;
+/*    
+    if (Right(CUr.VATNr,len(CUr.RegNr1))!=CUr.RegNr1) then begin
+      res = 1715;
+      gotofield = "RegNr1";
+      goto LValidCUDataForVATLaw_Latvian;
+    end;
+*/
+/*this is incorrect
+    tstr = CUr.RegNr1;
+    tstr = "LV" & tstr;
+    res = CheckVATNrMask(tstr,CUr.CountryCode,CUr.CustType,tstr);
+    if (res!=0) then begin
+      res = 1715;
+      gotofield = "RegNr1";
+      goto LValidCUDataForVATLaw_Latvian;
+    end;
+*/
+  end;
+LValidCUDataForVATLaw_Latvian:;  
+  ValidCUDataForVATLaw_Latvian = res;
+  return;
+end;
+   
+global
+function LongInt ValidCUDataForVATLaw_Polish(record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  string 255 tstr;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+  if (CUr.VEType!=0 or CUr.CUType!=0) then begin
+    if (nonblank(CUr.VATNr)) then begin
+      if (ValidateVATNr(CUr.VATNr,CUr.CountryCode,CUr.CustType)==false) then begin
+        res = 21444;
+        gotofield = "VATNr";
+        goto LValidCUDataForVATLaw_Polish;
+      end;
+    end;
+  end;
+LValidCUDataForVATLaw_Polish:;  
+  ValidCUDataForVATLaw_Polish = res;
+  return;
+end;
+
+    
+function LongInt ValidCUDataForVATLaw(Integer stat,record CUVc CUr,var string errstr,var string gotofield)
+begin
+  LongInt res;
+  
+  res = 0;
+  errstr = "";
+  gotofield = "";
+  if (HasLocalization("ARG")) then begin
+    res = ValidCUDataForVATLaw_Argentinean(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("BRA")) then begin
+    res = ValidCUDataForVATLaw_Brazilian(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("FIN")) then begin
+    res = ValidCUDataForVATLaw_Finnish(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("NOR")) then begin
+    res = ValidCUDataForVATLaw_Norwegian(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("HRV")) then begin
+    res = ValidCUDataForVATLaw_Croatian(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("ITA")) then begin
+    res = ValidCUDataForVATLaw_Italian(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("LVA")) then begin
+    res = ValidCUDataForVATLaw_Latvian(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("POL")) then begin
+    res = ValidCUDataForVATLaw_Polish(CUr,errstr,gotofield);
+  end;
+  if (HasLocalization("PRT")) then begin
+    res = ValidCUDataForVATLaw_Portuguese(CUr,errstr,gotofield);
+  end;
+  ValidCUDataForVATLaw = res;
+  return;
+end;
+
+global
+function LongInt CUVcRecordCheck(var record CUVc CUr,record CUVc CU2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  string 255 tstr,gotofield,oldnr;
+  record CUVc lCUr;
+  record CCatVc CCatr;
+  record VGVc VGr;
+  record ContactRelVc ContactRelr;
+  record AccBlock ARRec;
+  record PDVc PDr;
+  record CustomerSettingBlock CSb;
+  Boolean TrHs,gentrans;
+  Integer errcode;
+  record AccVc Accr;
+  record CountryVc Countryr;
+  record HotelBlock Hotelb;
+  Integer i,l;
+  record BankFileBlock BFb;
+  record CUUserLabelBlock CUUerLb;
+  record TaxTemplateVc TTr;
+
+  BlockLoad(BFb);
+  BlockLoad(CUUerLb);
+  res = 0;     
+  BlockLoad(CSb);
+  oldnr = CUr.Code;
+  if (blank(CUr.Code)) then begin
+    if (GetNextCustNr(tstr)) then begin end;
+    CUr.Code = tstr;
+    lCUr.Code = CUr.Code;
+    if (ReadFirstMain(lCUr,1,true)) then begin
+      RecordCheckError(1547,CUr.Code,-1,"Code");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (blank(CUr.Name)) then begin
+    if (HasJewelleryInterface) then begin
+      CUr.Name = Left(CUr.Salutation3,Len(CUr.Salutation3));
+      if (nonblank(CUr.Salutation2)) then begin 
+        if (nonblank(CUr.Name)) then begin 
+          CUr.Name = CUr.Name & ", ";
+        end;
+        CUr.Name = CUr.Name & CUr.Salutation2;
+      end;
+    end;
+  end;
+  if (blank(CUr.Name)) then begin
+    RecordCheckError(1058,CUr.Name,-1,"Name");      
+    res = -1; 
+    goto LCUVcRecordCheck;
+  end;
+  if (stat==Rs_insert) then begin
+    lCUr.Code = CUr.Code;
+    if (ReadFirstMain(lCUr,1,true)) then begin
+      RecordCheckError(1547,CUr.Code,-1,"Code");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+    if (UserCanAction("AllowCreateCust",true)==false) then begin
+      if (CUr.CUType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowCreateCust"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (UserCanAction("AllowCreateDealer",true)==false) then begin
+      if (CUr.DealerType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowCreateDealer"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (UserCanAction("AllowCreateSupp",true)==false) then begin
+      if (CUr.VEType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowCreateSupp"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (UserCanAction("AllowCreateGuest",true)==false) then begin
+      if (CUr.GuestType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowCreateGuest"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (SerNrTestCUVc(StringToLongInt(CUr.Code),CurrentDate,gentrans)==false) then begin
+      RecordCheckError(1557,"",-1,"Code");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (stat==Rs_update) then begin
+    if (UserCanAction("AllowCustChange",true)==false) then begin
+      if (CUr.CUType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowCustChange"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (UserCanAction("AllowDealerChange",true)==false) then begin
+      if (CUr.DealerType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowDealerChange"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (UserCanAction("AllowSuppChange",true)==false) then begin
+      if (CUr.VEType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowSuppChange"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (UserCanAction("AllowGuestChange",true)==false) then begin
+      if (CUr.GuestType!=0) then begin
+        RecordCheckError(1274,StringFromStringSet(3,"AllowGuestChange"),-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end;
+  if (len(CUr.Code)<=0) then begin
+    RecordCheckError(1125,"",-1,"Code");      
+    res = -1; 
+    goto LCUVcRecordCheck;
+  end;
+  if (CUr.CUType!=0) then begin
+    if (CSb.DemandCustomerCategory!=0) then begin
+      if (blank(CUr.CustCat) and HasCategories) then begin
+        RecordCheckError(1058,"",-1,"CustCat");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end;
+  tstr = "";
+  switch (CUUerLb.CountryAddrLine) begin
+    case kCountryAddrLineUserAddr0: tstr = CUr.InvAddr0; gotofield = "InvAddr0";
+    case kCountryAddrLineUserAddr1: tstr = CUr.InvAddr1; gotofield = "InvAddr1";
+    case kCountryAddrLineUserAddr2: tstr = CUr.InvAddr2; gotofield = "InvAddr2";
+    case kCountryAddrLineUserAddr3: tstr = CUr.InvAddr3; gotofield = "InvAddr3";
+    case kCountryAddrLineUserAddr4: tstr = CUr.InvAddr4; gotofield = "InvAddr4";
+  end;
+  if (nonblank(tstr)) then begin
+    Countryr.Comment = tstr;
+    if (ReadFirstKey("Comment",Countryr,1,true)==false) then begin
+      RecordCheckError(1120,tstr,-1,gotofield);      
+      res = -1;
+      goto LCUVcRecordCheck;
+    end;
+  end;  
+  if ((CUr.CUType!=0 or CUr.VEType!=0)) then begin 
+    if (nonblank(CUr.DelAddr0) or nonblank(CUr.DelAddr1) or nonblank(CUr.DelAddr2) or nonblank(CUr.DelAddr3) or nonblank(CUr.DelAddr4)) then begin 
+      errcode = CheckAddressForLocalisation("BRA",CUr.DelAddr0,"DelAddr0",CUr.DelAddr1,"DelAddr1",CUr.DelAddr2,"DelAddr2",CUr.DelAddr3,"DelAddr3",CUr.DelAddr4,"DelAddr4",tstr);
+      if (errcode!=0) then begin 
+        RecordCheckError(errcode,"",-1,tstr);
+        res = -1;
+        goto LCUVcRecordCheck;      
+      end; 
+    end;
+  end;    
+  if (CUr.RvrsVAT!=0) then begin
+    if (blank(CUr.VATNr)) then begin
+      RecordCheckError(1058,"",-1,"VATNr");
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  TrHs = true;
+  ContactRelr.ContactCode = CUr.Code;
+  while (LoopKey("ContactCode",ContactRelr,1,TrHs)) begin
+    if (ContactRelr.ContactCode!=CUr.Code) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      if (FindCustomerRelation(ContactRelr.CustCode,CUr.Name,lCUr)) then begin
+        if (lCUr.Code!=CUr.Code) then begin
+          RecordCheckError(1547,"",-1,"Name");
+          res = -1;
+          goto LCUVcRecordCheck;
+        end;
+      end;
+    end;
+  end;
+  if (nonblank(CUr.Nationality)) then begin
+    Countryr.Code = CUr.Nationality;
+    if (ReadFIrstMain(Countryr,1,true)==false) then begin
+      Countryr.Nationality = CUr.Nationality;
+      if (ReadFIrstKey("Nationality",Countryr,1,true)==false) then begin
+        RecordCheckError(1120,CUr.Nationality,-1,"Nationality");      
+        res = -1;
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end else begin
+    if (CUr.GuestType!=0) then begin
+      BlockLoad(Hotelb);
+      if (Hotelb.ForceGuestNationality!=0) then begin
+        RecordCheckError(1058,CUr.Nationality,-1,"Nationality");      
+        res = -1;
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end;
+  if (nonblank(CUr.AccAP)) then begin
+    Accr.AccNumber = CUr.AccAP;
+    if (ReadFirstMain(Accr,1,true)==false) then begin
+      RecordCheckError(1007,CUr.AccAP,-1,"AccAP");      
+      res = -1;
+      goto LCUVcRecordCheck;
+    end;
+    if (IsControlAccount(CUr.AccAP,false,true)==false) then begin
+      RecordCheckError(1082,"",-1,"AccAP");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (stat==Rs_update) then begin
+    if ((CUr.CUType==0) and (CU2r.CUType!=0)) then begin
+      if (CSVcExists(CUr.Code,false)) then begin
+        RecordCheckError(1121," " & CUr.Code,-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if ((CUr.VEType==0) and (CU2r.VEType!=0)) then begin
+      if (VSVcExists(CUr.Code,false)) then begin
+        RecordCheckError(2175," " & CUr.Code,-1,"Code");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end;
+  if (stat==Rs_update) then begin
+    if (HasLocalization("PRT")) then begin
+      if (CUr.VATNr!=CU2r.VATNr) then begin
+        if (CUr.CUType!=0) then begin
+          if (CSVcExists(CUr.Code,true)) then begin
+            RecordCheckError(1713," " & CUr.Code,-1,"Code");      
+            res = -1; 
+            goto LCUVcRecordCheck;
+          end;
+        end;
+
+        if (CUr.VEType!=0) then begin
+          if (VSVcExists(CUr.Code,true)) then begin
+            RecordCheckError(1713," " & CUr.Code,-1,"Code");      
+            res = -1; 
+            goto LCUVcRecordCheck;
+          end;
+        end;
+
+        if (QTVcExists(CUr.Code)) then begin
+          RecordCheckError(1713," " & CUr.Code,-1,"Code");      
+          res = -1; 
+          goto LCUVcRecordCheck;
+        end;
+      end;      
+    end;
+  end;
+  if (nonblank(CUr.CurncyCode)) then begin
+    if (CurncyCodeRegistered(CUr.CurncyCode)==false) then begin
+      RecordCheckError(1582,"",-1,"CurncyCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VECurncyCode)) then begin
+    if (CurncyCodeRegistered(CUr.VECurncyCode)==false) then begin
+      RecordCheckError(1582,"",-1,"VECurncyCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VEObjects)) then begin
+    errcode = CheckObjs("",CUr.VEObjects,tstr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,tstr,-1,"VEObjects");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.Objects)) then begin
+    errcode = CheckObjs("",CUr.Objects,tstr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,tstr,-1,"Objects");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.TaxTemplateCode)) then begin
+    TTr.Code = CUr.TaxTemplateCode;
+    if (ReadFirstMain(TTr,1,true)==false) then begin
+      RecordCheckError(1120,CUr.TaxTemplateCode,-1,"TaxTemplateCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VETaxTemplateCode)) then begin
+    TTr.Code = CUr.VETaxTemplateCode;
+    if (ReadFirstMain(TTr,1,true)==false) then begin
+      RecordCheckError(1120,CUr.VETaxTemplateCode,-1,"VETaxTemplateCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (ValidEInvoiceCUData(CUr,errcode,tstr)==false) then begin
+    RecordCheckError(errcode,"",-1,tstr);      
+    res = -1; 
+    goto LCUVcRecordCheck;
+  end;
+  if ((CSb.DemandVATRegNo!=0) and blank(CUr.VATNr)) then begin 
+    if (CUr.CUType==1) or (CUr.VEType==1) then begin 
+      RecordCheckError(1058,"",-1,"VATNr"); 
+      res = -1; 
+      goto LCUVcRecordCheck; 
+    end;  
+  end;
+  if (HasLocalization("LVA") and nonblank(CUr.VATNr)) or (HasLocalization("LVA")==false) then begin
+    errcode = CheckVATNrMask(CUr.VATNr,CUr.CountryCode,CUr.CustType,tstr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,tstr,-1,"VATNr");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  errcode = ValidCUDataForVATLaw(stat,CUr,tstr,gotofield);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode," " & tstr,-1,gotofield);      
+    res = -1; 
+    goto LCUVcRecordCheck;
+  end;
+  if (nonblank(CUr.PayDeal)) then begin
+    PDr.Code = CUr.PayDeal;
+    if (GetPD(PDr)==false) then begin
+      if (GetPM(CUr.PayDeal,tstr,tstr)==false) then begin
+        RecordCheckError(1256,"",-1,"PayDeal");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+    if (PDr.PDType==kInvoiceTypeEmployee) then begin
+      RecordCheckError(1958,"",-1,"PayDeal");      
+      res = -1;
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VEPayDeal)) then begin
+    PDr.Code = CUr.VEPayDeal;
+    if (GetPD(PDr)==false) then begin
+      if (GetPM(CUr.VEPayDeal,tstr,tstr)==false) then begin
+        RecordCheckError(1256,"",-1,"VEPayDeal");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end;
+  if (nonblank(CUr.VATNr) and (IsSyncing==false)) then begin
+    lCUr.VATNr = CUr.VATNr;
+    if (ReadFirstKey("VATNr",lCUr,1,true)) then begin
+      if (lCUr.Code!=CUr.Code) then begin
+        BlockLoad(ARRec);
+        if (ARRec.NoWarnOnDupVATnoOnCU==0) then begin
+          MessageBox(1706,": " & lCUr.Code);
+//        RecordCheckError(1706,CUr.Code,-1,"VATNr");
+        end;
+       end else begin
+        lCUr.VATNr = CUr.VATNr;
+        if (ReadLastKey("VATNr",lCUr,1,true)) then begin
+          if (lCUr.Code!=CUr.Code) then begin
+            BlockLoad(ARRec);
+            if (ARRec.NoWarnOnDupVATnoOnCU==0) then begin
+              MessageBox(1706,": " & lCUr.Code);
+//            RecordCheckError(1706,CUr.Code,-1,"RegNr1");
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (nonblank(CUr.RegNr1)) then begin
+    lCUr.RegNr1 = CUr.RegNr1;
+    if (ReadFirstKey("RegNr1",lCUr,1,true)) then begin
+      if (lCUr.Code!=CUr.Code) then begin
+        BlockLoad(ARRec);
+        if (ARRec.NoWarnOnDupVATnoOnCU==0) then begin
+          MessageBox(1709,": " & lCUr.Code);
+//        RecordCheckError(1709,CUr.Code,-1,"RegNr1");
+        end;
+      end else begin
+        lCUr.RegNr1 = CUr.RegNr1;
+        if (ReadLastKey("RegNr1",lCUr,1,true)) then begin
+          if (lCUr.Code!=CUr.Code) then begin
+            BlockLoad(ARRec);
+            if (ARRec.NoWarnOnDupVATnoOnCU==0) then begin
+              MessageBox(1709,": " & lCUr.Code);
+//            RecordCheckError(1709,CUr.Code,-1,"RegNr1");
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (nonblank(CUr.CustCat) and IsSyncing==false and HasCategories) then begin
+    CCatr.Code = CUr.CustCat; 
+    if (ReadFirstMain(CCatr,1,true)) then begin  
+      if (CheckClassInCUVc(CUr,CCatr,tstr)==false) then begin
+        RecordCheckError(1707,tstr,-1,"Classification");//change type     
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end else begin
+      RecordCheckError(1290,"",-1,"CustCat"); 
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VECat)) then begin
+    VGr.Code = CUr.VECat; 
+    if (ReadFirstMain(VGr,1,true)==false) then begin  
+      RecordCheckError(1290,"",-1,"VECat"); 
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.eMail)) then begin
+    if (InterNetAddrTest(CUr.eMail)==false) then begin
+      RecordCheckError(30229,tstr,-1,"eMail"); 
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+    if (CustomerWithEmailExists(CUr.Code,CUr.eMail)) then begin
+      RecordCheckError(20766,tstr,-1,"eMail"); 
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if ((CheckMultipleIndexField(CUr.Classification,10,10)==false) and (IsSyncing==false)) then begin
+    RecordCheckError(2246,"",-1,"Classification");      
+    res = -1; 
+    goto LCUVcRecordCheck;
+  end;
+  if (IsMarketplaceServer==false) then begin
+    if (nonblank(CUr.Classification) and (IsSyncing==false)) then begin
+      if (CheckClassification(CUr.Classification,tstr)==false) then begin
+        RecordCheckError(2246," " & tstr,-1,"Classification");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+    end;
+  end;
+  if (nonblank(CUr.HealthStatus)) then begin
+    if (CheckHealthStatus(CUr.HealthStatus,tstr)==false) then begin
+      RecordCheckError(2246," " & tstr,-1,"HealthStatus");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VATCode)) then begin
+    if  (IsVATCodeDefined(CUr.VATCode)==false) then begin
+      RecordCheckError(1120,CUr.VATCode,-1,"VATCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.VEVATCode)) then begin
+    if  (IsVATCodeDefined(CUr.VEVATCode)==false) then begin
+      RecordCheckError(1120,CUr.VEVATCode,-1,"VEVATCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (nonblank(CUr.IBANCode)) then begin
+    if (ValidateIBAN(CUr.IBANCode)==false) then begin
+      RecordCheckError(27312," " & CUr.IBANCode,-1,"IBANCode");      
+      res = -1; 
+      goto LCUVcRecordCheck;
+    end;
+  end;
+  if (BFb.Bank==31) then begin //only for BACS UK
+    if (CUr.VEType==1) and nonblank(CUr.BankAccount) then begin
+      l = Len(CUr.BankAccount);
+      if (l<>8) then begin
+        RecordCheckError(22021,CUr.BankAccount,-1,"BankAccount");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+      for (i=0;i<l;i=i+1) begin
+        if (IsDigit(Mid(CUr.BankAccount,i,1))==false) then begin
+          RecordCheckError(22021,CUr.BankAccount,-1,"BankAccount");      
+          res = -1; 
+          goto LCUVcRecordCheck;
+        end;
+      end;
+    end;
+    
+    if (CUr.VEType==1) and nonblank(CUr.SortCode) then begin
+      l = Len(CUr.SortCode);
+      if (l<>6) then begin
+        RecordCheckError(22022,CUr.SortCode,-1,"SortCode");      
+        res = -1; 
+        goto LCUVcRecordCheck;
+      end;
+      for (i=0;i<l;i=i+1) begin
+        if (IsDigit(Mid(CUr.SortCode,i,1))==false) then begin
+          RecordCheckError(22022,CUr.SortCode,-1,"SortCode");      
+          res = -1; 
+          goto LCUVcRecordCheck;
+        end;
+      end;
+    end;   
+  end;
+LCUVcRecordCheck:;
+  if (res!=0) then begin CUr.Code = oldnr; end;
+  CUVcRecordCheck = res;
+  RETURN;
+END;
+
+global 
+function Boolean CUVcRecordShouldBeSynchronised(record CUVc CUr,string tagstr)
+begin
+  Boolean res;
+  
+  res = true;
+  CUVcRecordShouldBeSynchronised = res;
+  return;
+end;
+
+global 
+function Boolean CUVcRecordSync(record CUVc CUr,string tagstr)
+begin
+  Boolean res;
+  
+  res = true;
+  CUVcRecordSync = res;
+  return;
+end;
+

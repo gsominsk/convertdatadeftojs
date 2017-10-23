@@ -1,0 +1,1536 @@
+external procedure IVCashDchsum(record IVCashVc,Integer);
+external procedure IVDchsum(var record IVVc,Integer);
+external procedure RoundRowSum(string,string,string,var val);
+external procedure IVCashSumup(var record IVCashVc,Boolean);
+external procedure MulM4ProcVal(val,val,var val);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external function val FormulaDiscountCalcSum(val,val,val,string);
+external function roundmode SetRoundModeD(Integer);
+external procedure RowCalculateTaxMatrix_IVVc(var record IVVc,Integer,row IVVc);
+external procedure RowCalculateTaxMatrix_IVCashVc(var record IVCashVc,Integer,row IVCashVc);
+
+function val Min(val v1,val v2)
+begin
+  val res;
+  
+  if (v1>v2) then begin
+    res = v2;
+  end else begin
+    res = v1;
+  end;
+  Min = res;
+  return;
+end;
+
+function val Max(val v1,val v2)
+begin
+  val res;
+  
+  if (v1>v2) then begin
+    res = v1;
+  end else begin
+    res = v2;
+  end;
+  Max = res;
+  return;
+end;
+
+procedure AddMultiBuyRow_IVVc(var record IVVc IVr,record MultiBuyRebVc MBRr,row MultiBuyRebVc getMBRrw,string vatcode,Integer mbrownr,string taxtemplatecode,record TaxMatrixVc TMr,
+                              string artcode)
+begin
+  row IVVc newIVrw;
+  row IVVc addtoIVrw;
+  val s,t;
+  Integer addtorownr,ivrwcnt,iiv;
+  record GeneralOptionBlock GOb;
+
+  if (MBRr.AddDiscountToLastRow!=0) then begin
+    BlockLoad(GOb);      
+    ivrwcnt = MatRowCnt(IVr);
+    for (iiv=ivrwcnt-1;iiv>=0;iiv=iiv-1) begin
+      MatRowGet(IVr,iiv,addtoIVrw);
+      if (addtoIVrw.ArtCode==artcode) then begin
+        addtorownr = iiv;
+        goto LAddMultiBuyRow_IVVcLastRow;
+      end;
+      if (addtoIVrw.stp==kInvoiceRowTypeNormal) then begin
+        ivrwcnt = iiv;
+        goto LAddMultiBuyRow_IVVcLastRow;
+      end;
+    end;
+/*
+    for (iiv=ivrwcnt-1;iiv>=0;iiv=iiv-1) begin
+      MatRowGet(IVr,iiv,addtoIVrw);
+      if (addtoIVrw.MBRCode==MBRr.Code) then begin
+        addtorownr = iiv;
+        iiv = -1;
+      end;
+    end;      
+*/    
+    addtorownr = ivrwcnt - 1;
+LAddMultiBuyRow_IVVcLastRow:;    
+
+    if (addtorownr<0) then begin 
+      addtorownr = 0;
+    end;
+    MatRowGet(IVr,addtorownr,addtoIVrw);
+    
+    CalcSum(-getMBRrw.GetQty,getMBRrw.Price,newIVrw.PriceFactor,getMBRrw.vRebate,s,0);  
+    addtoIVrw.Sum = addtoIVrw.Sum + s;
+    if (addtoIVrw.Sum<0) then begin
+      addtoIVrw.Sum = 0.00;
+    end;
+
+    addtoIVrw.vRebate = blankval;
+    CalcSum(addtoIVrw.Quant,addtoIVrw.Price,addtoIVrw.PriceFactor,addtoIVrw.vRebate,t,GOb.UseDiscount);
+    RoundRowSum(IVr.CurncyCode,IVr.PayDeal,"IVVc",t);     
+    s = addtoIVrw.Sum;// /addtoIVrw.Quant; not good
+    s = t - s;
+    s = s*100;
+    s = s/t;
+    addtoIVrw.vRebate = Round(s,SetRoundModeD(1));
+    if (addtoIVrw.vRebate==0) then begin addtoIVrw.vRebate = blankval; end;
+    MatRowPut(IVr,addtorownr,addtoIVrw);
+    IVDchsum(IVr,addtorownr);
+  end else begin
+    ClearRow(IVr,newIVrw,kInvoiceRowTypeMultiBuyDiscount);
+    newIVrw.MBRCode = MBRr.Code;
+    newIVrw.ArtCode = MBRr.RebArtCode;
+    newIVrw.Spec = MBRr.RebArtName;
+    newIVrw.Quant = -getMBRrw.GetQty;
+    newIVrw.vRebate = getMBRrw.vRebate;
+    newIVrw.VATCode = vatcode;
+    newIVrw.TaxTemplateCode = taxtemplatecode;
+    newIVrw.Price = getMBRrw.Price;    
+    newIVrw.MotherArtCode = getMBRrw.ArtCode;
+    CalcSum(newIVrw.Quant,newIVrw.Price,newIVrw.PriceFactor,newIVrw.vRebate,s,0);  
+    newIVrw.Sum = s;
+    PackRowFieldMatrix(newIVrw,"TaxMatrix",TMr);
+    RowCalculateTaxMatrix_IVVc(IVr,mbrownr,newIVrw);
+    if (mbrownr<0) then begin
+      addtorownr = MatRowCnt(IVr);
+      MatRowPut(IVr,addtorownr,newIVrw);
+    end else begin
+      addtorownr = mbrownr;
+      MatRowInsert(IVr,addtorownr,newIVrw);
+    end;
+    IVDchsum(IVr,addtorownr);
+  end;
+  return;
+end;
+
+procedure DeleteItemFromCombinedIV(var record IVVc tmpcombinedIVr,string artcode)
+begin
+  Integer i,rwcnt;
+  row IVVc IVrw;
+  
+  rwcnt = MatRowCnt(tmpcombinedIVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(tmpcombinedIVr,i,IVrw);
+    if (IVrw.ArtCode==artcode) then begin
+      MatRowDelete(tmpcombinedIVr,i);
+      i = rwcnt;
+    end;
+  end;
+  return;
+end;
+
+procedure SortInvoiceRows(record IVVc IVr,string fieldstr,Boolean descendingf)
+begin
+  Integer iiv,ivcombrwcnt;
+  row IVVc IVrw;
+  row IVVc nextIVrw;
+  row IVVc tmpIVrw;
+  Boolean testf,changef;
+
+  ivcombrwcnt = MatRowCnt(IVr);
+  changef = true;
+  while (changef) begin
+    changef = false;
+    for (iiv=0;iiv<ivcombrwcnt-1;iiv=iiv+1) begin
+      MatRowGet(IVr,iiv,IVrw);
+      MatRowGet(IVr,iiv+1,nextIVrw);
+      testf = false;
+      if (descendingf) then begin
+        if (IVrw.Price>nextIVrw.Price) then begin testf = true; end;
+      end else begin
+        if (IVrw.Price<nextIVrw.Price) then begin testf = true; end;
+      end;
+      if (testf) then begin
+        changef = true;
+        CopyRow(IVr,IVrw,tmpIVrw);
+        CopyRow(IVr,nextIVrw,IVrw);
+        CopyRow(IVr,tmpIVrw,nextIVrw);
+        MatRowPut(IVr,iiv,IVrw);
+        MatRowPut(IVr,iiv+1,nextIVrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+function Boolean MultiBuyTypeAnyQty_IVVc(record IVVc IVr,record MultiBuyRebVc MBRr,record IVVc combinedIVr,
+                                         var record IVVc tmpcombinedIVr,
+                                         var row MultiBuyRebVc getMBRrw,var string vatcode,
+                                         var string taxtemplatecode,var record TaxMatrixVc TMr)
+begin
+  Boolean addmultibuyrowf,testf,fixedpricef;
+  roundmode rm;
+  val fixedv,buyanyqty,buyanysum,tmpq,tmps,q,s,usedq;
+  row IVVc IV2rw;
+  Integer iiv,ivcombrwcnt;
+  Integer i,rwcnt;
+  Integer lmbrownr;
+  row MultiBuyRebVc buyMBRrw;
+  string 255 artcode;
+
+  rm = SetRoundModeD(0);
+  rm.mode = kRoundingModeTruncate;
+  
+  if (nonblank(MBRr.FixedPrice)) then begin
+    fixedpricef = true;
+    fixedv = StringToVal(MBRr.FixedPrice,M4Val);
+  end else begin
+    fixedpricef = false;
+    fixedv = StringToVal(MBRr.FixedDiscount,M4Val);
+  end;
+
+  switch (MBRr.RebType) begin
+    case kMultiBuyDiscountTypeCheapest:
+//      SortRows(combinedIVr,"Price",true);//Sometimes  dosnt  work, need to find out when
+      SortInvoiceRows(combinedIVr,"Price",true);
+    case kMultiBuyDiscountTypeMostExpensive:
+//      SortRows(combinedIVr,"Price",false);//Sometimes  dosnt  work, need to find out when
+      SortInvoiceRows(combinedIVr,"Price",false);
+    otherwise
+      goto LMultiBuyTypeAnyQty_IVVc;
+  end;
+        
+  rwcnt = MatRowCnt(MBRr);
+  ivcombrwcnt = MatRowCnt(combinedIVr);
+  for (iiv=0;iiv<ivcombrwcnt;iiv=iiv+1) begin
+    MatRowGet(combinedIVr,iiv,IV2rw);
+    if (blank(artcode) and IV2rw.stp==kInvoiceRowTypeNormal) then begin
+      artcode = IV2rw.ArtCode;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IV2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;
+      if (testf) then begin
+
+//Trace("buyanyqty " & buyanyqty," IV2rw.Quant " & IV2rw.Quant);            
+        if ((buyanyqty+IV2rw.Quant)>=MBRr.BuyAnyQty) then begin
+//          if (IV2rw.Quant>=MBRr.BuyAnyQty) then begin
+          if (true) then begin
+            
+            q = 0;
+            if (buyanyqty>0) then begin
+              if (buyanyqty+IV2rw.Quant>MBRr.BuyAnyQty) then begin 
+                q = MBRr.BuyAnyQty - buyanyqty; 
+              end else begin
+                q = IV2rw.Quant;
+              end;
+              if (q>0) then begin
+                CalcSum(q,IV2rw.Price,IV2rw.PriceFactor,IV2rw.vRebate,s,0);
+                usedq = usedq + q;
+  
+                buyanyqty = buyanyqty + q;
+                buyanysum = buyanysum + s;
+                getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+                getMBRrw.ArtCode = MBRr.RebArtCode;
+
+                if (fixedpricef) then begin
+                  getMBRrw.Price = (buyanysum - getMBRrw.GetQty*fixedv)/getMBRrw.GetQty;
+                end else begin
+                  if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                    MulM4ProcVal(fixedv,buyanysum,getMBRrw.Price);
+                  end else begin
+                    getMBRrw.Price = fixedv;
+                  end;
+                end;
+                vatcode = IV2rw.VATCode;//wierd stuff , what if 2 difrent vat codes ? 
+                taxtemplatecode = IV2rw.TaxTemplateCode;//wierd stuff , what if 2 difrent tax templates ? 
+                UnpackRowFieldMatrix(IV2rw,"TaxMatrix",TMr);//calculate? 
+                lmbrownr = MatRowCnt(IVr);
+                AddMultiBuyRow_IVVc(IVr,MBRr,getMBRrw,vatcode,lmbrownr,taxtemplatecode,TMr,artcode);
+                addmultibuyrowf = true;
+                buyanyqty = blankval;
+                buyanysum = blankval;
+              end;
+            end;
+
+            tmpq = IV2rw.Quant - q;
+            while (tmpq>=MBRr.BuyAnyQty) begin
+
+              buyanyqty = Round(tmpq/MBRr.BuyAnyQty,rm)*MBRr.BuyAnyQty;
+              CalcSum(buyanyqty,IV2rw.Price,IV2rw.PriceFactor,IV2rw.vRebate,s,0);
+              buyanysum = buyanysum + s;
+
+              getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+              getMBRrw.ArtCode = MBRr.RebArtCode;
+              if (fixedpricef) then begin
+                getMBRrw.Price = (buyanysum - getMBRrw.GetQty*fixedv)/getMBRrw.GetQty;
+              end else begin
+                if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                  MulM4ProcVal(fixedv,buyanysum,getMBRrw.Price);
+                end else begin
+                  getMBRrw.Price = fixedv;
+                end;
+              end;
+              
+              vatcode = IV2rw.VATCode;
+              taxtemplatecode = IV2rw.TaxTemplateCode;
+              UnpackRowFieldMatrix(IV2rw,"TaxMatrix",TMr);
+              lmbrownr = MatRowCnt(IVr);
+              AddMultiBuyRow_IVVc(IVr,MBRr,getMBRrw,vatcode,lmbrownr,taxtemplatecode,TMr,artcode);
+              addmultibuyrowf = true;
+              
+              usedq = usedq + buyanyqty;
+              tmpq = tmpq - buyanyqty;
+
+              buyanyqty = blankval;
+              buyanysum = blankval;
+            end;
+
+            q = IV2rw.Quant - usedq;
+            if (q>0) then begin
+              CalcSum(q,IV2rw.Price,IV2rw.PriceFactor,IV2rw.vRebate,s,0);
+            end else begin
+              q = 0;
+              s = 0;
+            end;
+            buyanyqty = buyanyqty + q;
+            buyanysum = buyanysum + s;
+          end else begin
+/*
+            q = IV2rw.Quant;
+            CalcSum(q,IV2rw.Price,IV2rw.PriceFactor,IV2rw.vRebate,s,0);
+            buyanyqty = buyanyqty + q;
+            buyanysum = buyanysum + s;
+
+            getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+            getMBRrw.ArtCode = MBRr.RebArtCode;
+
+            if (fixedpricef) then begin
+              getMBRrw.Price = (buyanysum - getMBRrw.GetQty*fixedv)/getMBRrw.GetQty;
+            end else begin
+              if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                MulM4ProcVal(fixedv,buyanysum,getMBRrw.Price);
+              end else begin
+                getMBRrw.Price = fixedv;
+              end;
+            end;
+            
+
+            vatcode = IV2rw.VATCode;
+            taxtemplatecode = IV2rw.TaxTemplateCode;
+            UnpackRowFieldMatrix(IV2rw,"TaxMatrix",TMr);
+
+            lmbrownr = MatRowCnt(IVr);
+            AddMultiBuyRow_IVVc(IVr,MBRr,getMBRrw,vatcode,lmbrownr,taxtemplatecode,TMr,artcode);
+            addmultibuyrowf = true;
+
+            buyanyqty = blankval;
+            buyanysum = blankval;
+*/            
+          end;
+        end else begin        
+          buyanyqty = buyanyqty + IV2rw.Quant;
+          buyanysum = buyanysum + IV2rw.Sum;
+        end;
+        i = rwcnt;        
+      end;
+    end;
+  end;
+LMultiBuyTypeAnyQty_IVVc:;  
+  MultiBuyTypeAnyQty_IVVc = addmultibuyrowf;
+  return;
+end;
+
+/*
+function Boolean MultiBuyTypeAnyQty_IVVc(record IVVc IVr,record MultiBuyRebVc MBRr,record IVVc combinedIVr,
+                                         var record IVVc tmpcombinedIVr,
+                                         var row MultiBuyRebVc getMBRrw,var string vatcode,
+                                         var string taxtemplatecode,var record TaxMatrixVc TMr)
+begin
+  Boolean addmultibuyrowf,testf;
+  row MultiBuyRebVc buyMBRrw;
+  row IVVc IV2rw;
+  Integer iiv2,ivcombrwcnt;
+  Integer i,rwcnt;
+  val oldPrice,fixedv,sum,sumperbundle,tmpsum;
+  val buyanyqty,maxbuyanyqty;
+  roundmode rm;
+  string 255 discartcode;
+  
+  rm = SetRoundModeD(0);
+  rm.mode = kRoundingModeTruncate;
+  if (nonblank(MBRr.FixedPrice)) then begin
+    fixedv = StringToVal(MBRr.FixedPrice,M4Val);
+  end else begin
+    fixedv = StringToVal(MBRr.FixedDiscount,M4Val);
+  end;
+
+  switch (MBRr.RebType) begin
+    case kMultiBuyDiscountTypeCheapest:
+      sum = 1000000000000.00;
+    case kMultiBuyDiscountTypeMostExpensive:
+      sum = 0.00;
+    otherwise
+      ;
+  end;
+  rwcnt = MatRowCnt(MBRr);
+  ivcombrwcnt = MatRowCnt(combinedIVr);
+  for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+    MatRowGet(combinedIVr,iiv2,IV2rw);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IV2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;        
+      if (testf) then begin
+        maxbuyanyqty = maxbuyanyqty + IV2rw.Quant;
+      end;
+    end;
+  end;
+  maxbuyanyqty = Round(maxbuyanyqty/MBRr.BuyAnyQty,rm);
+  maxbuyanyqty = maxbuyanyqty*MBRr.BuyAnyQty;//not corect
+
+  for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+    MatRowGet(combinedIVr,iiv2,IV2rw);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IV2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;        
+      if (testf) then begin
+        switch (MBRr.RebType) begin
+          case kMultiBuyDiscountTypeCheapest:
+          case kMultiBuyDiscountTypeMostExpensive:
+          otherwise
+            if (blank(MBRr.FixedPrice)) or (Right(MBRr.FixedPrice,1)=="%") then begin
+              sum = sum + IV2rw.Sum;
+            end;
+        end;
+      end;
+    end;    
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IV2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;        
+      if (buyanyqty>=maxbuyanyqty) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (blank(MBRr.FixedPrice)) or (Right(MBRr.FixedPrice,1)=="%") then begin
+        end else begin
+          sum = sum + IV2rw.Sum;
+        end;
+        switch (MBRr.RebType) begin
+          case kMultiBuyDiscountTypeCheapest:
+            if (nonblank(MBRr.FixedPrice)) then begin
+              oldPrice = sum;
+              if (Right(MBRr.FixedPrice,1)=="%") then begin
+                MulM4ProcVal(fixedv,IV2rw.Price,tmpsum);
+              end;
+              sum = Min(sum,tmpsum);
+            end else begin
+              oldPrice = fixedv;
+              if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                MulM4ProcVal(fixedv,IV2rw.Price,tmpsum);
+              end;
+              sum = Min(sum,tmpsum);
+            end;
+            if (sum==tmpsum) then begin
+              discartcode = buyMBRrw.ArtCode;
+            end;
+          case kMultiBuyDiscountTypeMostExpensive:
+            oldPrice = sum;
+            if (nonblank(MBRr.FixedPrice)) then begin
+              if (Right(MBRr.FixedPrice,1)=="%") then begin
+                MulM4ProcVal(fixedv,IV2rw.Price,tmpsum);
+              end;
+              sum = Max(sum,tmpsum);              
+            end else begin
+              oldPrice = sum;
+              if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                MulM4ProcVal(fixedv,IV2rw.Price,tmpsum);
+              end;
+              sum = Max(sum,tmpsum);
+            end;
+            if (sum==tmpsum) then begin
+              discartcode = buyMBRrw.ArtCode;
+            end;
+        end;
+        if (oldPrice!=fixedv) then begin
+          vatcode = IV2rw.VATCode;
+          taxtemplatecode = IV2rw.TaxTemplateCode;
+          UnpackRowFieldMatrix(IV2rw,"TaxMatrix",TMr);
+        end;
+        buyanyqty = buyanyqty + IV2rw.Quant;
+        DeleteItemFromCombinedIV(tmpcombinedIVr,IV2rw.ArtCode);
+        i = rwcnt;
+      end;                    
+    end;
+  end;
+  if (buyanyqty>=MBRr.BuyAnyQty) then begin
+    addmultibuyrowf = true;
+  end;                    
+
+  if (addmultibuyrowf)  then begin
+    getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+    getMBRrw.ArtCode = discartcode;
+    switch (MBRr.RebType) begin
+      case kMultiBuyDiscountTypeCheapest:
+        getMBRrw.Price = sum;
+      case kMultiBuyDiscountTypeMostExpensive:
+        getMBRrw.Price = sum;
+      otherwise
+        sumperbundle = sum / getMBRrw.GetQty;
+        if (nonblank(MBRr.FixedPrice)) then begin
+          if (Right(MBRr.FixedPrice,1)=="%") then begin
+            MulM4ProcVal(fixedv,sumperbundle,getMBRrw.Price);
+            getMBRrw.Price = sumperbundle - getMBRrw.Price;
+          end else begin
+            getMBRrw.Price = sumperbundle - fixedv;
+          end;
+        end else begin
+          if (Right(MBRr.FixedDiscount,1)=="%") then begin
+            MulM4ProcVal(fixedv,sumperbundle,getMBRrw.Price);
+          end else begin
+            getMBRrw.Price = fixedv;
+          end;
+        end;
+        if (getMBRrw.vRebate>0) then begin
+          getMBRrw.vRebate = 100 - getMBRrw.vRebate;
+        end;
+    end;
+    switch (MBRr.RebType) begin
+      case kMultiBuyDiscountTypeCheapest:
+      case kMultiBuyDiscountTypeMostExpensive:
+      otherwise
+      if (sum<getMBRrw.Price*getMBRrw.GetQty) then begin
+        getMBRrw.GetQty = 1.00;
+        getMBRrw.Price = sum;
+      end;
+    end;
+  end;
+  MultiBuyTypeAnyQty_IVVc = addmultibuyrowf;
+  return;
+end;
+*/
+
+function Boolean MultiBuyTypeBOGOF_IVVc(record MultiBuyRebVc MBRr,record IVVc combinedIVr,row IVVc IVrw,Integer rownr,
+                                        var record IVVc tmpcombinedIVr,
+                                        var row MultiBuyRebVc getMBRrw,var string vatcode,
+                                        var string taxtemplatecode,var record TaxMatrixVc TMr)
+begin
+  Boolean addmultibuyrowf;
+  Boolean buyqtyf,getqtyf,testf;
+  val getqtycoef,maxbuyqty;
+  row MultiBuyRebVc buyMBRrw;
+  row MultiBuyRebVc foundbuyMBRrw;
+  row IVVc IV2rw;
+  Integer iiv2,ivcombrwcnt;
+  Integer i,rwcnt;
+  roundmode rm;
+  vector Boolean vbuyartcodef;
+  vector val vbuyartcodeq;
+  
+  rm = SetRoundModeD(0);
+  rm.mode = kRoundingModeTruncate;
+  
+  buyqtyf = false;
+  getqtyf = false;
+  getqtycoef = 1000000000000.00;
+  maxbuyqty = 1000000000000.00;
+
+  rwcnt = MatRowCnt(MBRr);
+  ivcombrwcnt = MatRowCnt(combinedIVr);
+  
+  for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+    MatRowGet(tmpcombinedIVr,iiv2,IV2rw);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      if (buyMBRrw.BuyQty>0) then begin
+        if (IV2rw.ArtCode==buyMBRrw.ArtCode) then begin
+          if (IV2rw.Quant>=buyMBRrw.BuyQty) then begin
+            vbuyartcodef[buyMBRrw.ArtCode] = true;
+            vbuyartcodeq[buyMBRrw.ArtCode] = IV2rw.Quant;
+//            getqtycoef = Min(getqtycoef,Round(IV2rw.Quant/buyMBRrw.BuyQty,rm));
+            CopyRow(MBRr,buyMBRrw,foundbuyMBRrw);
+            maxbuyqty = Min(maxbuyqty,Round(IV2rw.Quant,rm));
+            i = rwcnt;
+            DeleteItemFromCombinedIV(tmpcombinedIVr,IV2rw.ArtCode);
+          end;
+        end;                    
+      end;
+    end;
+  end;
+  buyqtyf = true;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(MBRr,i,buyMBRrw);
+    if (buyMBRrw.BuyQty>0) then begin
+      if (vbuyartcodef[buyMBRrw.ArtCode]==false) then begin
+        buyqtyf = false;
+        i = rwcnt;
+      end;
+    end;
+  end;
+
+  if (buyqtyf) then begin
+    for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+      MatRowGet(combinedIVr,iiv2,IV2rw);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(MBRr,i,getMBRrw);
+        if (getMBRrw.GetQty>0) then begin
+
+          testf = true;
+          if (IV2rw.ArtCode!=getMBRrw.ArtCode) then begin testf = false; end;
+          if (IV2rw.Quant<getMBRrw.GetQty) then begin testf = false; end;        
+
+          if (testf) then begin
+            if (IV2rw.ArtCode==foundbuyMBRrw.ArtCode) then begin 
+              if ((IV2rw.Quant)<(getMBRrw.GetQty+foundbuyMBRrw.BuyQty)) then begin
+                testf = false; 
+              end;
+            end;
+          end;
+
+          if (testf) then begin
+            getqtyf = true;
+            if (blank(getMBRrw.Price)) then begin
+              getMBRrw.Price = IV2rw.Price;
+            end else begin
+              getMBRrw.Price = IV2rw.Price - getMBRrw.Price;
+            end;
+            CalcSum(getMBRrw.GetQty,getMBRrw.Price,IV2rw.PriceFactor,IV2rw.vRebate,getMBRrw.Price,0);  
+            if (getMBRrw.vRebate>0) then begin
+              getMBRrw.vRebate = 100 - getMBRrw.vRebate;
+            end;
+            if (IV2rw.ArtCode==foundbuyMBRrw.ArtCode) then begin 
+              getqtycoef = Min(getqtycoef,Round((IV2rw.Quant)/(foundbuyMBRrw.BuyQty+getMBRrw.GetQty),rm));
+            end else begin
+              getqtycoef = Min(getqtycoef,Round(IV2rw.Quant/getMBRrw.GetQty,rm));
+            end;
+            vatcode = IV2rw.VATCode;
+            taxtemplatecode = IV2rw.TaxTemplateCode;
+            UnpackRowFieldMatrix(IV2rw,"TaxMatrix",TMr);
+            DeleteItemFromCombinedIV(tmpcombinedIVr,IV2rw.ArtCode);
+            goto LFound;
+          end;
+        end;
+      end;                          
+    end;
+  end;
+LFound:;  
+  if (getqtycoef>maxbuyqty) then begin
+    getqtycoef = maxbuyqty;
+  end;
+  getMBRrw.GetQty = getMBRrw.GetQty*getqtycoef;
+  addmultibuyrowf = buyqtyf and getqtyf;
+  MultiBuyTypeBOGOF_IVVc = addmultibuyrowf;
+  return;
+end;
+
+procedure CombineRows_IVVc(row IVVc IVrw,var record IVVc combinedIVr)
+begin
+  Integer iiv,ivrwcnt;
+  row IVVc cIVrw;
+
+  ivrwcnt = MatRowCnt(combinedIVr);
+  for (iiv=0;iiv<ivrwcnt;iiv=iiv+1) begin
+    MatRowGet(combinedIVr,iiv,cIVrw);
+    if (IVrw.ArtCode==cIVrw.ArtCode) then begin
+      switch (IVrw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          goto LkInvoiceRowTypeNormal1;
+        case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal1:;
+          cIVrw.Quant = cIVrw.Quant + IVrw.Quant;
+          MatRowPut(combinedIVr,iiv,cIVrw);
+          goto LCombineRows_IVVc;
+        case kInvoiceRowTypeCorrection:
+          cIVrw.Quant = cIVrw.Quant - IVrw.Quant;
+          MatRowPut(combinedIVr,iiv,cIVrw);
+          goto LCombineRows_IVVc;
+      end;
+    end;
+  end;
+  CopyRow(combinedIVr,IVrw,cIVrw);
+  switch (IVrw.stp) begin
+    case kInvoiceRowTypeCorrection:
+      cIVrw.stp = kInvoiceRowTypeNormal;
+      cIVrw.Quant = -cIVrw.Quant;
+  end;
+  if (nonblank(cIVrw.ArtCode)) then begin
+    MatRowPut(combinedIVr,ivrwcnt,cIVrw);
+  end;
+LCombineRows_IVVc:;
+  return;
+end;
+
+global
+procedure AddMultiBuyDiscountItems_IVVc(var record IVVc IVr)
+begin
+  record MultiBuyRebVc MBRr;
+  row MultiBuyRebVc buyMBRrw;
+  row MultiBuyRebVc getMBRrw;
+  Integer i,j,rwcnt,rownr;
+  row IVVc IVrw;
+  row IVVc IV2rw;
+  record IVVc combinedIVr;
+  record IVVc tmpcombinedIVr;
+  Integer iiv,ivrwcnt,ivcombrwcnt,iiv2;
+  Boolean foundmbr,testf,addmultibuyrowf,buyqtyf,getqtyf;
+  val getqtycoef,buyanyqty;
+  string 255 inwarning,vatcode,taxtemplatecode,artcode; 
+  Integer mbrownr;
+  record TaxMatrixVc TMr;
+  vector Boolean vmbaf;
+
+  if (CountRecords("MultiBuyRebVc")>0) then begin
+    mbrownr = -1;
+    ivrwcnt = MatRowCnt(IVr);
+    for (iiv=0;iiv<ivrwcnt;iiv=iiv+1) begin
+      MatRowGet(IVr,iiv,IVrw);
+      switch (IVrw.stp) begin
+        case kInvoiceRowTypeMultiBuyDiscount:
+          MatRowDelete(IVr,iiv);
+          ivrwcnt = MatRowCnt(IVr);
+          iiv = iiv - 1;
+//          mbrownr = iiv;
+        case kInvoiceRowTypeNormal:
+          if (blank(IVrw.ArtCode) and blank(IVrw.Spec) and blank(IVrw.Sum)) then begin
+            MatRowDelete(IVr,iiv);
+            ivrwcnt = MatRowCnt(IVr);
+            iiv = iiv - 1;
+          end;
+      end;
+    end;    
+    ivrwcnt = MatRowCnt(IVr);
+    for (iiv=0;iiv<ivrwcnt;iiv=iiv+1) begin
+      MatRowGet(IVr,iiv,IVrw);
+      switch (IVrw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          goto LkInvoiceRowTypeNormal2;
+        case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal2:;
+          CombineRows_IVVc(IVrw,combinedIVr);
+        case kInvoiceRowTypeCorrection:
+          CombineRows_IVVc(IVrw,combinedIVr);
+      end;
+    end;
+    
+    ivcombrwcnt = MatRowCnt(combinedIVr);
+    RecordCopy(tmpcombinedIVr,combinedIVr);
+    for (iiv=0;iiv<ivcombrwcnt;iiv=iiv+1) begin
+      MatRowGet(combinedIVr,iiv,IVrw);
+      artcode = IVrw.ArtCode;
+      switch (IVrw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          goto LkInvoiceRowTypeNormal3;
+        case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal3:;
+          RecordClear(MBRr);
+          ResetLoop(MBRr);
+          foundmbr = true;
+          while (LoopKey("ActArtCode:" & IVrw.ArtCode,MBRr,1,foundmbr)) begin
+            if (foundmbr) then begin
+              testf = true;
+              if (DateInRange(IVr.TransDate,MBRr.StartDate,MBRr.EndDate)==false) then begin testf = false; end;
+              if (nonblank(MBRr.PLCode) and IVr.PriceList!=MBRr.PLCode) then begin testf = false; end;
+              if (nonblank(MBRr.Location) and !SetInSet(IVr.Location,MBRr.Location)) then begin testf = false; end;
+              if (vmbaf[MBRr.Code]) then begin testf = false; end;
+              if (testf) then begin
+                addmultibuyrowf = false;
+                vatcode = "";
+                taxtemplatecode = "";
+                ClearRow(MBRr,getMBRrw,1);
+                
+                rwcnt = MatRowCnt(MBRr);
+                switch (MBRr.Type) begin
+                  case kMultiBuyTypeAnyQty:
+                    MatRowDelete(tmpcombinedIVr,iiv);
+                    buyanyqty = IVrw.Quant;
+                    switch (MBRr.RebType) begin
+                      case kMultiBuyDiscountTypeNone:
+                      otherwise
+                        vatcode = IVrw.VATCode;
+                        taxtemplatecode = IVrw.TaxTemplateCode;
+                        UnpackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+                    end;
+                    RecordCopy(tmpcombinedIVr,IVr);
+                    RecordCopy(combinedIVr,IVr);
+                    addmultibuyrowf = MultiBuyTypeAnyQty_IVVc(IVr,MBRr,combinedIVr,tmpcombinedIVr,getMBRrw,vatcode,taxtemplatecode,TMr);
+                    if (addmultibuyrowf) then begin
+                      vmbaf[MBRr.Code] = true;
+                    end;
+                  case kMultiBuyTypeBOGOF:
+                    addmultibuyrowf = MultiBuyTypeBOGOF_IVVc(MBRr,combinedIVr,IVrw,iiv,tmpcombinedIVr,getMBRrw,vatcode,taxtemplatecode,TMr);
+                    if (addmultibuyrowf) then begin
+                      AddMultiBuyRow_IVVc(IVr,MBRr,getMBRrw,vatcode,mbrownr,taxtemplatecode,TMr,artcode);
+                      foundmbr = false;
+                      RecordCopy(combinedIVr,tmpcombinedIVr);
+                      iiv = iiv - 1;
+                      ivcombrwcnt = MatRowCnt(combinedIVr);
+//                      vmbaf[MBRr.Code] = true;
+                    end else begin
+                      RecordCopy(tmpcombinedIVr,combinedIVr);
+                    end;
+                end;
+              end;
+            end;
+          end;
+      end;
+    end;
+    IVSumup(IVr,true);
+  end;
+  return;
+end;
+
+procedure AddMultiBuyRow_IVCashVc(var record IVCashVc IVCashr,record MultiBuyRebVc MBRr,row MultiBuyRebVc getMBRrw,string vatcode,Integer mbrownr,string taxtemplatecode,record TaxMatrixVc TMr,
+                                  string artcode)
+begin
+  row IVCashVc newIVCashrw;
+  row IVCashVc addtoIVCashrw;
+  val s,t;
+  Integer addtorownr,ivrwcnt,iiv;
+  record GeneralOptionBlock GOb;
+
+  if (MBRr.AddDiscountToLastRow!=0) then begin
+    BlockLoad(GOb);      
+    ivrwcnt = MatRowCnt(IVCashr);
+    for (iiv=ivrwcnt-1;iiv>=0;iiv=iiv-1) begin
+      MatRowGet(IVCashr,iiv,addtoIVCashrw);
+      if (addtoIVCashrw.ArtCode==artcode) then begin
+        addtorownr = iiv;
+        goto LAddMultiBuyRow_IVCashVcLastRow;
+      end;
+      if (addtoIVCashrw.stp==kInvoiceRowTypeNormal) then begin
+        ivrwcnt = iiv;
+        goto LAddMultiBuyRow_IVCashVcLastRow;
+      end;
+    end;
+/*    
+    for (iiv=ivrwcnt-1;iiv>=0;iiv=iiv-1) begin
+      MatRowGet(IVCashr,iiv,addtoIVCashrw);
+      if (addtoIVCashrw.MBRCode==MBRr.Code) then begin
+        addtorownr = iiv;
+        iiv = -1;
+      end;
+    end;      
+  */  
+    addtorownr = ivrwcnt - 1;
+LAddMultiBuyRow_IVCashVcLastRow:;    
+    if (addtorownr<0) then begin 
+      addtorownr = 0;
+    end;
+    MatRowGet(IVCashr,addtorownr,addtoIVCashrw);
+    
+    CalcSum(-getMBRrw.GetQty,getMBRrw.Price,newIVCashrw.PriceFactor,getMBRrw.vRebate,s,0);  
+    addtoIVCashrw.Sum = addtoIVCashrw.Sum + s;
+    if (addtoIVCashrw.Sum<0) then begin
+      addtoIVCashrw.Sum = 0.00;
+    end;
+
+    addtoIVCashrw.vRebate = blankval;
+//    CalcSum(addtoIVCashrw.Quant,addtoIVCashrw.Price,addtoIVCashrw.PriceFactor,addtoIVCashrw.vRebate,t,GOb.UseDiscount);
+    t = FormulaDiscountCalcSum(addtoIVCashrw.Quant,addtoIVCashrw.Price,addtoIVCashrw.PriceFactor,addtoIVCashrw.vRebate);
+    RoundRowSum(IVCashr.CurncyCode,IVCashr.PayDeal,"IVCashVc",t);     
+    s = addtoIVCashrw.Sum;// /addtoIVCashrw.Quant; not good
+    s = t - s;
+    s = s*100;
+    s = s/t;
+    addtoIVCashrw.vRebate = Round(s,SetRoundModeD(1));
+    if (s==0) then begin addtoIVCashrw.vRebate = blankval; end;
+    MatRowPut(IVCashr,addtorownr,addtoIVCashrw);
+    IVCashDchsum(IVCashr,addtorownr);
+  end else begin
+    ClearRow(IVCashr,newIVCashrw,kInvoiceRowTypeMultiBuyDiscount);
+    newIVCashrw.MBRCode = MBRr.Code;
+    newIVCashrw.ArtCode = MBRr.RebArtCode;
+    newIVCashrw.Spec = MBRr.RebArtName;
+    newIVCashrw.Quant = -getMBRrw.GetQty;
+    newIVCashrw.vRebate = getMBRrw.vRebate;
+    newIVCashrw.VATCode = vatcode;
+    newIVCashrw.TaxTemplateCode = taxtemplatecode;
+    newIVCashrw.Price = getMBRrw.Price;       
+    newIVCashrw.MotherArtCode = getMBRrw.ArtCode;
+//    CalcSum(newIVCashrw.Quant,newIVCashrw.Price,newIVCashrw.PriceFactor,newIVCashrw.vRebate,s,0);  
+    newIVCashrw.Sum = FormulaDiscountCalcSum(newIVCashrw.Quant,newIVCashrw.Price,newIVCashrw.PriceFactor,newIVCashrw.vRebate);  
+    PackRowFieldMatrix(newIVCashrw,"TaxMatrix",TMr);
+    RowCalculateTaxMatrix_IVCashVc(IVCashr,mbrownr,newIVCashrw);
+    if (mbrownr<0) then begin
+      addtorownr = MatRowCnt(IVCashr);
+      MatRowPut(IVCashr,addtorownr,newIVCashrw);
+    end else begin
+      addtorownr = mbrownr;
+      MatRowInsert(IVCashr,addtorownr,newIVCashrw);
+    end;
+    IVCashDchsum(IVCashr,addtorownr);
+  end;
+  return;
+end;
+
+procedure DeleteItemFromCombinedIVCash(var record IVCashVc tmpcombinedIVCashr,string artcode)
+begin
+  Integer i,rwcnt;
+  row IVCashVc IVCashrw;
+  
+  rwcnt = MatRowCnt(tmpcombinedIVCashr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(tmpcombinedIVCashr,i,IVCashrw);
+    if (IVCashrw.ArtCode==artcode) then begin
+      MatRowDelete(tmpcombinedIVCashr,i);
+      i = rwcnt;
+    end;
+  end;
+  return;
+end;
+
+procedure SortPOSInvoiceRows(record IVCashVc IVCashr,string fieldstr,Boolean descendingf)
+begin
+  Integer iiv,ivcombrwcnt;
+  row IVCashVc IVCashrw;
+  row IVCashVc nextIVCashrw;
+  row IVCashVc tmpIVCashrw;
+  Boolean testf,changef;
+
+  ivcombrwcnt = MatRowCnt(IVCashr);
+  changef = true;
+  while (changef) begin
+    changef = false;
+    for (iiv=0;iiv<ivcombrwcnt-1;iiv=iiv+1) begin
+      MatRowGet(IVCashr,iiv,IVCashrw);
+      MatRowGet(IVCashr,iiv+1,nextIVCashrw);
+      testf = false;
+      if (descendingf) then begin
+        if (IVCashrw.Price>nextIVCashrw.Price) then begin testf = true; end;
+      end else begin
+        if (IVCashrw.Price<nextIVCashrw.Price) then begin testf = true; end;
+      end;
+      if (testf) then begin
+        changef = true;
+        CopyRow(IVCashr,IVCashrw,tmpIVCashrw);
+        CopyRow(IVCashr,nextIVCashrw,IVCashrw);
+        CopyRow(IVCashr,tmpIVCashrw,nextIVCashrw);
+        MatRowPut(IVCashr,iiv,IVCashrw);
+        MatRowPut(IVCashr,iiv+1,nextIVCashrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+function Boolean MultiBuyTypeAnyQty_IVCashVc(record IVCashVc IVCashr,record MultiBuyRebVc MBRr,record IVCashVc combinedIVCashr,
+                                         var record IVCashVc tmpcombinedIVCashr,
+                                         var row MultiBuyRebVc getMBRrw,var string vatcode,
+                                         var string taxtemplatecode,var record TaxMatrixVc TMr)
+begin
+  Boolean addmultibuyrowf,testf,fixedpricef;
+  roundmode rm;
+  val fixedv,buyanyqty,buyanysum,tmpq,tmps,q,s,usedq;
+  row IVCashVc IVCash2rw;
+  Integer iiv,ivcombrwcnt;
+  Integer i,rwcnt;
+  Integer lmbrownr;
+  row MultiBuyRebVc buyMBRrw;
+  string 255 artcode;
+
+  rm = SetRoundModeD(0);
+  rm.mode = kRoundingModeTruncate;
+  
+  if (nonblank(MBRr.FixedPrice)) then begin
+    fixedpricef = true;
+    fixedv = StringToVal(MBRr.FixedPrice,M4Val);
+  end else begin
+    fixedpricef = false;
+    fixedv = StringToVal(MBRr.FixedDiscount,M4Val);
+  end;
+
+  switch (MBRr.RebType) begin
+    case kMultiBuyDiscountTypeCheapest:
+//      SortRows(combinedIVCashr,"Price",true);//Sometimes  dosnt  work, need to find out when
+      SortPOSInvoiceRows(combinedIVCashr,"Price",true);
+    case kMultiBuyDiscountTypeMostExpensive:
+//      SortRows(combinedIVCashr,"Price",false);//Sometimes  dosnt  work, need to find out when
+      SortPOSInvoiceRows(combinedIVCashr,"Price",false);
+    otherwise
+      goto LMultiBuyTypeAnyQty_IVCashVc;
+  end;
+    
+  rwcnt = MatRowCnt(MBRr);
+  ivcombrwcnt = MatRowCnt(combinedIVCashr);
+  for (iiv=0;iiv<ivcombrwcnt;iiv=iiv+1) begin
+    MatRowGet(combinedIVCashr,iiv,IVCash2rw);
+    if (blank(artcode) and IVCash2rw.stp==kInvoiceRowTypeNormal) then begin
+      artcode = IVCash2rw.ArtCode;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IVCash2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;
+      if (testf) then begin
+
+//Trace("buyanyqty " & buyanyqty," IV2rw.Quant " & IV2rw.Quant);            
+        if ((buyanyqty+IVCash2rw.Quant)>=MBRr.BuyAnyQty) then begin
+//          if (IVCash2rw.Quant>=MBRr.BuyAnyQty) then begin
+          if (true) then begin
+            
+            q = 0;
+            if (buyanyqty>0) then begin
+              if (buyanyqty+IVCash2rw.Quant>MBRr.BuyAnyQty) then begin 
+                q = MBRr.BuyAnyQty - buyanyqty; 
+              end else begin
+                q = IVCash2rw.Quant;
+              end;
+              if (q>0) then begin
+//                CalcSum(q,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate,s,0);
+                s = FormulaDiscountCalcSum(q,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate);
+                usedq = usedq + q;
+  
+                buyanyqty = buyanyqty + q;
+                buyanysum = buyanysum + s;
+                getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+                getMBRrw.ArtCode = MBRr.RebArtCode;
+
+                if (fixedpricef) then begin
+                  getMBRrw.Price = (buyanysum - getMBRrw.GetQty*fixedv)/getMBRrw.GetQty;
+                end else begin
+                  if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                    MulM4ProcVal(fixedv,buyanysum,getMBRrw.Price);
+                  end else begin
+                    getMBRrw.Price = fixedv;
+                  end;
+                end;
+                
+                vatcode = IVCash2rw.VATCode;//wierd stuff , what if 2 difrent vat codes ? 
+                taxtemplatecode = IVCash2rw.TaxTemplateCode;//wierd stuff , what if 2 difrent tax templates ? 
+                UnpackRowFieldMatrix(IVCash2rw,"TaxMatrix",TMr);//calculate? 
+                lmbrownr = MatRowCnt(IVCashr);
+
+                AddMultiBuyRow_IVCashVc(IVCashr,MBRr,getMBRrw,vatcode,lmbrownr,taxtemplatecode,TMr,artcode);
+                addmultibuyrowf = true;
+                buyanyqty = blankval;
+                buyanysum = blankval;
+              end;
+            end;
+
+            tmpq = IVCash2rw.Quant - q;
+            while (tmpq>=MBRr.BuyAnyQty) begin
+
+              buyanyqty = Round(tmpq/MBRr.BuyAnyQty,rm)*MBRr.BuyAnyQty;
+//              CalcSum(buyanyqty,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate,s,0);
+              s = FormulaDiscountCalcSum(buyanyqty,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate);
+              buyanysum = buyanysum + s;
+
+              getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+              getMBRrw.ArtCode = MBRr.RebArtCode;
+              if (fixedpricef) then begin
+                getMBRrw.Price = (buyanysum - getMBRrw.GetQty*fixedv)/getMBRrw.GetQty;
+              end else begin
+                if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                  MulM4ProcVal(fixedv,buyanysum,getMBRrw.Price);
+                end else begin
+                  getMBRrw.Price = fixedv;
+                end;
+              end;
+              
+              vatcode = IVCash2rw.VATCode;
+              taxtemplatecode = IVCash2rw.TaxTemplateCode;
+              UnpackRowFieldMatrix(IVCash2rw,"TaxMatrix",TMr);
+              lmbrownr = MatRowCnt(IVCashr);
+              AddMultiBuyRow_IVCashVc(IVCashr,MBRr,getMBRrw,vatcode,lmbrownr,taxtemplatecode,TMr,artcode);
+              addmultibuyrowf = true;
+              
+              usedq = usedq + buyanyqty;
+              tmpq = tmpq - buyanyqty;
+
+              buyanyqty = blankval;
+              buyanysum = blankval;
+            end;
+
+            q = IVCash2rw.Quant - usedq;
+            if (q>0) then begin
+//              CalcSum(q,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate,s,0);
+              s = FormulaDiscountCalcSum(q,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate);
+            end else begin
+              q = 0;
+              s = 0;
+            end;
+            buyanyqty = buyanyqty + q;
+            buyanysum = buyanysum + s;
+          end else begin
+/*
+            q = IVCash2rw.Quant;
+            CalcSum(q,IVCash2rw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate,s,0);
+            buyanyqty = buyanyqty + q;
+            buyanysum = buyanysum + s;
+
+            getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+            getMBRrw.ArtCode = MBRr.RebArtCode;
+
+            if (fixedpricef) then begin
+              getMBRrw.Price = (buyanysum - getMBRrw.GetQty*fixedv)/getMBRrw.GetQty;
+            end else begin
+              if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                MulM4ProcVal(fixedv,buyanysum,getMBRrw.Price);
+              end else begin
+                getMBRrw.Price = fixedv;
+              end;
+            end;
+            
+
+            vatcode = IVCash2rw.VATCode;
+            taxtemplatecode = IVCash2rw.TaxTemplateCode;
+            UnpackRowFieldMatrix(IVCash2rw,"TaxMatrix",TMr);
+
+            lmbrownr = MatRowCnt(IVCashr);
+            AddMultiBuyRow_IVCashVc(IVCashr,MBRr,getMBRrw,vatcode,lmbrownr,taxtemplatecode,TMr);
+            addmultibuyrowf = true;
+
+            buyanyqty = blankval;
+            buyanysum = blankval;
+*/            
+          end;
+        end else begin        
+          buyanyqty = buyanyqty + IVCash2rw.Quant;
+          buyanysum = buyanysum + IVCash2rw.Sum;
+        end;
+        i = rwcnt;        
+      end;
+    end;
+  end;
+LMultiBuyTypeAnyQty_IVCashVc:;  
+  MultiBuyTypeAnyQty_IVCashVc = addmultibuyrowf;
+  return;
+end;
+
+/*
+function Boolean MultiBuyTypeAnyQty_IVCashVc(record MultiBuyRebVc MBRr,record IVCashVc combinedIVCashr,
+                                         var record IVCashVc tmpcombinedIVCashr,
+                                         var row MultiBuyRebVc getMBRrw,var string vatcode,
+                                         var string taxtemplatecode,var record TaxMatrixVc TMr)
+begin
+  Boolean addmultibuyrowf,testf;
+  row MultiBuyRebVc buyMBRrw;
+  row IVCashVc IVCash2rw;
+  Integer iiv2,ivcombrwcnt;
+  Integer i,rwcnt;
+  val oldPrice,fixedv,sum,sumperbundle,tmpsum;
+  val buyanyqty;
+  roundmode rm;
+  string 255 discartcode;
+  
+  if (blank(MBRr.FixedPrice)==false) then begin
+    fixedv = StringToVal(MBRr.FixedPrice,M4Val);
+  end else begin
+    fixedv = StringToVal(MBRr.FixedDiscount,M4Val);
+  end;
+
+  switch (MBRr.RebType) begin
+    case kMultiBuyDiscountTypeCheapest:
+      sum = 1000000000000.00;
+    case kMultiBuyDiscountTypeMostExpensive:
+      sum = 0.00;
+    otherwise
+      ;
+  end;
+  rwcnt = MatRowCnt(MBRr);
+  ivcombrwcnt = MatRowCnt(combinedIVCashr);
+  for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+    MatRowGet(combinedIVCashr,iiv2,IVCash2rw);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IVCash2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;        
+      if (testf) then begin
+        switch (MBRr.RebType) begin
+          case kMultiBuyDiscountTypeCheapest:
+          case kMultiBuyDiscountTypeMostExpensive:
+          otherwise
+            if (blank(MBRr.FixedPrice)) or (Right(MBRr.FixedPrice,1)=="%") then begin
+              sum = sum + IVCash2rw.Sum;
+            end;
+        end;
+      end;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+      testf = true;
+      if (IVCash2rw.ArtCode!=buyMBRrw.ArtCode) then begin testf = false; end;        
+      if (buyanyqty>=MBRr.BuyAnyQty) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (blank(MBRr.FixedPrice)) or (Right(MBRr.FixedPrice,1)=="%") then begin
+        end else begin
+          sum = sum + IVCash2rw.Sum;
+        end;
+        switch (MBRr.RebType) begin
+          case kMultiBuyDiscountTypeCheapest:
+            if (blank(MBRr.FixedPrice)==false) then begin
+              oldPrice = sum;
+              if (Right(MBRr.FixedPrice,1)=="%") then begin
+                MulM4ProcVal(fixedv,IVCash2rw.Price,tmpsum);
+              end;
+              sum = Min(sum,tmpsum);
+            end else begin
+              oldPrice = fixedv;
+              if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                MulM4ProcVal(fixedv,IVCash2rw.Price,tmpsum);
+              end;
+              sum = Min(sum,tmpsum);
+            end;
+            if (sum==tmpsum) then begin
+              discartcode = buyMBRrw.ArtCode;
+            end;
+          case kMultiBuyDiscountTypeMostExpensive:
+            oldPrice = sum;
+            if (nonblank(MBRr.FixedPrice)) then begin
+              if (Right(MBRr.FixedPrice,1)=="%") then begin
+                MulM4ProcVal(fixedv,IVCash2rw.Price,tmpsum);
+              end;
+              sum = Max(sum,tmpsum);              
+            end else begin
+              oldPrice = sum;
+              if (Right(MBRr.FixedDiscount,1)=="%") then begin
+                MulM4ProcVal(fixedv,IVCash2rw.Price,tmpsum);
+              end;
+              sum = Max(sum,tmpsum);
+            end;
+            if (sum==tmpsum) then begin
+              discartcode = buyMBRrw.ArtCode;
+            end;
+        end;
+        if (oldPrice!=fixedv) then begin
+          vatcode = IVCash2rw.VATCode;
+          taxtemplatecode = IVCash2rw.TaxTemplateCode;
+          UnpackRowFieldMatrix(IVCash2rw,"TaxMatrix",TMr);
+        end;
+        buyanyqty = buyanyqty + IVCash2rw.Quant;
+        DeleteItemFromCombinedIVCash(tmpcombinedIVCashr,IVCash2rw.ArtCode);
+        i = rwcnt;
+      end;                    
+    end;
+  end;
+  if (buyanyqty>=MBRr.BuyAnyQty) then begin
+    addmultibuyrowf = true;
+  end;                    
+  rm = SetRoundModeD(0);
+  rm.mode = kRoundingModeTruncate;
+
+
+  if (addmultibuyrowf)  then begin
+    getMBRrw.GetQty = Round(buyanyqty/MBRr.BuyAnyQty,rm);
+    getMBRrw.ArtCode = discartcode;
+    switch (MBRr.RebType) begin
+      case kMultiBuyDiscountTypeCheapest:
+        getMBRrw.Price = sum;
+      case kMultiBuyDiscountTypeMostExpensive:
+        getMBRrw.Price = sum;
+      otherwise
+        sumperbundle = sum / getMBRrw.GetQty;
+        if (nonblank(MBRr.FixedPrice)) then begin
+          if (Right(MBRr.FixedPrice,1)=="%") then begin
+            MulM4ProcVal(fixedv,sumperbundle,getMBRrw.Price);
+            getMBRrw.Price = sumperbundle - getMBRrw.Price;
+          end else begin
+            getMBRrw.Price = sumperbundle - fixedv;
+          end;
+        end else begin
+          if (Right(MBRr.FixedDiscount,1)=="%") then begin
+            MulM4ProcVal(fixedv,sumperbundle,getMBRrw.Price);
+          end else begin
+            getMBRrw.Price = fixedv;
+          end;
+        end;
+        if (getMBRrw.vRebate>0) then begin
+          getMBRrw.vRebate = 100 - getMBRrw.vRebate;
+        end;
+    end;
+    switch (MBRr.RebType) begin
+      case kMultiBuyDiscountTypeCheapest:
+      case kMultiBuyDiscountTypeMostExpensive:
+      otherwise
+      if (sum<getMBRrw.Price*getMBRrw.GetQty) then begin
+        getMBRrw.GetQty = 1.00;
+        getMBRrw.Price = sum;
+      end;
+    end;
+  end;
+  MultiBuyTypeAnyQty_IVCashVc = addmultibuyrowf;
+  return;
+end;
+*/
+
+function Boolean MultiBuyTypeBOGOF_IVCashVc(record MultiBuyRebVc MBRr,record IVCashVc combinedIVCashr,row IVCashVc IVCashrw,Integer rownr,
+                                        var record IVCashVc tmpcombinedIVCashr,
+                                        var row MultiBuyRebVc getMBRrw,var string vatcode,
+                                        var string taxtemplatecode,var record TaxMatrixVc TMr)
+begin
+  Boolean addmultibuyrowf;
+  Boolean buyqtyf,getqtyf;
+  val getqtycoef,maxbuyqty;
+  row MultiBuyRebVc buyMBRrw;
+  row MultiBuyRebVc foundbuyMBRrw;
+  row IVCashVc IVCash2rw;
+  Integer iiv2,ivcombrwcnt;
+  Integer i,rwcnt;
+  roundmode rm;
+  vector Boolean vbuyartcodef;
+  Boolean testf;
+  
+  rm = SetRoundModeD(0);
+  rm.mode = kRoundingModeTruncate;
+  
+  buyqtyf = false;
+  getqtyf = false;
+  getqtycoef = 1000000000000.00;
+  maxbuyqty = 1000000000000.00;
+
+  rwcnt = MatRowCnt(MBRr);
+  ivcombrwcnt = MatRowCnt(combinedIVCashr);
+  
+  for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+    MatRowGet(tmpcombinedIVCashr,iiv2,IVCash2rw);
+
+//Trace("1.IVCash2rw.ArtCode " & IVCash2rw.ArtCode," IVCash2rw.Quant " & IVCash2rw.Quant & " ivcombrwcnt " & ivcombrwcnt);
+
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(MBRr,i,buyMBRrw);
+//Trace("IVCash2rw.ArtCode " & IVCash2rw.ArtCode," buyMBRrw.ArtCode " & buyMBRrw.ArtCode & " buyMBRrw.BuyQty " & buyMBRrw.BuyQty);            
+      if (buyMBRrw.BuyQty>0) then begin
+//Trace("IVCash2rw.ArtCode " & IVCash2rw.ArtCode," buyMBRrw.ArtCode " & buyMBRrw.ArtCode);            
+        if (IVCash2rw.ArtCode==buyMBRrw.ArtCode) then begin
+//Trace("vbuyartcodef[buyMBRrw.ArtCode] " & vbuyartcodef[buyMBRrw.ArtCode]," buyMBRrw.ArtCode " & buyMBRrw.ArtCode);            
+          if (IVCash2rw.Quant>=buyMBRrw.BuyQty) then begin
+            vbuyartcodef[buyMBRrw.ArtCode] = true;
+//            getqtycoef = Min(getqtycoef,Round(IVCash2rw.Quant/buyMBRrw.BuyQty,rm));
+            CopyRow(MBRr,buyMBRrw,foundbuyMBRrw);
+            maxbuyqty = Min(maxbuyqty,Round(IVCash2rw.Quant,rm));
+            i = rwcnt;
+            DeleteItemFromCombinedIVCash(tmpcombinedIVCashr,IVCash2rw.ArtCode);
+          end;
+        end;                    
+      end;
+    end;
+  end;
+  buyqtyf = true;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(MBRr,i,buyMBRrw);
+    if (buyMBRrw.BuyQty>0) then begin
+      if (vbuyartcodef[buyMBRrw.ArtCode]==false) then begin
+        buyqtyf = false;
+        i = rwcnt;
+      end;
+    end;
+  end;          
+  if (buyqtyf) then begin
+    for (iiv2=0;iiv2<ivcombrwcnt;iiv2=iiv2+1) begin
+      MatRowGet(combinedIVCashr,iiv2,IVCash2rw);
+                          
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(MBRr,i,getMBRrw);
+        if (getMBRrw.GetQty>0) then begin
+          testf = true;
+          if (IVCash2rw.ArtCode!=getMBRrw.ArtCode) then begin testf = false; end;
+          if (IVCash2rw.Quant<getMBRrw.GetQty) then begin testf = false; end;        
+
+          if (testf) then begin
+            if (IVCash2rw.ArtCode==foundbuyMBRrw.ArtCode) then begin 
+              if ((IVCash2rw.Quant)<(getMBRrw.GetQty+foundbuyMBRrw.BuyQty)) then begin
+                testf = false; 
+              end;
+            end;
+          end;
+
+          if (testf) then begin
+            getqtyf = true;
+            if (blank(getMBRrw.Price)) then begin
+              getMBRrw.Price = IVCash2rw.Price;
+            end else begin
+              getMBRrw.Price = IVCash2rw.Price - getMBRrw.Price;
+            end;
+//            CalcSum(getMBRrw.GetQty,getMBRrw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate,getMBRrw.Price,0);  
+            getMBRrw.Price = FormulaDiscountCalcSum(getMBRrw.GetQty,getMBRrw.Price,IVCash2rw.PriceFactor,IVCash2rw.vRebate);  
+            if (getMBRrw.vRebate>0) then begin
+              getMBRrw.vRebate = 100 - getMBRrw.vRebate;
+            end;
+            if (IVCash2rw.ArtCode==foundbuyMBRrw.ArtCode) then begin 
+              getqtycoef = Min(getqtycoef,Round((IVCash2rw.Quant)/(foundbuyMBRrw.BuyQty+getMBRrw.GetQty),rm));
+            end else begin
+              getqtycoef = Min(getqtycoef,Round(IVCash2rw.Quant/getMBRrw.GetQty,rm));
+            end;
+            vatcode = IVCash2rw.VATCode;
+            taxtemplatecode = IVCash2rw.TaxTemplateCode;
+            UnpackRowFieldMatrix(IVCash2rw,"TaxMatrix",TMr);
+            DeleteItemFromCombinedIVCash(tmpcombinedIVCashr,IVCash2rw.ArtCode);
+            goto LFound;
+          end;
+        end;
+      end;
+    end;
+  end;
+LFound:;  
+  if (getqtycoef>maxbuyqty) then begin
+    getqtycoef = maxbuyqty;
+  end;
+  getMBRrw.GetQty = getMBRrw.GetQty*getqtycoef;
+  addmultibuyrowf = buyqtyf and getqtyf;
+  MultiBuyTypeBOGOF_IVCashVc = addmultibuyrowf;
+  return;
+end;
+
+procedure CombineRows_IVCashVc(row IVCashVc IVCashrw,var record IVCashVc combinedIVCashr)
+begin
+  Integer iiv,ivrwcnt;
+  row IVCashVc cIVCashrw;
+
+  ivrwcnt = MatRowCnt(combinedIVCashr);
+  for (iiv=0;iiv<ivrwcnt;iiv=iiv+1) begin
+    MatRowGet(combinedIVCashr,iiv,cIVCashrw);
+    if (IVCashrw.ArtCode==cIVCashrw.ArtCode) then begin
+      switch (IVCashrw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          goto LkInvoiceRowTypeNormal4;
+        case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal4:;
+          cIVCashrw.Quant = cIVCashrw.Quant + IVCashrw.Quant;
+          MatRowPut(combinedIVCashr,iiv,cIVCashrw);
+          goto LCombineRows_IVCashVc;
+        case kInvoiceRowTypeCorrection:
+          cIVCashrw.Quant = cIVCashrw.Quant - IVCashrw.Quant;
+          MatRowPut(combinedIVCashr,iiv,cIVCashrw);
+          goto LCombineRows_IVCashVc;
+      end;
+    end;
+  end;
+  CopyRow(combinedIVCashr,IVCashrw,cIVCashrw);
+  switch (IVCashrw.stp) begin
+    case kInvoiceRowTypeCorrection:
+      cIVCashrw.stp = kInvoiceRowTypeNormal;
+      cIVCashrw.Quant = -cIVCashrw.Quant;
+  end;
+  if (nonblank(cIVCashrw.ArtCode)) then begin
+    MatRowPut(combinedIVCashr,ivrwcnt,cIVCashrw);
+  end;
+LCombineRows_IVCashVc:;
+  return;
+end;
+
+global
+procedure AddMultiBuyDiscountItems_IVCashVc(var record IVCashVc IVCashr)
+begin
+  record MultiBuyRebVc MBRr;
+  row MultiBuyRebVc buyMBRrw;
+  row MultiBuyRebVc getMBRrw;
+  Integer i,j,rwcnt,rownr;
+  row IVCashVc IVCashrw;
+  row IVCashVc IVCash2rw;
+  record IVCashVc combinedIVCashr;
+  record IVCashVc tmpcombinedIVCashr;
+  Integer iiv,ivrwcnt,ivcombrwcnt,iiv2;
+  Boolean foundmbr,testf,addmultibuyrowf,buyqtyf,getqtyf;
+  val getqtycoef,buyanyqty;
+  string 255 inwarning,vatcode,taxtemplatecode,artcode; 
+  Integer mbrownr;
+  record TaxMatrixVc TMr;
+  vector Boolean vmbaf;
+
+  if (CountRecords("MultiBuyRebVc")>0) then begin
+    mbrownr = -1;
+    ivrwcnt = MatRowCnt(IVCashr);
+    for (iiv=0;iiv<ivrwcnt;iiv=iiv+1) begin
+      MatRowGet(IVCashr,iiv,IVCashrw);
+      switch (IVCashrw.stp) begin
+        case kInvoiceRowTypeMultiBuyDiscount:
+          MatRowDelete(IVCashr,iiv);
+          ivrwcnt = MatRowCnt(IVCashr);
+          iiv = iiv - 1;
+//          mbrownr = iiv;
+      end;
+    end;
+    ivrwcnt = MatRowCnt(IVCashr);
+    for (iiv=0;iiv<ivrwcnt;iiv=iiv+1) begin
+      MatRowGet(IVCashr,iiv,IVCashrw);
+      switch (IVCashrw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          goto LkInvoiceRowTypeNormal5;
+        case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal5:;
+          CombineRows_IVCashVc(IVCashrw,combinedIVCashr);
+        case kInvoiceRowTypeCorrection:
+          CombineRows_IVCashVc(IVCashrw,combinedIVCashr);
+      end;
+    end;
+    
+    ivcombrwcnt = MatRowCnt(combinedIVCashr);
+    RecordCopy(tmpcombinedIVCashr,combinedIVCashr);
+    for (iiv=0;iiv<ivcombrwcnt;iiv=iiv+1) begin
+      MatRowGet(combinedIVCashr,iiv,IVCashrw);
+      if (blank(artcode) and IVCashrw.stp==kInvoiceRowTypeNormal) then begin
+        artcode = IVCashrw.ArtCode;
+      end;
+      switch (IVCashrw.stp) begin
+        case kInvoiceRowTypeStructuredItemComponent:
+          goto LkInvoiceRowTypeNormal6;
+        case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal6:;
+          RecordClear(MBRr);
+          ResetLoop(MBRr);
+          foundmbr = true;
+          while (LoopKey("ActArtCode:" & IVCashrw.ArtCode,MBRr,1,foundmbr)) begin
+            if (foundmbr) then begin
+              testf = true;
+              if (DateInRange(IVCashr.TransDate,MBRr.StartDate,MBRr.EndDate)==false) then begin testf = false; end;
+              if (nonblank(MBRr.PLCode) and IVCashr.PriceList!=MBRr.PLCode) then begin testf = false; end;
+              if (nonblank(MBRr.Location) and !SetInSet(IVCashr.Location,MBRr.Location)) then begin testf = false; end;
+              if (vmbaf[MBRr.Code]) then begin testf = false; end;
+              if (testf) then begin
+                addmultibuyrowf = false;
+                vatcode = "";
+                taxtemplatecode = "";
+                ClearRow(MBRr,getMBRrw,1);
+                
+                rwcnt = MatRowCnt(MBRr);
+                switch (MBRr.Type) begin
+                  case kMultiBuyTypeAnyQty:
+                    MatRowDelete(tmpcombinedIVCashr,iiv);
+                    buyanyqty = IVCashrw.Quant;
+                    switch (MBRr.RebType) begin
+                      case kMultiBuyDiscountTypeNone:
+                      otherwise
+                        vatcode = IVCashrw.VATCode;
+                        taxtemplatecode = IVCashrw.TaxTemplateCode;
+                        UnpackRowFieldMatrix(IVCashrw,"TaxMatrix",TMr);
+                    end;
+                    RecordCopy(tmpcombinedIVCashr,IVCAshr);
+                    RecordCopy(combinedIVCashr,IVCashr);
+                    addmultibuyrowf = MultiBuyTypeAnyQty_IVCashVc(IVCashr,MBRr,combinedIVCashr,tmpcombinedIVCashr,getMBRrw,vatcode,taxtemplatecode,TMr);
+                    if (addmultibuyrowf) then begin
+                      vmbaf[MBRr.Code] = true;
+                    end;
+                  case kMultiBuyTypeBOGOF:
+                    addmultibuyrowf = MultiBuyTypeBOGOF_IVCashVc(MBRr,combinedIVCashr,IVCashrw,iiv,tmpcombinedIVCashr,getMBRrw,vatcode,taxtemplatecode,TMr);
+                    if (addmultibuyrowf) then begin
+                      AddMultiBuyRow_IVCashVc(IVCashr,MBRr,getMBRrw,vatcode,mbrownr,taxtemplatecode,TMr,artcode);
+                      foundmbr = false;
+                      RecordCopy(combinedIVCashr,tmpcombinedIVCashr);
+                      iiv = iiv-1;
+                      ivcombrwcnt = MatRowCnt(combinedIVCashr);
+                      mbrownr = -1;
+                    end else begin
+                      RecordCopy(tmpcombinedIVCashr,combinedIVCashr);
+                    end;
+                end;
+              end;
+            end;
+          end;
+      end;
+    end;
+    IVCashSumup(IVCashr,true);
+  end;
+  return;
+end;

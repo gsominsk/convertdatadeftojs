@@ -1,0 +1,546 @@
+external function roundmode DefaultRoundMode();
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external updating procedure RecordActionFEIV_Print(var record FEIVVc,string,Boolean);
+external function Boolean AllowCurChange(string,Boolean);
+remote function Boolean FEIVVc_PastePrepaymentNr(var record FEIVVc);
+remote function Boolean FEIVVc_PasteCustCode(var record IVVc,string,var string,var string,var string,var string,var string);
+remote procedure FEIVVc_PasteQuantFract(var record FEIVVc,Integer);
+remote procedure FEIVVc_PasteQuant(var record FEIVVc,Integer);
+remote function Boolean FEIVVc_PasteArtCode(var record FEIVVc,Integer,var string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure RoundRowSum(string,string,string,var val);
+
+global
+function Boolean FEIVDchrsum(var record FEIVVc FEIVp,Integer rownr)
+BEGIN
+  row FEIVVc FEIVrw;
+  val s,quant;
+  Boolean res;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  MatRowGet(FEIVp,rownr,FEIVrw);
+  if ((FEIVrw.stp==1) or (FEIVrw.stp==11)) then begin
+      quant = FEIVrw.QuantFract;
+      if (blank(FEIVrw.QuantFract)) then begin
+        quant = FEIVrw.Quant;
+      end;  
+      CalcSum(quant,FEIVrw.Price,FEIVrw.PriceFactor,FEIVrw.vRebate,s,GenOptRec.UseDiscount);  
+      RoundRowSum(FEIVp.CurncyCode,FEIVp.PayDeal,"IVVc",s);
+      if (s!=FEIVrw.Sum) then begin
+        FEIVrw.Sum = s;
+        res = true;
+        MatRowPut(FEIVp,rownr,FEIVrw);
+      end;
+  end;
+  if (FEIVrw.Price==0) then begin res = true; end;
+  FEIVDchrsum = res;
+  RETURN;
+END;
+
+global
+procedure FEIVSumup(record FEIVVc FEIVr)
+BEGIN
+  record SMVc VATr;
+  row FEIVVc FEIVrw;
+  Integer i,rwcnt;
+  Integer vcrwcnt;
+  roundmode roundlines,rndtotal,roundvat;
+  val vatv,t,t1,quant;
+  
+  FEIVr.Sum1 = blankval;
+  FEIVr.Sum2 = blankval;
+  FEIVr.Sum3 = blankval;
+  FEIVr.Sum4 = blankval;
+  FEIVr.TAX1Sum = blankval;
+  SetupVATBase(VATr,vcrwcnt);  
+  rwcnt = MatRowCnt(FEIVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(FEIVr,i,FEIVrw);
+    quant = FEIVrw.QuantFract;
+    if (blank(quant)) then begin
+      quant = FEIVrw.Quant;
+    end;  
+    if (FEIVrw.stp==11) then begin
+      FEIVrw.Sum = -FEIVrw.Sum;
+    end;
+    
+    MulVATIV(FEIVrw.VATCode,FEIVrw.Sum,vatv,t,FEIVr.InclVAT,FEIVr.NoTAXonVAT);
+    switch (FEIVr.InclVAT) begin
+      case 0:
+        FEIVr.Sum1 = FEIVr.Sum1 + FEIVrw.Sum;
+        if ((FEIVr.ExportFlag==0) or (FEIVr.ExportFlag==3) or (FEIVr.ExportFlag==4)) then begin
+          if (vatv==0) then begin 
+            FEIVr.Sum2 = FEIVr.Sum2 + FEIVrw.Sum;
+          end;
+//          FEIVr.Sum3 = FEIVr.Sum3 + vatv;
+          AddVATBase(VATr,FEIVrw.VATCode,FEIVrw.Sum,blankval,vcrwcnt,FEIVr.InclVAT,FEIVr.NoTAXonVAT);
+        end;
+      otherwise
+        AddVATBase(VATr,FEIVrw.VATCode,FEIVrw.Sum,blankval,vcrwcnt,FEIVr.InclVAT,FEIVr.NoTAXonVAT);
+        FEIVr.Sum4 = FEIVr.Sum4 + FEIVrw.Sum;
+//        FEIVr.Sum3 = FEIVr.Sum3 + vatv;
+        if ((FEIVr.ExportFlag==0) or (FEIVr.ExportFlag==3) or (FEIVr.ExportFlag==4)) then begin
+        end else begin
+          FEIVr.Sum4 = FEIVr.Sum4 + vatv;
+        end;
+        if (vatv==0) then begin 
+          FEIVr.Sum2 = FEIVr.Sum2 + FEIVrw.Sum;
+          if (FEIVrw.stp==5) then begin
+            FEIVr.Sum1 = FEIVr.Sum1 + FEIVrw.Sum;
+          end;
+        end else begin
+          FEIVr.Sum1 = FEIVr.Sum1 + FEIVrw.Sum;
+        end;
+    end;
+  end;
+  CalcVATBaseVAT(VATr,FEIVr.InclVAT,FEIVr.NoTAXonVAT,vcrwcnt,vatv,t1);
+  FEIVr.TAX1Sum = t1;
+  FEIVr.Sum3 = vatv;
+  if (FEIVr.FrPrice!=0) then begin
+    FEIVr.Sum4 = FEIVr.Sum4 + FEIVr.FrPrice;
+    MulVATIV(FEIVr.FrVATCode,FEIVr.FrPrice,vatv,t,FEIVr.InclVAT,FEIVr.NoTAXonVAT);
+    FEIVr.Sum3 = FEIVr.Sum3 + vatv;
+    AddVATBase(VATr,FEIVr.FrVATCode,FEIVr.FrPrice,blankval,vcrwcnt,FEIVr.InclVAT,FEIVr.NoTAXonVAT);
+    switch (FEIVr.InclVAT) begin
+      case 1:
+        FEIVr.Sum4 = FEIVr.Sum4 + vatv;
+    end;
+    if (vatv==0) then begin 
+      FEIVr.Sum2 = FEIVr.Sum2 + FEIVr.FrPrice;
+    end else begin
+      FEIVr.Sum1 = FEIVr.Sum1 + FEIVr.FrPrice;
+    end;        
+  end;
+  GetCurncyRoundoff(FEIVr.CurncyCode,FEIVr.PayDeal,"FIVVc",rndtotal,roundlines,roundvat);
+  FEIVr.Sum3 = Round(FEIVr.Sum3,roundvat);
+  
+  switch (FEIVr.InclVAT) begin
+      case 0:
+        t = FEIVr.Sum1 + FEIVr.Sum3;
+        t = FEIVr.Sum4 + t;            
+        t = t + FEIVr.TAX1Sum;            
+        FEIVr.Sum4 = Round(t,rndtotal);
+        t = FEIVr.Sum4 - t;
+        FEIVr.Sum0 = FEIVr.Sum0 + t;
+      otherwise
+        t = FEIVr.Sum4 + FEIVr.TAX1Sum;            
+        FEIVr.Sum4 = Round(t,rndtotal);
+        t = FEIVr.Sum4 - t;
+        FEIVr.Sum0 = FEIVr.Sum0 + t;
+  end;
+  FEIVr.Sum0 = Round(FEIVr.Sum0,DefaultRoundMode);
+  FEIVr.Sum1 = Round(FEIVr.Sum1,DefaultRoundMode);
+  FEIVr.Sum2 = Round(FEIVr.Sum2,DefaultRoundMode);
+  if (nonblank(FEIVr.CurncyCode)) then begin
+    FEIVr.BaseSum4 = MulRateToBase1(FEIVr.CurncyCode,FEIVr.Sum4,FEIVr.FrRate,FEIVr.ToRateB1,FEIVr.ToRateB2,FEIVr.BaseRate1,FEIVr.BaseRate2,DefaultCurRoundOff);
+  end;
+  RETURN;
+END;
+
+procedure FEIVVc_PastePrice(var record FEIVVc FEIVp,Integer rownr)
+BEGIN
+  row FEIVVc FEIVrw;
+  Boolean chsum;
+
+  MatRowGet(FEIVp,rownr,FEIVrw);
+  if ((FEIVrw.stp==1) or (FEIVrw.stp==11)) then begin
+    chsum = FEIVDchrsum(FEIVp,rownr);
+    if (chsum) then begin
+      FEIVSumup(FEIVp);
+    end;  
+  end;
+  RETURN;
+END;
+
+procedure FEIVVc_PasteVATCode(var record FEIVVc FEIVp,Integer rownr)
+BEGIN  
+  row FEIVVc FEIVrw;
+  Boolean chsum
+  
+  MatRowGet(FEIVp,rownr,FEIVrw);
+  switch (FEIVrw.stp) begin
+    otherwise
+      chsum = FEIVDchrsum(FEIVp,rownr);
+      FEIVSumup(FEIVp);
+  end;
+  RETURN;
+END;
+
+procedure FEIVVc_PastevRebate(var record FEIVVc FEIVp,Integer rownr)
+BEGIN
+  row FEIVVc FEIVrw;
+  Boolean chsum;
+
+  MatRowGet(FEIVp,rownr,FEIVrw);
+  if ((FEIVrw.stp==1) or (FEIVrw.stp==11)) then begin
+    chsum = FEIVDchrsum(FEIVp,rownr);
+    if (chsum) then begin
+      FEIVSumup(FEIVp);
+    end;  
+  end;
+  RETURN;
+END;
+
+function Boolean FEIVDClassArtCodeEFAfter(Integer wn,Integer rownr,Integer changed)
+begin  
+  record FEIVVc FEIVr;
+  string 255 inwarning;
+  
+  if (changed!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);
+    if (FEIVVc_PasteArtCode(FEIVr,rownr,inwarning)) then begin      
+      PutWindowRecord(wn,FEIVr);
+      if (nonblank(inwarning)) then begin
+        MessageBox(0,inwarning);
+      end;      
+    end else begin
+      Beep;
+    end;
+  end;
+  FEIVDClassArtCodeEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassQuantEFAfter(Integer wn,Integer rownr,Integer changed)
+begin  
+  record FEIVVc FEIVr;
+  Boolean chsum;
+
+  if (changed!=0) then begin  
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);
+    FEIVVc_PasteQuant(FEIVr,rownr);
+    PutWindowRecord(wn,FEIVr);
+  end;
+  FEIVDClassQuantEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassQuantFractEFAfter(Integer wn,Integer rownr,Integer changed)
+begin  
+  record FEIVVc FEIVr;
+  Boolean chsum;
+
+  if (changed!=0) then begin  
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);
+    FEIVVc_PasteQuantFract(FEIVr,rownr);
+    PutWindowRecord(wn,FEIVr);
+  end;
+  FEIVDClassQuantFractEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassPriceEFAfter(Integer wn,Integer rownr,Integer changed)
+begin  
+  record FEIVVc FEIVr;
+
+  if (changed!=0) and (rownr>=0) then begin  
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);
+    FEIVVc_PastePrice(FEIVr,rownr);
+    PutWindowRecord(wn,FEIVr);
+  end;  
+  FEIVDClassPriceEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassVATCodeEFAfter(Integer wn,Integer rownr,Integer changed)
+begin  
+  record FEIVVc FEIVr;
+
+  if (changed!=0) then begin  
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);
+    FEIVVc_PasteVATCode(FEIVr,rownr);
+    PutWindowRecord(wn,FEIVr);
+  end;
+  FEIVDClassVATCodeEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassvRebateEFAfter(Integer wn,Integer rownr,Integer changed)
+begin  
+  record FEIVVc FEIVr;
+  Boolean chsum;
+
+  if (changed!=0) then begin  
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);
+    FEIVVc_PastevRebate(FEIVr,rownr);
+    PutWindowRecord(wn,FEIVr);
+  end;
+  FEIVDClassvRebateEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassCustCodeEFAfter(Integer wn, Integer rownr,Integer changed)
+BEGIN
+  record FEIVVc FEIVr;
+  string 255 warning,errstr,prepstr,invdatewarn,transdatewarn;
+
+  GetWindowRecord(wn,FEIVr);    
+  if ((changed!=0) or ((blank(FEIVr.Addr0)) and (nonblank(FEIVr.CustCode)))) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,FEIVr);    
+    if (FEIVVc_PasteCustCode(FEIVr,WindEFstr(wn),warning,errstr,prepstr,invdatewarn,transdatewarn)) then begin
+      PutWindowRecord(wn,FEIVr);
+      if (nonblank(warning)) then begin
+        MessageBox(0,warning);
+      end;
+      if (nonblank(errstr)) then begin
+        MessageBox(0,errstr);
+      end;
+      if (nonblank(prepstr)) then begin
+        MessageBox(0,prepstr);
+      end;
+      if (nonblank(transdatewarn)) then begin
+        MessageBox(0,transdatewarn);
+      end;
+      if (nonblank(invdatewarn)) then begin
+        MessageBox(0,invdatewarn);
+      end;
+    end else begin
+      Beep;
+    end;
+  end;
+  FEIVDClassCustCodeEFAfter = true;
+  return;
+end;
+
+function Boolean FEIVDClassPrepaymentNrEFAfter(Integer wn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record FEIVVc FEIVr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,FEIVr);
+    if (FEIVr.PrepaymentNr!=-1) then begin
+      res = FEIVVc_PastePrepaymentNr(FEIVr);
+    end;
+    PutWindowRecord(wn,FEIVr);
+  end;  
+  FEIVDClassPrepaymentNrEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean FEIVDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "ArtCode": res = FEIVDClassArtCodeEFAfter(wn,rownr,changed);
+    case "Quant": res = FEIVDClassQuantEFAfter(wn,rownr,changed);
+    case "QuantFract": res = FEIVDClassQuantFractEFAfter(wn,rownr,changed);
+    case "Price": res = FEIVDClassPriceEFAfter(wn,rownr,changed);
+    case "VATCode": res = FEIVDClassVATCodeEFAfter(wn,rownr,changed);
+    case "CustCode": res = FEIVDClassCustCodeEFAfter(wn,rownr,changed);
+    case "PrepaymentNr": res = FEIVDClassPrepaymentNrEFAfter(wn,rownr,changed);
+    case "vRebate": res = FEIVDClassvRebateEFAfter(wn,rownr,changed);
+/*
+    case "BasePrice": res = FEIVDClassBasePriceEFAfter(wn,rownr,changed);
+    case "PayDeal": res = FEIVDClassPayDealEFAfter(wn,rownr,changed);
+    case "CurncyCode": res = FEIVDClassCurncyCodeEFAfter(wn,rownr,changed);
+    case "FrRate": res = FEIVDClassFrRateEFAfter(wn,rownr,changed);
+    case "ToRateB1": res = FEIVDClassToRateB1EFAfter(wn,rownr,changed);
+    case "ToRateB2": res = FEIVDClassToRateB2EFAfter(wn,rownr,changed);
+    case "BaseRate1": res = FEIVDClassBaseRate1EFAfter(wn,rownr,changed);
+    case "BaseRate2": res = FEIVDClassBaseRate2EFAfter(wn,rownr,changed);
+    case "LangCode": res = FEIVDClassLangCodeEFAfter(wn,rownr,changed);
+    case "InvDate": res = FEIVDClassInvDateEFAfter(wn,rownr,changed);
+    case "TransDate": res = FEIVDClassTransDateEFAfter(wn,rownr,changed);
+    case "Sum": res = FEIVDClassSumEFAfter(wn,rownr,changed);
+    case "SalesMan": res = FEIVDClassSalesManEFAfter(wn,rownr,changed);
+*/    
+  end;
+  FEIVDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean FEIVDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record FEIVVc FEIVr;
+  row FEIVVc FEIVrw;
+  
+  if (wnst!=2) then begin//Rs_update
+    res = true;
+    GetWindowRecord(wn,FEIVr);
+    if ((FEIVr.OrderNr!=-1) or (FEIVr.IVNr!=-1)) then begin
+      res = false;
+      if (FEIVr.IVNr==-1) then begin
+        switch (fieldname) begin
+          case "QuantFract": res = true;
+          case "LangCode": res = true;
+        end;
+      end;
+    end else begin
+      switch (fieldname) begin
+        case "PrepaymentNr": res = false;
+        case "TransDate": res = true;
+        case "LangCode": res = true;
+        case "FrRate": 
+          if (AllowCurChange(FEIVr.CurncyCode,false)==false) then begin res = false; end;
+        case "ToRateB1": 
+          if (AllowCurChange(FEIVr.CurncyCode,false)==false) then begin res = false; end;
+        case "ToRateB2": 
+          if (AllowCurChange(FEIVr.CurncyCode,false)==false) then begin res = false; end;
+        case "BaseRate1": 
+          if (AllowCurChange(FEIVr.CurncyCode,true)==false) then begin res = false; end;
+        case "BaseRate2": 
+          if (AllowCurChange(FEIVr.CurncyCode,true)==false) then begin res = false; end;
+        case "Price": 
+          if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+        case "vRebate": 
+          if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+        case "Sum": 
+          if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+      end;
+    end;
+  end else begin
+    res = true;
+    GetPrevWindowRecord(wn,FEIVr);
+    if (FEIVr.OKFlag!=0) then begin
+      res = false;
+      switch (fieldname) begin
+        case "SalesMan": res = true;
+        case "InvComment": res = true;
+        case "VATNr": res = true;
+        case "ClientContact": res = true;
+        case "Addr0": res = true;
+        case "Addr1": res = true;
+        case "Addr2": res = true;
+        case "Addr3": res = true;
+        case "InvAddr3": res = true;
+        case "InvAddr4": res = true;
+        case "LangCode": res = true;
+        case "Phone": res = true;
+        case "Fax": res = true;
+        case "PrepaymentNr": res = false;
+        case "PMComment": res = true;
+      end;
+    end else begin
+      GetWindowRecord(wn,FEIVr);
+      if ((FEIVr.OrderNr!=-1) or (FEIVr.IVNr!=-1)) then begin
+        res = false;
+        if (FEIVr.IVNr==-1) then begin
+          switch (fieldname) begin
+            case "QuantFract": res = true;
+          end;
+        end;
+        switch (fieldname) begin
+          case "SerNr": res = true;
+          case "LangCode": res = true;
+          case "TransDate": res = true;
+          case "PrepaymentNr": res = false;
+          case "PMComment": res = true;
+        end;
+      end else begin
+        switch (fieldname) begin
+          case "PrepaymentNr": res = false;
+          case "TransDate": res = true;
+          case "LangCode": res = true;
+          case "PMComment": res = true;
+          case "FrRate": 
+            if (AllowCurChange(FEIVr.CurncyCode,false)==false) then begin res = false; end;
+          case "ToRateB1": 
+            if (AllowCurChange(FEIVr.CurncyCode,false)==false) then begin res = false; end;
+          case "ToRateB2": 
+            if (AllowCurChange(FEIVr.CurncyCode,false)==false) then begin res = false; end;
+          case "BaseRate1": 
+            if (AllowCurChange(FEIVr.CurncyCode,true)==false) then begin res = false; end;
+          case "BaseRate2": 
+            if (AllowCurChange(FEIVr.CurncyCode,true)==false) then begin res = false; end;
+          case "Price": 
+            if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+          case "vRebate": 
+            if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+          case "Sum": 
+            if (UserCanAction("ChangePrices",true)==false) then begin res = false; end;
+        end;
+      end;
+    end;
+  end;
+  FEIVDClassActiveEditField = res;
+  RETURN;
+END;
+
+global 
+function Boolean FEIVDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record FEIVVc FEIVr;
+  row FEIVVc FEIVrw;
+  Boolean res;
+
+  res = true;
+  if (WindowState(wn)==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,FEIVr);    
+    if (FEIVr.OKFlag!=0) then begin res = false; end;
+  end else begin
+    if (rownr!=-1) then begin
+      GetWindowRecord(wn,FEIVr);    
+      if (FEIVr.OrderNr!=-1) then begin
+        res = false;
+      end;
+    end;    
+  end;
+  if (FEIVr.IVNr>0) then begin res = false; end;
+  if (FEIVr.OrderNr>0) then begin res = false; end;
+LFEIVDClassDeleteRowTest:;  
+  FEIVDClassDeleteRowTest = res;
+  return;
+end;
+
+global
+function Boolean FEIVDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record FEIVVc FEIVr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,FEIVr);
+    if (FEIVr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,FEIVr);
+    if (FEIVr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  FEIVDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+updating procedure PrintFEIVL(Integer wn,Boolean previewf)
+BEGIN
+  record FEIVVc FEIVr;
+  Integer i;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(FEIVr,wn,i)) begin
+    RecordActionFEIV_Print(FEIVr,previewf,true);
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  RETURN;
+END;

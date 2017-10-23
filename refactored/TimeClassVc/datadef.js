@@ -1,0 +1,16 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fCode: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fStartTime: { public: true, type: 'TIME' },
+     fEndTime: { public: true, type: 'TIME' },
+     fMonday: { public: true, type: 'INTEGER' },
+     fTuesday: { public: true, type: 'INTEGER' },
+     fWednesday: { public: true, type: 'INTEGER' },
+     fThursday: { public: true, type: 'INTEGER' },
+     fFriday: { public: true, type: 'INTEGER' },
+     fSaturday: { public: true, type: 'INTEGER' },
+     fSunday: { public: true, type: 'INTEGER' },
+     fRedday: { public: true, type: 'INTEGER' },
+     fDBRedday: { public: true, type: 'INTEGER' } },
+  indexes: { CodeIndex76: { fields: [ 'fCode' ], indicesType: 'UNIQUE' } } }

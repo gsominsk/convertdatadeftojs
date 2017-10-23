@@ -1,0 +1,1391 @@
+remote updating procedure RemotePrintStockMovInvoices(var record StockMovVc,var longint,var string,var record RcVc);
+remote function Boolean GetSVOSerialItem(string,string,record SVOSerVc);
+remote function Boolean GetFirstItem(var string,var record INVc);
+remote procedure StockMovVc_PasteThrouLocation(var record StockMovVc);
+remote procedure StockMovVc_PasteFromLocation(var record StockMovVc);
+external procedure CalculateStockMovArrival(date,time,integer,time,var date,var time);
+remote procedure StockMovVc_PasteToLocation(var record StockMovVc);
+remote procedure StockMovVc_PasteSentQuant(var record StockMovVc,Integer);
+external function Integer OpenArtStat(Integer,record RcVc,Boolean);
+external procedure WarnFutureDate(Boolean,Date);
+remote procedure StockMovVc_PasteSerialNr(var record StockMovVc,Integer,var array string);
+remote function Integer CreateQualConFromStockMov(record StockMovVc,Integer,var record QualConVc,Integer);
+remote procedure PasteStockMovProdSerNr(var record StockMovVc);
+external function Boolean TestForMATVARINS(Integer);
+external procedure StockMovSumUp(var record StockMovVc);
+remote function Boolean StockMovVc_PasteToPosCode(var record StockMovVc,string,string,val,Integer,var string);
+remote updating function Boolean RecordAction_rlStockMovLOK(var record StockMovVc,Boolean);
+external procedure RecordActionStockMov_Print(var record StockMovVc,string,string,Boolean);
+remote function Boolean StockMovVc_PasteQuant(var record StockMovVc,Integer);
+external function string 40 SerialNrSClassSpecPName(string);
+remote function Boolean StockMovVc_PasteArtCode(var record StockMovVc,Integer,Integer,var array string);
+external function Boolean WarnOldRecords(Date,string,LongInt);
+external function Boolean DateWarned(Date,string);
+remote procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean AllowCurChange(string,Boolean);
+external procedure SendArtStat(string,string,string,val,val,val,Date,Integer);
+remote procedure RecordAction_raStockMovFillFIFO(var record StockMovVc);
+external function val CalculateSerialNrQuantity(string,string,string,Boolean,val,val,val,val);
+external procedure StockMovSumUp(var record StockMovVc);
+external procedure SerialNrDimensions(string,string,var val,var val,var val);
+external function LongInt TimeToMinutes(Time);
+external function LongInt AddTime(Time,LongInt,var Time);
+external function LongInt DateDiff(Date,Date);
+external procedure DisplayStrArray(array string);
+remote function string 20 FindCustRouteByLocation(string,string,string);
+
+global
+procedure CalcNewPrice(val oldprice,string extra,var val newprice)
+BEGIN
+  string 255 tstr;
+  val t,valv;
+            
+  newprice = blankval;
+  if (blank(extra)) then begin
+    newprice = oldprice;
+    goto LCalcNewPrice;
+  end;
+  if (oldprice==blankval) then begin
+    goto LCalcNewPrice;
+  end;
+  tstr = extra;
+  if (Mid(tstr,len(tstr)-1,1)=="%") then begin  
+    tstr = Left(tstr,len(tstr)-1);
+    valv = StringToVal(tstr,M4Val);
+    t = oldprice*valv;
+    t = t/100;
+    newprice = oldprice + t;
+  end else begin
+    valv = StringToVal(tstr,M45Val);
+    newprice = oldprice + valv;
+  end;
+LCalcNewPrice:;
+  RETURN;
+END;
+
+global
+function Boolean StockMovDClassSwitchRow(Integer wn,Integer rownr)
+begin        
+  record StockMovVc StockMovr;  
+  row StockMovVc StockMovrw; 
+  Integer rwcnt;
+  Boolean res;
+  val t,tproc,unitprdisc,s,rowsum,sum;
+  string 255 recepy;
+  string 20 location;
+
+  res = true;
+  GetWindowRecord(wn,StockMovr);
+  rwcnt = MatRowCnt(StockMovr);  
+  if ((rownr<rwcnt) and (rownr>=0)) then begin
+    MatRowGet(StockMovr,rownr,StockMovrw);
+/*  This makes one extra call, I can see why but we need another solution
+      if (blank(recepy)) then begin
+        GetRecepy(StockMovrw.ArtCode,recepy);
+      end;  
+*/
+    location = StockMovr.FrLocation;
+    if (StockMovr.SentOKFlag!=0) then begin
+      location = StockMovr.ThrouLocation;
+    end;
+    SendArtStat(StockMovrw.ArtCode,location,recepy,t,tproc,unitprdisc,StockMovr.TransDate,0);
+    SetWindowNameArg(wn,StockMovrw.ArtCode & ":" & StockMovr.FrLocation);
+  end;
+  StockMovDClassSwitchRow = res;  
+  return;
+end;
+
+function Boolean StockMovDClassArtCodeEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  Boolean res;
+  array string 255 aWarning;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (StockMovVc_PasteArtCode(StockMovr,rownr,changed,aWarning)) then begin
+      PutWindowRecord(wn,StockMovr);
+    end;
+    DisplayStrArray(aWarning);
+    if (StockMovDClassSwitchRow(wn,rownr)) then begin end;
+  end;
+  StockMovDClassArtCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassQuantEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    res = StockMovVc_PasteQuant(StockMovr,rownr);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassQuantEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassSentQuantEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovVc_PasteSentQuant(StockMovr,rownr);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassSentQuantEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassOldPriceEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row StockMovVc StockMovrw;
+  record StockMovVc StockMovr;
+  Boolean res;
+  val t;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    CalcNewPrice(StockMovrw.OldPrice,StockMovrw.ExtraSCost,t);
+    StockMovrw.NewPrice = t;
+    MatRowPut(StockMovr,rownr,StockMovrw);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassOldPriceEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassExtraSCostEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row StockMovVc StockMovrw;
+  record StockMovVc StockMovr;
+  Boolean res;
+  val t;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    CalcNewPrice(StockMovrw.OldPrice,StockMovrw.ExtraSCost,t);
+    StockMovrw.NewPrice = t;
+    MatRowPut(StockMovr,rownr,StockMovrw);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassExtraSCostEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassNewPriceEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row StockMovVc StockMovrw;
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    StockMovrw.ExtraSCost = "";
+    MatRowPut(StockMovr,rownr,StockMovrw);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassNewPriceEFAfter = res;
+  RETURN;
+END;
+
+global
+procedure StockMovGetRate(var record StockMovVc StockMovp)
+BEGIN
+  val from,to1,to2,base1,base2;
+  val sum;
+  string 20 crncy;
+ 
+  crncy = StockMovp.CurncyCode;
+  GetFullCurncyRate(crncy,StockMovp.TransDate,from,to1,to2,base1,base2);
+  StockMovp.CurncyCode = crncy;
+  StockMovp.FrRate = from;
+  StockMovp.ToRateB1 = to1;
+  StockMovp.ToRateB2 = to2;
+  StockMovp.BaseRate1 = base1;
+  StockMovp.BaseRate2 = base2;  
+  RETURN;
+END;
+
+function Boolean StockMovDClassCurncyCodeEFAfter(Integer wn,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovGetRate(StockMovr);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassCurncyCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassTransDateEFAfter(Integer wn,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (DateWarned(StockMovr.TransDate,"StockMovVc")) then begin
+      MessageBox(1045,"");
+    end;
+    if (WarnOldRecords(StockMovr.TransDate,"StockMovVc",StockMovr.SerNr)) then begin
+      MessageBox(2020,"");
+    end;
+    WarnFutureDate(true,StockMovr.TransDate);
+    StockMovGetRate(StockMovr);
+    PutWindowRecord(wn,StockMovr);    
+//JJCS    
+  end;
+  StockMovDClassTransDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassSentTransDateEFAfter(Integer wn,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (DateWarned(StockMovr.SentTransDate,"StockMovVc")) then begin
+      MessageBox(1045,"");
+    end;
+    if (WarnOldRecords(StockMovr.SentTransDate,"StockMovVc",StockMovr.SerNr)) then begin
+      MessageBox(2020,"");
+    end;
+    WarnFutureDate(true,StockMovr.SentTransDate);
+    PutWindowRecord(wn,StockMovr);    
+//JJCS    
+  end;
+  StockMovDClassSentTransDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassUnitXvalEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row StockMovVc StockMovrw;
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if ((changed!=0) and (rownr>=0)) then begin
+    GetWindowRecord(wn,StockMovr);
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    StockMovrw.Quant = CalculateSerialNrQuantity(StockMovrw.ArtCode,"","",false,StockMovrw.UnitXval,StockMovrw.UnitYval,StockMovrw.UnitZval,StockMovrw.Quant);
+    MatRowPut(StockMovr,rownr,StockMovrw);
+    StockMovSumUp(StockMovr);    
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassUnitXvalEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassUnitYvalEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row StockMovVc StockMovrw;
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if ((changed!=0) and (rownr>=0)) then begin
+    GetWindowRecord(wn,StockMovr);
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    StockMovrw.Quant = CalculateSerialNrQuantity(StockMovrw.ArtCode,"","",false,StockMovrw.UnitXval,StockMovrw.UnitYval,StockMovrw.UnitZval,StockMovrw.Quant);
+    MatRowPut(StockMovr,rownr,StockMovrw);
+    StockMovSumUp(StockMovr);    
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassUnitYvalEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassUnitZvalEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  row StockMovVc StockMovrw;
+  record StockMovVc StockMovr;
+  Boolean res;
+  
+  res = true;
+  if ((changed!=0) and (rownr>=0)) then begin
+    GetWindowRecord(wn,StockMovr);
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    StockMovrw.Quant = CalculateSerialNrQuantity(StockMovrw.ArtCode,"","",false,StockMovrw.UnitXval,StockMovrw.UnitYval,StockMovrw.UnitZval,StockMovrw.Quant);    
+    MatRowPut(StockMovr,rownr,StockMovrw);
+    StockMovSumUp(StockMovr);    
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassUnitZvalEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassProdSerNrEFAfter(Integer wn,Boolean changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  record ProdSettingsBlock PSb;  
+  
+  res = true;
+  if (changed) then begin
+    BlockLoad(PSb);
+    if (PSb.UpdProdInQtyFromStockMov==0) then begin
+      GetWindowRecord(wn,StockMovr);
+      PasteStockMovProdSerNr(StockMovr);
+      PutWindowRecord(wn,StockMovr);    
+    end;
+  end;
+  StockMovDClassProdSerNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassSerialNrEFAfter(Integer wn,Integer rownr,Integer changed)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  array string 255 aWarning;
+  
+  res = true;
+  if ((changed!=0) and (rownr>=0)) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovVc_PasteSerialNr(StockMovr,rownr,aWarning);
+    DisplayStrArray(aWarning);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  StockMovDClassSerialNrEFAfter = res;
+  RETURN;
+END;
+ 
+function Boolean StockMovDClassToPosCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+  string 255 tstr;
+  
+  GetWindowRecord(wn,StockMovr);
+  MatRowGet(StockMovr,rownr,StockMovrw);    
+  DeselectWindow(wn,false);
+  if (changedf) then begin
+    if (StockMovVc_PasteToPosCode(StockMovr,StockMovrw.ToPosCode,StockMovrw.ArtCode,StockMovrw.Quant,rownr,tstr)==false) then begin
+      MessageBox(1396," " & tstr);
+    end;
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassToPosCodeEFAfter = true;
+  return;
+end;
+
+procedure StockMovFillFreightInfo(record StockMovVc StockMovr)
+begin
+  record FreightCompanyVc FCr;
+  
+  FCr.Code = StockMovr.FreightCode;
+  if (ReadFirstMain(FCr,1,true)) then begin
+    StockMovr.FreightCompany = FCr.Company;
+    StockMovr.FreightCompanyRegNr = FCr.CompanyRegNr;
+    StockMovr.TruckInfo = FCr.TruckInfo;
+    StockMovr.Driver = FCr.Driver;
+    StockMovr.CMRText = FCr.CMRText;
+  end else begin
+    Beep;
+  end;
+  return;
+end;
+
+function Boolean StockMovDClassFreightCodeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (nonblank(StockMovr.FreightCode)) then begin
+      StockMovFillFreightInfo(StockMovr);
+      PutWindowRecord(wn,StockMovr);
+    end;
+  end;
+  StockMovDClassFreightCodeEFAfter = res;
+  RETURN;
+END;
+
+procedure FindSend(var date SendDate,var time SendTime,integer DurationDays,time DurationTime,date ArrDate, time ArrTime)
+BEGIN
+  LongInt temp;
+  time t;
+  integer minutes1,minutes2,minutes3,days;
+
+  minutes1 = TimeToMinutes(SendTime);
+  minutes2 = TimeToMinutes(DurationTime);
+  minutes3 = minutes1 + minutes2;
+  days = minutes3/(24*60)+DurationDays;
+  SendDate = AddDay(ArrDate,-days);
+  temp = AddTime(ArrTime,-minutes2,t);
+  SendTime = t;
+  
+  RETURN;
+END;  
+
+function Boolean StockMovDClassDurationDateEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovr.ActDurationDays = DateDiff(StockMovr.ActArrDate,StockMovr.ActSendDate);
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassDurationDateEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassDurationTimeEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  LongInt temp;
+  time t;
+  integer minutes1,minutes2,minutes3;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (StockMovr.ActSendTime == StockMovr.ActArrTime) then begin
+      StockMovr.ActDurationTime = "";
+    end else begin
+      minutes1 = TimeToMinutes(StockMovr.ActSendTime);
+      minutes2 = TimeToMinutes(StockMovr.ActArrTime);
+      if (StockMovr.ActArrTime < StockMovr.ActSendTime) then begin
+        minutes3 = 24*60 - (minutes1 - minutes2);
+      end else begin
+        minutes3 = minutes2 - minutes1;
+      end;
+      temp = AddTime("",minutes3,t);
+      StockMovr.ActDurationTime = t;
+    end;
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassDurationTimeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassFrLocationEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovVc_PasteFromLocation(StockMovr);    
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassFrLocationEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassThrouLocationEFAfter(Integer wn,Boolean changedf)
+begin
+  record StockMovVc StockMovr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovVc_PasteThrouLocation(StockMovr);    
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassThrouLocationEFAfter = res;
+  return;
+end;
+
+function Boolean StockMovDClassToLocationEFAfter(Integer wn,Boolean changedf)
+begin
+  record StockMovVc StockMovr;
+  Boolean res;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    StockMovVc_PasteToLocation(StockMovr);
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassToLocationEFAfter = res;
+  return;
+end;
+
+function Boolean StockMovDClassPlanSendEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  record DurationVc Durationr;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    Durationr.FromLocation = StockMovr.FrLocation;
+    Durationr.ViaLocation  = StockMovr.ThrouLocation;
+    Durationr.ToLocation  = StockMovr.ToLocation;
+    if (ReadFirstMain(Durationr,3,true)) then begin
+      CalculateStockMovArrival(StockMovr.PlanSendDate,StockMovr.PlanSendTime,StockMovr.PlanDurationDays,StockMovr.PlanDurationTime,StockMovr.PlanArrDate,StockMovr.PlanArrTime);
+    end;
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassPlanSendEFAfter = res;
+  RETURN;
+END;
+
+function Boolean StockMovDClassPlanArrEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+  record DurationVc Durationr;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,StockMovr);
+    Durationr.FromLocation = StockMovr.FrLocation;
+    Durationr.ViaLocation  = StockMovr.ThrouLocation;
+    Durationr.ToLocation  = StockMovr.ToLocation;
+    if (ReadFirstMain(Durationr,3,true)) then begin
+      FindSend(StockMovr.PlanSendDate,StockMovr.PlanSendTime,StockMovr.PlanDurationDays,StockMovr.PlanDurationTime,StockMovr.PlanArrDate,StockMovr.PlanArrTime);
+    end;
+    PutWindowRecord(wn,StockMovr);
+  end;
+  StockMovDClassPlanArrEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean StockMovDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "SerialNr": res = StockMovDClassSerialNrEFAfter(wn,rownr,changed);
+    case "UnitZval": res = StockMovDClassUnitZvalEFAfter(wn,rownr,changed);
+    case "UnitYval": res = StockMovDClassUnitYvalEFAfter(wn,rownr,changed);
+    case "UnitXval": res = StockMovDClassUnitXvalEFAfter(wn,rownr,changed);
+    case "TransDate": res = StockMovDClassTransDateEFAfter(wn,changed);
+    case "SentTransDate": res = StockMovDClassSentTransDateEFAfter(wn,changed);
+    case "CurncyCode": res = StockMovDClassCurncyCodeEFAfter(wn,changed);
+    case "ArtCode": res = StockMovDClassArtCodeEFAfter(wn,rownr,changed);
+    case "Quant": res = StockMovDClassQuantEFAfter(wn,rownr,changed);
+    case "SentQuant": res = StockMovDClassSentQuantEFAfter(wn,rownr,changed);
+    case "OldPrice": res = StockMovDClassOldPriceEFAfter(wn,rownr,changed);
+    case "ExtraSCost": res = StockMovDClassExtraSCostEFAfter(wn,rownr,changed);
+    case "NewPrice": res = StockMovDClassNewPriceEFAfter(wn,rownr,changed);
+    case "ToPosCode": res = StockMovDClassToPosCodeEFAfter(wn,rownr,changed);
+    case "FreightCode": res = StockMovDClassFreightCodeEFAfter(wn,changed!=0);
+    case "FrLocation": res = StockMovDClassFrLocationEFAfter(wn,changed!=0);
+    case "ThrouLocation": res = StockMovDClassThrouLocationEFAfter(wn,changed!=0);
+    case "ToLocation": res = StockMovDClassToLocationEFAfter(wn,changed!=0);
+    case "PlanSendDate": res = StockMovDClassPlanSendEFAfter(wn,changed!=0);
+    case "PlanSendTime": res = StockMovDClassPlanSendEFAfter(wn,changed!=0);
+    case "PlanArrDate": res = StockMovDClassPlanArrEFAfter(wn,changed!=0);
+    case "PlanArrTime": res = StockMovDClassPlanArrEFAfter(wn,changed!=0);
+    case "ActSendDate": res = StockMovDClassDurationDateEFAfter(wn,changed!=0);
+    case "ActSendTime": res = StockMovDClassDurationTimeEFAfter(wn,changed!=0);
+    case "ActArrDate": res = StockMovDClassDurationDateEFAfter(wn,changed!=0);
+    case "ActArrTime": res = StockMovDClassDurationTimeEFAfter(wn,changed!=0);
+    case "ProdSerNr": res = StockMovDClassProdSerNrEFAfter(wn,changed!=0);
+  end;
+  StockMovDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean StockMovDClassBeforeEditField(Integer wn,string fieldname,Integer fn, Integer rownr)
+BEGIN
+  Boolean res;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+
+  switch (fieldname) begin  
+    case "Quant":     
+      GetWindowRecord(wn,StockMovr);      
+      MatRowGet(StockMovr,rownr,StockMovrw);
+      if (TestForMATVARINS(wn)) then begin end;
+    case "OrdQuant":     
+      GetWindowRecord(wn,StockMovr);      
+      MatRowGet(StockMovr,rownr,StockMovrw);
+      if (TestForMATVARINS(wn)) then begin end;
+    case "SentQuant":     
+      GetWindowRecord(wn,StockMovr);      
+      MatRowGet(StockMovr,rownr,StockMovrw);
+      if (TestForMATVARINS(wn)) then begin end;
+  end;
+  StockMovDClassBeforeEditField = res;
+  return;
+end;
+
+global
+procedure StockMovFillFIFODsm()
+BEGIN
+  Integer wn;
+  record StockMovVc StockMovr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,StockMovr);
+  RecordAction_raStockMovFillFIFO(StockMovr);
+  PutWindowRecord(wn,StockMovr);
+  return;
+end;
+
+global
+procedure ItemStatusStockMovDsm()
+BEGIN
+  Integer wn,nwn;
+  Boolean testf;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  nwn = OpenArtStat(wn,RepSpec,false);
+  testf = StockMovDClassSwitchRow(wn,WindowActiveRow(wn));
+  RETURN
+END;
+
+global
+function Boolean StockMovDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record StockMovVc StockMovr;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,StockMovr);    
+    StockMovSumUp(StockMovr);
+    PutWindowRecord(wn,StockMovr);    
+  end;
+  res = true;
+  StockMovDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global 
+function Boolean StockMovDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  Boolean res;
+  record StockMovVc StockMovr;
+  row StockMovVc StockMovrw;
+
+  res = true;
+  if (WindowState(wn)==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,StockMovr);    
+    MatRowGet(StockMovr,rownr,StockMovrw);
+    if (StockMovr.OKFlag!=0) or (StockMovr.SentOKFlag!=0) or (StockMovr.OrdFlag!=0) then begin 
+      res = false;
+    end;
+    if (StockMovrw.IntORRow>=0) then begin
+      res = false;
+    end;
+  end;
+  StockMovDClassDeleteRowTest = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassUpdateTest(Integer wn)
+BEGIN
+  Boolean res;
+  record StockMovVc StockMovr;
+  
+  res = true;
+  GetWindowRecord(wn,StockMovr);   
+  if (StockMovr.OKFlag!=0) then begin
+    res = false;
+  end;
+  if (UserCanAction("UnOKAll",false)) then begin
+    res = true;
+  end;
+  StockMovDClassUpdateTest = res;
+  RETURN;
+END;
+
+
+global
+function Boolean StockMovDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record StockMovVc StockMovr;
+  record StockMovVc StockMov2r;
+  row StockMovVc StockMovrw;
+  Integer orwcnt,rwcnt;
+ 
+  res = true;
+  GetWindowRecord(wn,StockMovr);    
+  GetPrevWindowRecord(wn,StockMov2r);
+
+  if (wnst==Rs_update) then begin
+    if (StockMov2r.SentOKFlag==0) then begin
+      if (StockMovr.IntORNo>0) then begin
+        orwcnt = WindowOldRowCnt(wn);
+        rwcnt = MatRowCnt(StockMovr);
+        if (orwcnt<rwcnt) and (rownr>=orwcnt) then begin
+          res = false;
+        end;
+      end;
+    end;
+  end;
+  switch (fieldname) begin
+    case "SerNr": 
+      if (wnst==Rs_update) then begin
+        if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+        if (StockMovr.OKFlag!=0) then begin res = false; end;
+      end;            
+    case "FrRate": 
+      if (AllowCurChange(StockMovr.CurncyCode,false)==false) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "ToRateB1": 
+      if (AllowCurChange(StockMovr.CurncyCode,false)==false) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "ToRateB2": 
+      if (AllowCurChange(StockMovr.CurncyCode,false)==false) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "BaseRate1": 
+      if (AllowCurChange(StockMovr.CurncyCode,true)==false) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "BaseRate2": 
+      if (AllowCurChange(StockMovr.CurncyCode,true)==false) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "OrdQuant": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (StockMovr.OrdFlag!=0) then begin res = false; end;
+      MatRowGet(StockMovr,rownr,StockMovrw);
+      if (StockMovrw.IntORRow>=0) then begin
+        res = false;
+      end;
+    case "FrPos": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "FrPosCode": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "BasePrice": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "SerialNr": 
+      if (wnst==Rs_update) then begin
+        if (StockMov2r.OKFlag!=0) then begin res = false; end;
+        if (StockMov2r.SentOKFlag!=0) then begin res = false; end;
+      end;
+    case "Objects": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "ArtCode": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (StockMovr.OrdFlag!=0) then begin res = false; end;
+      MatRowGet(StockMovr,rownr,StockMovrw);
+      if (StockMovrw.IntORRow>=0) then begin
+        res = false;
+      end;
+    case "SentTransDate": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+    case "SentQuant": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (blank(StockMovr.ThrouLocation)) then begin
+        MessageBox(20080,"");
+        res = false;
+      end;
+    case "OldPrice": 
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "ExtraSCost": 
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "NewPrice": 
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "OtherExtraCosts": 
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "SentOldPrice": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "SentExtraSCost": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "SentNewPrice": 
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (res) then begin res = UserCanAction("ChangingCostOnStockMov",true); end;
+    case "ThrouLocation": 
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.OrdFlag!=0) then begin res = false; end;
+    case "FrLocation": 
+      if (StockMovr.SentOKFlag!=0) then begin res = false; end;
+      if (StockMovr.OKFlag!=0) then begin res = false; end;
+      if (StockMovr.OrdFlag!=0) then begin res = false; end;
+    case "ToLocation": 
+      if (StockMovr.OrdFlag!=0) then begin res = false; end;
+    case "OrdTransDate": 
+      if (StockMovr.OrdFlag!=0) then begin res = false; end;
+    case "TaxAdminServSeal": 
+      res = StockMovr.StockMovType!=kStockMovTypeNormal and blank(StockMovr.TaxAdminServSeal);
+    case "Spec":
+      if (HasLocalization("PRT")) then begin
+        MatRowGet(StockMovr,rownr,StockMovrw);
+        if (nonblank(StockMovrw.ArtCode)) then begin
+          res = false;
+        end;
+      end;
+    otherwise
+      switch (wnst) begin
+        case Rs_update:
+          GetPrevWindowRecord(wn,StockMovr);
+          if (StockMovr.OKFlag!=0) then begin res = false; end;
+      end;
+  end;
+  StockMovDClassActiveEditField = res;
+  RETURN;
+END;
+
+procedure StockMovDClassSpecPasteNameArtCode(Integer wn,var string psname)
+begin
+  record StockMovVc StockMovr;
+  Integer rownr;
+
+  GetWindowRecord(wn,StockMovr);
+  rownr = WindowActiveRow(wn);
+  DeselectWindow(wn,false);
+  WindowFieldGoto(wn,StockMovr,rownr,"ArtCode",false);
+  return;
+end;
+
+global
+function string 40 StockMovDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 255 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "SerialNr": psname = SerialNrSClassSpecPName(defpsname);
+    case "ArtCode": StockMovDClassSpecPasteNameArtCode(wn,psname);
+  end;
+  StockMovDClassSpecPasteName = psname;
+  return;
+end;
+
+
+global
+function Boolean StockMovDClassOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode,insertmode;
+  record StockMovVc StockMovr;
+  record StockMovVc prevStockMovr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (StockMovr.OKFlag!=0) then begin
+      res = false;
+    end;
+    if (UserCanAction("UnOKAll",false)) then begin
+      res = true;
+    end;
+  end;  
+  if (WindowState(wn)==insertmode) then begin
+    GetWindowRecord(wn,StockMovr);
+    if (StockMovr.SentOKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetWindowRecord(wn,StockMovr);
+    GetPrevWindowRecord(wn,prevStockMovr);        
+    
+    if (prevStockMovr.SentOKFlag==0) then begin
+      if (StockMovr.SentOKFlag!=0) then begin
+        res = false;
+      end;
+    end;
+  end;  
+  StockMovDClassOKFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassSentOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode,insertmode;
+  record StockMovVc StockMovr;
+  record StockMovVc StockMov2r;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  GetWindowRecord(wn,StockMovr);
+  if (WindowState(wn)==normalmode) then begin
+    if (StockMovr.SentOKFlag!=0) then begin
+      res = false;
+    end;
+    if (StockMovr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  if (WindowState(wn)==insertmode) then begin
+    if (StockMovr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,StockMov2r);
+    if (StockMov2r.SentOKFlag!=0) then begin
+      res = false;
+    end;
+    if (StockMov2r.OKFlag!=0) then begin
+      res = false;
+    end;
+    if (StockMovr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  if (blank(StockMovr.ThrouLocation)) then begin
+    MessageBox(20080,"");
+    res = false;
+  end;
+  StockMovDClassSentOKFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassOrdFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  record StockMovVc StockMovr;
+  record StockMovVc StockMov2r;
+
+  res = true;
+  GetWindowRecord(wn,StockMovr);
+  if (WindowState(wn)==Rs_normal) then begin
+    if (StockMovr.OrdFlag!=0) then begin
+      res = false;
+    end;
+    if (UserCanAction("StockMovOrdFlagOff",false)) then begin
+      res = true;
+    end;
+    if (StockMovr.OKFlag!=0) then begin
+      res = false;
+    end;
+    if (StockMovr.SentOKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,StockMov2r);
+    if (StockMov2r.SentOKFlag!=0) then begin
+      res = false;
+    end;
+    if (StockMov2r.OKFlag!=0) then begin
+      res = false;
+    end;
+    if (StockMov2r.OrdFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  if (StockMovr.OrdFlag!=0) then begin
+    if (UserCanAction("StockMovOrdFlag",false)==false) then begin
+      res = false;
+    end;   
+  end;
+  StockMovDClassOrdFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassReservedButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record StockMovVc StockMovr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,StockMovr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,StockMovr);
+  end;  
+  if (StockMovr.OKFlag!=0) then begin
+    res = false;
+  end;
+  if (StockMovr.SentOKFlag!=0) then begin
+    res = false;
+  end;
+  if (StockMovr.OrdFlag!=0) then begin
+    res = false;
+  end;
+  if (UserCanAction("ChangeReserved",true)==false) then begin
+    res = false;
+  end;   
+  StockMovDClassReservedButtonAction = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassManualPickButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record StockMovVc StockMovr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,StockMovr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,StockMovr);
+  end;  
+  if (StockMovr.OKFlag!=0) then begin
+    res = false;
+  end;
+  if (StockMovr.ToForkLiftQue!=0) then begin
+    res = false;
+  end;
+  StockMovDClassManualPickButtonAction = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassToForkLiftQueButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record StockMovVc StockMovr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,StockMovr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,StockMovr);
+  end;  
+  if (StockMovr.OKFlag!=0) then begin
+    res = false;
+  end;
+  if (StockMovr.ToForkLiftQue!=0) then begin
+    res = false;
+  end;
+  StockMovDClassToForkLiftQueButtonAction = res;
+  return;
+end;
+
+global
+function Boolean StockMovDClassPrint(Integer wn,Boolean previewf)
+BEGIN
+  record StockMovVc StockMovr;
+  Integer normalmode,tf;
+
+  normalmode = 0;//Rs_normal
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,StockMovr); 
+  if ((WindowState(wn)==normalmode) and (previewf==false)) then begin
+    RecordActionStockMov_Print(StockMovr,"","StockMovForm",true);
+  end else begin  
+    tf = StockMovr.OKFlag;
+    if (previewf==false) then begin
+      StockMovr.OKFlag = 0;
+    end else begin
+      StockMovr.OKFlag = 1;
+    end;
+    if (PrintDocument(StockMovr,"StockMovForm",true)) then begin end;
+    StockMovr.OKFlag = tf;
+  end;
+  StockMovDClassPrint = true;
+  RETURN;
+END;
+
+global
+procedure PrintStockMovL(Integer wn,Boolean previewf)
+BEGIN
+  record StockMovVc StockMovr;
+  Integer i;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(StockMovr,wn,i)) begin
+    RecordActionStockMov_Print(StockMovr,previewf,"StockMovForm",true);
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  RETURN;
+END;
+
+global
+updating procedure OKStockMovLsm()
+BEGIN
+  Integer wn;
+  record StockMovVc StockMovr;
+  LongInt i;
+
+  wn = CurWindow;
+  if (UserCanAction("StockMovOK",true)) then begin
+    i = 1;
+    while (GetRecordFromBrowse(StockMovr,wn,i)) begin
+      if (RecordAction_rlStockMovLOK(StockMovr,true)) then begin      
+      end;
+      i = i + 1;
+    end;  
+    UpdateBrowses("StockMovVc");
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"StockMovOK"));
+  end;  
+  RETURN;
+END;
+
+global
+function Boolean StockMovDClassOnEnterKey(var Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  Integer wnst;
+  record StockMovVc SMr;
+  row StockMovVc SMrw;
+  string 255 gotofieldname;
+  Integer gotorownr;
+
+  res = true;
+  wnst = WindowState(wn);
+  if ((wnst==2) or (wnst==1)) then begin//Rs_update,Rs_insert
+    GetWindowRecord(wn,SMr);
+    if (rownr<0) then begin
+    end else begin
+      gotorownr = rownr;
+      MatRowGet(SMr,rownr,SMrw);            
+      switch (fieldname) begin
+        case "ArtCode": 
+          if (nonblank(SMr.ThrouLocation)) then begin
+            gotofieldname = "OrdQuant";
+          end else begin
+            gotofieldname = "Quant";
+          end;
+        case "Quant": 
+          gotofieldname = "ArtCode";
+          gotorownr = gotorownr + 1;
+      end;
+      if (nonblank(gotofieldname)) then begin
+        WindowFieldGoto(wn,SMr,gotorownr,gotofieldname,true);
+        res = false;
+      end;
+    end;
+  end;
+  StockMovDClassOnEnterKey = res;
+  return;  
+end;
+
+global
+procedure QualConFromStockMovDsm()
+begin
+  Integer wn,nwn;
+  Integer rownr,err;
+  record StockMovVc StockMovr;
+  record QualConVc QCr;
+
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    rownr = WindowActiveRow(wn);
+    DeselectWindow(wn,true);
+    GetWindowRecord(wn,StockMovr);
+    err = CreateQualConFromStockMov(StockMovr,rownr,QCr,0);
+    if (err==0) then begin
+      nwn = OpenWindow("QualConDClass",1,0,"","",QCr);
+    end else begin
+      MessageBox(err,"");
+    end;
+  end else begin
+    MessageBox(22064,"");
+  end;
+  return;
+end;
+
+/*
+global
+function Boolean StockMovDClassOnOpenWindow(Integer wn)
+begin
+  record StockMovVc StockMovr;
+  record eShipTaxAuthReplyVc eSTARr;
+  
+TaxAdminServSeal is in StockMovVc record
+  GetWindowRecord(wn,StockMovr);
+  if (HasLocalization("PRT")) then begin
+    eSTARr.FileName = "StockMovVc";
+    eSTARr.TransNr = StockMovr.SerNr;
+    ReadLastKey("FNTransNr",eSTARr,2,true);
+    PutWindowString(wn,"TaxAdminServSeal",eSTARr.TaxAdminServSeal);
+  end;  
+  StockMovDClassOnOpenWindow = false;
+  return;
+end;
+*/
+
+global
+procedure StockMovDClassBarcodeData(Integer wn,string bcdata)
+begin
+  record INVc INr;
+  record StockMovVc SMr;
+  row StockMovVc SMrw;
+  LongInt i,rows;
+  string 255 inwarn;
+  record SVOSerVc SVOSerr;
+  string 255 sernr;
+  array string 255 aWarning;
+  
+  if (GetFirstItem(bcdata,INr)==true) then begin
+    goto LStockMovDClassBarcodeDataDo;
+  end;
+  
+  if (GetSVOSerialItem("",bcdata,SVOSerr)) then begin
+    if (GetFirstItem(SVOSerr.ItemCode,INr)==true) then begin
+      sernr = SVOSerr.SerialNr;
+      goto LStockMovDClassBarcodeDataDo;
+    end;
+  end;
+  
+  goto LStockMovDClassBarcodeDataOut;
+  
+LStockMovDClassBarcodeDataDo:;
+  GetWindowRecord(wn,SMr);
+  rows = MatRowCnt(SMr);
+  
+  if (sernr=="") then begin
+    for (i = 0; i<rows; i = i + 1) begin
+      MatRowGet(SMr,i,SMrw);
+      if (SMrw.ArtCode==INr.Code) then begin
+        SMrw.Quant = SMrw.Quant + 1;
+        MatRowPut(SMr,i,SMrw);
+        PutWindowRecord(wn,SMr);
+//        StockMovDClassEditRow(wn,i);
+        goto LStockMovDClassBarcodeDataOut;
+      end;
+    end;
+  end;
+  
+  ClearRow(SMr,SMrw,1);
+  SMrw.ArtCode = INr.Code;
+  SMrw.SerialNr = sernr;
+  SMrw.Quant = 1;
+  MatRowPut(SMr,rows,SMrw);
+  
+  if (StockMovVc_PasteArtCode(SMr,rows,1,aWarning)) then begin
+    if (nonblank(inwarn)) then begin
+      MessageBox(0,inwarn);
+    end;
+    
+    MatRowGet(SMr,rows,SMrw);
+    
+    PutWindowRecord(wn,SMr);
+    if (StockMovDClassSwitchRow(wn,rows)) then begin end;
+    
+    //MatRowGet(SMr,rows,SMrw);
+    //SMrw.Qty = 1;
+    //MatRowPut(SMr,rows,SMrw);
+    //PutWindowRecord(wn,SMr);
+  end else begin
+    PutWindowRecord(wn,SMr);
+    Beep;
+  end;
+
+//  StockMovDClassEditRow(wn,rows);
+  
+LStockMovDClassBarcodeDataOut:;
+  return;
+end;
+
+global
+updating procedure PrintStockMovInvoices()
+begin
+  record StockMovVc SMr;
+  record RcVc RepSpec;
+  boolean res;
+  Integer wn;
+  longint errorlongint;
+  string 255 errormsg;
+  
+  res = true;
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    DeselectWindow(wn,true);
+    GetWindowRecord(wn,SMr);
+    if (HasLocalization("PRT")) then begin
+      switch (SMr.StockMovType) begin
+        case kStockMovTypeConsigment: res = true;
+        otherwise
+          MessageBox(39194,": " & StringFromSet(564,SMr.StockMovType) & chr(13) & chr(10) & USetStr(8329) & ": " & StringFromSet(564,kStockMovTypeConsigment));
+          res = false;
+          goto LPrintStockMovInvoices;
+      end;
+    end;
+    if (SMr.OrderNr==-1) then begin 
+      res = false;
+      MessageBox(39197,"");
+      goto LPrintStockMovInvoices;
+    end;
+    if (SMr.InvoiceNr!=-1 ) then begin
+      res = PrintDocument(SMr,"StockMovInvForm",false);
+      res = false;
+      goto LPrintStockMovInvoices;
+    end;
+    if (nonblank(SMr.ThrouLocation)) then begin 
+      if (SMr.SentOKFlag==0) then begin
+        res = false;
+        MessageBox(39191,"");
+        goto LPrintStockMovInvoices;
+      end;
+    end;
+    if (SMr.OKFlag==0) then begin
+      res = false;
+      MessageBox(39191,"");
+      goto LPrintStockMovInvoices;
+    end;
+    if (res) then begin
+      RemotePrintStockMovInvoices(SMr,errorlongint,errormsg,RepSpec);
+      if (errorlongint==0) then begin 
+        SetWindowState(wn,Rs_update);
+        PutWindowRecord(wn,SMr);
+        SetWindowState(wn,Rs_normal);
+        if (res) then begin   
+          res = PrintDocument(SMr,"StockMovInvForm",false);
+        end;       
+      end else begin
+        MessageBox(errorlongint,errormsg);
+      end; 
+    end;
+  end else begin
+    MessageBox(39193,"");
+  end;
+LPrintStockMovInvoices:;  
+  return;
+end;

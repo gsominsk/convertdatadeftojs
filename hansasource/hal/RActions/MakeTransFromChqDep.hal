@@ -1,0 +1,199 @@
+external procedure AddTransAutoTransRows(record TRVc);
+external function Boolean GetAccName(string,var string,Integer);
+external function Boolean TransInFiscal(Date);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external procedure AddObj(String, var string);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure GetPMObjCta(String,var String,var String,Var Integer);
+external procedure TRSumup(var record TRVc,var val);
+
+function boolean GetCurncyRateFromIP(LongInt IPNro,String TempAcc,var val fr,var val to1,var val to2,var val br1,var val br2)
+begin
+  boolean res;
+  record TRVc TRr;
+  row TRVc TRrw;
+  record IPVc IPr;
+  integer i,rows;
+   
+  res = false;
+  IPr.SerNr = IPNro;
+  if readfirstmain(IPr,1,true) then begin
+    TRr.Number=IPr.SerNr;
+    TRr.IntYc=IPYc; 
+    if (ReadFirstMain(TRr,2,true)) then begin
+      rows = matrowcnt(TRr);
+      for(i=0;i<rows;i=i+1) begin
+        matrowget(TRr,i,TRrw);
+        if (TempAcc==TRrw.AccNumber) then begin
+          fr =  TRrw.FrRate;
+          to1 = TRrw.ToRateB1;
+          to2 = TRrw.ToRateB2;
+          br1 = TRrw.BaseRate1;
+          br2 = TRrw.BaseRate2;
+          res = true;
+          i = rows;
+        end;
+      end;
+    end;
+  end;
+  GetCurncyRateFromIP = res;
+  return;
+end;  
+
+global
+function integer MakeTransFromChqDep(var Record TRVc TRr,Record ChqdepVc Chqdepr,boolean rpt)
+begin
+  record TRVc lTRr;
+  Record CheckVc Chq;
+  Row TRVc Asrw;           
+  Row ChqdepVc Chqdeprw;          
+  integer Res;
+  String 60 tstr,cur,obj,cta,ftxt;
+  roundmode roundlines,rndtotal,rndvat;
+  Integer intdummy;
+  Integer rows,j,curcomp;
+  val Cheques,dsum,csum,nilv,ValMonBase,TotalAs;
+  val frrate,torate1,torate2,baserate1,baserate2;
+  record TRGenBlock TRGenRec;
+  record IPVc IPr;
+  Val to1,to2,fr,br1,br2;
+  Date ed;
+  record AccBlock ARAccRec;
+  record BaseCurBlock bascur;
+  val rd,rd2;
+  
+  TotalAs = 0;
+  BlockLoad(bascur);
+  BlockLoad(TRGenRec);
+  BlockLoad(ARAccRec);
+  frrate = Chqdepr.FrRate;
+  torate1 = Chqdepr.ToRate1;
+  torate2 = Chqdepr.ToRate2;
+  baserate1 = Chqdepr.BaseRate1;
+  baserate2 = Chqdepr.BaseRate2;
+  RecordNew(TRr);
+
+  res = 1085;
+  if (rpt==false) then begin
+    if (TRGenRec.ChecksGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromChqDep;
+    end;
+  end;
+  if (rpt==false) then begin
+    if ((nonblankdate(TRGenRec.ChecksStartDate)) and
+       (Chqdepr.TransDate<TRGenRec.ChecksStartDate)) then begin
+      res = 0;
+      goto LMakeTransFromChqDep;
+    end;  
+  end;
+  if (true) then begin
+    TRr.IntYc  = ChqDepYc;
+    TRr.Number = Chqdepr.SerNr;
+    TRr.RefStr = "";
+  end;
+  if (rpt==false) then begin
+    lTRr.IntYc = TRr.IntYc;
+    lTRr.Number = TRr.Number;
+    if (ReadFirstMain(lTRr,2,true)) then begin
+      res = 1032;
+      goto LMakeTransFromChqDep;
+    end;
+  end;
+
+  TRr.RegDate = CurrentDate;
+  TRr.RegTime = CurrentTime;
+  TRr.TransDate = Chqdepr.TransDate;
+  if (rpt==false) then begin
+    if (TransInFiscal(Chqdepr.TransDate)==false) then begin
+      res = 1075;
+      goto LMakeTransFromChqDep;
+    end;
+  end;
+  ftxt = "";
+  TRr.Comment = Chqdepr.Comment;
+
+  GetCurncyRoundoff(Chqdepr.CurncyCode,Chqdepr.PayMode,"ChqdepVc",rndtotal,roundlines,rndvat);
+  GetPMObjCta(Chqdepr.PayModeCash,obj,cta,intdummy);
+  AddObj(Chqdepr.Objects,obj);
+  if (Chqdepr.Cash<>0) then begin 
+    if (GetAccName(cta,tstr,60)==false) then begin
+      res = 1908;
+      goto LMakeTransFromChqDep;
+    end;
+    ValMonBase = MulRateToBase1(Chqdepr.CurncyCode,Chqdepr.Cash,frrate,torate1,torate2,baserate1,baserate2,rndtotal);  
+    AddEuroCurncyTrRow(TRr,cta,obj,"",tstr,ValMonBase,false,false,TotalAs,Chqdepr.CurncyCode,frrate,torate1,torate2,baserate1,baserate2,Chqdepr.Cash,nilv,-1,false,"");
+  end;
+  if (Chqdepr.Commision<>0) then begin 
+    cta= ARAccRec.CommisionAcc;
+    if (GetAccName(cta,tstr,60)==false) then begin
+      res = 1908;
+      goto LMakeTransFromChqDep;
+    end;
+    ValMonBase = MulRateToBase1(Chqdepr.CurncyCode,Chqdepr.Commision,frrate,torate1,torate2,baserate1,baserate2,rndtotal);  
+    AddEuroCurncyTrRow(TRr,cta,obj,"",tstr,ValMonBase,false,true,TotalAs,Chqdepr.CurncyCode,frrate,torate1,torate2,baserate1,baserate2,Chqdepr.Commision,nilv,-1,false,"");
+  end;
+  
+  rows = MatRowCnt(Chqdepr);
+  for (j=0;j<rows;j=j+1) begin
+    MatRowGet(Chqdepr,j,Chqdeprw);
+    
+    if (GetAccName(Chqdepr.TempAccNr,tstr,60)==false) then begin
+      res = 1908;
+      goto LMakeTransFromChqDep;
+    end;
+    Chq.SerNr = Chqdeprw.ChqNr;
+    if (ReadfirstMain(Chq,1,true)) then begin
+      // Exchange Rate should be taken from the CLOut2Vc or IPVc
+      obj = Chq.TempObjects;
+      AddObj(Chqdepr.Objects,obj);
+      IPr.SerNr = Chq.FromNo;//what ? 
+      if (ReadFirstMain(IPr,1,true)) then begin         
+        if (GetCurncyRateFromIP(Chq.FromNo,Chq.TempAccNr,fr,to1,to2,br1,br2)) then begin
+          ValMonBase = MulRateToBase1(Chqdepr.CurncyCode,Chqdeprw.Amount,fr,to1,to2,br1,br2,rndtotal); 
+          AddEuroCurncyTrRow(TRr,Chqdepr.TempAccNr,obj,"",tstr,ValMonBase,false,false,TotalAs,Chqdepr.CurncyCode,fr,to1,to2,br1,br2,Chqdeprw.Amount,nilv,-1,false,"");
+        end;
+      end else begin
+        ValMonBase = MulRateToBase1(Chqdepr.CurncyCode,Chqdeprw.Amount,frrate,torate1,torate2,baserate1,baserate2,rndtotal);  
+        AddEuroCurncyTrRow(TRr,Chqdepr.TempAccNr,obj,"",tstr,ValMonBase,false,false,TotalAs,Chqdepr.CurncyCode,frrate,torate1,torate2,baserate1,baserate2,Chqdeprw.Amount,nilv,-1,false,"");
+      end;
+    end; 
+  end;
+  
+  GetPMObjCta(Chqdepr.PayMode,obj,cta,intdummy);
+  AddObj(Chqdepr.Objects,obj);
+  if (GetAccName(cta,tstr,60)==false) then begin  //LDP FIX
+    res = 1908;
+    goto LMakeTransFromChqDep;
+  end;
+  ValMonBase = MulRateToBase1(Chqdepr.CurncyCode,Chqdepr.Sum,frrate,torate1,torate2,baserate1,baserate2,rndtotal);  
+  AddEuroCurncyTrRow(TRr,Chqdepr.DepAccNr,obj,"",tstr,ValMonBase,false,true,TotalAs,Chqdepr.CurncyCode,frrate,torate1,torate2,baserate1,baserate2,Chqdepr.Sum,nilv,-1,false,"");
+  
+  TRSumup(TRr,nilv);
+  rd  = TRr.DiffVal;
+  rd2 = TRr.Diff2Val;
+  if ((rd<0) or (rd2<0)) then begin
+    if (GetAccName(ARAccRec.RateLossAcc,tstr,60)==false) then begin
+      res = 1917;
+      goto LMakeTransFromChqDep;
+    end;
+    AddEuroCurncyTrRow(TRr,ARAccRec.RateGainAcc,obj,"",tstr,rd,true,false,TotalAs,
+                       Chqdepr.CurncyCode,blankval,blankval,blankval,blankval,blankval,rd2,blankval,-1,false,""); //trrwcnt-2);
+  end;
+  if ((rd>0) or (rd2>0)) then begin
+    if (GetAccName(ARAccRec.RateGainAcc,tstr,60)==false) then begin
+      res = 1918;
+      goto LMakeTransFromChqDep;
+    end;
+    AddEuroCurncyTrRow(TRr,ARAccRec.RateLossAcc,obj,"",tstr,rd,true,false,TotalAs,
+                       Chqdepr.CurncyCode,blankval,blankval,blankval,blankval,blankval,rd2,blankval,-1,false,""); //trrwcnt-2);
+  end;
+
+  AddTransAutoTransRows(TRr);
+  TRSumup(TRr,nilv);
+  res = 0;
+LMakeTransFromChqDep:;
+  MakeTransFromChqDep = res;
+  return;
+end;

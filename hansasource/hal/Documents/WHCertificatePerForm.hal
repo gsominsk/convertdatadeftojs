@@ -1,0 +1,270 @@
+external function roundmode SetRoundModeD(Integer);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure CommonDocumentFields(record RcVc);
+external function string 255 AddStr(string,string,string);
+
+procedure DoPrintWHCertificatePerForm(record RcVc RepSpec,record CUVc VEr,Array record WHCertificateVc aWHCertificaters,Integer acnt)
+begin
+  Integer i;
+  record SysFormatBlock SFb;
+  record LangNrVc LangNrr;
+  record WHCertificateVc WHCertificater;
+  record WHCalcFormVc WHCalcFormr;
+  string 255 tstr,LastCalcForm;
+  val RowBase,RowAmount,TotMonth1Base,TotMonth2Base,TotMonth3Base,TotAmount;
+
+  GetLangNr("",LangNrr);  
+  BlockLoad(SFb);
+  
+  OUTFORMFIELD("F_PERIODSTART",DateToString(RepSpec.sStartDate,"MMDDYY"));
+  OUTFORMFIELD("F_PERIODEND",DateToString(RepSpec.sEndDate,"MMDDYY"));
+  
+  OUTFORMFIELD("F_LEVNAMN",VEr.Name);
+  OUTFORMFIELD("F_LEVERANTOR",VEr.Code);
+  OUTFORMFIELD("F_LEVVATNR",VEr.VATNr);
+  OUTFORMFIELD("F_VEREGNUMBER1",VEr.RegNr1);
+  OUTFORMFIELD("F_VEREGNUMBER2",VEr.RegNr2);
+  tstr = VEr.InvAddr0;
+  tstr = AddStr(tstr,VEr.InvAddr1," ");
+  tstr = AddStr(tstr,VEr.InvAddr2," ");
+  tstr = AddStr(tstr,VEr.InvAddr3," ");
+  tstr = AddStr(tstr,VEr.InvAddr4," ");
+  OUTFORMFIELD("F_LEVLEVERANTOR",tstr);
+  tstr = VEr.DelAddr0;
+  tstr = AddStr(tstr,VEr.DelAddr1," ");
+  tstr = AddStr(tstr,VEr.DelAddr2," ");
+  tstr = AddStr(tstr,VEr.DelAddr3," ");
+  tstr = AddStr(tstr,VEr.DelAddr4," ");
+  OUTFORMFIELD("F_VEDELADDR",tstr);
+  
+  for (i=0;i<acnt;i=i+1) begin
+    WHCertificater = aWHCertificaters[i];
+    if (WHCertificater.CalcForm!=LastCalcForm) then begin
+      if (nonblank(LastCalcForm)) then begin
+        OUTFORMFIELD("F_ROWBASE",RowBase);
+        OUTFORMFIELD("F_AMOUNT",RowAmount);
+        EndFormRow;
+        RowBase = blankval;
+        RowAmount = blankval;
+      end;
+    end;
+    LastCalcForm = WHCertificater.CalcForm;
+    WHCalcFormr.PayCode = WHCertificater.CalcForm;
+    ReadFirstMain(WHCalcFormr,1,true);
+    OUTFORMFIELD("F_CALCULATIONFORMULA",WHCertificater.CalcForm);  
+//Trace("WHCertificater.CalcForm " & WHCertificater.CalcForm," WHCertificater.CalcBase " & WHCertificater.CalcBase);    
+    OUTFORMFIELD("F_CALCULATIONFORMULANAME",WHCalcFormr.Comment);  
+    switch (GetMonth(WHCertificater.OPTransDate)) begin
+      case 1: 
+        OUTFORMFIELD("F_MONTH1BASE",WHCertificater.CalcBase);
+        TotMonth1Base = TotMonth1Base + WHCertificater.CalcBase;
+      case 2: 
+        OUTFORMFIELD("F_MONTH2BASE",WHCertificater.CalcBase);
+        TotMonth2Base = TotMonth2Base + WHCertificater.CalcBase;
+      case 3: 
+        OUTFORMFIELD("F_MONTH3BASE",WHCertificater.CalcBase);
+        TotMonth3Base = TotMonth3Base + WHCertificater.CalcBase;
+    end;
+    RowBase = RowBase + WHCertificater.CalcBase;
+    RowAmount = RowAmount + WHCertificater.Amount;
+    TotAmount = TotAmount + WHCertificater.Amount;
+  end;
+  if (nonblank(LastCalcForm)) then begin
+    OUTFORMFIELD("F_ROWBASE",RowBase);
+    OUTFORMFIELD("F_AMOUNT",RowAmount);
+    EndFormRow;
+  end;
+  
+  OUTFORMFIELD("F_TOTALMONTH1BASE",TotMonth1Base);
+  OUTFORMFIELD("F_TOTALMONTH2BASE",TotMonth2Base);
+  OUTFORMFIELD("F_TOTALMONTH3BASE",TotMonth3Base);
+  OUTFORMFIELD("F_TOTALBASE",TotMonth1Base+TotMonth2Base+TotMonth3Base);
+  OUTFORMFIELD("F_TOTALAMOUNT",TotAmount);
+  return;                   
+end;
+
+procedure PrintWHCertificatePerForm(record RcVc RepSpec,record CUVc VEr,Array record WHCertificateVc aWHCertificaters,Integer acnt)
+begin
+  Integer i,rwcnt;  
+  Boolean printf,langf;
+  Integer intdocnr;
+  string 30 formcode,langcode;
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+
+  langcode = VEr.LangCode;
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,2,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LPrintWHCertificatePerForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,-1,FDrw.PrintGroupCode,
+                      langcode,intdocnr,"",formcode)) then
+      begin
+        goto LBREAKAPS;
+      end;
+    end;
+LBREAKAPS:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+        DoPrintWHCertificatePerForm(RepSpec,VEr,aWHCertificaters,acnt);
+        CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+  end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LPrintWHCertificatePerForm:;  
+  return;
+end;
+
+procedure AddWHCertificatePerRow(record WHCertificateVc WHCertificater,Array record WHCertificateVc aWHCertificaters,var Integer acnt)
+begin
+  Integer i;
+  Boolean found;
+  record WHCertificateVc aWHCr;
+  Integer Month1,Month2;
+  Date d;
+  
+  Month1 = Mod(GetMonth(WHCertificater.OPTransDate),3);
+  if (Month1==0) then begin Month1 = 3; end;
+  for (i=0;i<acnt;i=i+1) begin
+    aWHCr = aWHCertificaters[i];
+    Month2 = Mod(GetMonth(aWHCr.OPTransDate),3);
+    if (Month2==0) then begin Month2 = 3; end;
+    if (aWHCr.CalcForm==WHCertificater.CalcForm and Month1==Month2) then begin
+      aWHCr.CalcBase = aWHCr.CalcBase + WHCertificater.CalcBase;
+      aWHCr.Amount = aWHCr.Amount + WHCertificater.Amount;
+      aWHCertificaters[i] = aWHCr;
+      found = true;
+    end;
+  end;
+  if (found==false) then begin
+    d = WHCertificater.OPTransDate;
+    d.month = Month1;
+    WHCertificater.OPTransDate = d;
+    aWHCertificaters[acnt] = WHCertificater;
+    acnt = acnt + 1;
+  end;
+  return;
+end;
+
+procedure SortWHCertificates(Array record WHCertificateVc aWHCertificaters,Integer acnt)
+begin
+  record WHCertificateVc WHCr1,WHCr2;
+  Integer i;
+  Boolean sorted;
+  
+  while (!sorted) begin
+    sorted = true;
+    for (i=0;i<acnt-1;i=i+1) begin
+      WHCr1 = aWHCertificaters[i];
+      WHCr2 = aWHCertificaters[i+1];
+      if (WHCr1.CalcForm>WHCr2.CalcForm) then begin
+        aWHCertificaters[i] = WHCr2;
+        aWHCertificaters[i+1] = WHCr1;
+        sorted = false;
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+procedure OneWHCertificatePerForm(record RcVc RepSpec,record CUVc VEr)
+begin
+  Boolean found,testf;
+  record WHCertificateVc WHCertificater;
+  LongInt afr,ato;
+  string 255 frve,tove;
+  Boolean tmpf;
+  string 255 keystr;
+  Array record WHCertificateVc aWHCertificaters;
+  Integer acnt;
+  
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  keystr = "VECode";
+  found = true;
+  WHCertificater.VECode = VEr.Code;
+  while (LoopKey(keystr,WHCertificater,1,found)) begin
+    if (WHCertificater.VECode!=VEr.Code) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (WHCertificater.OPNr<afr) then begin testf = false; end;
+        if (WHCertificater.OPNr>ato) then begin testf = false; end;
+      end;      
+      if (DateInRange(WHCertificater.OPTransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+      if (testf) then begin
+        AddWHCertificatePerRow(WHCertificater,aWHCertificaters,acnt);
+      end;
+    end;
+  end;
+  SortWHCertificates(aWHCertificaters,acnt);
+  PrintWHCertificatePerForm(RepSpec,VEr,aWHCertificaters,acnt);
+  return;
+end;
+
+global
+procedure DoWHCertificatePerForms(record RcVc RepSpec)
+begin
+  Boolean found;
+  string 255 frve,tove;
+  record CUVc VEr;
+
+  frve = FirstInRange(RepSpec.f2,10);
+  tove = LastInRange(RepSpec.f2,10);
+  VEr.Code = frve;
+  found = true;
+  while (LoopMain(VEr,1,found)) begin
+    if (nonblank(RepSpec.f2)) then begin
+      if (VEr.Code>tove) then begin found = false; end;
+    end;
+    if (found) and (VEr.VEType!=0) then begin
+      OneWHCertificatePerForm(RepSpec,VEr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure DoWHCertificatePerForm(record RcVc Dummyr,record RcVc RepSpec)
+begin
+  DoWHCertificatePerForms(RepSpec);
+  return;
+end;
+
+global
+updating procedure WHCertificatePerForm(record RcVc RepSpec)
+begin
+  Boolean tmpf;
+  
+  tmpf = PrintDocument(RepSpec,"WHCertificatePerForm",false);
+  return;
+end;

@@ -1,0 +1,530 @@
+external function Duration MultiplyDuration(Duration,val);
+external function Time MultiplyTime(Time,val);
+external function val DurationToVal(Duration);
+external procedure ProdOperationSumup(var record ProdOperationVc);
+external procedure ProdOperationVc_PasteItem(var record ProdOperationVc,Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external function LongInt AddTime(Time,LongInt,var Time);
+external function LongInt TimeToMinutes(Time);
+
+procedure CopyInstructions(record ProdOperationVc ProdOpr,record StdOperationr StdOpr)
+begin
+  Integer i,rwcnt;
+  string 255 tstr;
+  
+  rwcnt = LineTextCnt(StdOpr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    tstr = LineTextGet(StdOpr,i);
+    LineTextPut(ProdOpr,i,tstr);      
+  end;  
+  return;
+end;
+
+procedure AddProdOpertaionRow(record ProdOperationVc ProdOpr,row ProdOperationVc ProdOprw,string item,string comment,string material,string objects,                               
+                               val prodinqty,val prodoutqty,val itemcost,val relval,val fiforowval,val coef,val stdoqty,Boolean mulf)
+begin
+  ClearRow(ProdOpr,ProdOprw,1);
+  ProdOprw.Item = item;
+  ProdOprw.Comment = comment;
+  ProdOprw.Material = material;
+  if (prodinqty!=0) then begin
+//StopAlert("2.ProdOprw.InQty " & ProdOprw.InQty & " stdoqty " & stdoqty & " prodinqty " & prodinqty & " mulf  " & mulf);                              
+    if (stdoqty!=0) then begin
+      ProdOprw.InQty = stdoqty;
+//StopAlert("1.ProdOprw.InQty " & ProdOprw.InQty & " ProdOprw.ArtCode " & ProdOprw.Item & " Prodrw.InQty " & Prodrw.InQty);        
+      switch (ProdOpr.RowsHoldActualQty) begin
+        case 1: 
+          ProdOprw.InQty = ProdOprw.InQty*ProdOpr.Qty;
+        otherwise ;
+      end;
+    end;
+    if (ProdOprw.InQty==0) then begin
+      ProdOprw.InQty = prodinqty;
+      if (mulf) then begin
+        ProdOprw.InQty = ProdOprw.InQty*ProdOpr.Qty;
+      end;
+    end;
+    ProdOprw.OutQty = blankval;
+  end else begin
+    ProdOprw.InQty = blankval;
+    if (stdoqty!=0) then begin
+      ProdOprw.OutQty = stdoqty;
+      switch (ProdOpr.RowsHoldActualQty) begin
+        case 1: 
+          ProdOprw.OutQty = ProdOprw.OutQty*ProdOpr.Qty;
+        otherwise ;
+      end;
+    end;
+    if (ProdOprw.OutQty==0) then begin
+      ProdOprw.OutQty = prodoutqty;
+      if (mulf) then begin
+        ProdOprw.OutQty = ProdOprw.OutQty*ProdOpr.Qty;
+      end;
+    end;
+  end;
+//StopAlert("ProdOprw.InQty " & ProdOprw.InQty & " ProdOprw.ArtCode " & ProdOprw.Item & " Prodrw.InQty " & Prodrw.InQty);        
+  ProdOprw.ActualInQty = blankval;
+  ProdOprw.ActualOutQty = blankval;
+  ProdOprw.ItemCost = itemcost;
+  ProdOprw.RelVal = relval;
+  ProdOprw.FIFORowVal = fiforowval;
+  ProdOprw.Coefficient = coef;
+  ProdOprw.Objects = objects;
+  MatRowPut(ProdOpr,MatRowCnt(ProdOpr),ProdOprw);
+  return;
+end;
+
+global
+procedure ProdOp_AddLowerLevelsRecursive(record ProdSettingsBlock PSb,record ProdOperationVc ProdOpr,row ProdOperationVc ProdOprw,string item,val inqty,row StdOperationVc StdOperationrw,Boolean mulf)
+begin        
+  record INVc INr;
+  record INVc rowINr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  Integer recrwcnt,reci;
+  val q;
+
+  if (ReadFirstItem(item,INr,false,false)) then begin
+    Recr.Code = INr.Recepy;
+    if (ReadFirstMain(Recr,1,true)) then begin
+      recrwcnt = MatRowCnt(Recr);
+      for (reci=0;reci<recrwcnt;reci=reci+1) begin
+        MatRowGet(Recr,reci,Recrw);
+        if (Recrw.Material==StdOperationrw.Material) then begin
+          if (ReadFirstItem(Recrw.Item,rowINr,false,false)) then begin
+          end;
+          switch (ProdOpr.RowsHoldActualQty) begin
+            case 1: q = inqty;
+            otherwise q = 1;
+          end;
+          AddProdOpertaionRow(ProdOpr,ProdOprw,Recrw.Item,Recrw.Comment,StdOperationrw.Material,rowINr.Objects,
+                              Recrw.InQty*q,Recrw.OutQty*q,Recrw.ItemCost,Recrw.RelVal,Recrw.ItemCost,blankval,
+                              StdOperationrw.Qty*q,mulf);
+        end else begin
+          if (Recrw.Recipe!=0) then begin
+            if (Recrw.Item!=item) then begin
+              if (Recrw.InQty!=0) then begin
+                ProdOp_AddLowerLevelsRecursive(PSb,ProdOpr,ProdOprw,Recrw.Item,inqty,StdOperationrw,mulf);
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+          
+global
+procedure AddTimeItemToProdOperation(record ProdOperationVc ProdOpr,string item,Time tt)
+begin
+  row ProdOperationVc ProdOprw;
+  Integer rwcnt;
+
+  if (nonblank(item)) then begin
+    rwcnt = MatRowCnt(ProdOpr);
+    ClearRow(ProdOpr,ProdOprw,1);
+    ProdOprw.Item = item;
+    MatRowPut(ProdOpr,rwcnt,ProdOprw);
+    ProdOperationVc_PasteItem(ProdOpr,rwcnt);
+    MatRowGet(ProdOpr,rwcnt,ProdOprw);
+    ProdOprw.InQty = TimeToVal(tt);
+    if (ProdOprw.InQty<0) then begin
+      ProdOprw.InQty = blankval;
+    end;
+    MatRowPut(ProdOpr,rwcnt,ProdOprw);
+  end;
+  return;
+end;
+
+global
+procedure AddDurationItemToProdOperation(record ProdOperationVc ProdOpr,string item,Duration dd)
+begin
+  row ProdOperationVc ProdOprw;
+  Integer rwcnt;
+
+  if (nonblank(item)) then begin
+    rwcnt = MatRowCnt(ProdOpr);
+    ClearRow(ProdOpr,ProdOprw,1);
+    ProdOprw.Item = item;
+    MatRowPut(ProdOpr,rwcnt,ProdOprw);
+    ProdOperationVc_PasteItem(ProdOpr,rwcnt);
+    MatRowGet(ProdOpr,rwcnt,ProdOprw);
+    ProdOprw.InQty = DurationToVal(dd);
+    if (ProdOprw.InQty<0) then begin
+      ProdOprw.InQty = blankval;
+    end;
+    MatRowPut(ProdOpr,rwcnt,ProdOprw);
+  end;
+  return;
+end;
+
+global
+procedure CreateProdOperation2(record ProdSettingsBlock PSb,record ProdOperationVc ProdOpr,record ProdVc Prodr,row RoutingVc Routingrw,record StdOperationVc StdOperationr,var Date startdate,var Time starttime,var vector Boolean materialhandled)
+begin
+  row ProdOperationVc ProdOprw;
+  row ProdVc Prodrw;
+  row StdOperationVc StdOperationrw;
+  Integer rwcnt,i;
+  Integer prwcnt,pi;
+  Time tt;
+
+  ProdOpr.Qty = blankval;
+  ProdOpr.ProdNr = Prodr.SerNr;
+  ProdOpr.ProdOrdNr = Prodr.ProdOrder;
+  ProdOpr.Sequence = Routingrw.Sequence;
+  ProdOpr.SubSequence = Routingrw.SubSequence;
+  ProdOpr.Comment = Routingrw.Comment;
+  ProdOpr.RunTime = Routingrw.RunTime;
+  ProdOpr.MachineGroup = Routingrw.MachineGroup;
+  ProdOpr.Machine = Routingrw.Machine;
+  if (blank(ProdOpr.RunTime)) then begin
+    ProdOpr.RunTime = StdOperationr.RunTime;
+  end;
+  ProdOpr.SetupTime = Routingrw.SetupTime;
+  if (blank(ProdOpr.SetupTime)) then begin
+    ProdOpr.SetupTime = StdOperationr.SetupTime;
+  end;
+  ProdOpr.QueueTime = Routingrw.QueueTime;
+  if (blank(ProdOpr.QueueTime)) then begin
+    ProdOpr.QueueTime = StdOperationr.QueueTime;
+  end;
+  ProdOpr.MoveTime = Routingrw.MoveTime;
+  if (blank(ProdOpr.MoveTime)) then begin
+    ProdOpr.MoveTime = StdOperationr.MoveTime;
+  end;
+  ProdOpr.Qty = Prodr.Qty;
+  switch (ProdOpr.RowsHoldActualQty) begin
+    case 1: //? is it really ? 
+      ProdOpr.RunTime = MultiplyDuration(ProdOpr.RunTime,ProdOpr.Qty);
+      ProdOpr.QueueTime = MultiplyTime(ProdOpr.QueueTime,ProdOpr.Qty);
+      ProdOpr.SetupTime = MultiplyTime(ProdOpr.SetupTime,ProdOpr.Qty);
+      ProdOpr.MoveTime = MultiplyTime(ProdOpr.MoveTime,ProdOpr.Qty);
+    otherwise ;
+  end;
+
+  
+  ProdOpr.StartDate = startdate;
+  ProdOpr.StartTime = starttime;
+
+  
+  ProdOpr.ProdDate = startdate;
+  ProdOpr.ProdDate = AddDay(ProdOpr.ProdDate,AddTime(ProdOpr.StartTime,TimeToMinutes(StdOperationr.DurTime),tt));
+//ProdOpr.EndTime = tt;  
+  if (StdOperationr.DurDays>0) then begin
+    ProdOpr.ProdDate = AddDay(ProdOpr.ProdDate,StdOperationr.DurDays);
+  end;
+  startdate = ProdOpr.ProdDate;
+  starttime = ProdOpr.EndTime;
+
+  ProdOpr.Location = Prodr.Location;
+  ProdOpr.StdOperation = StdOperationr.Code;
+  ProdOpr.BatchTime = StdOperationr.BatchTime;
+  ProdOpr.LangCode = Prodr.LangCode;
+  if (blank(ProdOpr.MachineGroup)) then begin
+    ProdOpr.MachineGroup = StdOperationr.MachineGroup;
+  end;
+  if (blank(ProdOpr.Machine)) then begin
+    ProdOpr.Machine = StdOperationr.Machine;
+  end;
+  ProdOpr.DisplayGroup = StdOperationr.DisplayGroup;
+  CopyInstructions(ProdOpr,StdOperationr);
+  ProdOpr.SerNr = NextSerNr("ProdOperationVc",ProdOpr.ProdDate,-1,false,"");
+  
+  rwcnt = MatRowCnt(StdOperationr);
+  prwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(StdOperationr,i,StdOperationrw);
+    for (pi=0;pi<prwcnt;pi=pi+1) begin
+      MatRowGet(Prodr,pi,Prodrw);
+      if (materialhandled[Prodrw.Material]==false) then begin
+        if (Prodrw.Material==StdOperationrw.Material) then begin
+          AddProdOpertaionRow(ProdOpr,ProdOprw,Prodrw.Item,Prodrw.Comment,StdOperationrw.Material,Prodrw.Objects,
+                              Prodrw.InQty,Prodrw.OutQty,Prodrw.ItemCost,Prodrw.RelVal,Prodrw.FIFORowVal,Prodrw.Coefficient,
+                              StdOperationrw.Qty,false);
+        end else begin
+          if (Prodrw.InQty!=0) then begin
+            ProdOp_AddLowerLevelsRecursive(PSb,ProdOpr,ProdOprw,Prodrw.Item,Prodrw.InQty,StdOperationrw,ProdOpr.RowsHoldActualQty==0);
+          end;
+        end;
+      end;
+    end;
+    materialhandled[StdOperationrw.Material] = true;
+  end;
+  if (PSb.FixedTime!=0) then begin
+    AddDurationItemToProdOperation(ProdOpr,PSb.LabourCostItem,ProdOpr.RunTime);
+    AddTimeItemToProdOperation(ProdOpr,PSb.SetupCostItem,ProdOpr.SetupTime);
+    AddTimeItemToProdOperation(ProdOpr,PSb.MoveCostItem,ProdOpr.MoveTime);
+    AddTimeItemToProdOperation(ProdOpr,PSb.QueueCostItem,ProdOpr.QueueTime);
+  end;
+  return;
+end;
+
+global
+procedure CreateProdOperation(record ProdSettingsBlock PSb,record ProdOperationVc ProdOpr,record ProdVc Prodr,row RoutingVc Routingrw,record StdOperationVc StdOperationr,var Date startdate,var Time starttime)
+begin
+  vector Boolean materialhandled;
+  CreateProdOperation2(PSb,ProdOpr,Prodr,Routingrw,StdOperationr,startdate,starttime,materialhandled);
+end;
+
+global
+procedure CreateProdOperation_Phantom(record ProdSettingsBlock PSb,record ProdOperationVc ProdOpr,record ProdVc Prodr,val inqty,record RcVc Recr,row RoutingVc Routingrw,record StdOperationVc StdOperationr,var Date startdate,var Time starttime)
+begin
+  row ProdOperationVc ProdOprw;
+  row StdOperationVc StdOperationrw;
+  Integer rwcnt,i;
+  Time tt;
+  row RecVc Recrw;
+  Integer recrwcnt,reci;
+
+  ProdOpr.Qty = blankval;
+  ProdOpr.ProdNr = Prodr.SerNr;
+  ProdOpr.ProdOrdNr = Prodr.ProdOrder;
+  ProdOpr.Sequence = Routingrw.Sequence;
+  ProdOpr.SubSequence = Routingrw.SubSequence;
+  ProdOpr.Comment = Routingrw.Comment;
+  ProdOpr.RunTime = Routingrw.RunTime;
+  ProdOpr.MachineGroup = Routingrw.MachineGroup;
+  ProdOpr.Machine = Routingrw.Machine;
+  if (blank(ProdOpr.RunTime)) then begin
+    ProdOpr.RunTime = StdOperationr.RunTime;
+  end;
+  ProdOpr.SetupTime = Routingrw.SetupTime;
+  if (blank(ProdOpr.SetupTime)) then begin
+    ProdOpr.SetupTime = StdOperationr.SetupTime;
+  end;
+  ProdOpr.QueueTime = Routingrw.QueueTime;
+  if (blank(ProdOpr.QueueTime)) then begin
+    ProdOpr.QueueTime = StdOperationr.QueueTime;
+  end;
+  ProdOpr.MoveTime = Routingrw.MoveTime;
+  if (blank(ProdOpr.MoveTime)) then begin
+    ProdOpr.MoveTime = StdOperationr.MoveTime;
+  end;
+  
+  ProdOpr.StartDate = startdate;
+  ProdOpr.StartTime = starttime;
+
+  
+  ProdOpr.ProdDate = startdate;
+  ProdOpr.ProdDate = AddDay(ProdOpr.ProdDate,AddTime(ProdOpr.StartTime,TimeToMinutes(StdOperationr.DurTime),tt));
+//ProdOpr.EndTime = tt;  
+  if (StdOperationr.DurDays>0) then begin
+    ProdOpr.ProdDate = AddDay(ProdOpr.ProdDate,StdOperationr.DurDays);
+  end;
+  startdate = ProdOpr.ProdDate;
+  starttime = ProdOpr.EndTime;
+  ProdOpr.Qty = Prodr.Qty;
+
+  ProdOpr.Location = Prodr.Location;
+  ProdOpr.StdOperation = StdOperationr.Code;
+  ProdOpr.BatchTime = StdOperationr.BatchTime;
+  ProdOpr.LangCode = Prodr.LangCode;
+  if (blank(ProdOpr.MachineGroup)) then begin
+    ProdOpr.MachineGroup = StdOperationr.MachineGroup;
+  end;
+  if (blank(ProdOpr.Machine)) then begin
+    ProdOpr.Machine = StdOperationr.Machine;
+  end;
+  ProdOpr.DisplayGroup = StdOperationr.DisplayGroup;
+  CopyInstructions(ProdOpr,StdOperationr);
+  ProdOpr.SerNr = NextSerNr("ProdOperationVc",ProdOpr.ProdDate,-1,false,"");
+  
+  rwcnt = MatRowCnt(StdOperationr);
+  recrwcnt = MatRowCnt(Recr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(StdOperationr,i,StdOperationrw);
+    for (reci=0;reci<recrwcnt;reci=reci+1) begin
+      MatRowGet(Recr,reci,Recrw);
+      if (Recrw.Material==StdOperationrw.Material) then begin
+        AddProdOpertaionRow(ProdOpr,ProdOprw,Recrw.Item,Recrw.Comment,StdOperationrw.Material,"",
+                            Recrw.InQty,Recrw.OutQty,Recrw.ItemCost,Recrw.RelVal,blankval,blankval,
+                            StdOperationrw.Qty,false);
+      end else begin
+        if (Recrw.InQty!=0) then begin
+          ProdOp_AddLowerLevelsRecursive(PSb,ProdOpr,ProdOprw,Recrw.Item,Recrw.InQty,StdOperationrw,true);
+        end;
+      end;
+    end;
+  end;
+  if (PSb.FixedTime!=0) then begin
+    AddDurationItemToProdOperation(ProdOpr,PSb.LabourCostItem,ProdOpr.RunTime);
+    AddTimeItemToProdOperation(ProdOpr,PSb.SetupCostItem,ProdOpr.SetupTime);
+    AddTimeItemToProdOperation(ProdOpr,PSb.MoveCostItem,ProdOpr.MoveTime);
+    AddTimeItemToProdOperation(ProdOpr,PSb.QueueCostItem,ProdOpr.QueueTime);
+  end;
+  return;
+end;
+
+updating procedure ProdOper_AddPhantomOperations(record ProdSettingsBlock PSb,record RecVc Recr,record ProdVc Prodr,val inqty,var Date startdate,var Time starttime)
+begin
+  record ProdOperationVc ProdOpr;
+  Integer roui,rourwcnt;
+  record RoutingVc Routingr;
+  row RoutingVc Routingrw;
+  record StdOperationVc StdOperationr;
+  Integer flushcnt;
+
+  Routingr.Code = Recr.DefaultRouting;
+  if (ReadFirstMain(Routingr,1,true)) then begin
+    rourwcnt = MatRowCnt(Routingr);
+    for (roui=0;roui<rourwcnt;roui=roui+1) begin
+      MatRowGet(Routingr,roui,Routingrw);
+      StdOperationr.Code = Routingrw.StdOperation;
+      if (ReadFirstMain(StdOperationr,1,true)) then begin
+        RecordNew(ProdOpr);
+        CreateProdOperation_Phantom(PSb,ProdOpr,Prodr,inqty,Recr,Routingrw,StdOperationr,startdate,starttime);
+        if (ProdOpr.SerNr>0) then begin
+          if (RecordStore(ProdOpr,false)) then begin end;
+        end;
+        CheckFlush(flushcnt,10);
+      end;
+    end;
+  end;
+  return;
+end;
+    
+global    
+function Boolean IsPhantomItem(record INVc INr)
+begin
+  IsPhantomItem = INr.ItemType==0 and nonblank(INr.Recepy);
+  return;
+end;
+
+updating procedure ProdOper_AddPhantomsOperations_Recursive(record ProdSettingsBlock PSb,record RecVc Recr,record ProdVc Prodr,val inqty,var Date startdate,var Time starttime)
+begin    
+  row RecVc Recrw;
+  Integer recrwcnt,reci;
+  record INVc INr;
+
+  recrwcnt = MatRowCnt(Recr);
+  for (reci=0;reci<recrwcnt;reci=reci+1) begin
+    MatRowGet(Recr,reci,Recrw);
+    if (Recrw.InQty!=0) then begin
+      if (ReadFirstItem(Recrw.Item,INr,false,false)) then begin
+        if (IsPhantomItem(INr)) then begin
+          Recr.Code = INr.Recepy;
+          if (ReadFirstMain(Recr,1,true)) then begin
+            if (nonblank(Recr.DefaultRouting)) then begin
+              ProdOper_AddPhantomsOperations_Recursive(PSb,Recr,Prodr,inqty,startdate,starttime);
+              ProdOper_AddPhantomOperations(PSb,Recr,Prodr,inqty,startdate,starttime);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+                    
+global                            
+updating procedure ProdOper_AddPhantomsOperations(record ProdSettingsBlock PSb,record ProdVc Prodr,var Date startdate,var Time starttime)
+begin
+  row ProdVc Prodrw;
+  record INVc INr;
+  record RecVc Recr;
+  Integer pi,prwcnt;
+    
+  prwcnt = MatRowCnt(Prodr);
+  for (pi=0;pi<prwcnt;pi=pi+1) begin
+    MatRowGet(Prodr,pi,Prodrw);
+    if (Prodrw.InQty!=0) then begin
+      if (ReadFirstItem(Prodrw.Item,INr,false,false)) then begin
+        if (IsPhantomItem(INr)) then begin
+          Recr.Code = INr.Recepy;
+          if (ReadFirstMain(Recr,1,true)) then begin
+            if (nonblank(Recr.DefaultRouting)) then begin              
+              ProdOper_AddPhantomsOperations_Recursive(PSb,Recr,Prodr,Prodrw.InQty,startdate,starttime);              
+              ProdOper_AddPhantomOperations(PSb,Recr,Prodr,Prodrw.InQty,startdate,starttime);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ProdOperationMn(record RcVc RepSpec)
+BEGIN
+  record ProdVc Prodr;
+  record RoutingVc Routingr;
+  row RoutingVc Routingrw;
+  record StdOperationVc StdOperationr;
+  Boolean TrHs,testf;
+  Integer flushcnt;
+  Integer rwcnt,i;
+  LongInt lastseqnr;
+  Date startdate;
+  Time starttime;
+  record ProdOperationVc ProdOpr;
+  Boolean firstf;
+  record ProdSettingsBlock PSb;
+  vector Boolean materialhandled;
+
+  BlockLoad(PSb);
+  TrHs = true;
+  Prodr.SerNr = RepSpec.long1;
+  ResetLoop(Prodr);
+  while(LoopMain(Prodr,1,TrHs)) begin
+    if (RepSpec.long1>0) then begin
+      if (Prodr.SerNr>RepSpec.long1) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = true;
+    if (TrHs==false) then begin
+      testf = false;
+    end;
+    if (blank(Prodr.Routing)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      ProdOpr.ProdNr = Prodr.SerNr;
+      testf = !ReadFirstKey("ProdNr",ProdOpr,1,true);
+      if (testf==false) then begin
+        MessageBox(20783,"");
+      end;
+    end;
+    if (testf) then begin
+      startdate = Prodr.StartDate;
+      if (blankdate(startdate)) then begin
+        startdate = Prodr.ProdDate;
+      end;
+      if (blankdate(startdate)) then begin
+        startdate = CurrentDate;
+      end;
+      starttime = Prodr.StartTime;
+
+      Routingr.Code = Prodr.Routing;
+      if (ReadFirstMain(Routingr,1,true)) then begin
+        ProdOper_AddPhantomsOperations(PSb,Prodr,startdate,starttime);
+        firstf = true;
+        rwcnt = MatRowCnt(Routingr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(Routingr,i,Routingrw);
+          StdOperationr.Code = Routingrw.StdOperation;
+          if (ReadFirstMain(StdOperationr,1,true)) then begin
+            if (lastseqnr>0) then begin
+              if (lastseqnr!=Routingrw.Sequence) then begin
+                firstf = false;
+              end;
+            end;
+            RecordNew(ProdOpr);
+            CreateProdOperation2(PSb,ProdOpr,Prodr,Routingrw,StdOperationr,startdate,starttime,materialhandled);
+            if (ProdOpr.SerNr>0) then begin
+              ProdOperationSumup(ProdOpr);
+              if (RecordStore(ProdOpr,false)) then begin end;
+            end;
+            lastseqnr = Routingrw.Sequence ;
+            CheckFlush(flushcnt,10);
+          end;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+

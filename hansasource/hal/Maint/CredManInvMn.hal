@@ -1,0 +1,629 @@
+external procedure AddWithholdingTaxesRows_IVVc(var record IVVc);
+external procedure AddPerceptionTaxesRows_IVVc(var record IVVc);
+external function roundmode SetRoundModeD(Integer);
+external function Boolean IPVc_PasteCustCode(var record IPVc,Integer,var LongInt);
+external procedure BuildCredManPayPlan(record CredManVc,var record CredManPayPlanVc,record CredManSetBlock,Boolean,Boolean);
+external updating procedure IVUpdateCredMan(record IVVc,var record CredManEventVc,Boolean,Boolean);
+external procedure IPVc_PasteRecVal(var record IPVc,Integer);
+external function Boolean PasteInvIn2IPr(var record IPVc,Integer,Date,var val,Boolean,var Boolean);
+external function val FindVAT(string,val,Integer,Integer);
+external function Integer GetCurrentMonth(record CredManVc);
+external procedure CalcCredManCurrentPeriod(record CredManVc,Integer,var Date,var Date,var Date);
+external function val GetCredManStatus(record CredManVc,Integer,Integer);
+external function LongInt MonthDiff(Date,Date);
+external function Boolean PasteCustInInv(var record IVVc);
+external function Boolean CheckCustomerBlocked(string);
+external function Boolean IVVc_PasteArtCode(var record IVVc,Integer,var string,var string,Boolean,var Integer);
+external procedure GetARAcc(string,var string);
+external procedure IVVc_PastePayDeal(var record IVVc,string,string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetPriceList(string,Date,Time,var string,var Integer);
+external function string 255 FindNextLegalSerNr(record IVVc,string);
+external procedure GetBaseCurncy(Integer,var string);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure IVDchsum(var record IVVc,Integer);
+
+function Boolean FindUnOKedCredManInv(LongInt sernr)
+begin
+  record IVVc IVr;
+  Boolean foundf;
+  Boolean res;
+  
+  res = false;
+  IVr.OKFlag = 0;
+  foundf = true;
+  while (LoopKey("OKFlag",IVr,1,foundf)) begin
+    if (IVr.OKFlag!=0) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      if (IVr.CredManNr==sernr) then begin
+        res = true;
+        foundf = false;
+      end;
+    end;
+  end;
+  FindUnOKedCredManInv = res;
+  return;
+end;
+
+procedure AddInvCommentLines(record CredManVc CredManr,var record IVVc IVp,string newcomment)
+begin
+  row IVVc IVrw;
+  string 255 tstr,t2;
+  
+  tstr = USetStr(1168);
+  t2 = CredManr.SerNr;
+  tstr = tstr & t2;
+  ClearRow(IVp,IVrw,1);
+  IVrw.Spec = tstr;
+  MatRowPut(IVp,MatRowCnt(IVp),IVrw);
+  if (nonblank(newcomment)) then begin
+    ClearRow(IVp,IVrw,1);
+    IVrw.Spec = newcomment;
+    MatRowPut(IVp,MatRowCnt(IVp),IVrw);
+  end;
+  if (nonblank(CredManr.InvoiceToCode)) then begin
+    tstr = USetStr(7252);
+    tstr = tstr & ": ";
+    tstr = tstr & CredManr.Addr0;
+    ClearRow(IVp,IVrw,1);
+    IVrw.Spec = tstr;
+    MatRowPut(IVp,MatRowCnt(IVp),IVrw);
+  end;
+  return;
+end;
+
+function Integer FindNextToInvoice(record CredManPayPlanVc CredManPayPlanr,Date todat,var Date firstdat)
+begin
+  row CredManPayPlanVc CredManPayPlanrw;
+  LongInt i,rwcnt;
+  Integer res;
+  Boolean foundissuedint;
+  
+  res = 0;
+  foundissuedint = false;
+  rwcnt = MatRowCnt(CredManPayPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CredManPayPlanr,i,CredManPayPlanrw);
+    if (CredManPayPlanrw.TransDate>todat) then begin
+      goto LFindNextToInvoice;
+    end else begin
+      switch (CredManPayPlanrw.PlanType) begin
+        case 1: foundissuedint = true;
+        case 9: foundissuedint = false;
+        case 0:
+          if (foundissuedint) then begin
+            firstdat = AddDay(CredManPayPlanrw.TransDate,-1);
+            res = 1;
+            goto LFindNextToInvoice;
+          end;
+        case 7:
+          res = 2;
+          goto LFindNextToInvoice;
+      end;
+    end;
+  end;
+  if (foundissuedint) then begin
+    firstdat = AddDay(CredManPayPlanrw.TransDate,-1);
+    res = 1;
+  end;
+LFindNextToInvoice:;
+  FindNextToInvoice = res;
+  return;
+end;
+
+updating function Boolean BuildIVFromCredMan(var record IVVc IVp,record CredManVc CredManr,string newcomment,Date frdat,Date todat,Date invdate,var Integer makedepinvf,Boolean maintf)
+begin
+  Boolean res,addf;
+  record CredManSetBlock CredManSetb;
+  record CredManPayPlanVc CredManPayPlanr;
+  row CredManPayPlanVc CredManPayPlanrw;
+  row CredManVc CredManrw;
+  val opensum,invoiced;
+  row IVVc IVrw;
+  string 255 tstr,t2;
+  LongInt oldser;
+  LongInt i,rwcnt,rownr;
+  Date invd,sdp,edp,firstdat;
+  val fr,to1,to2,br1,br2;
+  string 5 crncy;
+  Integer sernrf;
+  
+  res = false;
+// Basically Get Unpaid Instalment
+  invoiced = GetCredManStatus(CredManr,0,2);
+  opensum = CredManr.InvSum4 - CredManr.DepositSum - invoiced;
+  if (opensum - 0.5<=0) then begin //## Again some sort of % to be safe....
+    if (maintf==false) then begin
+      MessageBox(20794,"");
+    end;
+    goto LBuildIVFromCredMan;
+  end;
+  AddInvCommentLines(CredManr,IVp,newcomment);
+  BlockLoad(CredManSetb);
+  RecordNew(CredManPayPlanr);
+  BuildCredManPayPlan(CredManr,CredManPayPlanr,CredManSetb,true,false);
+  makedepinvf = FindNextToInvoice(CredManPayPlanr,todat,firstdat);
+  if (makedepinvf==0) then begin
+    if (maintf==false) then begin
+      MessageBox(20794,"");
+    end;
+    goto LBuildIVFromCredMan;
+  end;
+  if (makedepinvf==1) then begin
+/*
+    if ((CredManr.OKFlag==0) or (CredManr.Approved==0)) then begin
+      if (maintf==false) then begin
+        MessageBox(20795,"");
+      end;
+      goto LBuildIVFromCredMan;
+    end;
+*/
+  end;
+  if (FindUnOKedCredManInv(CredManr.SerNr)) then begin
+    if (maintf==false) then begin
+      MessageBox(20790,"");
+    end;
+    goto LBuildIVFromCredMan;
+  end;
+  if (makedepinvf==1) then begin
+    CalcCredManCurrentPeriod(CredManr,MonthDiff(CredManr.FirstIntDate,firstdat)-1,sdp,edp,invd); // GetCurrentMonth(CredManr)
+    IVp.InvComment = USetStr(1169) & sdp & ":" & edp;
+    ClearRow(IVp,IVrw,1);
+    IVrw.Spec = IVp.InvComment;
+    MatRowPut(IVp,MatRowCnt(IVp),IVrw);
+  end else begin
+    invd = CredManr.startDate;
+  end;
+  ClearRow(IVp,IVrw,1);
+  IVrw.Spec = " ";
+  MatRowPut(IVp,MatRowCnt(IVp),IVrw);
+  IVp.InvDate = invd;
+  IVp.TransDate = IVp.InvDate;
+  IVVc_PastePayDeal(IVp,"","");
+  IVp.SerNr = NextSerNr("IVVc",IVp.TransDate,oldser,false,IVp.LangCode);
+  crncy = IVp.CurncyCode;
+  GetFullCurncyRate(crncy,IVp.TransDate,fr,to1,to2,br1,br2);
+  IVp.CurncyCode = crncy;
+  IVp.FrRate = fr;
+  IVp.ToRateB1 = to1; 
+  IVp.ToRateB2 = to2;
+  IVp.BaseRate1 = br1;
+  IVp.BaseRate2 = br2;
+  rownr = MatRowCnt(IVp);
+  rwcnt = MatRowCnt(CredManPayPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CredManPayPlanr,i,CredManPayPlanrw);
+    if (CredManPayPlanrw.TransDate>todat or (CredManPayPlanrw.PlanType==0 and res==true)) then begin
+      goto LBuildIVFromCredMan;
+    end;
+    if ((CredManr.ChargeMethod==1 and CredManPayPlanrw.PlanType>=4 and CredManPayPlanrw.PlanType<=8) or
+        (CredManr.ChargeMethod==0 and (CredManPayPlanrw.PlanType==1 or CredManPayPlanrw.PlanType==4 or CredManPayPlanrw.PlanType==7)))then begin
+      ClearRow(IVp,IVrw,1);
+      IVrw.ArtCode = CredManPayPlanrw.ArtCode;
+      IVrw.Quant = 1;
+      MatRowPut(IVp,rownr,IVrw);
+      if (IVVc_PasteArtCode(IVp,rownr,tstr,tstr,false,sernrf)) then begin
+      end;
+      MatRowGet(IVp,rownr,IVrw);
+      IVrw.Price = CredManPayPlanrw.Sum;
+      IVrw.Sum = CredManPayPlanrw.Sum;
+//      IVrw.Spec = CredManrw.Comment;
+      if (CredManPayPlanrw.PlanType==6) then begin
+        IVrw.SalesAcc = CredManr.CredManAcc;
+      end;
+      if (CredManPayPlanrw.PlanType==7) then begin
+        if (maintf==false) then begin
+          if (FindVAT(IVrw.VATCode,IVrw.Sum,IVp.InclVAT,IVp.NoTAXonVAT)>0) then begin
+            MessageBox(20791,"");
+          end;
+        end;
+      end;
+      MatRowPut(IVp,rownr,IVrw);
+      rownr = MatRowCnt(IVp);
+      res = true;
+    end;
+  end;
+LBuildIVFromCredMan:;
+  BuildIVFromCredMan = res;
+  return;
+end;
+
+procedure PasteCredManToInv(var record IVVc IVp,record CredManVc CredManr)
+begin
+  val fr,to1,to2,br1,br2;
+  string 5 crncy;
+  string 255 tstr;
+
+  if (PasteCustInInv(IVp)) then begin end;
+  IVp.Addr0 = CredManr.Addr0;
+  IVp.CustCat = CredManr.CustCat;
+  IVp.PayDeal = CredManr.PayDeal;
+  IVp.ClientContact = CredManr.ClientContact;
+  IVp.Objects = CredManr.Objects;
+  IVp.CurncyCode = CredManr.CurncyCode;
+  if (nonblank(CredManr.PayDeal)) then begin
+    IVp.PayDeal = CredManr.PayDeal;
+  end;
+  crncy = IVp.CurncyCode;
+  GetFullCurncyRate(crncy,IVp.TransDate,fr,to1,to2,br1,br2);
+  IVp.CurncyCode = crncy;
+  IVp.FrRate = fr;
+  IVp.ToRateB1 = to1; 
+  IVp.ToRateB2 = to2;
+  IVp.BaseRate1 = br1;
+  IVp.BaseRate2 = br2;
+  IVp.SalesMan = CredManr.SalesMan;
+  IVp.LangCode = CredManr.LangCode;
+  IVp.PriceList = CredManr.PriceList;
+  IVp.RebCode = CredManr.RebCode;
+  IVp.ARAcc = CredManr.ARAcc;
+  IVp.Objects = CredManr.ARAccObject;
+  tstr = IVp.PriceList;
+  GetPriceList(IVp.CustCat,IVp.TransDate,IVp.TransTime,tstr,IVp.InclVAT);
+  IVp.PriceList = tstr;
+  IVp.ExportFlag = CredManr.ExportFlag;
+  IVp.CredManNr = CredManr.SerNr;
+//  IVp.InvComment = CredManr.InvComment;
+  IVp.UpdStockFlag = 0;
+  return;
+end;
+
+procedure SetupIVFromScratch(var record IVVc IVp,record CredManVc CredManr,Date invdate)
+begin
+  record PLDefVc PLDefR;
+  record CUVc CUr;
+  record CUVc invtoCUr;
+
+  RecordNew(IVp);
+  IVp.InvDate = invdate;
+  IVp.TransDate = invdate;
+  invtoCUr.Code = "";
+  CUr.Code = CredManr.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    IVp.CustCode = CUr.Code;  
+    if (nonblank(CUr.InvoiceToCode)) then begin
+      invtoCUr.Code = CUr.InvoiceToCode;
+      if (ReadFirstMain(invtoCUr,1,true)) then begin
+        IVp.CustCode = invtoCUr.Code;
+      end;
+    end;
+  end;
+  if (nonblank(CredManr.InvoiceToCode)) then begin
+    invtoCUr.Code = CredManr.InvoiceToCode;
+    if (ReadFirstMain(invtoCUr,1,true)) then begin
+      IVp.CustCode = invtoCUr.Code;
+    end;
+  end;
+  if (blank(IVp.CustCode)) then begin
+    IVp.CustCode = CredManr.CustCode;  
+  end;
+  PasteCredManToInv(IVp,CredManr);
+//  IVp.InclVAT = CredManr.InclVAT; 
+  GetARAcc(IVp.CustCode,IVp.ARAcc);
+  return;
+end;
+
+procedure SetupIVFromCredMan(var record IVVc IVp,record CredManVc CredManr,Date invdate)
+begin
+  SetupIVFromScratch(IVp,CredManr,invdate);
+  return;
+end;
+
+updating procedure InsertNewCredManInvoice(record IVVc IVp,record CredManVc CredManr,var record CredManEventVc CredManEventr,Integer makedepinvf)
+begin
+  string 255 tstr;
+  record CUVc CUr;
+
+  CUr.Code = IVp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin end;
+//  IVp.OfficialSerNr = FindNextLegalSerNr(IVp,CUr.Classification); //POSN
+  if (CredManr.ChargeMethod==1 or makedepinvf==2) then begin
+    if (IVp.SerNr<>-1) then begin
+      if (RecordInsert(IVp,false)) then begin end;
+    end;
+  end else begin
+    IVp.SerNr = -1;
+    IVUpdateCredMan(IVp,CredManEventr,true,false);
+  end;
+  return;
+end;
+
+updating procedure BuildIVFromCredMan2(record RcVc RepSpec,var record IVVc IVp,var record CredManEventVc CredManEventr,record CredManVc CredManr,Date invdate,Boolean storef,Boolean maintf)
+begin
+  record IVVc oldIVr;
+  LongInt oldser;
+  LongInt rwcnt;
+  Boolean res;
+  Date edat;
+  Integer makedepinvf;
+
+  SetupIVFromCredMan(IVp,CredManr,invdate);
+  edat = RepSpec.sEndDate;
+  if (nonblankdate(CredManr.endDate)) then begin
+    if (edat>CredManr.endDate or blankdate(edat)) then begin
+      edat = CredManr.endDate;
+    end;
+  end;
+  IVp.SerNr = NextSerNr("IVVc",IVp.TransDate,oldser,false,IVp.LangCode);
+  if (BuildIVFromCredMan(IVp,CredManr,RepSpec.ObjStr,RepSpec.sStartDate,edat,invdate,makedepinvf,maintf)) then begin
+    AddPerceptionTaxesRows_IVVc(IVp);
+    AddWithholdingTaxesRows_IVVc(IVp);
+    IVSumup(IVp,true);  
+    rwcnt = MatRowCnt(IVp);
+    if (rwcnt>0 and storef ) then begin
+      InsertNewCredManInvoice(IVp,CredManr,CredManEventr,makedepinvf);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure PasteCredManInIV(var record IVVc IVp,var record CredManEventVc CredManEventr,LongInt ordnr)
+begin
+  record CredManVc CredManr;
+  record RcVc RepSpec;
+  Date bldat;
+
+  RepSpec.UsedOnly = 0;
+  RepSpec.Stext = "";
+  RepSpec.ObjStr = "";
+  CredManr.SerNr = ordnr;
+  if (ReadFirstMain(CredManr,1,true)) then begin
+    RepSpec.sStartDate = bldat; //CurrentDate; //bldat;
+    RepSpec.sEndDate = bldat; //AddDay(AddMonth(RepSpec.sStartDate,CredManr.perLength),-1); //bldat;
+    BuildIVFromCredMan2(RepSpec,IVp,CredManEventr,CredManr,bldat,true,false);
+  end;
+  return;
+end;
+
+// VAT
+function Boolean AddOpenInvoices(var record IPVc IPr,var Integer ln,record CredManVc CredManr,LongInt ivnr)
+begin
+  record CredManEventVc CredManEventr;
+  record ARVc ARr;
+  row IPVc IPrw;
+  Integer i,rwcnt;
+  Boolean foundf,testf,addall,installmentf;
+  val chk,blval;
+  Boolean res;
+  
+  res = false;
+/*
+  addall = true;
+  rwcnt = MatRowCnt(IPr);
+  for (i=ln+1;i<rwcnt;i=i+1) begin
+    MatRowGet(IPr,i,IPrw);
+    if (IPrw.InvoiceNr>0 or nonblank(IPrw.CustCode) or IPrw.CredManNr>0) then begin
+      addall = false;
+      i = rwcnt;
+    end;
+  end;
+*/
+  CredManEventr.CredManNr = CredManr.SerNr;
+  CredManEventr.FileName = "IVVc";
+  CredManEventr.RecordNr = ivnr;
+  foundf = true;
+  while (LoopKey("FindOriginalRecord",CredManEventr,3,foundf)) begin
+    if ((CredManEventr.CredManNr!=CredManr.SerNr) or (CredManEventr.FileName!="IVVc")) then begin
+      foundf = false;
+    end;
+    if (ivnr>0) then begin
+      if (CredManEventr.RecordNr!=ivnr) then begin
+        foundf = false;
+      end;
+    end;
+    testf = foundf;
+    if (testf) then begin
+      ARr.InvoiceNr = CredManEventr.RecordNr;
+      if (ReadFirstMain(ARr,1,true)==false) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      rwcnt = MatRowCnt(IPr);
+      if (ln<rwcnt) then begin
+        rwcnt = ln;
+      end;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IPr,i,IPrw);
+        if (IPrw.InvoiceNr==CredManEventr.RecordNr) then begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      ClearRow(IPr,IPrw,1);
+      IPrw.InvoiceNr = CredManEventr.RecordNr;
+      MatRowPut(IPr,ln,IPrw);
+      PasteInvIn2IPr(IPr,ln,IPr.TransDate,chk,false,installmentf);
+      MatRowGet(IPr,ln,IPrw);
+      IPrw.SuggestVal = IPrw.RecVal;
+      IPrw.RecVal = blval;
+      IPrw.CustName = CredManEventr.Comment;
+      MatRowPut(IPr,ln,IPrw);
+      IPVc_PasteRecVal(IPr,ln);
+      ln = ln + 1;
+      res = true;
+    end;
+  end;
+  if (res) then begin
+    ClearRow(IPr,IPrw,1);
+    IPrw.CredManNr = CredManr.SerNr;
+    IPrw.CustCode = CredManr.CustCode;
+    MatRowPut(IPr,ln,IPrw);
+    PasteInvIn2IPr(IPr,ln,IPr.TransDate,chk,false,installmentf);
+    ln = ln + 1;
+  end;
+  AddOpenInvoices = res;
+  return;
+end;
+
+// VAT
+function Boolean AddSuggestedInstalment(var record IPVc IPr,var Integer ln,record CredManVc CredManr,LongInt ivnr)
+begin
+  record CredManPayPlanVc CredManPayPlanr;
+  record CredManSetBlock CredManSetb;
+  row CredManPayPlanVc CredManPayPlanrw;
+  record ARVc ARr;
+  row IPVc IPrw;
+  LongInt i,rwcnt,error;
+  Boolean foundf,testf,addall,installmentf;
+  val sum,blval;
+  Boolean res;
+  
+  res = false;
+/*
+  addall = true;
+  rwcnt = MatRowCnt(IPr);
+  for (i=ln+1;i<rwcnt;i=i+1) begin
+    MatRowGet(IPr,i,IPrw);
+    if (IPrw.InvoiceNr>0 or nonblank(IPrw.CustCode) or IPrw.CredManNr>0) then begin
+      addall = false;
+      i = rwcnt;
+    end;
+  end;
+*/
+  BlockLoad(CredManSetb);
+  BuildCredManPayPlan(CredManr,CredManPayPlanr,CredManSetb,true,true);
+  rwcnt = MatRowCnt(CredManPayPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CredManPayPlanr,i,CredManPayPlanrw);
+    if (CredManPayPlanrw.PlanType==4 or CredManPayPlanrw.PlanType==5 or CredManPayPlanrw.PlanType==6) then begin
+      sum = sum + CredManPayPlanrw.Sum;
+    end;
+    if (CredManPayPlanrw.PlanType==0 and sum!=0) then begin
+      i = rwcnt;
+    end;
+  end;
+  if (sum!=0) then begin
+    ClearRow(IPr,IPrw,1);
+    IPrw.CustCode = CredManr.CustCode;
+    IPrw.CredManNr = CredManr.SerNr;
+    IPrw.SuggestVal = sum;
+    MatRowPut(IPr,ln,IPrw);
+    if (IPVc_PasteCustCode(IPr,ln,error)) then begin
+    end;
+    ln = ln + 1;
+    res = true;
+  end;
+  AddSuggestedInstalment = res;
+  return;
+end;
+
+global
+function Boolean PasteCredManInIP(var record IPVc IPr,Integer ln,LongInt ordnr,LongInt ivnr,string custcode)
+begin
+  record CredManVc CredManr;
+  string 20 thekey;
+  Boolean foundf;
+  Boolean res;
+  Integer locln;
+  
+  locln = ln;
+  res = false;
+  CredManr.SerNr = ordnr;
+  CredManr.CustCode = custcode;
+  if (ordnr>0) then begin
+    thekey = "SerNr";
+  end else begin
+    thekey = "CustCode";
+  end;
+  foundf = true;
+  while (LoopKey(thekey,CredManr,1,foundf)) begin
+    if (ordnr>0) then begin
+      if (CredManr.SerNr!=ordnr) then begin
+        foundf = false;
+      end;
+    end else begin
+      if (CredManr.CustCode!=custcode) then begin
+        foundf = false;
+      end;
+    end;
+    if (foundf) then begin
+      if (CredManr.ChargeMethod==1) then begin
+        if (AddOpenInvoices(IPr,locln,CredManr,ivnr)) then begin
+          res = true;
+        end;
+      end else begin
+        if (AddSuggestedInstalment(IPr,locln,CredManr,ivnr)) then begin
+          res = true;
+        end;
+      end;
+    end;
+  end;
+  PasteCredManInIP = res;
+  return;
+end;
+
+global
+procedure AutoDistributeSums(var record IPVc IPr,Integer rownr)
+begin
+  row IPVc IPrw;
+  row IPVc theIPrw;
+  Integer i,rwcnt;
+  string 60 custcode;
+  Integer emptycnt;
+  val rem,qrv;
+  
+  MatRowGet(IPr,rownr,IPrw);
+  if (IPrw.InvoiceNr>0) then begin
+    if (IPrw.RecVal>IPrw.SuggestVal) then begin
+      rem = IPrw.RecVal - IPrw.SuggestVal;
+      custcode = IPrw.CustCode;
+      IPrw.RecVal = IPrw.SuggestVal;
+      MatRowPut(IPr,rownr,IPrw);
+      IPVc_PasteRecVal(IPr,rownr);
+    end;
+  end;
+  if (rem>0) then begin
+    rwcnt = MatRowCnt(IPr);
+    for (i=rownr+1;i<rwcnt;i=i+1) begin
+      MatRowGet(IPr,i,IPrw);
+      if (IPrw.CustCode==custcode) then begin
+        if (IPrw.InvoiceNr>0) then begin
+          IPrw.RecVal = rem;
+          if (IPrw.RecVal>IPrw.SuggestVal) then begin
+            rem = IPrw.RecVal - IPrw.SuggestVal;
+            IPrw.RecVal = IPrw.SuggestVal;
+          end else begin
+            rem = 0;
+          end;
+          MatRowPut(IPr,i,IPrw);
+          IPVc_PasteRecVal(IPr,i);
+        end else begin
+          emptycnt = emptycnt + 1;
+        end;
+      end;
+      if (rem<=0) then begin
+        i = rwcnt;
+      end;
+    end;
+  end;
+  if (rem>0) then begin
+    qrv = round(rem / emptycnt,SetRoundModeD(2));
+    rwcnt = MatRowCnt(IPr);
+    for (i=rownr+1;i<rwcnt;i=i+1) begin
+      MatRowGet(IPr,i,IPrw);
+      if (IPrw.CustCode==custcode) then begin
+        if (IPrw.InvoiceNr<=0) then begin
+          if (qrv<rem) then begin
+            IPrw.RecVal = qrv;
+            rem = rem - qrv;
+          end else begin
+            IPrw.RecVal = rem;
+            rem = 0;
+          end;
+          MatRowPut(IPr,i,IPrw);
+          IPVc_PasteRecVal(IPr,i);
+        end;
+      end;
+      if (rem<=0) then begin
+        i = rwcnt;
+      end;
+    end;
+  end;
+  return;
+end;
+

@@ -1,0 +1,282 @@
+external function Boolean CheckActTypeClass(string,string);
+external procedure FindUserMailboxName(string,var string,var string);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external function boolean AddEMailRecipients(var record MailVc,string,string,integer);
+external procedure MailTextRow(string,string,string,var row MailTextVc,var Integer);
+
+updating 
+procedure LinkActivity(var record MailVc Mailr,record ActVc Actr)
+begin
+  string 255 docname,fname;
+  
+  if (ReadFirstMain(Actr,0,true)) then begin end;  
+  docname = "ActDocForm";
+  fname = "tmp/" & USetStr(1845) & " " & Actr.SerNr & ".pdf";
+  SetDocumentFilename(fname);
+  SetMedia(mtPdf);
+  PrintDocument(Actr,docname,false);
+  if (FileExists(fname)) then begin
+    if (RecordLinkFile(fname,0,Mailr,CurrentCompany)) then begin
+    end;
+  end;
+  SetDocumentFilename("");
+  Delete_File(fname);
+  
+  return;
+end;  
+
+
+updating function Integer CreateMailFromAct(var record MailVc Mailr,record ActVc Actr,var string warning)
+begin
+  Integer res;
+  record MailVc Mail2r;
+  record LTxtVc LTxtr;
+  record CUVc CUr;
+  record PRVc PRr;
+  record CUVc ContactCUr;
+  row MailVc MArw;
+  row MailTextVc MTrw;
+  row ActVc Actrw;
+  Integer i,rwcnt;
+  string 255 mailboxnr,tstr;
+  string 1 TAB;
+  record MailSettingsBlock MSb;
+  string 255 docname,fname;
+  string 20 custemail,langcode;
+  record IVVc oldIVr;
+  Integer IgnoreRecordDetails;
+ 
+  res = 0;
+  if (ReadFirstMain(Actr,0,true)) then begin end;  
+  TAB = chr(9);
+  FindUserMailboxName(CurrentUser,mailboxnr,tstr);
+  if (blank(tstr)) then begin
+    BlockLoad(MSb);
+    tstr = MSb.FromSystem;
+  end;
+  if (blank(tstr)) then begin
+    res = 2289;
+    warning = CurrentUser;
+    goto LCreateMailFromAct;
+  end;  
+  MArw.RowTyp = 1;
+  MArw.AddrCode = tstr;
+  MatRowPut(Mailr,0,MArw);
+  
+  if nonblank(Actr.PRCode)  then begin 
+    PRr.Code = Actr.PRCode;
+    if ReadFirstMain(PRr,1,true) then begin 
+      langcode = PRr.LangCode;
+      if nonblank(PRr.Contact) then begin 
+        if (FindCustomerRelation(PRr.CustCode,PRr.Contact,ContactCUr)) then begin
+          custemail = ContactCUr.eMail;
+          langcode = ContactCUr.LangCode;
+        end;
+      end;
+    end;
+  end;
+  if blank(custemail) then begin 
+    CUr.Code = Actr.CUCode;
+    if (ReadFirstMain(CUr,1,true)) then begin end;
+    custemail = CUr.eMail;
+    if blank(langcode) then begin 
+      langcode = CUr.LangCode;
+    end;
+  end;
+  if (AddEMailRecipients(Mailr,Actr.CUCode,custemail,kMailActivity)==false) then begin 
+    res = 2289;
+    warning = CUr.Code;
+    goto LCreateMailFromAct;
+  end;
+  MailTextRow("ActVc","",PRr.LangCode,MTrw,IgnoreRecordDetails);
+  Mailr.Header = MTrw.Header;
+  
+  LTxtr.Code = MTrw.FirstTxt;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    Mailr.HtmlFlag = LTxtr.HtmlFlag;
+  end;
+  if (Mailr.HtmlFlag==0) then begin
+    LTxtr.Code = MTrw.LastTxt;
+    if (ReadFirstMain(LTxtr,1,true)) then begin
+      Mailr.HtmlFlag = LTxtr.HtmlFlag;
+    end;
+  end;
+  
+  Mailr.TransDate = CurrentDate;
+  Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+  if (RecordStore(Mailr,false)) then begin 
+    CreateRecordLink(Mailr,CurrentCompany,Actr,CurrentCompany);  
+    CreateRecordLink(Actr,CurrentCompany,Mailr,CurrentCompany);  
+  end;
+  RecordCopy(Mail2r,Mailr);
+  
+  LTxtr.Code = MTrw.FirstTxt;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    if (Mailr.HtmlFlag==0) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        tstr = LineTextGet(LTxtr,i);
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+      end;    
+      AddCRToText(Mailr);
+    end else begin
+      if (LTxtr.HtmlFlag==0) then begin
+        AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+      end else begin
+        AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+      end;
+    end;
+  end;
+  if (IgnoreRecordDetails==0) then begin
+    rwcnt = MatRowCnt(Actr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Actr,i,Actrw);
+      tstr = Actrw.TextCode & TAB;
+      tstr = tstr & Actrw.Text & TAB;
+      if (Mailr.HtmlFlag==0) then begin
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+      end else begin
+        LineTextPutToHtmlRecord(Mailr,tstr,false,true);
+      end;
+    end;
+  end;
+  LTxtr.Code = MTrw.LastTxt;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    if (Mailr.HtmlFlag==0) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        tstr = LineTextGet(LTxtr,i);
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+      end;    
+      AddCRToText(Mailr);
+    end else begin
+      if (LTxtr.HtmlFlag==0) then begin
+        AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+      end else begin
+        AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+      end;
+    end;
+  end;
+  
+  RecordUpdate(Mail2r,Mailr,false);
+
+  docname = "ActDocForm";
+  fname = "tmp/" & USetStr(1845) & " " & Actr.SerNr & ".pdf";
+  SetDocumentFilename(fname);
+  SetMedia(mtPdf);
+  PrintDocument(Actr,docname,false);
+  if (FileExists(fname)) then begin
+    if (RecordLinkFile(fname,0,Mailr,CurrentCompany)) then begin
+    end;
+  end;
+  SetDocumentFilename("");
+  Delete_File(fname);
+  
+LCreateMailFromAct:;  
+  if res!=0 or nonblank(warning) then begin 
+    UserTrace(USetStr(res) & " " & warning,0);
+  end;  
+  CreateMailFromAct = res;
+  return;
+end;
+
+
+global
+updating procedure ActToMailMn(record RcVc RepSpec)
+begin
+  record ActVc Actr;
+  Boolean TrHs,test;
+  string 255 ckey,tstr;
+  record MailVc Mailr,OldMailr;
+  string 255 fname,docname,warning;
+  integer res;
+  string 20 customer, project;
+  
+  switch (RepSpec.ArtMode) begin
+    case 0: 
+      ckey = "TransDate";
+      Actr.TransDate = RepSpec.sStartDate;
+    case 1:
+      ckey = "CUCode";
+      if nonblank(RepSpec.f1) then begin 
+        Actr.CUCode = RepSpec.f1;
+      end;  
+    case 2:
+      ckey = "PRCode";
+      if nonblank(RepSpec.f2) then begin
+        Actr.PRCode = RepSpec.f2;
+      end;  
+  end; 
+  TrHs = true;
+  while (LoopKey(ckey,Actr,1,TrHs)) begin
+    test = true;
+    if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+      test = false; 
+      if (RepSpec.ArtMode==0) then begin
+        TrHs = false;
+      end;
+    end;
+    if blank(Actr.CUCode) then begin 
+      test = false;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (Actr.CUCode!=RepSpec.f1) then begin 
+        test = false;
+      end;
+      if (RepSpec.ArtMode==1) then begin
+        TrHs = false;
+      end;
+    end;
+    if (nonblank(RepSpec.f2)) then begin
+      if (Actr.PRCode!=RepSpec.f2) then begin 
+        test = false;
+      end;
+      if (RepSpec.ArtMode==2) then begin
+        TrHs = false;
+      end;
+    end;
+    if (test==true) then begin
+      test = false;
+      if (Actr.OKFlag==1) and (RepSpec.flags[0]==1) then begin
+        test = true;
+      end;
+      if (Actr.OKFlag==0) and (RepSpec.flags[1]==1) then begin
+        test = true;
+      end;
+    end;
+    if nonblank(RepSpec.f3) then begin
+      if (Actr.ActType!=RepSpec.f3) then begin 
+        test = false;
+      end;
+    end; 
+    if nonblank(RepSpec.f4) then begin
+      if (test) then begin
+        test = CheckActTypeClass(RepSpec.f4,Actr.ActType);
+      end;
+    end; 
+    if (test) then begin    
+      switch (RepSpec.ArtMode) begin
+      case 0: 
+        RecordNew(Mailr);
+        res = CreateMailFromAct(Mailr,Actr,warning);
+      case 1: //customer 
+        if (Actr.CUCode!=customer) then begin 
+          RecordNew(Mailr);
+          res = CreateMailFromAct(Mailr,Actr,warning);
+        end else begin 
+          LinkActivity(Mailr,Actr);
+        end;
+        customer = Actr.CUCode;
+      case 2: //project
+        if (Actr.PRCode!=project) then begin 
+          RecordNew(Mailr);
+          res = CreateMailFromAct(Mailr,Actr,warning);
+        end else begin 
+          LinkActivity(Mailr,Actr);
+        end;
+        project = Actr.PRCode;
+      end;
+    end; 
+  end;
+  return;
+end;

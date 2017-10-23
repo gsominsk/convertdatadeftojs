@@ -1,0 +1,761 @@
+external function Integer PayTermType(string);
+external function Integer VerifyTaxTemplateCode(string,var string);
+external function Boolean UseTaxTemplatesforTaxCalc();
+external function Boolean CheckPDExists(string);
+external function Integer CheckRates(string,val,val,val,val,val,var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean CorrectM4ValProc(val);
+external procedure ConvertSalesAcc(var string,Integer);
+external function Integer CheckVATNrMask(string,string,Integer,var string);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean Date2Test(string,Date,string,Integer);
+external updating procedure MakeActFromSubSys_COVc(var record COVc,Boolean,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure SwapM4Val(var val,var val);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure COSumup(var record COVc);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+
+updating procedure UpdateINSerCO(record COVc COp,Boolean cof,record COVc CO2p,Boolean co2f)
+BEGIN
+  record INSerCOVc INSerr;
+  record INSerCOVc oldINSerr;
+  row COVc COrw;
+  Integer rwcnt,i;
+  Boolean foundf;
+  
+  if (co2f) then begin
+    rwcnt = MatRowCnt(CO2p);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(CO2p,i,COrw);
+      if ((nonblank(COrw.OrgArtCode)) and (nonblank(COrw.OrgSerNr))) then begin
+        INSerr.ItemCode = COrw.OrgArtCode;
+        INSerr.SerialNr = COrw.OrgSerNr;
+        INSerr.CONr = CO2p.SerNr;
+        INSerr.COChildNr = CO2p.ChildSerNr;
+        if (ReadFirstMain(INSerr,4,true)) then begin
+          RecordDelete(INSerr);
+        end;
+      end;
+    end;
+  end;
+  if (cof) then begin
+    rwcnt = MatRowCnt(COp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(COp,i,COrw);
+      if ((nonblank(COrw.OrgArtCode)) and (nonblank(COrw.OrgSerNr))) then begin
+        INSerr.ItemCode = COrw.OrgArtCode;
+        INSerr.SerialNr = COrw.OrgSerNr;
+        INSerr.CONr = COp.SerNr;
+        INSerr.COChildNr = COp.ChildSerNr;
+        foundf = ReadFirstMain(INSerr,4,true);
+        RecordCopy(oldINSerr,INSerr);
+        if (foundf==false) then begin
+          INSerr.ItemCode = COrw.OrgArtCode;
+          INSerr.SerialNr = COrw.OrgSerNr;
+          INSerr.CONr = COp.SerNr;
+          INSerr.COChildNr = COp.ChildSerNr;
+        end;
+        INSerr.StartDate = COp.startDate;
+        INSerr.EndDate = COp.endDate;
+        if (foundf) then begin
+          if (RecordUpdate(oldINSerr,INSerr,false)==0) then begin
+          end;
+        end else begin
+          if (RecordStore(INSerr,false)) then begin end;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure COVcConvertB1ToB2(record COVc COr,string curncy,val fr,var val to1,var val to2,var val br1,var val br2)
+BEGIN
+  row COVc COrw;
+  val t;
+  Integer i,rwcnt;
+
+  SwapM4Val(br1,br2);
+  SwapM4Val(to1,to2);
+  rwcnt = MatRowCnt(COr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(COr,i,COrw);
+    B1ToB2Val(COrw.rowGP,br1,br2,t);
+    COrw.rowGP = t;
+    B1ToB2Val(COrw.BasePrice,br1,br2,t);
+    COrw.BasePrice = t;
+    MatRowPut(COr,i,COrw);
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt COVcRecordImport(var record COVc COr,record COVc CO2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  string 5 curncy;
+  val fr,to1,to2,br1,br2,t;
+  Boolean gBase1ToBase2,gToDualBase;
+  record ConvMasterBlock cvm;
+  record AccBlock Accb;
+      
+  BlockLoad(cvm);
+  BlockLoad(Accb);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gToDualBase) then begin
+    curncy = COr.CurncyCode;
+    fr = COr.FrRate;
+    to1 = COr.ToRateB1;
+    to2 = COr.ToRateB2;
+    br1 = COr.BaseRate1;
+    br2 = COr.BaseRate2;
+    t = COr.Sum4;
+    ConvertToDualBase(curncy,COr.CODate,fr,to1,to2,br1,br2,t,true);
+    COr.CurncyCode = curncy;
+    COr.FrRate = fr;
+    COr.ToRateB1 = to1;
+    COr.ToRateB2 = to2;
+    COr.BaseRate1 = br1;
+    COr.BaseRate2 = br2;
+    COr.Sum4 = t;
+  end;
+  if (gBase1ToBase2) then begin
+    to1 = COr.ToRateB1;
+    to2 = COr.ToRateB2;
+    br1 = COr.BaseRate1;
+    br2 = COr.BaseRate2;  
+    COVcConvertB1ToB2(COr,COr.CurncyCode,COr.FrRate,to1,to2,br1,br2);
+    COr.ToRateB1 = to1;
+    COr.ToRateB2 = to2;
+    COr.BaseRate1 = br1;
+    COr.BaseRate2 = br2;
+    COSumup(COr);
+  end;
+  if (COr.Sum4!=0) then begin
+    COSumup(COr);
+  end;
+  UpdateINSerCO(COr,true,CO2r,false);
+  if (COr.NoTAXonVAT==-1) then begin
+    COr.NoTAXonVAT = Accb.NoTAXonVAT;
+  end;
+  COVcRecordImport = res;
+  RETURN;
+END;
+
+global
+function LongInt COVcRecordDuplicate(var record COVc COr,record COVc CO2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  string 10 curcode;
+  val fr,to1,to2,br1,br2;
+  record UserVc Userr;
+  Date blankd;
+  Integer i,rwcnt;
+  row COVc COrw;
+  record ContractSetBlock CSb;
+
+  BlockLoad(CSb);
+  COr.SerNr = -1;
+  COr.ChildSerNr = -1;
+  COr.CQNr = -1;
+  COr.CQVersion = -1;
+  COr.CODate = CurrentDate;
+  COr.lastInvDate = blankd;
+  COr.NextPriceChange = blankd;
+  COr.OKFlag = 0;
+  curcode = COr.CurncyCode;
+  GetFullCurncyRate(curcode,COr.CODate,fr,to1,to2,br1,br2);
+  COr.CurncyCode = curcode;
+  COr.FrRate = fr;
+  COr.ToRateB1 = to1; 
+  COr.ToRateB2 = to2;
+  COr.BaseRate1 = br1;
+  COr.BaseRate2 = br2;  
+  if (SingleUserMode) then begin
+    COr.SerNr = NextSerNr("COVc",COr.CODate,-1,false,"");
+  end;
+  COr.OKFlag = 0;
+  Userr.Code = CurrentUser;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    COr.OurContact = Userr.CurOurContact;
+  end;
+  rwcnt = MatRowCnt(COr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(COr,i,COrw);
+    COrw.InvoiceNo = -1;
+    COrw.InvoiceAfter = blankd;
+    MatRowPut(COr,i,COrw);
+  end;  
+  COr.CreateRegister = CSb.CreateRegister;
+  COVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function LongInt COVcRecordDefaults(var record COVc COr,record COVc CO2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record AccBlock ARAccRec;
+  record CODefValBlock CODefr;
+  record ContractSetBlock CSb;
+  record UserVc Userr;
+  string 10 curcode;
+  val fr,to1,to2,br1,br2;
+
+  BlockLoad(ARAccRec);
+  BlockLoad(CODefr);
+  BlockLoad(CSb);
+  COr.SerNr = -1;
+  COr.ChildSerNr = -1;
+  COr.CQNr = -1;
+  COr.CQVersion = -1;
+  COr.InvType = 1;
+  COr.perType = CODefr.perType;
+  COr.perLength = CODefr.perLength;
+  COr.invDtype = CODefr.invDtype;
+  COr.invDays = CODefr.invDays;
+  COr.normalFactor = CODefr.normalFactor;
+  COr.ContractClass = CODefr.ContractClass;
+  COr.CODate = CurrentDate;
+  if (SingleUserMode) then begin
+    COr.SerNr = NextSerNr("COVc",COr.CODate,-1,false,"");
+  end;
+  COr.CustCat = "";
+  COr.ExportFlag = 0;
+  COr.OKFlag = 0;
+  COr.InclVAT = ARAccRec.BasePriceInclVAT;
+  COr.NoTAXonVAT = ARAccRec.NoTAXonVAT;
+  COr.TotalwoTAX = ARAccRec.TotalwoTAX;
+  COr.PriceList = "";
+  COr.PayDeal = "";
+  COr.Objects = "";
+  COr.InvComment = "";
+  COr.CurncyCode = "";
+  curcode = COr.CurncyCode;
+  GetFullCurncyRate(curcode,COr.CODate,fr,to1,to2,br1,br2);
+  COr.CurncyCode = curcode;
+  COr.FrRate = fr;
+  COr.ToRateB1 = to1; 
+  COr.ToRateB2 = to2;
+  COr.BaseRate1 = br1;
+  COr.BaseRate2 = br2;    
+  Userr.Code = CurrentUser;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    COr.OurContact = Userr.CurOurContact;
+  end;
+  COr.Sum0 = blankval;
+  COr.Sum1 = blankval;
+  COr.Sum2 = blankval;
+  COr.Sum3 = blankval;
+  COr.Sum4 = blankval;
+  COr.FrItem = "";
+  COr.FrObjects = "";
+  COr.FrBase = blankval;
+  COr.FrPrice = blankval;
+  COr.FrGP = blankval;
+  COr.FrGPPercent = blankval;
+  COr.CreateRegister = CSb.CreateRegister;
+  COVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt COVcRecordRemoveTest(var record COVc COr,record COVc CO2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 1;
+  if (COr.OKFlag!=0) then begin
+    if (long3>0) then begin
+      MessageBox(1560,"");
+    end;
+    res = 0;
+  end;
+LCOVcRecordRemoveTest:;
+  COVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+updating procedure UpdateCQ(record COVc COp,record COVc CO2p)
+BEGIN
+  record CQVc CQr;
+  record CQVc oldCQr;
+  record COCQStatVc COCQr;
+  record COCQStatVc oldCOCQr;
+
+  CQr.SerNr = CO2p.CQNr;
+  CQr.Version = CO2p.CQVersion;
+  CQr.CONr = CO2p.SerNr;
+  if (ReadFirstKey("CONr",CQr,3,true)) then begin
+    RecordCopy(oldCQr,CQr);
+    CQr.CONr = COp.SerNr;
+    CQr.COChildNr = COp.ChildSerNr;
+    if (RecordUpdate(oldCQr,CQr,true)==0) then begin end;
+  end;
+  COCQr.COSerNr = CO2p.SerNr;
+  COCQr.COChildNr = CO2p.ChildSerNr;
+  if (ReadFirstKey("COSerNr",COCQr,2,true)) then begin
+    RecordCopy(oldCOCQr,COCQr);
+    COCQr.COSerNr = COp.SerNr;
+    COCQr.COChildNr = COp.ChildSerNr;
+    if (RecordUpdate(oldCOCQr,COCQr,true)==0) then begin end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt COVcRecordUpdateAfter(var record COVc COr,record COVc CO2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  UpdateINSerCO(COr,true,CO2r,true);
+  if ((COr.SerNr!=CO2r.SerNr) and (COr.ChildSerNr!=CO2r.ChildSerNr)) then begin
+    UpdateCQ(COr,CO2r);
+  end;
+  if ((CO2r.OKFlag==0) and (COr.OKFlag!=0)) then begin
+    MakeActFromSubSys_COVc(COr,false,false);
+  end;
+LCOVcRecordUpdateAfter:;
+  COVcRecordUpdateAfter = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt COVcRecordSaveAfter(var record COVc COr,record COVc CO2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  UpdateINSerCO(COr,true,CO2r,false);
+  if (COr.OKFlag!=0) then begin
+    MakeActFromSubSys_COVc(COr,false,false);
+  end;
+LCOVcRecordSaveAfter:;
+  COVcRecordSaveAfter = res; 
+  RETURN;
+END;
+
+updating procedure UpdateCQFromCO(record COVc COp,Boolean add)
+BEGIN
+  record CQVc oldCQr;
+  record CQVc CQr;
+  
+  CQr.SerNr = COp.CQNr;
+  CQr.Version = COp.CQVersion;
+  if (ReadFirstMain(CQr,2,true)) then begin
+    RecordCopy(oldCQr,CQr);
+    if (add) then begin
+      if ((CQr.CONr==COp.SerNr) and (CQr.COChildNr==COp.ChildSerNr)) then begin goto LUpdateCQFromCO; end;
+      CQr.CONr = COp.SerNr;
+      CQr.COChildNr = COp.ChildSerNr;
+    end else begin
+      if ((CQr.CONr==-1) and (CQr.COChildNr==-1)) then begin goto LUpdateCQFromCO; end;
+      CQr.CONr = -1;
+      CQr.COChildNr = -1;
+    end;
+    if (RecordUpdate(oldCQr,CQr,false)==0) then begin end;
+  end;
+LUpdateCQFromCO:;
+  RETURN;
+END;
+
+global
+updating procedure COSetStatus(var record COVc COp,var record COVc CO2p,Boolean readco2f)
+BEGIN
+  record COCQStatVc oldCOCQr;
+  record COCQStatVc COCQr;
+  Boolean found;
+
+  if (readco2f) then begin
+    if (ReadFirstMain(CO2p,0,true)) then begin end;  
+  end;
+  RecordNew(COCQr);
+  if (RecordValid(COp)) then begin
+    COCQr.COSerNr = COp.SerNr;
+    COCQr.COChildNr = COp.ChildSerNr;
+    if (ReadFirstKey("COSerNr",COCQr,2,true)) then begin
+      RecordCopy(oldCOCQr,COCQr);
+      COCQr.CustCode = COp.CustCode;
+      COCQr.Name = COp.Addr0;
+      if (RecordUpdate(oldCOCQr,COCQr,false)==0) then begin end;
+      found = true;
+    end;
+    if (found==false) then begin
+      if (COp.CQNr!=-1) then begin
+        COCQr.CQSerNr = COp.CQNr;
+        COCQr.CQVersion = COp.CQVersion;
+        if (ReadFirstKey("CQSerNr",COCQr,2,true)) then begin
+          RecordCopy(oldCOCQr,COCQr);
+          COCQr.COSerNr = COp.SerNr;
+          COCQr.COChildNr = COp.ChildSerNr;
+          COCQr.CustCode = COp.CustCode;
+          COCQr.Name = COp.Addr0;
+          if (RecordUpdate(oldCOCQr,COCQr,false)==0) then begin end;
+          found = true;
+        end;
+      end;
+    end;
+    if (found==false) then begin
+      COCQr.SerNr = NextSerNr("COCQStatVc",CurrentDate,-1,false,"");
+      COCQr.CQSerNr = COp.CQNr;
+      COCQr.CQVersion = COp.CQVersion;
+      COCQr.COSerNr = COp.SerNr;
+      COCQr.COChildNr = COp.ChildSerNr;
+      COCQr.CustCode = COp.CustCode;
+      COCQr.Name = COp.Addr0;
+      if (RecordInsert(COCQr,false)) then begin end;
+    end;
+    if (COp.CQNr!=-1) then begin 
+      UpdateCQFromCO(COp,true);
+    end;
+  end;
+  if ((RecordValid(COp)==false) and (RecordValid(CO2p))) then begin
+    if (CO2p.CQNr!=-1) then begin
+      UpdateCQFromCO(CO2p,false);
+    end;
+    COCQr.COSerNr = CO2p.SerNr;
+    COCQr.COChildNr = CO2p.ChildSerNr;
+    if (ReadFirstKey("COSerNr",COCQr,2,true)) then begin
+      RecordCopy(oldCOCQr,COCQr);
+      if (COCQr.CQSerNr==-1) then begin
+        RecordDelete(COCQr);
+      end else begin
+        COCQr.COSerNr = -1;
+        COCQr.COChildNr = -1;
+        if (RecordUpdate(oldCOCQr,COCQr,false)==0) then begin end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt COVcRecordRemove(var record COVc COr,record COVc CO2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  COSetStatus(CO2r,COr,false); 
+  UpdateINSerCO(CO2r,false,COr,true);
+LCOVcRecordRemove:;
+  COVcRecordRemove = res; 
+  RETURN;
+END;
+
+function Integer ValidateContractClass(string contractclass)
+begin
+  Integer res;
+  record ContractClassBlock CCb;
+  row ContractClassBlock CCbrw;
+  Integer i,rwcnt;
+  string 255 classification;  
+  
+  res = 1290;
+  BlockLoad(CCb);
+  rwcnt = MatRowCnt(CCb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CCb,i,CCbrw);
+    if (CCbrw.Code==contractclass) then begin
+      res = 0;
+      goto LValidateContractClass;
+    end;
+  end;
+LValidateContractClass:;  
+  ValidateContractClass = res;
+  return;
+end;
+
+global
+updating function LongInt COVcRecordCheck(var record COVc COr,record COVc CO2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record CUVc CUr;
+  row COVc COrw;
+  Integer i,rwcnt,errcode;
+  record INVc INr;
+  LongInt oldnr;
+  record AccVc Accr;
+  string 255 tstr,errstr;
+  record AccBlock ARAccRec;
+  Boolean gentrans;
+  Integer insertmode,updatemode;
+  record COVc lCOr;
+  record PRVc PRr;
+  Boolean onenormalline;
+  Boolean unokf;
+  record COCUServiceBlock COCUSb;
+  
+  BlockLoad(COCUSb);
+  oldnr = COr.SerNr;
+  if (COCUSb.BlockUsingStdCO!=0) then begin
+    RecordCheckError(1274,"Normal Contract Module Deactivated",-1,"SerNr"); // Is made for us, can stay in English
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;
+  res = 0;
+  if (COr.OKFlag==0) then begin
+    if (stat==Rs_update) then begin
+      if (CO2r.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin 
+//    errcode = IsUnOKAllowed_IVVc(IVp);
+//    if (errcode!=0) then begin
+//      RecordCheckError(errcode,"",-1,"TransDate");      
+//      res = -1; 
+//    end;
+    goto LCOVcRecordCheck;
+  end;
+  onenormalline = false;
+  insertmode = 1;
+  updatemode = 2;
+  BlockLoad(ARAccRec);
+  rwcnt = MatRowCnt(COr);
+  if (COr.ChildSerNr==0) then begin COr.ChildSerNr = -1; end;
+  if (COr.SerNr<=0) then begin
+    COr.SerNr = NextSerNr("COVc",COr.CODate,-1,false,"");
+  end;
+  if (stat==updatemode) then begin
+    if (COr.SerNr<=0) and (CO2r.OKFlag==0) then begin
+      COr.SerNr = CO2r.SerNr;
+    end;
+  end;  
+  if ((stat==insertmode) or (COr.SerNr!=CO2r.SerNr)) then begin
+    lCOr.SerNr = COr.SerNr;
+    lCOr.ChildSerNr = COr.ChildSerNr;
+    if (ReadFirstMain(lCOr,2,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1; 
+      goto LCOVcRecordCheck;
+    end;
+  end;
+  if (Date2Test("COVc",COr.CODate,"CODate",-1)==false) then begin
+    res = -1;
+    goto LCOVcRecordCheck;
+  end;
+  errcode = CheckObjs("",COr.Objects,errstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,errstr,-1,"Objects");      
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;
+  if (blank(COr.CustCode)) then begin
+    RecordCheckError(1125,"",-1,"CustCode");      
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;
+  CUr.Code = COr.CustCode;
+  if (ReadFirstMain(CUr,1,true)==false) then begin
+    RecordCheckError(1120,COr.CustCode,-1,"CustCode");      
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;
+  errcode = CheckVATNrMask(COr.VATNr,CUr.CountryCode,CUr.CustType,tstr);  
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,tstr,-1,"VATNr");      
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;
+  if (nonblank(COr.PRCode)) then begin
+    PRr.Code = COr.PRCode;
+    if (ReadFirstMain(PRr,1,true)) then begin
+      if (COr.CustCode!=PRr.CustCode) then begin
+        RecordCheckError(1218,"",-1,"PRCode");      
+        res = -1;
+        goto LCOVcRecordCheck;
+      end;
+    end else begin
+      RecordCheckError(1232,"",-1,"PRCode");      
+      res = -1;
+      goto LCOVcRecordCheck;
+    end;    
+    if (PRr.Terminated!=0) then begin
+      RecordCheckError(1232,"",-1,"PRCode");      
+      res = -1;
+      goto LCOVcRecordCheck;
+    end;        
+  end;     
+  if (CheckPDExists(COr.PayDeal)==false) then begin
+    RecordCheckError(1256,"",-1,"PayDeal");      
+    res = -1;
+    goto LCOVcRecordCheck;        
+  end; 
+  switch (PayTermType(COr.PayDeal)) begin
+    case kInvoiceTypeCredit:
+      RecordCheckError(1227,COr.PayDeal,-1,"PayDeal");      
+      res = -1;
+      goto LCOVcRecordCheck;
+    case kInvoiceTypeEmployee:
+      RecordCheckError(1958,"",-1,"PayDeal");      
+      res = -1;
+      goto LCOVcRecordCheck;
+  end;
+  
+  errcode = CheckRates(COr.CurncyCode,COr.FrRate,COr.ToRateB1,COr.ToRateB2,COr.BaseRate1,COr.BaseRate2,errstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,"",-1,errstr);      
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;          
+  if (nonblank(COr.ContractClass)) then begin
+    errcode = ValidateContractClass(COr.ContractClass);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",-1,"ContractClass");      
+      res = -1;
+      goto LCOVcRecordCheck;
+    end;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(COr,i,COrw);
+    if ((nonblank(COrw.ArtCode)) and (COrw.RowType==0) and (COrw.perLength==-1)) then begin
+      onenormalline = true;
+    end;
+    switch (COrw.stp) begin
+      case 1:
+        if (ARAccRec.VATCodeCtrl==1) then begin
+          Accr.AccNumber = COrw.SalesAcc;
+          if (ReadFirstMain(Accr,1,true)) then begin
+            if ((nonblank(Accr.VATCode)) and (Accr.VATCode!=COrw.VATCode)) then begin
+              RecordCheckError(1245,"",i,"VATCode");      
+              res = -1; 
+              goto LCOVcRecordCheck;
+            end;
+          end else begin
+            tstr = COrw.SalesAcc;
+            ConvertSalesAcc(tstr,COr.ExportFlag);
+            Accr.AccNumber = tstr;
+            if (ReadFirstMain(Accr,1,true)) then begin
+              if ((nonblank(Accr.VATCode)) and (Accr.VATCode!=COrw.VATCode)) then begin
+                RecordCheckError(1245,"",i,"VATCode");      
+                res = -1; 
+                goto LCOVcRecordCheck;
+              end;
+            end;
+          end;
+        end;
+        if (nonblank(COrw.ArtCode)) then begin
+          if (ReadFirstItem(COrw.ArtCode,INr,true,true)==false) then begin
+            RecordCheckError(1120,COrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LCOVcRecordCheck;
+          end;
+        end;
+        if (nonblankdate(COrw.startDate)) then begin
+          if (COrw.startDate<COr.startDate) then begin
+            RecordCheckError(20851,COrw.startDate,i,"startDate");      
+            res = -1; 
+            goto LCOVcRecordCheck;
+          end;
+          if (nonblankdate(COr.endDate)) then begin
+            if (COrw.startDate>COr.endDate) then begin
+              RecordCheckError(20851,COrw.startDate,i,"startDate");      
+              res = -1; 
+              goto LCOVcRecordCheck;
+            end;
+          end;
+        end;
+        if (nonblankdate(COrw.endDate)) then begin
+          if (COrw.endDate<COr.startDate) then begin
+            RecordCheckError(20851,COrw.endDate,i,"endDate");      
+            res = -1; 
+            goto LCOVcRecordCheck;
+          end;
+          if (nonblankdate(COr.endDate)) then begin
+            if (COrw.endDate>COr.endDate) then begin
+              RecordCheckError(20851,COrw.endDate,i,"endDate");      
+              res = -1; 
+              goto LCOVcRecordCheck;
+            end;
+          end;
+        end;
+//        if (nonblank(COrw.Objects)) then begin
+          tstr = COr.Objects;
+          if (nonblank(tstr)) then begin
+            tstr = tstr & ",";
+          end;
+          tstr = tstr & COrw.Objects;
+          errcode = CheckObjs(COrw.SalesAcc,tstr,errstr);
+          if (errcode!=0) then begin
+            RecordCheckError(errcode,errstr,i,"Objects");      
+            res = -1; 
+            goto LCOVcRecordCheck;
+          end;
+//        end;
+        if (COrw.Sum!=0) then begin
+          if (UseTaxTemplatesforTaxCalc) then begin
+            if (blank(COrw.TaxTemplateCode)) then begin
+              RecordCheckError(24201,"",i,"TaxTemplateCode");      
+              res = -1;
+              goto LCOVcRecordCheck;
+            end;
+            errcode = VerifyTaxTemplateCode(COrw.TaxTemplateCode,tstr);
+            if (errcode!=0) then begin
+              RecordCheckError(errcode,tstr,i,"TaxTemplateCode");                
+              res = -1; 
+              goto LCOVcRecordCheck;
+            end;
+          end else begin
+            if (blank(COrw.VATCode)) then begin
+              RecordCheckError(1134,"",i,"VATCode");      
+              res = -1; 
+              goto LCOVcRecordCheck;
+            end;
+          end;
+        end;
+        if (nonblank(COrw.SVCCode)) then begin
+          if (BlankDate(COrw.SVCStartDate)) then begin
+            RecordCheckError(1058 ,"",i,"SVCStartDate");      
+            res = -1; 
+            goto LCOVcRecordCheck;
+          end;
+        end;
+        if (CorrectM4ValProc(COrw.vRebate)==false) then begin
+          RecordCheckError(1019,"",i,"vRebate");      
+          res = -1; 
+          goto LCOVcRecordCheck;
+        end;
+    end;
+  end;  
+/*
+  if (onenormalline==false) then begin
+    RecordCheckError(20565,"",-1,"perLength");      
+    res = -1; 
+    goto LCOVcRecordCheck;
+  end;          
+*/
+LCOVcRecordCheck:;
+  if (res!=0) then begin COr.SerNr = oldnr; end;
+  COVcRecordCheck = res;
+  RETURN;
+END;
+
+procedure RetainCOStatus(record COVc COp,record COVc CO2p)
+BEGIN
+  Integer i,rwcnt;
+  row COVc COrw;
+  row COVc CO2rw;
+  Integer rwcnt2;
+  
+  rwcnt = MatRowCnt(COp);
+  rwcnt2 = MatRowCnt(CO2p);
+  for (i=0;i<rwcnt;i=i+1) begin
+    if (i<rwcnt2) then begin
+      MatRowGet(COp,i,COrw);
+      MatRowGet(CO2p,i,CO2rw);
+      COrw.InvCnt = CO2rw.InvCnt;
+      MatRowPut(COp,i,COrw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function LongInt COVcRecordProtectFields(var record COVc COr,record COVc CO2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  RetainCOStatus(CO2r,COr);
+  COVcRecordProtectFields = res;
+  RETURN;
+END;
+

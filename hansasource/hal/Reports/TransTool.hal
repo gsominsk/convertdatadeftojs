@@ -1,0 +1,239 @@
+external procedure HTDetailLevel(Integer, var string);
+external procedure ToStrTRCode(var string,Integer,LongInt);
+external procedure AddToVATSum(record SMVc,string,val);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTVatNr(string,var string);
+
+global
+procedure ClearAcums()
+BEGIN
+  Integer i;
+  
+  for (i=0;i<10;i=i+1) begin
+    ClearAccumulator(i);
+  end;
+  RETURN;
+END;
+
+global
+procedure SumupTRVATCode(record TRVc TRp,string vatcod,var val srevp,var string firstrev)
+BEGIN
+  Integer i,rwcnt;
+  row TRVc TRrw;
+  
+  srevp = blankval;
+  firstrev = "";
+  rwcnt = MatRowCnt(TRp);
+  for (i=0; i<rwcnt;i=i+1) begin
+    MatRowGet(TRp,i,TRrw);
+    if (TRrw.VATCode==vatcod) then begin
+      srevp = srevp + TRrw.DebVal;
+      srevp = srevp - TRrw.CredVal;
+      if (blank(firstrev)) then begin
+        firstrev = TRrw.AccNumber;
+      end;  
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure AddToVAT2Sum(record SMVc SMaccr,string acc,val dvp,val cvp)
+BEGIN
+  Integer i,rwcnt;
+  Integer hit;
+  row SMVc SMrw;
+  
+  if (nonblank(acc)) then begin
+    hit = -1;
+    rwcnt = MatRowCnt(SMaccr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SMaccr,i,SMrw);
+      if (SMrw.AccNumber==acc) then begin
+        hit = i;
+        SMrw.DebVal = dvp + SMrw.DebVal;
+        SMrw.CredVal = cvp + SMrw.CredVal;
+        MatRowPut(SMaccr,i,SMrw); 
+        i = rwcnt;     
+      end;
+    end;
+    if (hit==-1) then begin
+      ClearRow(SMaccr,SMrw,1);
+      SMrw.AccNumber = acc;
+      SMrw.DebVal = dvp + SMrw.DebVal;
+      SMrw.CredVal = cvp + SMrw.CredVal;
+      MatRowPut(SMaccr,rwcnt,SMrw);     
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure LstRegDat(var string res)
+begin
+  string 255 tstr;
+  record SRBlock SRRec;
+
+  BlockLoad(SRRec);
+  res = USetStr(3017);
+  tstr = SRRec.LastRegDate;  
+  res = res & tstr;
+  return;
+end;
+
+procedure HTTrans(string a,var string res)
+BEGIN
+  if (blank(a)) then begin
+    res = USetStr(3009);
+  end else begin
+    res = USetStr(3010);
+    res = res & a;
+  end;
+  RETURN;
+END;
+
+global
+procedure TransRnHeader(record RcVc RepSpec)
+BEGIN
+  string 255 tstr;
+  Integer rw;
+    
+  rw = 1;  
+  HTTrans(RepSpec.f1,tstr); 
+  Header(rw,tstr,1);
+  rw = rw + 1;  
+  LstRegDat(tstr);
+  Header(rw,tstr,0);
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTVatNr(RepSpec.f2,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;  
+  HTDetailLevel(RepSpec.ArtMode,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  RETURN;            
+END;
+
+global
+procedure ListPerTrans(record RcVc RepSpec)
+BEGIN
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer curyc;
+  LongInt curnr;
+  LongInt firstnr;
+  string 255 tstr,t2;
+  Boolean TrHs,lastIntYcf,testf;
+  val csum,dsum,totcsum,totdsum;
+  Integer hit,i,rwcnt;
+
+// This function is called from other reports, can't setrepcols here, it screws up the other reports...
+/*
+  SetRepCol(2,50);
+  SetRepCol(3,288);
+  SetRepCol(4,384);
+  SetRepCol(5,480);
+  SetRepCol(6,15);
+*/
+  curyc = -1;
+  curnr = -1;
+  lastIntYcf = false;
+  StartFormat(20);
+   OutString(0,0,USetStr(3168),false);
+   OutStringAdjustBiDi(380,0,USetStr(3187),true,M4Val,430);
+   OutStringAdjustBiDi(1,0,USetStr(3188),true,M4Val,520);
+  EndFormat;
+  TrHs = true;
+  while (LoopMain(TRr,1,TrHs)) begin
+    testf = false;
+    rwcnt = MatRowCnt(TRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+      if (TRrw.ovst==0) then begin
+        testf = true;
+        i = rwcnt;
+      end;
+    end;
+    if (testf) then begin
+      if (nonblank(RepSpec.f2)) then begin
+        rwcnt = MatRowCnt(TRr);
+        hit = -1;
+        for (i=0 ; i<rwcnt ;i=i+1) begin
+          MatRowGet(TRr,i,TRrw);
+          if (TRrw.VATCode==RepSpec.f2) then begin 
+            hit = i; 
+            i = rwcnt;
+          end;
+        end;
+        if (hit==-1) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f1)) then begin
+        if ((RepSpec.flags[0]<TRr.IntYc) or (RepSpec.flags[1]>TRr.IntYc)) then begin testf = false; end;
+        if (testf) then begin
+          if ((RepSpec.long1>TRr.Number) or (RepSpec.long2<TRr.Number)) then begin testf = false; end;
+        end;  
+      end;
+    end;
+    if (testf) then begin
+      if (DateInRange(TRr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)) then begin
+        if ((TRr.IntYc<>curyc) or (TRr.Number<>curnr+1)) then begin
+          if (curyc<>-1) then begin
+            ToStrTRCode(tstr,curyc,firstnr);
+            if (curnr<>firstnr) then begin
+              ToStrTRCode(t2,curyc,curnr);
+              tstr = tstr & ":";
+              tstr = tstr & t2;
+            end;
+            StartFormat(15);
+            OutString(0,0,tstr,false);
+            OutValBiDi(380,0,dsum,M4Val,true,430);
+            OutValBiDi(1,0,csum,M4Val,true,520);
+            EndFormat;
+            lastIntYcf = false;   
+          end;
+          totdsum = totdsum + dsum;
+          totcsum = totcsum + csum;
+          csum = 0;
+          dsum = 0;
+          firstnr = TRr.Number;
+        end;
+        switch (RepSpec.basecurncy) begin
+          case 0:
+            dsum = dsum + TRr.DSum;
+            csum = csum - TRr.CSum;
+          case 1:
+            dsum = dsum + TRr.DSum2;
+            csum = csum - TRr.CSum2;
+        end;
+        curyc = TRr.IntYc;
+        curnr = TRr.Number;
+        lastIntYcf = true;
+      end;
+    end;  
+  end;
+  if (lastIntYcf==true) then begin 
+    ToStrTRCode(tstr,curyc,firstnr);
+    if (curnr<>firstnr) then begin
+      ToStrTRCode(t2,curyc,curnr);
+      tstr = tstr & ":";
+      tstr = tstr & t2;
+    end;
+    StartFormat(15);
+    OutString(0,0,tstr,false);
+    OutValBiDi(380,0,dsum,M4Val,true,430);
+    OutValBiDi(1,0,csum,M4Val,true,520);
+    EndFormat;
+  end;
+  totdsum = totdsum + dsum;
+  totcsum = totcsum + csum;
+  Gray_Divider(200,480);
+  StartFormat(15);
+  OutString(15,0,USetStr(3196),false);
+  OutValBiDi(380,0,totdsum,M4Val,true,430);
+  OutValBiDi(1,0,totcsum,M4Val,true,520);
+  EndFormat;
+  RETURN;
+END;

@@ -1,0 +1,384 @@
+external function Boolean FEIVDchrsum(var record FEIVVc,Integer);
+external procedure FEIVSumup(record FEIVVc);
+external function string 255 FindINObjects(string,string);
+external function Integer AddPortugueseType();
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function LongInt DateDiff(Date,Date);
+external function Boolean GetPD(var record PDVc);
+external procedure SetSalesMan(var string,string);
+external function Boolean GetCustAndBal(var record CUVc,var val,var val,Integer,Integer,Integer,Integer,Integer,Integer,var Boolean);
+external procedure RemoveOldCustObjects(string,var string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetItemVATCode(string,Integer,var string,Boolean);
+external procedure GetItemSalesAcc(string,Integer,var string);
+external function Boolean DateWarned(Date,string);
+external function Boolean QtyDepPriceL(string);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+external procedure SetupVATBase(var record SMVc,var Integer);
+
+procedure PastePDInFEIV(var record FEIVVc FEIVp)
+BEGIN
+  record PDVc PDr;
+  Integer i,mrwcnt;
+  LongInt restdays;
+  Date td;
+  Integer newInvType,pdtype;
+  LongInt sernr;
+
+  PDr.Code = FEIVp.PayDeal;
+  if (GetPD(PDr)==false) then begin
+    goto LPastePDInFEIV;
+  end;
+  FEIVp.PayDeal = PDr.Code;
+//  FEIVp.pdays = PDr.pdays;
+//  FEIVp.pdvrebt = PDr.pdvrebt;
+//  FEIVp.pdrdays = PDr.pdrdays;
+//  FEIVp.pdComment = "";
+  pdtype = PDr.PDType;
+  newInvType = pdtype;
+  if (pdtype==5) then begin newInvType = 4; end; // 5 is a manual Interest Inv.
+  if (pdtype==6) then begin newInvType = 1; end;
+  if (pdtype==4) then begin newInvType = 1; end;
+  if (pdtype==0) then begin newInvType = 1; end;
+  if (FEIVp.InvType<4) then begin
+    FEIVp.InvType = newInvType;
+  end;  
+  if (FEIVp.InvType==3) then begin    
+//    FEIVp.CredMark = USetStr(1078);
+  end else begin
+//    FEIVp.CredMark = "";
+  end;
+//  if (FEIVp.pdays!=-1) then begin
+//    FEIVp.PayDate = AddDay(FEIVp.InvDate,FEIVp.pdays);
+//  end else begin
+//    FEIVp.PayDate = FEIVp.InvDate;
+//  end;  
+  if (pdtype==4) then begin
+//    FEIVp.PayDate = FEIVp.InvDate;
+//    td = FEIVp.InvDate;
+//    td = AddMonth(td,1);
+//    if (FEIVp.pdays==0) then begin td = AddMonth(td,1); end;
+//    td = AddDay(td,-GetDay(td) + 1);//1
+//    if (FEIVp.InvType<4) then begin FEIVp.InvType = 1; end;
+//    restdays = DateDiff(td,FEIVp.InvDate);
+//    if (FEIVp.pdays>=0) then begin restdays = restdays -1; end;
+//    FEIVp.pdays = FEIVp.pdays + restdays;
+//    FEIVp.PayDate = AddDay(FEIVp.InvDate,FEIVp.pdays);
+  end;
+  if (pdtype==6) then begin
+  end;
+LPastePDInFEIV:;
+  RETURN;
+END;
+
+procedure FEIVGetRate(var record FEIVVc FEIVp)
+BEGIN
+  val from,to1,to2,base1,base2;
+  string 5 crncy;
+ 
+  crncy = FEIVp.CurncyCode;
+  GetFullCurncyRate(crncy,FEIVp.TransDate,from,to1,to2,base1,base2);
+  FEIVp.CurncyCode = crncy;
+  FEIVp.FrRate = from;
+  FEIVp.ToRateB1 = to1;
+  FEIVp.ToRateB2 = to2;
+  FEIVp.BaseRate1 = base1;
+  FEIVp.BaseRate2 = base2;  
+  FEIVp.BaseSum4 = MulRateToBase1(FEIVp.CurncyCode,FEIVp.Sum4,from,to1,to2,base1,base2,DefaultCurRoundOff);
+  RETURN;
+END;
+
+global
+function Boolean FEIVVc_PasteArtCode(var record FEIVVc FEIVp,Integer rownr,var string inwarning)
+BEGIN
+  Boolean chsum,res;
+  Boolean chrsum;
+  record CUVc CUr;
+  record INVc INr;
+  row FEIVVc FEIVrw;
+  val t,s,price,vreb,baseprice,temp,tax2prc;
+  string 255 curitemname,salesacc,vatcode,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Boolean pritemf;
+  Integer exportflag,rwcnt;
+  Boolean dummyf;
+  Time blankt;
+
+  pritemf = true;
+  MatRowGet(FEIVp,rownr,FEIVrw);
+  CUr.Code = FEIVp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+  end;
+  FEIVrw.Price = BlankVal;
+  FEIVrw.vRebate = BlankVal;
+  FEIVrw.Sum = BlankVal;
+  exportflag = FEIVp.ExportFlag;
+  if (GetItemPriceDiscount3(FEIVrw.ArtCode,FEIVrw.Quant,INr,FEIVp.CurncyCode,
+                            FEIVp.FrRate,FEIVp.ToRateB1,FEIVp.ToRateB2,FEIVp.BaseRate1,FEIVp.BaseRate2,
+                            FEIVp.LangCode,CUr.CustCat,CUr.PLCode,CUr.RebCode,
+                            price,curitemname,vreb,vatcode,baseprice,salesacc,
+                            exportflag,calcprice,FEIVp.TransDate,blankt,FEIVp.CustCode,true,dummyf,FEIVp.PayDeal,tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    if (vreb==0) then begin
+      vreb = blankval;
+    end;
+    inwarning = INr.WarnText1;
+    FEIVrw.Price = price;
+    FEIVrw.Spec = curitemname;
+    FEIVrw.vRebate = vreb;
+    FEIVrw.VATCode = vatcode;
+    FEIVrw.BasePrice = baseprice;
+    FEIVrw.SalesAcc = salesacc;
+    if (nonblank(FEIVp.CustVATCode)) then begin
+      FEIVrw.VATCode = FEIVp.CustVATCode;
+    end;
+    FEIVrw.Objects = FindINObjects(INr.Objects,INr.Group);
+    FEIVrw.Spec = curitemname;
+    MatRowPut(FEIVp,rownr,FEIVrw);
+    chrsum = true;
+    res = true;
+  end;
+  if (chrsum) then begin
+    chsum = FEIVDchrsum(FEIVp,rownr);
+  end;
+  FEIVSumup(FEIVp); 
+  FEIVVc_PasteArtCode = res;
+  RETURN;
+END;    
+
+procedure PasteQty(var record FEIVVc FEIVp,Integer rownr,Integer typ)
+BEGIN
+  val t,s,price,vreb,baseprice,temp,tax2prc;
+  Boolean chrsum;
+  record CUVc CUr;
+  record INVc INr;
+  row FEIVVc FEIVrw;
+  string 255 tstr,tax2code,taxtemplatecode;
+  Boolean calcprice;
+  Integer exportflag;
+  Boolean dummyf;
+  Time blankt;
+
+  MatRowGet(FEIVp,rownr,FEIVrw);
+  CUr.Code = FEIVp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+  end;
+  chrsum = true;
+  vreb = FEIVrw.vRebate;  
+  price = FEIVrw.Price;
+  exportflag = FEIVp.ExportFlag;
+  if (FEIVp.InvType==kInvoiceTypeCredit or FEIVp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    exportflag = exportflag + AddPortugueseType;
+  end;  
+  switch (typ) begin
+    case 0: 
+      FEIVrw.QuantFract = FEIVrw.Quant;
+  end;
+  if (GetItemPriceDiscount3(FEIVrw.ArtCode,FEIVrw.QuantFract,INr,FEIVp.CurncyCode,
+                            FEIVp.FrRate,FEIVp.ToRateB1,FEIVp.ToRateB2,FEIVp.BaseRate1,FEIVp.BaseRate2,
+                            FEIVp.LangCode,CUr.CustCat,CUr.PLCode,CUr.RebCode,
+                            price,tstr,vreb,tstr,baseprice,tstr,
+                            exportflag,calcprice,FEIVp.TransDate,blankt,FEIVp.CustCode,true,dummyf,FEIVp.PayDeal,tax2code,tax2prc,"","",taxtemplatecode)) then begin
+    FEIVrw.ArtCode = INr.Code;
+    if (FEIVp.OrderNr==-1) then begin 
+      if (nonblank(CUr.PLCode)) then begin
+        if (QtyDepPriceL(CUr.PLCode)) then begin
+          FEIVrw.Price = price;
+        end;
+      end;
+      if (FEIVrw.vRebate==0) then begin
+        FEIVrw.vRebate = vreb;
+      end;
+      if (baseprice<>0) then begin
+        FEIVrw.BasePrice = baseprice;
+      end;
+    end;
+    MatRowPut(FEIVp,rownr,FEIVrw);
+  end;
+  if (chrsum) then begin
+    calcprice = FEIVDchrsum(FEIVp,rownr);
+  end;
+  if (calcprice) then begin
+    FEIVSumup(FEIVp);
+  end;  
+  RETURN;
+END;
+
+global
+procedure FEIVVc_PasteQuant(var record FEIVVc FEIVp,Integer rownr)
+BEGIN
+  PasteQty(FEIVp,rownr,0);
+  RETURN;    
+END;    
+
+global
+procedure FEIVVc_PasteQuantFract(var record FEIVVc FEIVp,Integer rownr)
+BEGIN
+  PasteQty(FEIVp,rownr,1);
+  RETURN;    
+END;    
+
+global
+function Boolean FEIVVc_PasteCustCode(var record FEIVVc FEIVp,string efstr,var string warning,var string errstr,var string prepstr,var string invdatewarn,var string transdatewarn)
+BEGIN
+  record CUVc CUr;
+  record INVc INr;
+  Boolean found;
+  Boolean iscred,limitdaysf;
+  val x,pr,bal,limit,t;
+  record CreditLimitBlock CreditLimitRec;
+  record FreightBlock FreightRec;
+  string 255 tstr;
+  record GeneralOptionBlock GenOptRec;
+  Integer InclVAT;
+  val fr,to1,to2,br1,br2;
+  string 5 curcode;
+
+  warning = "";
+  errstr = "";
+  prepstr = "";
+  invdatewarn = "";
+  transdatewarn = "";
+  BlockLoad(GenOptRec);
+  BlockLoad(FreightRec);
+  BlockLoad(CreditLimitRec);
+  if ((efstr!=FEIVp.CustCode) and (nonblank(efstr))) then begin
+    tstr = FEIVp.Objects;
+    RemoveOldCustObjects(efstr,tstr);
+    FEIVp.Objects = tstr;
+  end;
+  if (FEIVp.InvType==kInvoiceTypeCredit or FEIVp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    iscred = true;
+  end;  
+  CUr.Code = FEIVp.CustCode;
+  if (GetCustAndBal(CUr,limit,bal,CreditLimitRec.Base,CreditLimitRec.OwnCheques,CreditLimitRec.ThirdCheques,CreditLimitRec.IOUCheques,CreditLimitRec.ThirdIOUCheques,CreditLimitRec.ORSaveWarn,limitdaysf)) then begin
+    found = true;
+    FEIVp.Addr0 = CUr.Name;
+    FEIVp.Addr1 = CUr.InvAddr0;
+    FEIVp.Addr2 = CUr.InvAddr1;
+    FEIVp.Addr3 = CUr.InvAddr2;
+    FEIVp.InvAddr3 = CUr.InvAddr3;
+    FEIVp.InvAddr4 = CUr.InvAddr4;
+    FEIVp.ClientContact = CUr.Person;
+    tstr = FEIVp.Objects;
+    if ((nonblank(tstr)) and (nonblank(CUr.Objects))) then begin
+      tstr = tstr & ",";
+    end;
+    tstr = tstr & CUr.Objects;
+    FEIVp.Objects = tstr;    
+    FEIVp.CurncyCode = CUr.CurncyCode;
+    SetSalesMan(tstr,CUr.SalesMan);
+    FEIVp.SalesMan = tstr;
+    FEIVp.LangCode = CUr.LangCode;
+    FEIVp.OrgCust = "";
+    FEIVp.CustVATCode = CUr.VATCode;
+    FEIVp.Phone = CUr.Phone;
+    FEIVp.Fax = CUr.Fax;
+    FEIVp.VATNr = CUr.VATNr;
+    FEIVp.InvComment = CUr.OrderComment;
+    FEIVSumup(FEIVp);
+    FEIVp.ExportFlag = CUr.ExportFlag;
+    if (iscred==false) then begin
+      FEIVp.PayDeal = CUr.PayDeal;
+      PastePDInFEIV(FEIVp);
+    end;
+    curcode = FEIVp.CurncyCode;
+    GetFullCurncyRate(curcode,FEIVp.TransDate,fr,to1,to2,br1,br2);
+    FEIVp.CurncyCode = curcode;
+    FEIVp.FrRate = fr;
+    FEIVp.ToRateB1 = to1;
+    FEIVp.ToRateB2 = to2;
+    FEIVp.BaseRate1 = br1;
+    FEIVp.BaseRate2 = br2;
+    FEIVp.FrGPPercent = FreightRec.FrGPPercent;
+    INr.Code = FEIVp.FrItem;
+    if (ReadFirstMain(INr,1,true)) then begin
+      GetItemVATCode(FEIVp.FrItem,FEIVp.ExportFlag,tstr,true);
+      FEIVp.FrVATCode = tstr;
+      GetItemSalesAcc(FEIVp.FrItem,FEIVp.ExportFlag,tstr);
+      FEIVp.FrSalesAcc = tstr;
+      FEIVp.FrBase = INr.UPrice1;
+    end else begin
+      FEIVp.FrItem = "";
+      FEIVp.FrGPPercent = blankval;
+      FEIVp.FrBase = blankval;
+      FEIVp.FrPrice = blankval;
+      FEIVp.FrGP = blankval;
+      FEIVp.FrVATCode = "";
+      FEIVp.FrSalesAcc = "";
+    end;
+    FEIVSumup(FEIVp);
+    if (nonblank(CUr.WarnText1)) then begin
+      warning = CUr.WarnText1;
+    end;
+    if (CreditLimitRec.IVPaste==1) then begin
+      if (limitdaysf) then begin
+        if (CreditLimitRec.IVSave==1) then begin    
+          errstr = USetStr(1164);
+        end;
+      end;
+      if (limit>0) then begin
+        if (bal>limit) then begin
+          errstr = USetStr(1164);
+        end;
+      end;
+    end;
+    FEIVGetRate(FEIVp);
+    if (DateWarned(FEIVp.TransDate,"FEIVVc")) then begin
+      transdatewarn = USetStr(1045);
+    end;
+    if (DateWarned(FEIVp.IVInvDate,"FEIVVc")) then begin
+      invdatewarn = USetStr(1045);
+    end;    
+  end;
+  FEIVVc_PasteCustCode = found;
+  RETURN;
+END;
+
+global
+function Boolean FEIVVc_PastePrepaymentNr(var record FEIVVc FEIVp)
+BEGIN
+  Boolean res;
+  record FEIVVc lFEIVr;
+  row FEIVVc FEIVrw;
+  LongInt oldnr;
+  Boolean TrHs,firstf;
+  Array val aqfact;
+  Integer acnt;
+  Integer i,rwcnt;
+
+  oldnr = FEIVp.SerNr;
+  firstf = true;
+  TrHs = true;
+  lFEIVr.SerNr = FEIVp.PrepaymentNr;
+  while (LoopKey("PrepaymentNr",lFEIVr,1,TrHs)) begin
+    if (lFEIVr.PrepaymentNr!=FEIVp.PrepaymentNr) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      if (firstf) then begin
+        FEIVp = lFEIVr;
+        firstf = false;        
+        FEIVp.SerNr = oldnr;
+      end;
+      rwcnt = MatRowCnt(lFEIVr);
+      acnt = rwcnt;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(lFEIVr,i,FEIVrw);
+        aqfact[i] = aqfact[i] + FEIVrw.QuantFract;
+      end;
+    end;    
+  end;
+  if (firstf==false) then begin
+    for (i=0;i<acnt;i=i+1) begin
+      MatRowGet(FEIVp,i,FEIVrw);
+      FEIVrw.QuantFract = FEIVrw.Quant - aqfact[i];
+      MatRowPut(FEIVp,i,FEIVrw);
+    end;
+    FEIVSumup(FEIVp);
+  end;
+  FEIVVc_PastePrepaymentNr = res;
+  RETURN;
+END;
+

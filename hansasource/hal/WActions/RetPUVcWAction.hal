@@ -1,0 +1,718 @@
+external procedure PUCalcPerc(val,string,var val);
+external function roundmode SetRoundModeD(Integer);
+remote procedure RetPUVc_PasteQuant(var record RetPUVc,Integer);
+external procedure WarnFutureDate(Boolean,Date);
+remote function Integer RetPUVc_PastePURow(var record RetPUVc,Integer,Boolean);
+remote function Integer RetPUVc_PastePUNr(var record RetPUVc,Integer);
+remote function Integer RetPUVc_PasteOrdRow(var record RetPUVc,Integer,Boolean);
+remote function Integer RetPUVc_PastePONr(var record RetPUVc,Integer);
+external function roundmode GetCostRoundMode(record RoundBlock);
+external function roundmode DefaultRoundMode();
+remote function Integer CreateQualConFromRetPU(record RetPUVc,Integer,var record QualConVc,Integer);
+remote updating function Integer RecordAction_raPasteRetPUInVI(var record VIVc,LongInt);
+remote procedure RetPUVc_PasteTransDate(var record RetPUVc);
+external function Boolean WarnOldRecords(Date,string,LongInt);
+external function Boolean DateWarned(Date,string);
+remote procedure RetPUVc_PasteSerialNr(var record RetPUVc,Integer,var string);
+remote updating function Integer RecordAction_raPastePOInRetPU(var record RetPUVc,LongInt);
+external function string 40 SerialNrSClassSpecPName(string);
+remote procedure SetDelAddr(string,string,var string,var string,var string,var string,var string,var string,var string,var string,var string,var string,var Integer,var string);
+remote function string 20 FindCustRoute(string,string,string);
+remote procedure RetPUVc_PasteLocation(var record RetPUVc,Integer);
+
+global
+procedure RetPUSumUp(var record RetPUVc RetPUp)
+BEGIN
+  Integer i,rwcnt;
+  row RetPUVc RetPUrw;
+  val t;
+  
+  RetPUp.SumCostPrice = blankval;
+  RetPUp.SumQuant = blankval;
+  RetPUp.ShipCost = blankval;
+  RetPUp.Cost1 = blankval;
+  RetPUp.Cost2 = blankval;
+  RetPUp.Cost3 = blankval;
+  RetPUp.Cost4 = blankval;
+  RetPUp.Cost5 = blankval;
+  RetPUp.CustomsCost = blankval;
+  RetPUp.ExtraCost = blankval;
+
+  RetPUp.ShipCostRound = blankval;
+  RetPUp.Cost1Round = blankval;
+  RetPUp.Cost2Round = blankval;
+  RetPUp.Cost3Round = blankval;
+  RetPUp.Cost4Round = blankval;
+  RetPUp.Cost5Round = blankval;
+  RetPUp.CustomsCostRound = blankval;
+
+  rwcnt = MatRowCnt(RetPUp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RetPUp,i,RetPUrw);
+    RetPUp.SumQuant = RetPUp.SumQuant + RetPUrw.Quant;
+    RetPUp.SumCostPrice = RetPUp.SumCostPrice + RetPUrw.FIFORowVal;
+
+    t = Round(RetPUrw.Quant*RetPUrw.ShipCost,SetRoundModeD(5));//RoundRec.RndFIFO
+    RetPUp.ShipCost = t + RetPUp.ShipCost;
+    t = Round(RetPUrw.Quant*RetPUrw.RowCost1,SetRoundModeD(5));//RoundRec.RndFIFO
+    RetPUp.Cost1 = t + RetPUp.Cost1;
+    t = Round(RetPUrw.Quant*RetPUrw.RowCost2,SetRoundModeD(5));//RoundRec.RndFIFO
+    RetPUp.Cost2 = t + RetPUp.Cost2;
+    t = Round(RetPUrw.Quant*RetPUrw.RowCost3,SetRoundModeD(5));//RoundRec.RndFIFO
+    RetPUp.Cost3 = t + RetPUp.Cost3;
+    t = Round(RetPUrw.Quant*RetPUrw.RowCost4,SetRoundModeD(5));//RoundRec.RndFIFO
+    RetPUp.Cost4 = t + RetPUp.Cost4;
+    t = Round(RetPUrw.Quant*RetPUrw.RowCost5,SetRoundModeD(5));//RoundRec.RndFIFO
+    RetPUp.Cost5 = t + RetPUp.Cost5;
+
+    PUCalcPerc(RetPUrw.FIFORowVal,RetPUrw.CustomsCost,t);
+    t = RetPUrw.Quant*t;
+    RetPUp.CustomsCost = t + RetPUp.CustomsCost;
+  end;
+  RetPUp.SumCostPrice = Round(RetPUp.SumCostPrice,DefaultRoundMode);
+  RetPUp.ShipCost = Round(RetPUp.ShipCost,SetRoundModeD(3));
+  RetPUp.Cost1 = Round(RetPUp.Cost1,SetRoundModeD(3));
+  RetPUp.Cost2 = Round(RetPUp.Cost2,SetRoundModeD(3));
+  RetPUp.Cost3 = Round(RetPUp.Cost3,SetRoundModeD(3));
+  RetPUp.Cost4 = Round(RetPUp.Cost4,SetRoundModeD(3));
+  RetPUp.Cost5 = Round(RetPUp.Cost5,SetRoundModeD(3));
+  RetPUp.CustomsCost = Round(RetPUp.CustomsCost,SetRoundModeD(5));
+  RetPUp.ExtraCost = Round(RetPUp.ExtraCost,DefaultRoundMode);
+  RETURN;
+END;
+
+global
+function string 40 RetPUDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 255 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "SerialNr": psname = SerialNrSClassSpecPName(defpsname);
+  end;
+  RetPUDClassSpecPasteName = psname;
+  return;
+end;
+
+global
+updating procedure RetPUFromPODsm()
+BEGIN
+  record POVc POr;
+  record RetPUVc RetPUr;
+  Integer wn,r,nwn;
+  Integer normalstate;
+  record POSettingBlock POSb;
+
+  normalstate = 0;//Rs_normal
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  if (WindowState(wn)==normalstate) then begin
+    BlockLoad(POSb);
+    if (POSb.NoRetPUFromPO==0) then begin
+      GetWindowRecord(wn,POr);
+      if (UserCanAction("POToRetPU",true)) then begin
+        r = RecordAction_raPastePOInRetPU(RetPUr,POr.SerNr);
+        if (r==0) then begin
+          if (MatRowCnt(RetPUr)!=0) then begin
+            nwn = OpenWindow("RetPUDClass",1,0,"","",RetPUr);
+          end else begin
+            MessageBox(27354,"");
+          end;
+        end else begin
+          MessageBox(r,"");
+        end;
+      end else begin
+        MessageBox(1274,StringFromStringSet(3,"POToRetPU"));
+      end;
+    end else begin
+      MessageBox(20107,"");
+    end;
+  end else begin
+    Beep;
+  end;
+  RETURN;
+END;
+
+function Boolean RetPUDClassSerialNrEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RetPUVc RetPUr;
+  Boolean res;
+  string 255 tstr;
+  
+  res = true;
+  if ((changed!=0) and (rownr>=0)) then begin
+    GetWindowRecord(wn,RetPUr);
+    RetPUVc_PasteSerialNr(RetPUr,rownr,tstr);    
+    if (nonblank(tstr)) then begin
+      MessageBox(0,tstr);
+    end;    
+    PutWindowRecord(wn,RetPUr);    
+  end;
+  RetPUDClassSerialNrEFAfter = res;
+  RETURN;
+END;
+
+function Boolean RetPUDClassTransDateEFAfter(Integer wn,Integer changed)
+BEGIN
+  record RetPUVc RetPUr;
+
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,RetPUr);    
+  if (DateWarned(RetPUr.TransDate,"RetPUVc")) then begin
+    MessageBox(1045,"");
+  end;
+  if (WarnOldRecords(RetPUr.TransDate,"RetPUVc",RetPUr.SerNr)) then begin
+    MessageBox(2020,"");
+  end;
+  if (changed!=0) then begin
+//    RetPUVc_PasteTransDate(RetPUr); // Function empty...
+    WarnFutureDate(true,RetPUr.TransDate);
+//JJCS    
+    PutWindowRecord(wn,RetPUr);
+  end;
+  RetPUDClassTransDateEFAfter = true;
+  return;
+end;
+
+function Boolean RetPUDClassQuantEFAfter(Integer wn, Integer rownr,Integer changed)
+BEGIN
+  record RetPUVc RetPUr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,RetPUr);
+    RetPUVc_PasteQuant(RetPUr,rownr);
+    PutWindowRecord(wn,RetPUr);
+  end;
+  RetPUDClassQuantEFAfter = true;
+  return;
+end;
+
+function Boolean RetPUDClassFIFOEFAfter(Integer wn, Integer rownr,Integer changed)
+begin
+  record RetPUVc RetPUr;
+  row RetPUVc RetPUrw;
+  record RoundBlock ROb;
+
+  if (changed!=0) then begin
+    BlockLoad(ROb);
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,RetPUr);
+    MatRowGet(RetPUr,rownr,RetPUrw);
+    RetPUrw.FIFORowVal = Round(RetPUrw.FIFO*RetPUrw.Quant,GetCostRoundMode(ROb));
+    MatRowPut(RetPUr,rownr,RetPUrw);
+    RetPUSumUp(RetPUr);
+    PutWindowRecord(wn,RetPUr);
+  end;
+  RetPUDClassFIFOEFAfter = true;
+  return;
+end;
+
+function Boolean RetPUDClassFIFORowValEFAfter(Integer wn, Integer rownr,Integer changed)
+begin
+  record RetPUVc RetPUr;
+  row RetPUVc RetPUrw;
+  record RoundBlock ROb;
+
+  if (changed!=0) then begin
+    BlockLoad(ROb);
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,RetPUr);
+    MatRowGet(RetPUr,rownr,RetPUrw);
+    RetPUrw.FIFO = RetPUrw.FIFORowVal/RetPUrw.Quant;
+    MatRowPut(RetPUr,rownr,RetPUrw);
+    RetPUSumUp(RetPUr);
+    PutWindowRecord(wn,RetPUr);
+  end;
+  RetPUDClassFIFORowValEFAfter = true;
+  return;
+end;
+
+function Boolean RetPUDClassDelAddrCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RetPUVc RetPUr;
+  Boolean res;
+  string 255 name,s1,s2,s3,s4,s5,country,region,taxtemplatecode,vatcode,dummy;
+  Integer exportflag;
+
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,RetPUr);
+    SetDelAddr(RetPUr.VECode,RetPUr.DelAddrCode,name,s1,s2,s3,s4,s5,country,region,taxtemplatecode,vatcode,exportflag,dummy);
+    RetPUr.VEName = name;
+    RetPUr.DelAddr0 = s1;
+    RetPUr.DelAddr1 = s2;
+    RetPUr.DelAddr2 = s3;
+    RetPUr.DelAddr3 = s4;
+    RetPUr.DelAddr4 = s5;
+    RetPUr.Sorting = FindCustRoute(RetPUr.VECode,RetPUr.Location,RetPUr.DelAddrCode);
+    PutWindowRecord(wn,RetPUr);    
+  end;
+  RetPUDClassDelAddrCodeEFAfter = res;
+  return;
+end;
+
+procedure FillFreightInfo(record RetPUVc RetPUr)
+begin
+  record FreightCompanyVc FCr;
+  
+  FCr.Code = RetPUr.FreightCode;
+  if (ReadFirstMain(FCr,1,true)) then begin
+    RetPUr.FreightCompany = FCr.Company;
+    RetPUr.FreightCompanyRegNr = FCr.CompanyRegNr;
+    RetPUr.TruckInfo = FCr.TruckInfo;
+    RetPUr.Driver = FCr.Driver;
+    RetPUr.CMRText = FCr.CMRText;
+  end else begin
+    Beep;
+  end;
+  return;
+end;
+
+function Boolean RetPUDClassFreightCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RetPUVc RetPUr;
+  Boolean res;
+
+  res = true;
+  if (changed!=0) then begin
+    GetWindowRecord(wn,RetPUr);
+    if (nonblank(RetPUr.FreightCode)) then begin
+      FillFreightInfo(RetPUr);
+      PutWindowRecord(wn,RetPUr);
+    end;
+  end;
+  RetPUDClassFreightCodeEFAfter = res;
+  RETURN;
+END;
+
+function Boolean RetPUDClassPONrEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin
+  record RetPUVc RetPUr;
+  Boolean res;
+  INteger err;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,RetPUr);
+    err = RetPUVc_PastePONr(RetPUr,rownr);
+    switch (err) begin
+      case 0: PutWindowRecord(wn,RetPUr);
+      otherwise MessageBox(err,""); 
+    end;
+  end;
+  RetPUDClassPONrEFAfter = res;
+  return;
+end;
+
+function Boolean RetPUDClassOrdRowEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  record RetPUVc RetPUr;
+  Integer err;
+
+  res = true;
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,RetPUr);
+    err = RetPUVc_PasteOrdRow(RetPUr,rownr,changedf);
+    switch (err) begin
+      case 0: PutWindowRecord(wn,RetPUr);
+      otherwise MessageBox(err,""); 
+    end;
+  end;
+  RetPUDClassOrdRowEFAfter = true;
+  return;
+end;
+
+function Boolean RetPUDClassPUNrEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin
+  record RetPUVc RetPUr;
+  Boolean res;
+  INteger err;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,RetPUr);
+    err = RetPUVc_PastePUNr(RetPUr,rownr);
+    switch (err) begin
+      case 0: PutWindowRecord(wn,RetPUr);
+      otherwise MessageBox(err,""); 
+    end;
+  end;
+  RetPUDClassPUNrEFAfter = res;
+  return;
+end;
+
+function Boolean RetPUDClassPURowEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin
+  Boolean res;
+  record RetPUVc RetPUr;
+  Integer err;
+
+  res = true;
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,RetPUr);
+    err = RetPUVc_PastePURow(RetPUr,rownr,changedf);
+    switch (err) begin
+      case 0: PutWindowRecord(wn,RetPUr);
+      otherwise MessageBox(err,""); 
+    end;
+  end;
+  RetPUDClassPURowEFAfter = true;
+  return;
+end;
+
+function Boolean RetPUDClassLocationEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin
+  record RetPUVc RetPUr;
+  
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,RetPUr);
+    RetPUVc_PasteLocation(RetPUr,rownr);
+    PutWindowRecord(wn,RetPUr);
+  end;
+  
+  RetPUDClassLocationEFAfter = true;
+  return;
+end;
+
+global
+function Boolean RetPUDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "TransDate": res = RetPUDClassTransDateEFAfter(wn,changed);
+    case "Quant": res = RetPUDClassQuantEFAfter(wn,rownr,changed);
+    case "FIFO": res = RetPUDClassFIFOEFAfter(wn,rownr,changed);
+    case "FIFORowVal": res = RetPUDClassFIFORowValEFAfter(wn,rownr,changed);
+    case "SerialNr": res = RetPUDClassSerialNrEFAfter(wn,fn,rownr,changed);
+    case "DelAddrCode": res = RetPUDClassDelAddrCodeEFAfter(wn,fn,rownr,changed);
+    case "FreightCode": res = RetPUDClassFreightCodeEFAfter(wn,fn,rownr,changed);
+    case "PONr": res = RetPUDClassPONrEFAfter(wn,rownr,changed);
+    case "OrdRow": res = RetPUDClassOrdRowEFAfter(wn,rownr,changed);
+    case "PUNr": res = RetPUDClassPUNrEFAfter(wn,rownr,changed);
+    case "PURow": res = RetPUDClassPURowEFAfter(wn,rownr,changed);
+    case "Location": res = RetPUDClassLocationEFAfter(wn,rownr,changed);
+  end;
+  RetPUDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean RetPUDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record RetPUVc RetPUr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,RetPUr);    
+    RetPUSumUp(RetPUr);
+    PutWindowRecord(wn,RetPUr);    
+  end;
+  RetPUDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global 
+function Boolean RetPUDClassDeleteRowTest(Integer wn, Integer rownr)
+BEGIN
+  Boolean res;
+  record RetPUVc RetPUr;
+
+  res = false;
+  switch (WindowState(wn)) begin
+    case Rs_update:
+      GetPrevWindowRecord(wn,RetPUr);
+    case Rs_normal:
+      GetWindowRecord(wn,RetPUr);
+  end;
+  if (RetPUr.OKFlag==0) then begin
+    res = true;
+  end;
+  RetPUDClassDeleteRowTest = res;
+  RETURN;
+END;
+
+global 
+function Boolean RetPUDClassInsertRowTest(Integer wn, Integer rownr)
+begin
+  Boolean res;
+  record RetPUVc RetPUr;
+
+  res = true;
+  switch (WindowState(wn)) begin
+    case Rs_normal:
+      GetWindowRecord(wn,RetPUr);
+      if (RetPUr.OKFlag!=0) then begin res = false; end;
+    case Rs_insert:
+      res = true;
+    case Rs_update:
+      GetPrevWindowRecord(wn,RetPUr);
+      if (RetPUr.OKFlag!=0) then begin res = false; end;
+    otherwise
+      res = false;
+  end;
+  RetPUDClassInsertRowTest = res;
+  return;
+end;
+
+function Boolean RetPUCostPriceNotFromPU()
+begin 
+  record CostAccBlock CAb;
+  
+  BlockLoad(CAb);
+  RetPUCostPriceNotFromPU = CAb.RetPUCostPriceNotFromPU==0;
+  return;
+end;
+
+global
+function Boolean RetPUDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record RetPUVc RetPUr;
+  row RetPUVc RetPUrw;
+  
+  res = true;
+  if (wnst==Rs_update) then begin
+    GetPrevWindowRecord(wn,RetPUr);
+    if (RetPUr.OKFlag!=0) then begin
+      res = false;
+      switch (fieldname) begin
+        case "Comment": res = true;
+        case "TaxAdminServSeal": res = blank(RetPUr.TaxAdminServSeal);
+      end;
+    end;
+  end;
+  if (res) then begin
+    if (rownr>-1) then begin
+      switch (fieldname) begin
+        case "ArtCode": res = false;
+      end;
+    end;
+  end;  
+  switch (fieldname) begin
+    case "FIFO": 
+      res = false;//ItemHistVc is updated with source cost price
+    case "FIFORowVal": 
+      res = false;//ItemHistVc is updated with source cost price
+    case "Cost1":  res = false;
+    case "Cost2":  res = false;
+    case "Cost3":  res = false;
+    case "Cost4":  res = false;
+    case "Cost5":  res = false;
+//    case "ShipCost":  res = false;
+//    case "CustomsCost":  res = false;
+    case "Spec": 
+      if (HasLocalization("PRT")) then begin
+        MatRowGet(RetPUr,rownr,RetPUrw);
+        if (nonblank(RetPUrw.ArtCode)) then begin
+          res = false;
+        end;
+      end;
+  end;
+  RetPUDClassActiveEditField = res;
+  return;
+end;
+
+global
+function Boolean RetPUDClassExtraCostsCalculationButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+
+  res = false;
+  RetPUDClassExtraCostsCalculationButtonAction = res;
+  return;
+end;
+
+global
+function Boolean RetPUDClassOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record RetPUVc RetPUr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,RetPUr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,RetPUr);
+  end;  
+  if (RetPUr.OKFlag!=0) then begin
+    res = false;
+    if (UserCanAction("UnOKAll",false)) then begin
+      res = true;
+    end;
+  end else begin
+    if (UserCanAction("RetPUOK",true)==false) then begin
+      res = false;
+      MessageBox(1274,StringFromStringSet(3,"RetPUOK"));
+    end;  
+  end;
+  RetPUDClassOKFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean RetPUDClassUpdStockFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record RetPUVc RetPUr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,RetPUr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,RetPUr);
+  end;  
+  if (RetPUr.OKFlag!=0) then begin
+    res = false;
+  end;
+  RetPUDClassUpdStockFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean RetPUDClassTypeButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record RetPUVc RetPUr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,RetPUr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,RetPUr);
+  end;  
+  if (RetPUr.OKFlag!=0) then begin
+    res = false;
+  end;
+  RetPUDClassTypeButtonAction = res;
+  return;
+end;
+
+/*
+above
+global 
+function Boolean RetPUDClassInsertRowTest(Integer wn,Integer rownr)
+begin
+  record RetPUVc RetPUr;
+  Boolean res;
+
+  res = false;
+  RetPUDClassInsertRowTest = res;
+  return;
+end;
+*/
+global
+updating procedure CredVIFromRetPUDsm()
+BEGIN
+  record RetPUVc RetPUr;
+  record VIVc VIr;
+  Integer wn,r,nwn;
+  Integer normalstate;
+
+  normalstate = 0;//Rs_normal
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  if (WindowState(wn)==normalstate) then begin
+    GetWindowRecord(wn,RetPUr);
+    if (UserCanAction("RetPUToVI",true)) then begin
+      r = RecordAction_raPasteRetPUInVI(VIr,RetPUr.SerNr);  
+      switch (r) begin
+        case 1:
+          if (MatRowCnt(VIr)!=0) then begin
+            nwn = OpenWindow("VIDClass",1,0,"","",VIr);
+          end;
+        case -1: Beep;
+        case -2: MessageBox(0,USetStr(1368));
+        otherwise 
+          MessageBox(r,"");
+      end;                
+    end else begin
+      MessageBox(1274,StringFromStringSet(3,"RetPUToVI"));
+    end;
+  end else begin
+    Beep;
+  end;
+  RETURN;
+END;
+
+global
+procedure QualConFromRetPUDsm()
+begin
+  Integer wn,nwn;
+  Integer rownr,err;
+  record RetPUVc RetPUr;
+  record QualConVc QCr;
+
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    rownr = WindowActiveRow(wn);
+    DeselectWindow(wn,true);
+    GetWindowRecord(wn,RetPUr);
+    err = CreateQualConFromRetPU(RetPUr,rownr,QCr,0);
+    if (err==0) then begin
+      nwn = OpenWindow("QualConDClass",1,0,"","",QCr);
+    end else begin
+      MessageBox(err,"");
+    end;
+  end else begin
+    MessageBox(22064,"");
+  end;
+  return;
+end;
+
+global
+function Boolean RetPUDClassOpenRecord(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  record RetPUVc RetPUr;
+  row RetPUVc RetPUw;
+  record CUVc VEr;
+  Integer nwn;
+  
+  switch (fieldname) begin
+    case "VECode":
+      GetWindowRecord(wn,RetPUr);
+      VEr.Code = RetPUr.VECode;
+      if (ReadFirstMain(VEr,1,true)) then begin
+        nwn = OpenWindow("CUDClass",0,0,"","",VEr);    
+      end;
+  end;
+  RetPUDClassOpenRecord = res;
+  return;
+end;
+
+/*
+global
+function Boolean RetPUDClassOnOpenWindow(Integer wn)
+begin
+  record RetPUVc RetPUr;
+  record eShipTaxAuthReplyVc eSTARr;
+  
+TaxAdminServSeal is in RetPUVc record
+  
+  GetWindowRecord(wn,RetPUr);
+  if (HasLocalization("PRT")) then begin
+    eSTARr.FileName = "RetPUVc";
+    eSTARr.TransNr = RetPUr.SerNr;
+    ReadLastKey("FNTransNr",eSTARr,2,true);
+    PutWindowString(wn,"TaxAdminServSeal",eSTARr.TaxAdminServSeal);
+  end;  
+  RetPUDClassOnOpenWindow = false;
+  return;
+end;
+
+*/

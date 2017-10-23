@@ -1,0 +1,337 @@
+
+external function LongInt DateDiff(Date,Date);
+external function Integer GetIntYc(Date);
+
+procedure FindCustBalance(string cust,var val balp,var val duep)
+begin
+  record ARVc ARr;
+  Boolean found;
+  val rs;
+  LongInt latedays;
+      
+  duep=0;
+  ARr.CustCode=cust;
+  found = true;
+  ResetLoop(ARr);
+  while (LoopKey("CustCode",ARr,1,found)) begin
+    if (found) then begin
+      if (ARr.CustCode<>cust) then begin found = false; end;
+    end;  
+    if (found) then begin
+        rs = ARr.BookRVal;
+        balp = balp + rs;
+        latedays=DateDiff(ARr.DueDate,CurrentDate);
+        if (latedays<0) then begin
+          duep = duep + rs;
+        end;
+    end;
+  end;  
+  return;
+end;
+
+procedure CUCalcPayHistory(record CUVc CUp,var LongInt nrpayp,var LongInt paydayp,var LongInt latedayp,var val openp,var val duep,record RcVc RepSpec)
+begin
+  record IPrsVc IPrsr;
+  Boolean found;
+  LongInt tpaydays,tlatedays;
+  LongInt xpaydays,xlatedays;
+  LongInt nrpays;
+  record IVVc IVr;
+  LongInt l;
+  val open,due;
+  Boolean custout,breakf,testf;
+  Integer trwcnt,t;
+  record PurgeTRVc PurgeTRr;
+  record TRVc TRr;
+  row  TRVc TRrw;
+  record CLInVc CLInr;
+  row  CLInVc CLInrw;
+  string 255 tstr,t2;
+  
+  custout = false;
+  open=0;
+  due=0;
+  tpaydays = 0;
+  xpaydays = 0;
+  tlatedays = 0;
+  xlatedays = 0;
+  nrpays = 0;
+  IPrsr.CustCode=CUp.Code;
+  IPrsr.TransDate = RepSpec.sStartDate;
+  found = true;
+  ResetLoop(IPrsr);
+  while (LoopKey("CustTransKey",IPrsr,2,found)) begin
+    if (found) then begin
+      if (CUp.Code<>IPrsr.CustCode) then begin found = false; end;
+      if (IPrsr.TransDate<RepSpec.sStartDate) then begin found = false; end;
+      if (IPrsr.TransDate>RepSpec.sEndDate) then begin found = false; end;
+    end;
+    if (found) then begin
+      if (IPrsr.TransType==kIPrsTransTypeReceipt) then begin
+        IVr.SerNr = IPrsr.IVNr;
+        if (ReadFirstMain(IVr,1,true)) then begin
+          if (IVr.Invalid==0) then begin
+            nrpays=nrpays+1;
+            l=DateDiff(IVr.PayDate,IPrsr.TransDate);          
+            tlatedays = tlatedays + l;
+            l=DateDiff(IVr.InvDate,IPrsr.TransDate);  
+            tpaydays = tpaydays+l;
+            
+            if (RepSpec.ArtMode==1) then begin
+              if (custout==false) then begin
+                custout = true;
+                StartFormat(15);
+                EndFormat;
+                StartFormat(15);
+                OutString(0,0,CUp.Code,false);
+                OutString(60,0,CUp.Name,false);
+                EndFormat;
+              end;
+              StartFormat(15);
+              OutLongInt(30,"DblIPVc",IPrsr.TransNr,false);
+              OutDate(80,0,IPrsr.TransDate,false);
+              l=DateDiff(IVr.InvDate,IPrsr.TransDate);
+              OutLongInt(260,0,l,true);
+              l=DateDiff(IVr.PayDate,IPrsr.TransDate);
+              OutLongInt(320,0,l,true);
+              EndFormat;
+            end;
+          end;
+        end;
+      end;
+
+      if (IPrsr.TransType==kIPrsTransTypePurgeNLTransaction) then begin
+        PurgeTRr.Number = IPrsr.TransNr;
+        PurgeTRr.IntYc = GetIntYc(IPrsr.TransDate);
+        PurgeTRr.TransRow = IPrsr.TransRow;
+        if (ReadFirstMain(PurgeTRr,3,true)) then   begin           
+          testf = false;
+          if ((PurgeTRr.Typ==1) and (PurgeTRr.CredVal<>0)) then begin
+            testf = true;
+          end;          
+          if (testf) then begin
+            nrpays=nrpays + 1;
+            l = DateDiff(PurgeTRr.TransDate,IPrsr.TransDate);
+            tlatedays = tlatedays + l;
+            l = DateDiff(PurgeTRr.TransDate,IPrsr.TransDate);
+            tpaydays = tpaydays + l;
+            if (RepSpec.ArtMode==1) then begin
+              if (custout==false) then begin
+                custout = true;
+                StartFormat(15);
+                EndFormat;
+                StartFormat(15);
+                OutString(0,0,CUp.Code,false);
+                OutString(60,0,CUp.Name,false);
+                EndFormat;
+                StartFormat(15);
+                EndFormat;
+              end;
+              StartFormat(15);
+              tstr = IPrsr.TransNr;
+              t2 = USetStr(2530);
+              tstr = tstr & t2;
+              OutString(30,0,tstr,false);
+              OutDate(80,0,IPrsr.TransDate,false);
+              l=DateDiff(PurgeTRr.TransDate,IPrsr.TransDate);
+              OutLongInt(260,0,l,true);
+              l=DateDiff(PurgeTRr.TransDate,IPrsr.TransDate);
+              OutLongInt(320,0,l,true);
+              EndFormat;
+            end;
+          end;  
+        end;
+      end;
+            
+      if (IPrsr.TransType==kIPrsTransTypeNLTransaction) then begin
+        TRr.Number = IPrsr.TransNr;
+        TRr.IntYc = GetIntYc(IPrsr.TransDate);
+        if (ReadFirstMain(TRr,2,true)) then   begin           
+          testf=false;
+          trwcnt = MatRowCnt(TRr);
+          for (t=0;t<trwcnt;t=t+1) begin
+              if (breakf==false) then begin
+                MatRowGet(TRr,t,TRrw);
+                 if ((TRrw.Typ==1) and (TRrw.CredVal<>0)) then begin
+                   testf=true;
+                   breakf=true;;
+                 end;
+              end;  
+           end;  
+          
+          if (testf) then begin
+            nrpays=nrpays + 1;
+            l = DateDiff(TRr.TransDate,IPrsr.TransDate);
+            tlatedays = tlatedays + l;
+            l = DateDiff(TRr.TransDate,IPrsr.TransDate);
+            tpaydays = tpaydays + l;
+            if (RepSpec.ArtMode==1) then begin
+              if (custout==false) then begin
+                custout = true;
+                StartFormat(15);
+                EndFormat;
+                StartFormat(15);
+                OutString(0,0,CUp.Code,false);
+                OutString(60,0,CUp.Name,false);
+                EndFormat;
+                StartFormat(15);
+                EndFormat;
+              end;
+              StartFormat(15);
+              tstr = IPrsr.TransNr;
+              t2 = USetStr(2530);
+              tstr = tstr & t2;
+              OutString(30,0,tstr,false);
+              OutDate(80,0,IPrsr.TransDate,false);
+              l=DateDiff(TRr.TransDate,IPrsr.TransDate);
+              OutLongInt(260,0,l,true);
+              l=DateDiff(TRr.TransDate,IPrsr.TransDate);
+              OutLongInt(320,0,l,true);
+              EndFormat;
+            end;
+          end;  
+        end;
+      end;
+      if (IPrsr.TransType==kIPrsTransTypeCashIn) then begin
+        CLInr.SerNr = IPrsr.TransNr;
+        if (ReadFirstMain(CLInr,1,true)) then   begin           
+          testf = false;
+          trwcnt = MatRowCnt(CLInr);
+          for (t=0;t<trwcnt;t=t+1) begin
+            if (breakf==false) then begin
+               MatRowGet(CLInr,t,CLInrw);
+               if (CLInrw.Type==1) then begin
+                 testf = true;
+                 breakf = true;
+               end;
+             end;  
+           end;            
+          if (testf) then begin
+            nrpays = nrpays + 1;
+            l = DateDiff(CLInr.TransDate,IPrsr.TransDate);
+            tlatedays = tlatedays + l;
+            l = DateDiff(CLInr.TransDate,IPrsr.TransDate);
+            tpaydays = tpaydays + l;
+            if (RepSpec.ArtMode==1) then begin
+              if (custout==false) then begin
+                custout = true;
+                StartFormat(15);
+                EndFormat;
+                StartFormat(15);
+                OutString(0,0,CUp.Code,false);
+                OutString(60,0,CUp.Name,false);
+                EndFormat;
+                StartFormat(15);
+                EndFormat;
+              end;
+              StartFormat(15);
+              tstr = IPrsr.TransNr;
+              t2 = USetStr(1193);
+              tstr = tstr & t2;
+              OutString(30,0,tstr,false);
+              OutDate(80,0,IPrsr.TransDate,false);
+              l=DateDiff(CLInr.TransDate,IPrsr.TransDate);
+              OutLongInt(260,0,l,true);
+              l=DateDiff(CLInr.TransDate,IPrsr.TransDate);
+              OutLongInt(320,0,l,true);
+              EndFormat;
+            end;
+          end;  
+        end;
+      end;
+            
+    end;
+  end;
+  if (nrpays!=0) then begin    
+    xpaydays = tpaydays/nrpays;
+    xlatedays = tlatedays / nrpays;
+    nrpayp = nrpayp + nrpays;
+    paydayp = paydayp + tpaydays;
+    latedayp = latedayp + tlatedays;
+    FindCustBalance(CUp.Code,open,due);
+    openp=open+openp;
+    duep=due+duep;
+    if (RepSpec.ArtMode==1) then begin
+      Gray_Divider(0,1);
+    end;  
+    StartFormat(15);
+    if (RepSpec.ArtMode==0) then begin
+      OutString(0,0,CUp.Code,false);
+      OutString(60,0,CUp.Name,false);
+    end;
+    OutLongInt(260,0,xpaydays,true);
+    OutLongInt(320,0,xlatedays,true);
+    OutVal(400,0,open,M4Val,true);
+    OutVal(480,0,due,M4Val,true);
+    EndFormat;
+  end;
+  return;
+end;
+
+global
+procedure CUPayHistoryRn(record RcVc RepSpec)
+begin
+  record CUVc CUr;
+  Boolean found;
+  String 20 frcc,tocc;
+  Boolean testf;
+  val open,due;
+  LongInt nrpay,payday,lateday;
+  LongInt xpayday,xlateday;
+  
+  StartReportJob(USetStr(6740));
+  EndHeader;
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(6741),false);
+  OutString(60,0,USetStr(6742),false);
+  OutString(260,0,USetStr(6743),true);
+  OutString(320,0,USetStr(6744),true);
+  OutString(400,0,USetStr(6745),true);
+  OutString(480,0,USetStr(6746),true);
+  EndFormat;
+  lateday = 0;
+  payday =  0;
+  nrpay = 0;
+  open = 0;
+  due = 0;
+  Gray_Divider(0,1);
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc =  LastInRange(RepSpec.f1,20);
+  CUr.Code=frcc;
+  found = true;
+  while (LoopMain(CUr,1,found)) begin
+    if (found) then begin
+      if (nonblank(tocc)) then begin
+        if (CUr.Code>tocc) then begin found = false; end;
+      end;
+    end;
+    if (found==true) then begin
+      testf = true;
+      if (nonblank(RepSpec.f3)) then begin
+        if (RepSpec.f3<>CUr.CustCat) then begin testf = false; end;
+      end;
+      if (CUr.CUType==0) then begin testf = false; end;
+      if (testf) then begin
+         CUCalcPayHistory(CUr,nrpay,payday,lateday,open,due,RepSpec);
+      end;
+    end;
+  end;
+  if (nrpay!=0) then begin
+    xpayday = payday / nrpay;
+    xlateday = lateday / nrpay;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutLongInt(260,0,xpayday,true);
+  OutLongInt(320,0,xlateday,true);
+  OutVal(400,0,open,M4Val,true);
+  OutVal(480,0,due,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

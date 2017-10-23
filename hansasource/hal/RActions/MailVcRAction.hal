@@ -1,0 +1,1151 @@
+external updating procedure SetMailAcceptancePostponed(LongInt);
+external function Boolean ValidEmailAddress(string);
+external updating procedure CreateActivityforCustomer_Mail(record MailVc,var record ActVc,Boolean);
+external updating function LongInt MakeActFromSubSys_MailVc(var record MailVc,var record ActVc,Boolean);
+external updating procedure AddToETasksQueueVc(string,string,LongInt,Integer);
+external procedure FindMailboxName(LongInt,var string,var string);
+external function Boolean FindUserInMailbox(string,var string,var LongInt);
+external function Boolean InterNetAddrTest(string);
+external procedure SetMailForward(record MailVc);
+external procedure FindCurMailboxName(var string);
+external procedure GetMailFormattingSettings(record MailVc,var record ConfVc);
+external function string 255 CleanupUTF8String(string);
+
+global
+procedure ResolveMailboxNumber(var row MailVc mailrw)
+begin
+  string 255 mailboxstr;
+  LongInt mailboxnr;
+  
+  if (FindUserInMailbox(mailrw.AddrCode,mailboxstr,mailboxnr)) then begin
+    mailrw.Mailbox = mailboxnr;
+  end else begin
+    mailrw.Mailbox = -1;
+  end;
+  
+  return;
+end;
+
+procedure UpdateMailboxes(var record MailVc Mailr,record MailVc oldMailr)
+begin
+  LongInt i,rwcnt,newrwcnt,oldrwcnt;
+  row MailVc Mailrw;
+  row MailVc oldMailrw;
+  Boolean sentf;
+  
+  newrwcnt = MatRowCnt(Mailr);
+  oldrwcnt = MatRowCnt(oldMailr);
+  
+  if (newrwcnt>oldrwcnt) then begin
+    rwcnt = oldrwcnt;
+  end else begin
+    rwcnt = newrwcnt;
+  end;
+  
+  if (Mailr.SendFlag==0) then begin
+    //LogText(0,"SendFlag==0");
+    sentf = false;
+  end else begin
+    //LogText(0,"SendFlag<>0");
+    sentf = true;
+  end;
+  
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    MatRowGet(oldMailr,i,oldMailrw);
+    
+    if (sentf or Mailrw.RowTyp==kMailRowTypeFrom) then begin
+      if ((Mailrw.AddrCode<>oldMailrw.AddrCode) or (Mailrw.Mailbox==-1)) then begin
+        ResolveMailboxNumber(Mailrw);
+        MatRowPut(Mailr,i,Mailrw);
+      end;
+    end else begin
+      if (Mailrw.Mailbox<>-1) then begin
+        Mailrw.Mailbox = -1;
+        MatRowPut(Mailr,i,Mailrw);
+      end;
+    end;
+  end;
+  
+  for (i = rwcnt; i<newrwcnt; i = i + 1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if (sentf or Mailrw.RowTyp==kMailRowTypeFrom) then begin
+      ResolveMailboxNumber(Mailrw);
+      MatRowPut(Mailr,i,Mailrw);
+    end else begin
+      if (Mailrw.Mailbox<>-1) then begin
+        Mailrw.Mailbox = -1;
+        MatRowPut(Mailr,i,Mailrw);
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+procedure ResolveMailboxes(var record MailVc Mailr)
+begin
+  LongInt i,rwcnt;
+  row MailVc Mailrw;
+  Boolean sentf,iscomment;
+  
+  rwcnt = MatRowCnt(Mailr);
+  sentf = Mailr.SendFlag<>0;
+  iscomment = Mailr.IsComment;
+
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if ((sentf or Mailrw.RowTyp==kMailRowTypeFrom)) then begin
+      ResolveMailboxNumber(Mailrw);
+    end else begin
+      Mailrw.Mailbox = -1;
+    end;
+    if (iscomment) then begin
+      Mailrw.AddrStatus = 1;
+    end;
+    MatRowPut(Mailr,i,Mailrw);
+  end;
+  
+LResolveMailboxes_out:;
+  return;
+end;
+
+updating function DeleteAllMailRead(LongInt sernr)
+begin
+  record MailReadVc MailReadr;
+  Boolean TrHs;
+  
+  //LogText(0,"Deleating MailReadVc for mail " & sernr);
+  
+  TrHs = true;
+  MailReadr.mailSerNr = sernr;
+  while (LoopMain(MailReadr,1,TrHs)) begin
+    if (MailReadr.mailSerNr!=sernr) then begin
+      //LogText(0,"-- Found MailReadVc for mail " & MailReadr.mailSerNr & ", breaking loop");
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      //LogText(0,"-- Found MailReadVc for mail " & sernr);
+      RecordDelete(MailReadr);
+      StepBack(MailReadr);
+    end;
+  end;
+  return;
+end;
+
+/*
+updating procedure DeleteAllMailAttach(LongInt sernr)
+begin
+  return;
+end;
+*/
+
+/* called from C, do not change prototype unless you change C code as well */
+global
+updating procedure TestAndDeleteMail(record MailVc Mailr)
+begin
+  LongInt i,rwcnt;
+  row MailVc Mailrw;
+  record RLinkVc RLr;
+  string 255 rlink;
+  
+  if (AutoSyncing and ClientMode) then begin
+    goto out;
+  end;
+
+  if (Mailr.IsComment) then begin
+    // should count incoming record links, but this is called before 1st link is created (record must be saved to create link)
+    goto out;
+  end;
+
+  rwcnt = MatRowCnt(Mailr);
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if (Mailrw.Mailbox<>-1 and Mailrw.AddrStatus==0) then begin
+      goto out;
+    end;
+  end;
+  
+  if (AutoSyncing==false or ServerMode) then begin
+    rlink = GetRecordLink(Mailr);
+    RLr.ToRecidStr = rlink;
+    if (ReadFirstKey("ToRecKey",RLr,1,true)) then begin
+      if (RLr.ToRecidStr==rlink) then begin
+        goto out;
+      end;
+    end;
+  end;
+  
+  RecordDelete(Mailr);
+  DeleteAllMailRead(Mailr.SerNr);
+  //DeleteAllMailAttach(Mailr.SerNr);  
+  
+out:;
+  return;
+end;
+
+procedure AddMailSignature(var record MailVc Mailp,string frompers)
+begin
+  record ConfSignVc csp;
+  string 255 tstr;
+  Integer i,cscnt;
+  LongInt l;
+  Integer line;
+
+  if (FindUserInMailbox(frompers,tstr,l)) then begin
+    csp.SerNr = l;
+    if (ReadFirstMain(csp,1,true)) then begin
+      AddCRToText(Mailp);
+      AddCRToText(Mailp);
+      AddCRToText(Mailp);
+      line = LineTextCnt(Mailp);//this is the only place addsignature might fail
+      cscnt = LineTextCnt(csp);
+      for (i=0;i<cscnt;i=i+1) begin
+        tstr = LineTextGet(csp,i);
+        LineTextPut(Mailp,line,tstr);
+        line = line + 1;
+      end;  
+    end;
+  end;          
+  return;
+end;
+
+global
+function LongInt MailVcRecordInIndex(record MailVc Mailr,string indexname)
+begin
+  LongInt res;
+  
+  res = 1;
+  if (Mailr.Priority==0) then begin 
+    if (indexname=="UserPrio")  then begin res = 0; end;
+  end;
+  MailVcRecordInIndex = res;
+  return;
+end;
+
+global
+updating function LongInt MailVcRecordRemoveAfter(var record MailVc Mailr,record MailVc Mail2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  DeleteAllMailRead(Mailr.SerNr);
+  //DeleteAllMailAttach(Mailr.SerNr);
+  MailVcRecordRemoveAfter = res;
+  return;
+end;
+
+global
+function LongInt MailVcRecordDefaults(var record MailVc Mailr,record MailVc Mail2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  row MailVc marw;
+  string 255 tstr;
+  
+  Mailr.SerNr = -1;
+  Mailr.SendFlag = 0;
+
+  ClearRow(Mailr,marw,1);
+  marw.RowTyp = kMailRowTypeFrom;
+  FindCurMailboxName(tstr);
+  marw.AddrCode = tstr;
+  ResolveMailboxNumber(marw);
+  MatRowPut(Mailr,0,marw);
+//  AddMailSignature(Mailr,tstr);
+  MailVcRecordDefaults = res; 
+  return;
+end;
+
+global
+function LongInt MailVcRecordDuplicate(var record MailVc Mailr,record MailVc Mail2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  string 255 curmailbox;
+  row MailVc Mailrw;
+  Integer i,rwcnt;
+  longint mailboxnr;
+  string 255 mailboxcode;
+  
+  Mailr.SerNr = -1;
+  Mailr.SendFlag = 0;
+  Mailr.LockedFlag = 0;
+  SetMailForward(Mailr);
+  
+  FindCurMailboxName(curmailbox);
+  FindUserInMailbox(curmailbox,mailboxcode,mailboxnr);
+  rwcnt = MatRowCnt(Mailr);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if (Mailrw.Mailbox!=mailboxnr) then begin
+      switch (Mailrw.RowTyp) begin
+        case kMailRowTypeFrom:
+          MatRowDelete(Mailr,i);
+          Mailrw.RowTyp = kMailRowTypeTo;
+          Mailrw.AddrStatus = 0;
+          MatRowPut(Mailr,MatRowCnt(Mailr),Mailrw);
+        otherwise
+          Mailrw.AddrStatus = 0;
+          MatRowPut(Mailr,i,Mailrw);
+      end;
+    end else begin
+      Mailrw.AddrStatus = 0;
+      MatRowPut(Mailr,i,Mailrw);
+    end;
+  end;  
+  MailVcRecordDuplicate = res; 
+  return;
+end;
+
+global
+function LongInt MailVcRecordRemoveTest(var record MailVc Mailr,record MailVc Mail2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  res = 0;
+  if (long3>0) then begin
+    MessageBox(1359,"");
+  end;
+  MailVcRecordRemoveTest = res; 
+  return;
+end;
+
+function Boolean IsAllowedConference(string addrname)
+begin
+  Boolean res;
+  record ConfVc Confr;
+  
+  res = true;
+  Confr.AddrName = addrname;
+  if (ReadFirstKey("AddrName",Confr,1,true)) then begin
+    if (Confr.Class==kConfClassFolder) then begin
+      res = false;
+    end;
+  end else begin
+    res = false;
+  end;
+  IsAllowedConference = res;
+  return;
+end;
+
+function Boolean AddrInMail(string addrcode,record MailVc Mailp)
+begin
+  Boolean res;
+  row MailVc marw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(Mailp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Mailp,i,marw);
+    if (marw.AddrCode==addrcode) then begin
+      res = true;
+      goto LAddrInMail;
+    end;
+  end;
+LAddrInMail:;
+  AddrInMail = res;
+  return;
+end;
+
+function Boolean FilesFullyUploaded(record MailVc Mailr)
+begin
+  Boolean res;
+  record RLinkVc RLr;
+  record Attach2Vc Attach2r;
+  LongInt cnt;
+  
+  res = true;
+  cnt = 1;
+  
+  while (ReadRecordLink(Mailr,cnt,Attach2r,RLr)) begin
+    if (Attach2r.Uploading!=0) then begin
+      res = false;
+      goto LFilesFullyUploaded;
+    end;
+    cnt = cnt + 1;
+  end;
+LFilesFullyUploaded:;
+  FilesFullyUploaded = res;
+  return;
+end;
+
+global
+updating function LongInt MailVcRecordCheck(var record MailVc Mailp,record MailVc Mail2p,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  Integer rwcnt,i,j; 
+  row MailVc marw,marw2;
+  string 60 usercode;
+  LongInt nr;
+  Boolean externalexists;
+  Integer insertmode,updatemode;
+  record MailReadVc MRr;
+  record HtmlTemplateVc HtmlTemplr;
+  record ConfVc Confr;
+  record IntServerTypeBlock ISb;
+  
+  res = 0;
+  BlockLoad(ISb);
+  if (AutoSyncing and ClientMode) then begin
+    goto LMailVcRecordCheck;
+  end;
+
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+
+  if (stat==updatemode) then begin
+    if (Mailp.SendFlag==0) and (Mail2p.SendFlag!=0) then begin
+      rwcnt = MatRowCnt(Mail2p);
+      for (i = 0; i<rwcnt; i = i + 1) begin
+        MatRowGet(Mail2p,i,marw);
+        if (marw.RowTyp==kMailRowTypeFrom) then begin
+          if (marw.Mailbox==-1) then begin
+            RecordCheckError(25466,"",0,"AddrCode");
+            res = -1;
+            goto LMailVcRecordCheck;
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  externalexists = false;
+  if (Mailp.Lifespan==-1000) then begin
+    Mailp.Lifespan = 0;
+    goto LMailVcRecordCheck;
+  end;
+  rwcnt = MatRowCnt(Mailp);
+  if (rwcnt==0) then begin
+    RecordCheckError(1352,"",0,"AddrCode");
+    res = -1;
+    goto LMailVcRecordCheck;
+  end;
+  GetMailFormattingSettings(Mailp,Confr);
+  for (i = 0;i <rwcnt; i = i + 1) begin
+    MatRowGet(Mailp,i,marw);
+    if (marw.RowTyp==kMailRowTypeFile) then begin goto LSKIPROW; end;
+    if (marw.AddrStatus!=0) then begin goto LSKIPROW; end;
+    if ((i==0) and (marw.RowTyp!=kMailRowTypeFrom)) then begin
+      RecordCheckError(1352,marw.AddrCode,i,"AddrCode");
+      res = -1;
+      goto LMailVcRecordCheck;
+    end;
+    if ((i==0) and (blank(marw.AddrCode))) then begin
+      RecordCheckError(1352,marw.AddrCode,i,"AddrCode");
+      res = -1;
+      goto LMailVcRecordCheck;
+    end;
+    if ((i==0) and (marw.Mailbox>0) and stat==Rs_insert) then begin
+      if (Confr.SerNr>0) then begin
+        if (Confr.ForceHtmlFlag!=0 and Mailp.HtmlFlag!=Confr.DefaultHtmlFlag) then begin
+          switch (Confr.DefaultHtmlFlag) begin
+            case 0: RecordCheckError(25453,"",-1,"HtmlFlag");
+            case 1: RecordCheckError(25454,"",-1,"HtmlFlag");
+          end;
+          res = -1;
+          goto LMailVcRecordCheck;
+        end;
+        if (Confr.RequireTemplate!=0 and blank(Mailp.HtmlTemplate)) then begin
+          RecordCheckError(1058,"",-1,"HtmlTemplate");
+          res = -1; 
+          goto LMailVcRecordCheck;
+        end;
+        if (Confr.ForceDefaultTemplate!=0 and nonblank(Confr.DefaultTemplate) and Mailp.HtmlTemplate!=Confr.DefaultTemplate) then begin
+          RecordCheckError(1956,"",-1,"HtmlTemplate");
+          res = -1;
+          goto LMailVcRecordCheck;
+        end;
+      end;
+    end;
+    if (InterNetAddrTest(marw.AddrCode)==false) then begin
+      if (ISb.Server!=kInternalServerForum) then begin
+        if (IsAllowedConference(marw.AddrCode)==false) then begin
+          RecordCheckError(2118," " & marw.AddrCode,i,"AddrCode");
+          res = -1;
+          goto LMailVcRecordCheck;
+        end;
+        if (FindUserInMailbox(marw.AddrCode,usercode,nr)==false) then begin
+          if (stat==Rs_update) then begin
+            if (AddrInMail(marw.AddrCode,Mail2p)) then begin goto L55; end;
+          end;
+          RecordCheckError(1353,marw.AddrCode,i,"AddrCode");
+          res = -1;
+          goto LMailVcRecordCheck;
+        end;
+      end;
+    end else begin
+      if (ValidEmailAddress(marw.AddrCode)==false) then begin
+        RecordCheckError(2118," " & marw.AddrCode,i,"AddrCode");
+        res = -1;
+        goto LMailVcRecordCheck;
+      end;
+      externalexists = true;
+    end;
+L55:;
+    for (j = 0; j<i; j = j + 1) begin
+      MatRowGet(Mailp,j,marw2);
+      if (marw2.AddrCode==marw.AddrCode) then begin
+        RecordCheckError(1391,marw.AddrCode,i,"AddrCode");
+        res = -1;
+        goto LMailVcRecordCheck;
+      end;
+    end;
+LSKIPROW:;
+  end;
+  if (nonblank(Mailp.HtmlTemplate)) then begin
+    HtmlTemplr.Code = Mailp.HtmlTemplate;
+    if (ReadFirstMain(HtmlTemplr,1,true)==false) then begin
+      RecordCheckError(1120,Mailp.HtmlTemplate,-1,"HtmlTemplate");
+      res = -1;
+      goto LMailVcRecordCheck;
+    end;
+  end;
+  if (externalexists) then begin
+    if ((Mailp.SendFlag!=0) and ((Mail2p.SendFlag==0) or (stat==insertmode))) then begin
+      if (FilesFullyUploaded(Mailp)==false) then begin
+        RecordCheckError(1667,"",-1,"Header");
+        res = -1;
+        goto LMailVcRecordCheck;
+      end;
+    end;
+  end;
+  if (stat==Rs_update) then begin
+    if (Mailp.SendFlag==0) and (Mail2p.SendFlag!=0) then begin
+      MRr.mailSerNr = Mailp.SerNr;
+      MRr.accode = kMailStatusQueued;
+      if (ReadFirstKey("accode",MRr,2,true)) then begin
+        RecordCheckError(8137,"",-1,"Header");      
+        res = -1;
+        goto LMailVcRecordCheck;
+      end;
+      MRr.mailSerNr = Mailp.SerNr;
+      MRr.accode = kMailStatusRouted;
+      if (ReadFirstKey("accode",MRr,2,true)) then begin
+        RecordCheckError(8138,"",-1,"Header");
+        res = -1;
+        goto LMailVcRecordCheck;
+      end;
+    end;
+  end;
+  
+LMailVcRecordCheck:;
+  MailVcRecordCheck = res;
+  return;
+end;
+
+procedure TextAutoMailToEMailQue(record ConfAutoReplyVc ConfAutoReplyr,record EMailQueVc EMailQuep)
+begin
+  string 255 tstr;
+  Integer pos,textsize;
+  
+  textsize = SizeTextCnt(ConfAutoReplyr);
+  while (pos<textsize) begin
+    tstr = StringFromText(ConfAutoReplyr,pos,255);
+    pos = pos + len(tstr);
+    if (len(tstr)==0) then begin
+      pos = pos + 1;
+    end;
+    AddToText(tstr,EMailQuep);
+  end;
+  return;
+end;
+
+updating procedure CopyAutoFilesToEMailQue(record ConfAutoReplyVc ConfAutoReplyr,record EMailQueVc EMailQuep)
+begin
+  Integer notenr;
+  record RLinkVc RLinkr;
+  record Attach2Vc Attachr;
+  
+  notenr = 1;
+  while (ReadRecordLink(ConfAutoReplyr,notenr,Attachr,RLinkr)) begin
+    CreateRecordLink(EMailQuep,CurrentCompany,Attachr,CurrentCompany);
+    notenr = notenr + 1;
+  end;
+  return;
+end;
+
+updating procedure CreateAndSendAutoReply(record ConfAutoReplyVc ConfAutoReplyr,string fromstr,string tostr)
+begin
+  record EMailQueVc EMailQuer;
+  row EMailQueVc EMailQuerw;
+  Integer i,rwcnt;
+  
+  RecordNew(EMailQuer);
+  i = 0;
+  EMailQuerw.RowTyp = kMailRowTypeFrom;
+  EMailQuerw.AddrCode = fromstr;
+  MatRowPut(EMailQuer,i,EMailQuerw);
+  i = i + 1;
+  EMailQuerw.RowTyp = kMailRowTypeTo;
+  EMailQuerw.AddrCode = tostr;
+  MatRowPut(EMailQuer,i,EMailQuerw);
+  EMailQuer.HtmlFlag = ConfAutoReplyr.HtmlFlag;
+  EMailQuer.SerNr = -1;
+  EMailQuer.OrgSerNr = -1;
+  EMailQuer.FileName = "";
+  EMailQuer.Header = ConfAutoReplyr.Header;
+  EMailQuer.MessageID = "";
+  EMailQuer.TransDate = CurrentDate;
+  EMailQuer.TransTime = CurrentTime;
+  EMailQuer.HasFileAtt = 0;
+  EMailQuer.HasRecAtt = 0;
+  EMailQuer.Priority = 0;
+  EMailQuer.EMailSent = 0;
+  EMailQuer.Lifespan = 0;
+  EMailQuer.QueDate = CurrentDate;
+  EMailQuer.QueTime = CurrentTime;
+  if (EMailQuer.HtmlFlag==0) then begin
+    TextAutoMailToEMailQue(ConfAutoReplyr,EMailQuer);
+  end else begin
+    AddHtmlRecordToHtmlRecord(ConfAutoReplyr,EMailQuer,true);
+  end;
+  if (RecordInsert(EMailQuer,false)) then begin 
+    CopyAutoFilesToEMailQue(ConfAutoReplyr,EMailQuer);
+  end;
+  return;
+end;
+
+procedure TextAutoMailToEMailQue(record MailVc Mailp,record EMailQueVc EMailQuep)
+begin
+  string 255 tstr;
+  Integer pos,textsize;
+  row MailVc Mailrw;
+  Integer i,rwcnt;
+
+
+  LineTextPut(EMailQuep,LineTextCnt(EMailQuep),"");
+  LineTextPut(EMailQuep,LineTextCnt(EMailQuep),"");
+  LineTextPut(EMailQuep,LineTextCnt(EMailQuep),">" & USetStr(11705) & ": " & Mailp.Header);
+  rwcnt = MatRowCnt(Mailp);
+  for (i=0;i<rwcnt;i=i+1) begin  
+    MatRowGet(Mailp,i,Mailrw);
+    tstr = ">";
+    switch (Mailrw.RowTyp) begin
+      case kMailRowTypeFrom: tstr = tstr & USetStr(8130) & ": ";
+      case kMailRowTypeTo: tstr = tstr & USetStr(8131) & ": ";
+      case kMailRowTypeCC: tstr = tstr & USetStr(8133) & ": ";
+    end;
+    tstr = tstr & Mailrw.AddrCode;
+    LineTextPut(EMailQuep,LineTextCnt(EMailQuep),tstr);
+  end;  
+  tstr = ">" & USetStr(8143) & ": ";
+  tstr = tstr & Mailp.TransDate;
+  LineTextPut(EMailQuep,LineTextCnt(EMailQuep),tstr);
+  LineTextPut(EMailQuep,LineTextCnt(EMailQuep),"");
+
+  textsize = SizeTextCnt(Mailp);
+  while (pos<textsize) begin
+    tstr = StringFromText(Mailp,pos,255);
+    pos = pos + len(tstr);
+    if (len(tstr)==0) then begin
+      pos = pos + 1;
+    end;
+    AddToText(tstr,EMailQuep);
+  end;
+  return;
+end;
+
+updating procedure CopyAutoEmailFilesToEMailQue(record MailVc Mailp,record EMailQueVc EMailQuep)
+begin
+  Integer notenr;
+  record RLinkVc RLinkr;
+  record Attach2Vc Attachr;
+  
+  notenr = 1;
+  while (ReadRecordLink(Mailp,notenr,Attachr,RLinkr)) begin
+    CreateRecordLink(EMailQuep,CurrentCompany,Attachr,CurrentCompany);
+    notenr = notenr + 1;
+  end;
+  return;
+end;
+
+global
+updating procedure CreateAndForwardMail(record MailVc Mailp,string fromstr,string tostr)
+begin
+  record EMailQueVc EMailQuer;
+  row EMailQueVc EMailQuerw;
+  Integer i,rwcnt;
+  
+  RecordNew(EMailQuer);
+  i = 0;
+  EMailQuerw.RowTyp = kMailRowTypeFrom;
+  EMailQuerw.AddrCode = fromstr;
+  MatRowPut(EMailQuer,i,EMailQuerw);
+  i = i + 1;
+  EMailQuerw.RowTyp = kMailRowTypeTo;
+  EMailQuerw.AddrCode = tostr;
+  MatRowPut(EMailQuer,i,EMailQuerw);
+  EMailQuer.HtmlFlag = Mailp.HtmlFlag;
+  EMailQuer.SerNr = -1;
+  EMailQuer.OrgSerNr = -1;
+  EMailQuer.FileName = "";
+  EMailQuer.Header = Mailp.Header;
+  EMailQuer.MessageID = "";
+  EMailQuer.TransDate = CurrentDate;
+  EMailQuer.TransTime = CurrentTime;
+  EMailQuer.HasFileAtt = 0;
+  EMailQuer.HasRecAtt = 0;
+  EMailQuer.Priority = 0;
+  EMailQuer.EMailSent = 0;
+  EMailQuer.Lifespan = 0;
+  EMailQuer.QueDate = CurrentDate;
+  EMailQuer.QueTime = CurrentTime;
+  if (EMailQuer.HtmlFlag==0) then begin
+    TextAutoMailToEMailQue(Mailp,EMailQuer);
+  end else begin
+    AddHtmlRecordToHtmlRecord(Mailp,EMailQuer,true);
+    TextAutoMailToEMailQue(Mailp,EMailQuer);
+  end;
+  if (RecordInsert(EMailQuer,false)) then begin 
+    CopyAutoEmailFilesToEMailQue(Mailp,EMailQuer);
+  end;
+  return;
+end;
+
+updating function Boolean CheckForAutoReply(record MailVc Mailp,string afromstr)
+begin
+  Boolean res;
+  Integer i,i2,rwcnt,rwcnt2;
+  row MailVc marw;
+  row MailVc marw2;
+  record ConfAutoReplyVc ConfAutoReplyr;
+  record AutoReplyListVc AutoReplyListr;
+  record AutoReplyListVc oldAutoReplyListr;
+  string 255 tstr;
+  LongInt l;
+  Boolean sendf,internetf,foundf;
+  string 255 fromstr,ch;
+  
+  fromstr = CleanupUTF8String(afromstr);
+  
+  if (BytesInString(fromstr)>60) begin
+    l = len(fromstr);
+    for (i=l-1;i>=0;i=i-1) begin
+      ch = mid(fromstr,i,1);
+      if (foundf==false) then begin
+        if (ch==">") then begin
+          foundf = true;
+          tstr = ch;
+        end;
+      end else begin
+        if (ch=="<") then begin
+          i = -1;
+        end;
+        tstr = ch & tstr;
+      end;
+    end;
+    if (nonblank(tstr)) then begin
+      fromstr = tstr;
+    end;
+  end;
+
+  while (BytesInString(fromstr)>60) begin
+    fromstr = left(fromstr,len(fromstr)-1);
+  end;
+  
+  if (InterNetAddrTest(fromstr)) then begin
+    internetf = true;
+  end;
+
+  rwcnt = MatRowCnt(Mailp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Mailp,i,marw);
+    if ((marw.RowTyp==kMailRowTypeTo) or (marw.RowTyp==kMailRowTypeCC)) then begin
+      if (FindUserInMailbox(marw.AddrCode,tstr,l)) then begin
+        ConfAutoReplyr.SerNr = l;
+        if (ReadFirstMain(ConfAutoReplyr,1,true)) then begin
+          if (ConfAutoReplyr.Activated!=0 or ConfAutoReplyr.ForwardEnabled!=0) then begin
+            sendf = true;
+            AutoReplyListr.SerNr = ConfAutoReplyr.SerNr;
+            AutoReplyListr.AddrCode = fromstr;
+            AutoReplyListr.TransDate = CurrentDate;
+            if (ReadFirstMain(AutoReplyListr,3,true)) then begin
+              if (AutoReplyListr.cnt>2) then begin
+                sendf = false;
+              end else begin
+                RecordCopy(oldAutoReplyListr,AutoReplyListr);
+                AutoReplyListr.cnt = AutoReplyListr.cnt + 1;
+                if (RecordUpdate(oldAutoReplyListr,AutoReplyListr,true)==0) then begin end;
+              end;
+              ResetLoop(AutoReplyListr);
+              foundf = true;
+              AutoReplyListr.SerNr = ConfAutoReplyr.SerNr;
+              AutoReplyListr.AddrCode = fromstr;
+              while (LoopMain(AutoReplyListr,2,foundf)) begin
+                if (AutoReplyListr.SerNr!=ConfAutoReplyr.SerNr) then begin foundf = false; end;
+                if (AutoReplyListr.AddrCode!=fromstr) then begin foundf = false; end;
+                if (AutoReplyListr.TransDate==CurrentDate) then begin foundf = false; end;
+                if (foundf) then begin
+                  RecordDelete(AutoReplyListr);
+                  StepBack(AutoReplyListr);
+                end;
+              end;
+            end else begin
+              AutoReplyListr.SerNr = ConfAutoReplyr.SerNr;
+              AutoReplyListr.AddrCode = fromstr;
+              AutoReplyListr.cnt = 1;
+              AutoReplyListr.TransDate = CurrentDate;
+              if (RecordStore(AutoReplyListr,true)) then begin end;
+            end;
+            if (sendf or ConfAutoReplyr.ForwardEnabled!=0) then begin
+              if (internetf and ConfAutoReplyr.Activated!=0) then begin
+                CreateAndSendAutoReply(ConfAutoReplyr,marw.AddrCode,fromstr);
+              end;
+              if (nonblank(ConfAutoReplyr.ForwardTo) and ConfAutoReplyr.ForwardEnabled!=0 and InterNetAddrTest(ConfAutoReplyr.ForwardTo)) then begin              
+                rwcnt2 = MatRowCnt(Mailp);
+                for (i2=0;i2<rwcnt2;i2=i2+1) begin                
+                  MatRowGet(Mailp,i2,marw2)
+                  if (marw2.AddrCode==ConfAutoReplyr.ForwardTo) then begin
+                    goto LSKIPADDRES;
+                  end;
+                end;
+                CreateAndForwardMail(Mailp,marw.AddrCode,ConfAutoReplyr.ForwardTo);
+LSKIPADDRES:;                
+              end;
+              res = true;
+            end;
+          end;          
+        end;        
+      end;
+    end;
+  end;
+  CheckForAutoReply = res;
+  return;
+end;
+
+global
+updating function LongInt MailVcRecordSave(var record MailVc Mailp,record MailVc Mail2p,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  Integer i,rwcnt;
+  row MailVc marw;
+  
+  Mailp.TransDate = CurrentDate;
+  Mailp.TransTime = CurrentTime;
+  
+  if (Mailp.Lifespan==-1000) then begin
+    Mailp.Lifespan = 0;
+  end;
+  
+  if (ClientMode==true and AutoSyncing==true) then begin
+    goto LMailVcRecordSave;
+  end;
+  
+  ResolveMailboxes(Mailp);
+  
+  if (Mailp.SendFlag!=0) then begin
+    rwcnt = MatRowCnt(Mailp);
+    for (i = 0; i<rwcnt; i = i + 1) begin
+      MatRowGet(Mailp,i,marw);
+      if (marw.RowTyp==kMailRowTypeFrom) then begin
+        if (CheckForAutoReply(Mailp,marw.AddrCode)) then begin
+          goto LMailVcRecordSave;
+        end;
+      end;
+    end;
+  end;
+LMailVcRecordSave:;  
+  MailVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt MailVcRecordSaveAfter(var record MailVc Mailp,record MailVc Mail2p,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  record ActVc Actr;
+  
+  TestAndDeleteMail(Mailp);
+  
+/*
+old, we have CreateActivityforCustomer_Mail
+  if (AutoSyncing==false or ServerMode) then begin
+    if (Mailp.SendFlag!=0) then begin
+      res = MakeActFromSubSys_MailVc(Mailp,Actr,false);
+    end;
+  end;
+*/  
+  if (AutoSyncing==false or ServerMode or SingleUserMode) then begin
+    if (Mailp.SendFlag!=0) then begin
+      CreateActivityforCustomer_Mail(Mailp,Actr,false);
+    end;
+  end;
+  MailVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+updating function LongInt MailVcRecordUpdate(var record MailVc Mailp,record MailVc Mail2p,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  Integer i,rwcnt;
+  row MailVc marw;
+  Boolean sendtopostmasterf;
+  record MailSettingsBlock MailSb;
+  record ConfVc Confr;
+  transaction Boolean gMailVcDoNotUpdateDatef;
+  record MailVc Mail3p;
+  
+  Mail3p = Mail2p;
+  Mail3p.Tags = Mailp.Tags;
+
+  if (ComparePosts(Mailp,Mail3p)==false) then begin
+    if (gMailVcDoNotUpdateDatef==false) then begin
+      Mailp.TransDate = CurrentDate;
+      Mailp.TransTime = CurrentTime;
+    end;
+  end;
+  
+  if (Mailp.Lifespan==-1000) then begin
+    Mailp.Lifespan = 0;
+  end;
+  
+  UpdateMailboxes(Mailp,Mail2p);
+  
+  if (Mailp.SendFlag!=0) and (Mail2p.SendFlag==0) then begin
+    rwcnt = MatRowCnt(Mailp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Mailp,i,marw);
+      if (marw.RowTyp==kMailRowTypeFrom) then begin
+        if (CheckForAutoReply(Mailp,marw.AddrCode)) then begin
+          goto LMailVcRecordUpdate;
+        end;
+      end;
+    end;
+  end;
+  if (Mailp.SendFlag==0) and (Mail2p.SendFlag!=0) then begin
+    sendtopostmasterf = true;
+    rwcnt = MatRowCnt(Mailp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Mailp,i,marw);
+      if (marw.RowTyp==kMailRowTypeFrom) then begin
+        if (InterNetAddrTest(marw.AddrCode)==false) then begin
+          sendtopostmasterf = false;
+          i = rwcnt;
+        end;        
+      end;
+    end;
+    if (sendtopostmasterf) then begin
+      BlockLoad(MailSb);
+      Confr.AddrName = MailSb.Postmaster;
+      if (ReadFirstKey("AddrName",Confr,1,true)) then begin
+        ClearRow(Mailp,marw,1);
+        marw.AddrCode = MailSb.Postmaster;
+        ResolveMailboxNumber(marw);
+        MatRowPut(Mailp,MatRowCnt(Mailp),marw);
+        Mailp.Header = USetStr(2230) & ">>" & Mailp.Header;
+      end;
+    end;
+  end;
+LMailVcRecordUpdate:;  
+  MailVcRecordUpdate = res;
+  return;
+end;
+
+updating procedure UpdateRLinksFromMail(record MailVc Mailp,record MailVc oMailp)
+begin
+  record RLinkVc RLr;
+  record RLinkVc oRLr;
+  string 255 tstr;
+  Boolean found;
+
+  tstr = BuildRecordIdStr(oMailp,CurrentCompany);
+  RLr.ToRecidStr = tstr;
+  found = true;
+  while (LoopKey("ToRecKey",RLr,1,found)) begin
+    if (RLr.ToRecidStr!=tstr) then begin
+      found = false;
+    end;
+    if (found) then begin
+      RecordCopy(oRLr,RLr);
+      RLr.Comment = Mailp.Header;
+      RecordUpdate(oRLr,RLr,false);
+    end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt MailVcRecordUpdateAfter(var record MailVc Mailp,record MailVc Mail2p,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  record ActVc Actr;
+  
+  TestAndDeleteMail(Mailp);
+  
+  if (AutoSyncing==false or ServerMode) then begin
+    if (Mailp.Header!=Mail2p.Header) then begin
+      UpdateRLinksFromMail(Mailp,Mail2p);
+    end;
+  end;
+  if (AutoSyncing==false or ServerMode or SingleUserMode) then begin
+    if (Mailp.SendFlag!=0) and (Mail2p.SendFlag==0) then begin
+      CreateActivityforCustomer_Mail(Mailp,Actr,false);
+    end;
+  end;
+//  SetMailAcceptancePostponed(Mailp.SerNr);
+  MailVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+function LongInt MailVcRecordImport(var record MailVc Mailr,record MailVc Mail2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (Mailr.SerNr<1) then begin
+    Mailr.SerNr = NextSerNr("MailVc",CurrentDate,-1,false,"");
+  end;
+  MailVcRecordImport = res;
+  return;
+end;
+
+global
+function LongInt MailVcRecordProtectFields(var record MailVc Mailr,record MailVc Mail2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  Mailr.RequireAcceptance = Mail2r.RequireAcceptance;
+  MailVcRecordProtectFields = res;
+  return;
+end;
+
+
+global
+function LongInt SMSVcRecordDefaults(var record SMSVc SMSr,record SMSVc SMS2r,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  string 255 tstr;
+  
+  SMSr.SerNr = -1;
+  SMSr.SendFlag = 0;
+  SMSr.TransDate = CurrentDate;
+  SMSr.TransTime = CurrentTime;
+  SMSVcRecordDefaults = res; 
+  return;
+end;
+
+global
+updating function LongInt SMSVcRecordCheck(var record SMSVc SMSr,record SMSVc SMS2r,LongInt stat,LongInt check)
+begin
+  LongInt res;
+
+  res = 0;     
+  if (SMSr.SerNr<=0) then begin
+    SMSr.SerNr = NextSerNr("SMSVc",SMSr.TransDate,-1,false,"");
+  end;
+LSMSVcRecordCheck:;
+  SMSVcRecordCheck = res;
+  return;
+end;
+
+global
+updating function LongInt SMSVcRecordSave(var record SMSVc SMSr,record SMSVc SMS2r,LongInt stat,LongInt check)
+begin
+  LongInt res;  
+  record UserVc Userr;
+  record CUVc CUr;
+  record CUVc GlobalCUr;
+  record GlobalUserVc GlobalUserr;
+
+  SMSr.SendFlag = 1;
+  
+  GlobalUserr.Code = CurrentUser;
+  if (ReadFirstMain(GlobalUserr,1,true)) then begin end;
+  GlobalCUr.Code = GlobalUserr.CustCode;
+  if (ReadFirstMain(GlobalCUr,1,true)) then begin end;
+
+  Userr.Code = CurrentUser;
+  if (ReadFirstMain(Userr,1,true)) then begin end; 
+  CUr.Code = Userr.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin end;
+
+  SMSr.Person = Userr.Code;
+  if (blank(SMSr.FromPhoneNo)) then begin SMSr.FromPhoneNo = GlobalCUr.Mobile; end;
+  if (blank(SMSr.FromPhoneNo)) then begin SMSr.FromPhoneNo = CUr.Mobile; end;
+  if (blank(SMSr.FromPhoneNo)) then begin SMSr.FromPhoneNo = Userr.Phone1; end;
+  if (blank(SMSr.FromPhoneNo)) then begin SMSr.FromPhoneNo = Userr.Phone2; end;
+  SMSVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt SMSVcRecordSaveAfter(var record SMSVc SMSr,record SMSVc SMS2r,LongInt stat,LongInt check)
+begin
+  LongInt res;
+
+  if (SMSr.MessageType==kComMessageTypeSms) then begin
+    AddToETasksQueueVc("SENDSMS","SMSVc",SMSr.SerNr,1);
+  end;
+LSMSVcRecordSaveAfter:;  
+  SMSVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+function LongInt SMSVcRecordDuplicate(var record SMSVc SMSr,record SMSVc SMS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  string 255 curmailbox;
+  Integer i,rwcnt;
+  
+  SMSr.SerNr = -1;
+  SMSr.SendFlag = 0;
+  SMSr.CheckSum = blankval;
+  SMSVcRecordDuplicate = res; 
+  return;
+end;
+
+global
+function LongInt HtmlTemplateVcRecordCheck(var record HtmlTemplateVc HtmlTemplater,record HtmlTemplateVc HtmlTemplate2r,LongInt stat,LongInt check)
+begin
+  LongInt res;
+  
+  if (blank(HtmlTemplater.Code)) then begin
+    RecordCheckError(1058,"",-1,"Code");
+    res = -1;
+    goto LHtmlTemplateVcRecordCheck;
+  end;
+  res = 0;
+LHtmlTemplateVcRecordCheck:;
+  HtmlTemplateVcRecordCheck = res;
+  return;
+end;
+
+//MailTextVc
+global
+function LongInt MailTextVcRecordImport(var record MailTextVc MailTextr,record MailTextVc MailText2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (blank(MailTextr.FileName)) then begin
+    MailTextr.FileName = StringSetFromString(-3,MailTextr.Register);
+  end;
+  MailTextVcRecordImport = res;
+  return;
+end;
+
+global
+function LongInt WebNGStatVcRecordDuplicate(var record WebNGStatVc WebNGStatr,record WebNGStatVc WebNGStat2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  WebNGStatr.SerNr = -1;
+  if (SingleUserMode) then begin
+    WebNGStatr.SerNr = NextSerNr("WebNGStatVc",CurrentDate,-1,false,"");
+  end;
+  WebNGStatVcRecordDuplicate = res; 
+  return;
+end;
+
+global
+function LongInt WebNGStatVcRecordCheck(var record WebNGStatVc WebNGStatr,record WebNGStatVc WebNGStat2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  res = 0;
+  if (WebNGStatr.SerNr<=0) then begin  
+    WebNGStatr.SerNr = NextSerNr("WebNGStatVc",CurrentDate,-1,false,"");
+  end;
+LWebNGStatVcRecordCheck:;
+  WebNGStatVcRecordCheck = res;
+  return;
+end;

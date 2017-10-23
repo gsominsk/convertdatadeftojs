@@ -1,0 +1,799 @@
+//tools
+external function boolean LoginState();
+external function string 255 removenextnode(var string);
+external function string 10 ToolWebNGGetCountry();
+external procedure AddToSortedArray(string,string,var array string,var array string,var integer);
+external procedure RollbackOneRequestURL();
+external function string 255 FormatLink(string,string,boolean,boolean);
+external function string 10 CurrentWebLang();
+external procedure WebOutSubmit(string,string,string,string);
+//translation
+external function string 255 ToolWebNGTranslateText(integer);
+//pages
+external procedure ShowWebAppPageStart(record WebNGPageVc,string);
+external procedure ShowWebAppPageEnd(record WebNGPageVc);
+external procedure ShowErrorPage(string);
+//shop
+external function boolean ShopSetCompany(string);
+//webng
+external procedure RedirectToRequestedPage();
+external procedure RedirectToStructLink(string);
+//contactus
+external procedure OldCodeWebHBSDivContactLine(string,string,string,Boolean);
+external procedure OldCodeContactTextBox(string,string,record NotepadVc);
+external procedure OldCodeWebHBSDivRadioButton(string,string,Integer,Boolean);
+external procedure OldCodeCountryDropDown(string,string,string,boolean);
+
+//std
+external updating procedure StoreDownload(record MailVc);
+external procedure AddTextLineToMail(string,record MailVc);
+external procedure AddNLToMail(record MailVc);
+
+function string 255 GetFileExtension(string filename)
+begin
+  string 255 ext;
+  if (mid(filename,len(filename)-4,1)==".") then begin
+    ext = right(filename,3);
+  end else begin
+    if (mid(filename,len(filename)-5,1)==".") then begin
+      ext = right(filename,4);
+    end;
+  end;
+  GetFileExtension = ext;
+  return;
+end;
+
+global
+procedure SetContentTypeForExtension(string ext)
+begin
+  switch (ext) begin
+    case "css" : WebSetContentType("text/css");
+    case "jpg" : WebSetContentType("image/jpeg");
+    case "jpeg" : WebSetContentType("image/jpeg");
+    case "png" : WebSetContentType("image/png");
+    case "gif" : WebSetContentType("image/gif");
+    case "htc" : WebSetContentType("text/x-component");
+    case "exe" : WebSetContentType("application/binary");
+    case "bin" : WebSetContentType("application/binary");
+    case "obj" : WebSetContentType("application/binary");
+    case "hpf" : WebSetContentType("application/binary");
+    case "hob" : WebSetContentType("application/binary");
+    case "dat" : WebSetContentType("application/binary");
+    case "swf" : WebSetContentType("application/x-shockwave-flash");
+    case "pdf" : WebSetContentType("application/pdf");
+    case "zip" : WebSetContentType("application/zip");
+    case "txt" : WebSetContentType("text/plain");
+    case "xml" : WebSetContentType("text/xml");
+    case "xsl" : WebSetContentType("text/xsl");
+    case "htm" : WebSetContentType("text/html");
+    case "html" : WebSetContentType("text/html");
+    otherwise
+      WebSetContentType("application/binary");
+  end;
+  return;
+end;
+
+global
+procedure SendAttachedFile(record Attach2Vc Attachr,boolean downloadf)
+begin
+  string 255 ext;
+  
+  if (Attachr.SerNr>0) then begin
+    ext = GetFileExtension(Attachr.FileName);
+    
+    SetContentTypeForExtension(ext);
+    
+    if (downloadf) then begin
+      WebSetContentDisposition("attachment; filename=" & Attachr.FileName);
+    end else begin
+      WebSetContentDisposition("inline; filename=" & Attachr.FileName);
+    end;
+
+    WebOutAttachment(Attachr.SerNr);
+  end;
+  
+  return;
+end;
+
+procedure SendAttachedNote(record NotepadVc Noter,string filename,boolean downloadf)
+begin
+  string 255 ext;
+  
+  ext = GetFileExtension(filename);
+    
+  SetContentTypeForExtension(ext);
+    
+  if (downloadf) then begin
+    WebSetContentDisposition("attachment; filename=" & filename);
+  end else begin
+    WebSetContentDisposition("inline; filename=" & filename);
+  end;
+
+  WebOutText(Noter,false,"");
+  
+  return;
+end;
+
+global
+procedure FileDownloadApp(record WebNGStructVc WSr)
+begin
+  string 255 filename;
+  boolean downloadf,foundf;
+  record RLinkVc RLr;
+  record Attach2Vc Attachr;
+  record NotepadVc Noter;
+  integer i;
+  
+  RollbackOneRequestURL;
+  
+  foundf = false;
+  filename = WebGetArg("file");
+  downloadf = false;
+  if (WebGetArg("download")=="1") then begin downloadf = true; end;
+  
+  if (nonblank(filename)) then begin
+    i = 1;
+    while (foundf==false and ReadRecordLink(WSr,i,Noter,RLr)) begin
+      i = i+1;
+      if (RLr.Comment==filename) then begin
+        foundf = true;
+        SendAttachedNote(Noter,filename,downloadf);
+      end;
+    end;
+
+    if (foundf==false) then begin
+      i = 1;
+      while (foundf==false and ReadRecordLink(WSr,i,Attachr,RLr)) begin
+        i = i+1;
+        if (Attachr.FileName==filename) then begin
+          foundf = true;
+          SendAttachedFile(Attachr,downloadf);
+        end;
+      end;
+    end;
+  end;
+  
+  if (foundf==false) then begin
+    ShowErrorPage(ToolWebNGTranslateText(25000)); //File not found
+  end;
+  return;
+end;
+
+global
+function boolean FileNameIsImage(string filename)
+begin
+  boolean res;
+  
+  res = true;
+  if (right(filename,4)==".jpg")  then begin goto LFileNameIsImage; end;
+  if (right(filename,4)==".png")  then begin goto LFileNameIsImage; end;
+  if (right(filename,4)==".bmp")  then begin goto LFileNameIsImage; end;
+  if (right(filename,4)==".gif")  then begin goto LFileNameIsImage; end;
+  if (right(filename,5)==".jpeg") then begin goto LFileNameIsImage; end;
+  if (right(filename,5)==".pict") then begin goto LFileNameIsImage; end;
+  res = false;
+  
+LFileNameIsImage:;
+  FileNameIsImage = res;
+  return;
+end;
+
+global
+function boolean ProductHasImage(record WebNGProductVc WPr,var string imageid)
+begin
+  record Attach2Vc Attachr;
+  record RLinkVc RLr;
+  integer i;
+  boolean res;
+  
+  i = 1;
+  res = false;
+  imageid = "";
+  while (ReadRecordLink(WPr,i,Attachr,RLr) and res==false) begin
+    if (FileNameIsImage(Attachr.FileName)) then begin
+      res = true;
+      imageid = Attachr.SerNr & "-" & Attachr.FileSize;
+    end;
+    i = i+1;
+  end;
+  
+  ProductHasImage = res;
+  return;
+end;
+
+global
+procedure ProductImageDownloadApp(string path)
+begin
+  string 255 node,mpath;
+  string 255 productcode;
+  integer imgno;
+  boolean thumbf,downloadf,addf,foundf;
+  record WebNGProductVc WPr;
+  record Attach2Vc Attachr;
+  record RLinkVc RLr;
+  array string 255 aFiles,aAttachSerNr;
+  integer aLen,i;
+  integer oldcompany;
+  boolean res;
+  
+  RollbackOneRequestURL;
+  
+  //handles
+  // product/10101/
+  // product/10101/1/
+  // product/10101/?thumb=yes
+  // product/?code=10101
+
+  foundf = false;
+  imgno = 0;
+  aLen = 0;
+  mpath = path;
+  
+  productcode = URLDecode(removenextnode(mpath));
+  if (blank(productcode)) then begin
+    productcode = WebGetArg("code");
+  end;
+  if (nonblank(productcode)) then begin
+    node = removenextnode(mpath);
+    if (blank(node)) then begin
+      imgno = 0;
+    end else begin
+      imgno = StringToInt(node);
+      if (imgno==0) then begin
+        imgno = -1;
+      end;
+    end;
+    
+    if (WebGetArg("download")=="1") then begin downloadf = true; end;
+    if (WebGetArg("thumb")=="1") then begin thumbf = true; end;
+
+    if (imgno>=0) then begin
+      oldcompany = CurrentCompany;
+      res = ShopSetCompany(ToolWebNGGetCountry);
+      WPr.Code = productcode;
+      if (ReadFirstMain(WPr,1,true)) then begin
+        LRetryFindImage:;
+        i = 1;
+        while (ReadRecordLink(WPr,i,Attachr,RLr)) begin
+          addf = false;
+          if (thumbf) then begin
+            if (left(Attachr.FileName,5)=="thumb") then begin
+              addf = true;
+            end;
+          end else begin
+            addf= true;
+          end;
+          
+          if (FileNameIsImage(Attachr.FileName)==false) then begin
+            addf = false;
+          end;
+          
+          if (addf) then begin
+            AddToSortedArray(Attachr.FileName,Attachr.SerNr,aFiles,aAttachSerNr,aLen);
+          end;
+          
+          i = i+1;
+        end;
+        if (thumbf and aLen==0) then begin
+          thumbf = false;
+          goto LRetryFindImage;
+        end;
+        if (imgno==0 or imgno<=aLen) then begin
+          if (imgno==0) then begin
+            imgno = 1;
+          end;
+          
+          Attachr.SerNr = StringToLongint(aAttachSerNr[imgno-1]);
+          if (ReadFirstMain(Attachr,1,true)) then begin
+            foundf = true;
+            SendAttachedFile(Attachr,downloadf);
+          end;
+        end;
+      end;
+      if (res) then begin
+        ResetCompany(oldcompany);
+      end;
+    end;
+  end;
+  
+  if (foundf==false) then begin
+    ShowErrorPage(ToolWebNGTranslateText(25000)); //File not found
+  end;
+  
+  return;
+end;
+
+global
+procedure ObjectImageDownloadApp(string path)
+begin
+  string 255 node,mpath;
+  string 255 objectcode;
+  integer imgno;
+  boolean thumbf,downloadf,addf,foundf;
+  record ObjVc Objr;
+  record Attach2Vc Attachr;
+  record RLinkVc RLr;
+  array string 255 aFiles,aAttachSerNr;
+  integer aLen,i;
+  integer oldcompany;
+  boolean res;
+  
+  RollbackOneRequestURL;
+  
+  //handles
+  // product/10101/
+  // product/10101/1/
+  // product/10101/?thumb=yes
+  // product/?code=10101
+
+  foundf = false;
+  imgno = 0;
+  aLen = 0;
+  mpath = path;
+  
+  objectcode = URLDecode(removenextnode(mpath));
+  if (blank(objectcode)) then begin
+    objectcode = WebGetArg("code");
+  end;
+  if (nonblank(objectcode)) then begin
+    node = removenextnode(mpath);
+    if (blank(node)) then begin
+      imgno = 0;
+    end else begin
+      imgno = StringToInt(node);
+      if (imgno==0) then begin
+        imgno = -1;
+      end;
+    end;
+    
+    if (WebGetArg("download")=="1") then begin downloadf = true; end;
+    if (WebGetArg("thumb")=="1") then begin thumbf = true; end;
+
+    if (imgno>=0) then begin
+      oldcompany = CurrentCompany;
+      res = ShopSetCompany(ToolWebNGGetCountry);
+      Objr.Code = objectcode;
+      if (ReadFirstMain(Objr,1,true)) then begin
+        LRetryFindImage:;
+        i = 1;
+        while (ReadRecordLink(Objr,i,Attachr,RLr)) begin
+          addf = false;
+          if (thumbf) then begin
+            if (left(Attachr.FileName,5)=="thumb") then begin
+              addf = true;
+            end;
+          end else begin
+            addf= true;
+          end;
+          
+          if (FileNameIsImage(Attachr.FileName)==false) then begin
+            addf = false;
+          end;
+          
+          if (addf) then begin
+            AddToSortedArray(Attachr.FileName,Attachr.SerNr,aFiles,aAttachSerNr,aLen);
+          end;
+          
+          i = i+1;
+        end;
+        if (thumbf and aLen==0) then begin
+          thumbf = false;
+          goto LRetryFindImage;
+        end;
+        if (imgno==0 or imgno<=aLen) then begin
+          if (imgno==0) then begin
+            imgno = 1;
+          end;
+          
+          Attachr.SerNr = StringToLongint(aAttachSerNr[imgno-1]);
+          if (ReadFirstMain(Attachr,1,true)) then begin
+            foundf = true;
+            SendAttachedFile(Attachr,downloadf);
+          end;
+        end;
+      end;
+      if (res) then begin
+        ResetCompany(oldcompany);
+      end;
+    end;
+  end;
+  
+  if (foundf==false) then begin
+    ShowErrorPage(ToolWebNGTranslateText(25000)); //File not found
+  end;
+  
+  return;
+end;
+
+global
+procedure OnlineReservationRoomPictureDownload(string roomtype)
+begin
+  record Attach2Vc Attachr;
+  record RLinkVc RLr;
+  record ResTypeVc ResTyper;
+  string 255 mpath,node;
+  integer i;
+  
+  mpath = roomtype;
+  node = roomtype;
+  if (nonblank(node)) then begin
+    ResTyper.Code = node;
+    if (ReadFirstMain(ResTyper,1,true)) then begin
+      i = 1;
+      while (ReadRecordLink(ResTyper,i,Attachr,RLr)) begin
+        if (FileNameIsImage(Attachr.FileName)) then begin
+          SendAttachedFile(Attachr,false);
+          goto LShowRoomPicture;
+        end;
+        i = i + 1;
+      end;
+    end;
+  end;
+LShowRoomPicture:;
+  return;
+end;
+
+global
+function string 255 GetWebmailBoxForCountry(string country)
+begin
+  string 255 res;
+  record WebNGCountryVc WCr;
+  
+  res = "";
+  WCr.Code = country;
+  if (ReadFirstMain(WCr,1,true)) then begin
+    res = WCr.WebMailConference;
+  end;
+  
+  GetWebmailBoxForCountry = res;
+  return;
+end;
+
+procedure StoreDownloadRegistrationMail(string companyname,string personname,string email,string url,string phone,string fax,
+                                                  integer interestflag,string country,record NotepadVc Noter)
+begin
+  record MailSettingsBlock MSr;
+  record ConfVc Confr;
+  record MailVc Mailr;
+  row MailVc Mailrw;
+  integer i,cnt;
+  string 255 tstr;
+  string 255 toconf;
+
+  toconf = "Contact Us"; //country
+  
+  if (nonblank(toconf)) then begin
+    BlockLoad(MSr);
+    RecordNew(Mailr);
+    Mailr.SendFlag = 1;
+    Mailrw.RowTyp = 1;
+    Mailrw.AddrCode = ToolWebNGTranslateText(25433);  //Download Registration
+
+    MatRowPut(Mailr,0,Mailrw);
+    Mailrw.RowTyp = 0;
+    Mailrw.AddrCode = GetWebmailBoxForCountry(country);
+    if (blank(Mailrw.AddrCode)) then begin
+      Mailrw.AddrCode = MSr.Postmaster;
+    end;
+    MatRowPut(Mailr,1,Mailrw);
+//    Mailr.Header = "Download made by: " & WebGetArg("companyname");
+    AddTextLineToMail(personname,Mailr);
+    AddTextLineToMail(companyname,Mailr);
+    AddTextLineToMail(email,Mailr);
+    AddTextLineToMail(url,Mailr);
+    AddTextLineToMail(phone,Mailr);
+    AddTextLineToMail(fax,Mailr);
+    AddTextLineToMail("",Mailr);
+    AddTextLineToMail("",Mailr);
+
+    i = 0;
+    cnt = SizeTextCnt(Noter);
+    while (i<cnt) begin
+      tstr = StringFromText(Noter,i,255);
+      i = i + 255;
+      AddToText(tstr,Mailr);
+    end;
+
+    AddNLToMail(Mailr);
+    AddNLToMail(Mailr);
+    switch (interestflag) begin
+      case 0:
+        /*Confr.AddrName = Confr.AddrName & " FO";
+        if (ReadFirstKey("AddrName",Confr,1,true)) then begin
+          Mailrw.RowTyp = 0;
+          Mailrw.AddrCode = Confr.AddrName;
+          MatRowPut(Mailr,1,Mailrw);
+        end;*/
+        tstr = ToolWebNGTranslateText(20129); 
+//      case 1: tstr = ToolWebNGTranslateText(20130);
+      case 2: tstr = ToolWebNGTranslateText(20131);
+      case 3: tstr = ToolWebNGTranslateText(20132);
+      case 4: tstr = ToolWebNGTranslateText(20133);
+      otherwise
+        tstr = ToolWebNGTranslateText(20368) & "-" & interestflag;
+    end;
+    AddTextLineToMail(ToolWebNGTranslateText(20135) & " " & tstr,Mailr);
+    AddTextLineToMail("Customer country:" & " " & country,Mailr);
+    Mailr.Header = Left(tstr & " (Download made by: " & companyname & ")",199);
+    queued.StoreDownload(Mailr);
+  end;
+  
+  return;
+end;
+
+global
+procedure StoreDownloadRegistration()
+begin
+  integer i,cnt,pos,errorflags;
+  string 255 companyname;
+  string 255 personname;
+  string 255 address1;
+  string 255 address2;
+  string 255 address3;
+  string 255 address4;
+  string 255 address5;
+  string 255 email;
+  string 255 url;
+  string 255 phone;
+  string 255 fax;
+  string 255 messagecnt;
+  string 255 interestflag;
+  string 255 country;
+  record NotepadVc Noter;
+  string 255 tstr;
+  
+  //read from webargs
+  companyname = WebGetArg("companyname");
+  personname  = WebGetArg("personname");
+  email       = WebGetArg("email");
+  url         = WebGetArg("url");
+  phone       = WebGetArg("phone");
+  fax         = WebGetArg("fax");
+  interestflag= WebGetArg("interestflag");
+  country     = WebGetArg("country");
+  WebGetText("message",Noter);
+  
+  //validate
+  errorflags = 0;
+  if (blank(companyname)) then begin
+    errorflags = errorflags + 1;
+  end;
+  if (blank(email)) then begin
+    errorflags = errorflags + 2;
+  end;
+  if (blank(phone)) then begin
+    errorflags = errorflags + 4;
+  end;
+  if (blank(country)) then begin
+    errorflags = errorflags + 8;
+  end;
+  if (blank(interestflag)) then begin
+    errorflags = errorflags + 16;
+  end;
+  
+  if (errorflags==0) then begin
+    StoreDownloadRegistrationMail(companyname,personname,email,url,phone,fax,StringToInt(interestflag),country,Noter);
+    PutSessionString("downloadreg_redirecttocountry",country);
+    PutSessionString("downloadreg_complete","1");
+  end else begin
+    PutSessionString("downloadreg_errorflags",errorflags);
+    PutSessionString("downloadreg_companyname",companyname);
+    PutSessionString("downloadreg_personname",personname);
+    PutSessionString("downloadreg_email",email);
+    PutSessionString("downloadreg_url",url);
+    PutSessionString("downloadreg_phone",phone);
+    PutSessionString("downloadreg_fax",fax);
+    PutSessionString("downloadreg_interestflag",interestflag);
+    PutSessionString("downloadreg_country",country);
+    
+    pos=0;
+    i = 0;
+    cnt = SizeTextCnt(Noter);
+    while (pos<cnt) begin
+      tstr = StringFromText(Noter,i,255);
+      if (len(tstr)!=0) then begin
+        i = i+1;
+        PutSessionString("downloadreg_message" & i,tstr);
+      end;
+      pos = pos + 255;
+    end;
+    PutSessionString("downloadreg_messagecnt","" & i);
+  end;
+  
+  RedirectToRequestedPage;
+  
+  return;
+end;
+
+procedure ClearDownloadRegistrationSessionVariables()
+begin
+  integer i,cnt;
+  PutSessionString("downloadreg_complete","");
+
+  PutSessionString("downloadreg_companyname","");
+  PutSessionString("downloadreg_personname","");
+  PutSessionString("downloadreg_email","");
+  PutSessionString("downloadreg_url","");
+  PutSessionString("downloadreg_phone","");
+  PutSessionString("downloadreg_fax","");
+  PutSessionString("downloadreg_interestflag","");
+  PutSessionString("downloadreg_country","");
+  PutSessionString("downloadreg_errorflags","");
+
+  cnt = StringToInt(GetSessionString("downloadreg_messagecnt"));
+  for (i=1;i<=cnt;i=i+1) begin
+    PutSessionString("downloadreg_message" & i,"");
+  end;
+  PutSessionString("downloadreg_messagecnt","");
+
+  return;
+end;
+
+procedure ShowDownloadRegForm()
+begin
+  Boolean res;
+  string 200 tstr;
+  LongInt interestf;
+  string 255 llink;
+  integer i,cnt;
+  string 255 companyname;
+  string 255 personname;
+  string 255 address1;
+  string 255 address2;
+  string 255 address3;
+  string 255 address4;
+  string 255 address5;
+  string 255 email;
+  string 255 url;
+  string 255 phone;
+  string 255 fax;
+  string 255 messagecnt;
+  string 255 interestflag;
+  string 255 country;
+  record NotepadVc Noter;
+  integer errorflags;
+  
+    messagecnt  = GetSessionString("downloadreg_messagecnt");
+    companyname = GetSessionString("downloadreg_companyname");
+    personname  = GetSessionString("downloadreg_personname");
+    email       = GetSessionString("downloadreg_email");
+    url         = GetSessionString("downloadreg_url");
+    phone       = GetSessionString("downloadreg_phone");
+    fax         = GetSessionString("downloadreg_fax");
+    cnt = StringToInt(messagecnt);
+    for (i=1;i<=cnt;i=i+1) begin
+      AddToText(GetSessionString("downloadreg_message" & i),Noter);
+    end;
+    interestflag= GetSessionString("downloadreg_interestflag");
+    country     = GetSessionString("downloadreg_country");
+    if (blank(country)) then begin
+      country = ToolWebNGGetCountry;
+    end;
+
+    errorflags  = StringToInt(GetSessionString("downloadreg_errorflags"));
+    
+    ClearDownloadRegistrationSessionVariables;
+        
+    WebOutTagOpen("<form method=""post"" action=""" & FormatLink("/WebAction.hal","?action=registerdownload",true,true) & """>");
+    WebOutTagOpen("<table width=""100%"" border=""0"" cellpadding=""1"" cellspacing=""0"">");
+    WebOutStringFormatNL("<input type=""hidden"" id=""path"" name=""path"" value=""" & WebGetArg("path") & """>");
+
+    if (errorflags!=0) then begin
+      WebOutTagOpen("<tr>");
+      WebOutTagOpen("<td colspan=""2"" class=""error"">");
+      WebOutStringFormat(ToolWebNGTranslateText(25002));
+      WebOutTagOpen("<ul>");
+      if (BitAnd(errorflags,1)==1) then begin
+        WebOutStringFormatNL("<li>" & ToolWebNGTranslateText(20059) & "</li>");
+      end;
+      if (BitAnd(errorflags,2)==2) then begin
+        WebOutStringFormatNL("<li>" & ToolWebNGTranslateText(20060) & "</li>");
+      end;
+      if (BitAnd(errorflags,4)==4) then begin
+        WebOutStringFormatNL("<li>" & ToolWebNGTranslateText(20062) & "</li>");
+      end;
+      if (BitAnd(errorflags,8)==8) then begin
+        WebOutStringFormatNL("<li>" & ToolWebNGTranslateText(20065) & "</li>");
+      end;
+      if (BitAnd(errorflags,16)==16) then begin
+        WebOutStringFormatNL("<li>" & ToolWebNGTranslateText(20134) & "</li>");
+      end;      
+      WebOutTagClose("<ul>");
+      WebOutTagClose("</td>");
+      WebOutTagClose("</tr>");
+    end;
+
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20058),"personname",personname,false);
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20059) & " (*)","companyname",companyname,false);
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20060) & " (*)","email",email,false);
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20061),"url",url,false);
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20062) & " (*)","phone",phone,false);
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20063),"fax",fax,false);
+    OldCodeContactTextBox(ToolWebNGTranslateText(20064),"message",Noter); //TODO
+    OldCodeCountryDropDown(ToolWebNGTranslateText(20065) & "  (*)","country",country,true); //TODO
+
+    WebOutTagOpen("<tr valign=""top"">");
+    WebOutTagOpen("<td class=""feedback-txt"">");
+    WebOutStringFormat(ToolWebNGTranslateText(20134));
+    WebOutTagClose("</td>");
+    WebOutTagOpen("<td class=""feedback"">");
+    interestf = StringToLongint(interestflag);
+    OldCodeWebHBSDivRadioButton(ToolWebNGTranslateText(20129),"interestFlag",0,interestf==0);
+//    OldCodeWebHBSDivRadioButton(ToolWebNGTranslateText(20130),"interestFlag",1,interestf==1);
+    OldCodeWebHBSDivRadioButton(ToolWebNGTranslateText(20131),"interestFlag",2,interestf==2);
+    OldCodeWebHBSDivRadioButton(ToolWebNGTranslateText(20132),"interestFlag",3,interestf==3);
+    OldCodeWebHBSDivRadioButton(ToolWebNGTranslateText(20133),"interestFlag",4,interestf==4);
+    WebOutTagClose("</td>");
+    WebOutTagClose("</tr>");
+    OldCodeWebHBSDivContactLine(ToolWebNGTranslateText(20066),"","",false);
+    WebOutTagOpen("<tr valign=""top"">");
+    WebOutTagOpen("<td width=""28%"">");
+    WebOutStringFormat("&nbsp;");
+    WebOutTagClose("</td>");
+    WebOutTagOpen("<td width=""72%"">");
+    WebOutSubmit("","button","Submit",ToolWebNGTranslateText(20067));
+    WebOutStringFormatNL("<input type=""reset"" name=""Reset"" value=""" & ToolWebNGTranslateText(20068) & """>");
+    WebOutTagClose("</td>");
+    WebOutTagClose("</tr>");
+    WebOutTagClose("</table>");
+    WebOutTagClose("</form>");
+
+  return;
+end;
+
+global
+procedure DownloadRegistrationApp(record WebNGStructVc WSr)
+begin
+  record WebNGPageVc WPr;
+  string 255 link;
+  record WebNGStructVc WS2r;
+  string 255 country;
+  
+  if (LoginState or GetSessionString("downloadreg_complete")=="1") then begin
+    PutSessionString("downloadreg_complete","");
+    link = WebGetArg("path");
+    if (right(link,1)!="/") then begin
+      link = link & "/";
+    end;
+    if (nonblank(GetSessionString("downloadreg_redirecttocountry"))) then begin
+      WS2r.Mother = WSr.SerNr;
+      WS2r.Name = GetSessionString("downloadreg_redirecttocountry");
+      if (ReadFirstKey("Mother",WS2r,2,true)) then begin
+        country = WS2r.Name;
+      end;
+      PutSessionString("downloadreg_redirecttocountry","");
+    end;
+    if (blank(country)) then begin
+      country = ToolWebNGGetCountry;
+    end;
+    link = link & country;
+    RedirectToStructLink(link);
+  end else begin
+    WPr.Code = WSr.WebPage;
+    if (nonblank(WPr.Code)) then begin
+      if (ReadFirstMain(WPr,1,true)) then begin end;
+    end;
+
+    ShowWebAppPageStart(WPr,"");
+    
+    ShowDownloadRegForm;
+
+    ShowWebAppPageEnd(WPr);
+  end;
+  
+  return;
+end;
+
+global
+procedure SingleFileDownloadApp(record WebNGStructVc WSr)
+begin
+  record Attach2Vc Attachr;
+  record RLinkVc RLr;
+
+  if (ReadRecordLink(WSr,1,Attachr,RLr)) begin  
+    WebSetContentDisposition("attachment; filename=" & Attachr.FileName);
+    WebOutAttachment(Attachr.SerNr);
+  end;
+  
+  return;
+end;

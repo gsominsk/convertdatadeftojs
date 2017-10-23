@@ -1,0 +1,494 @@
+external function roundmode SetRoundModeD(Integer);
+external function val GetNumberOfSellRequest(LongInt,string,Date);
+external function val GetNumberOfBuyRequest(LongInt,string,Date);
+external function val GetNumberOfShares(string,Date);
+external function val GetOfficialShareValue(Date);
+external function val GetMainShareHoldValue(Date);
+external function val GetCompanyShareValue(Date);
+
+procedure AddToInfoArray(val theqty,val price,var array val aval,var array val aqty,var Integer cnt)
+begin
+  Integer i;
+  Boolean treatedf;
+  
+  treatedf = false;
+  for (i=0;i<cnt;i=i+1) begin
+    if (aval[i]==price) then begin
+      aqty[i] = aqty[i] + theqty;
+      treatedf = true;
+      i = cnt;
+    end;
+  end;
+  if (treatedf==false) then begin
+    aval[cnt] = price;
+    aqty[cnt] = theqty;
+    cnt = cnt + 1;
+  end;
+  return;
+end;
+
+procedure FillShareInfoArray(Date thedat,var array val abuyval,var array val abuyqty,var Integer buycnt,var array val asellval,var array val asellqty,var Integer sellcnt,var array val anotsellval,var array val anotsellqty,var Integer notsellcnt)
+begin
+  record SharesSellVc SSr;
+  record SharesBuyVc SBr;
+  row SharesSellVc SSrw;
+  row SharesBuyVc SBrw;
+  Boolean foundf;
+  Integer i,rwcnt;
+  
+  foundf = true;
+  while (LoopMain(SSr,1,foundf)) begin
+    rwcnt = MatRowCnt(SSr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SSr,i,SSrw);
+/*
+      if (SSrw.SellAgreement==1) then begin
+        if (SSrw.SellForPrice==0) then begin
+          SSrw.SellForPrice = GetOfficialShareValue(thedat);
+        end;
+      end;
+*/
+      if (SSrw.SellAgreement==1) then begin
+        if (SSrw.SellForPrice==0) then begin
+          SSrw.SellForPrice = GetOfficialShareValue(thedat);
+        end;
+        AddToInfoArray(SSrw.Qty,SSrw.SellForPrice,anotsellval,anotsellqty,notsellcnt);
+      end else begin
+        AddToInfoArray(SSrw.Qty,SSrw.SellForPrice,asellval,asellqty,sellcnt);
+      end;
+    end;
+  end;
+  foundf = true;
+  while (LoopMain(SBr,1,foundf)) begin
+    rwcnt = MatRowCnt(SBr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SBr,i,SBrw);
+      AddToInfoArray(SBrw.Qty,SBrw.BuyForPrice,abuyval,abuyqty,buycnt);
+    end;
+  end;
+  return;
+end;
+
+procedure SortInfoArray(Integer mode,Boolean sellf,var array val aval,var array val aqty,var Integer cnt)
+begin
+  Integer i,j;
+  val tq,tv;
+  
+  for (i=0;i<cnt;i=i+1) begin
+    for (j=i;j<cnt;j=j+1) begin
+      if (sellf) then begin
+        if (aval[j]<aval[i]) then begin
+          tv = aval[i];
+          tq = aqty[i];
+          aval[i] = aval[j];
+          aqty[i] = aqty[j];
+          aval[j] = tv;
+          aqty[j] = tq;
+        end;
+      end else begin
+        if (aval[j]>aval[i]) then begin
+          tv = aval[i];
+          tq = aqty[i];
+          aval[i] = aval[j];
+          aqty[i] = aqty[j];
+          aval[j] = tv;
+          aqty[j] = tq;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure SharesInfoRn(Record RcVc RepSpec)
+begin
+  Array val abuyval;
+  Array val abuyqty;
+  Array val asellval;
+  Array val asellqty;
+  Array val anotsellval;
+  Array val anotsellqty;
+  Integer buycnt,sellcnt,notsellcnt,i;
+  Integer loopcnt,limit;
+  record SysFormatBlock SysFormatRec;
+  val sellval,totqty,offval,compval,mainval;
+  Date thedat;
+  val yourshares,yoursales,yourpurch;
+  Integer oldcomp;
+
+  oldcomp = CurrentCompany;
+  if (SetCompany(1,false)) then begin end;
+  thedat = CurrentDate;
+  sellval = 0;
+  offval = 0;
+  compval = 0;
+  mainval = 0;
+  totqty = 0;
+  limit = 5;
+  BlockLoad(SysFormatRec);
+  StartReportJob(USetStr(14700));
+  EndHeader;
+  SetRepCol(2,80);
+  SetRepCol(3,160);
+  SetRepCol(4,280);
+  SetRepCol(5,360);
+  SetRepCol(6,240);
+  SetRepCol(7,250);
+  FillShareInfoArray(thedat,abuyval,abuyqty,buycnt,asellval,asellqty,sellcnt,anotsellval,anotsellqty,notsellcnt);
+
+  SortInfoArray(0,false,abuyval,abuyqty,buycnt);
+  SortInfoArray(0,true,asellval,asellqty,sellcnt);
+  SortInfoArray(0,true,anotsellval,anotsellqty,notsellcnt);
+
+  if (buycnt>sellcnt) then begin
+    loopcnt = buycnt;
+  end else begin
+    loopcnt = sellcnt;
+  end;
+  if (RepSpec.ArtMode==0) then begin
+    if (loopcnt>limit) then begin
+      loopcnt = limit;
+    end;
+  end;
+//  if (RepSpec.flags[19]==1) then begin // Only from Operations menu.
+    yourshares = GetNumberOfShares(CurrentUser,thedat);
+    yoursales  = GetNumberOfSellRequest(-1,CurrentUser,thedat);
+    yourpurch  = GetNumberOfBuyRequest(-1,CurrentUser,thedat);
+    StartFormat(15);
+    OutString(3,"DblSharesBuyCurVc",USetStr(14716),true);
+    if (yourshares>0) then begin
+      OutString(5,"DblSharesSellCurVc",USetStr(14717),true);
+    end;
+    EndFormat;
+    StartFormat(15);
+    EndFormat;
+    Gray_Divider(0,1);
+//  end;
+  StartFormat(15);
+  OutString(2,0,USetStr(14701),true);
+  OutString(3,0,USetStr(14704),true);
+  OutString(4,0,USetStr(14702),true);
+  OutString(5,0,USetStr(14703),true);
+//  OutString(1,0,USetStr(14705),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  for (i=0;i<loopcnt;i=i+1) begin
+    StartFormat(15);
+    if (i>=buycnt) then begin
+      OutString(2,0,"-",true);
+      OutString(3,0,"-",true);
+    end else begin
+      OutStringID(2,"DblShareSellOrder",ValToString(abuyval[i],M4Val,SysFormatRec.thousSep,SysFormatRec.decimalPt,0),true,abuyqty[i]);
+      if (RepSpec.flags[1]==0) then begin
+        OutVal(3,0,abuyqty[i],M4Qty,true);
+      end else begin
+        OutStringID(3,"DblDetailBuy",ValToString(abuyqty[i],M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,0),true,abuyval[i]);
+      end;
+    end;
+    if (i>=sellcnt) then begin
+      OutString(4,0,"-",true);
+      OutString(5,0,"-",true);
+    end else begin
+      OutStringID(4,"DblShareBuyOrder",ValToString(asellval[i],M4Val,SysFormatRec.thousSep,SysFormatRec.decimalPt,0),true,asellqty[i]);
+      if (RepSpec.flags[1]==0) then begin
+        OutVal(5,0,asellqty[i],M4Qty,true);
+      end else begin
+        OutStringID(5,"DblDetailSell",ValToString(asellqty[i],M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,0),true,asellval[i]);
+      end;
+    end;
+/*
+    if ((i>=buycnt) or (i>=sellcnt)) then begin
+      OutString(1,0,"-",true);
+    end else begin
+      OutVal(1,0,abuyval[i]-asellval[i],M4UVal,true);
+    end;
+*/
+    EndFormat;
+    if ((RepSpec.flags[0]>0) and (RepSpec.ArtMode==1)) then begin // Because it already loops through the entire loop
+      sellval = sellval + (asellval[i]*asellqty[i]);
+      totqty = totqty + asellqty[i];
+    end;
+  end;
+  Gray_Divider(0,1);
+  if ((RepSpec.flags[0]>0) and (RepSpec.ArtMode==0)) then begin
+    for (i=0;i<sellcnt;i=i+1) begin
+      sellval = sellval + (asellval[i]*asellqty[i]);
+      totqty = totqty + asellqty[i];
+    end;
+  end;
+  if (RepSpec.flags[0]>0) then begin
+    for (i=0;i<notsellcnt;i=i+1) begin
+      sellval = sellval + (anotsellval[i]*anotsellqty[i]);
+      totqty = totqty + anotsellqty[i];
+    end;
+  end;
+  if (RepSpec.flags[0]>0) then begin
+    offval = GetOfficialShareValue(thedat);
+    compval = GetCompanyShareValue(thedat);
+    mainval = GetMainShareHoldValue(thedat);
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(14709),false);
+    EndFormat;
+    Gray_Divider(0,4);
+    StartFormat(15);
+    OutString(0,0,USetStr(14706),false);
+    OutVal(6,0,totqty,M4UVal,true);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(14707),false);
+    OutVal(6,0,Round(sellval/totqty,SetRoundModeD(0)),M4UVal,true);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(14708),false);
+    OutVal(6,0,sellval,M4UVal,true);
+    EndFormat;
+
+    if (((RepSpec.flags[0]==1) or (RepSpec.flags[0]==4)) and (offval>0)) then begin
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14710),false);
+      EndFormat;
+      Gray_Divider(0,4);
+      StartFormat(15);
+      OutString(0,0,USetStr(14706),false);
+      OutVal(6,0,totqty,M4UVal,true);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14707),false);
+      OutVal(6,0,offval,M4UVal,true);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14708),false);
+      OutVal(6,0,offval*totqty,M4UVal,true);
+      EndFormat;
+    end;
+    if (((RepSpec.flags[0]==2) or (RepSpec.flags[0]==4)) and (compval>0)) then begin
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14711),false);
+      EndFormat;
+      Gray_Divider(0,4);
+      StartFormat(15);
+      OutString(0,0,USetStr(14706),false);
+      OutVal(6,0,totqty,M4UVal,true);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14707),false);
+      OutVal(6,0,compval,M4UVal,true);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14708),false);
+      OutVal(6,0,compval*totqty,M4UVal,true);
+      EndFormat;
+    end;
+    if (((RepSpec.flags[0]==3) or (RepSpec.flags[0]==4)) and (mainval>0)) then begin
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14712),false);
+      EndFormat;
+      Gray_Divider(0,4);
+      StartFormat(15);
+      OutString(0,0,USetStr(14706),false);
+      OutVal(6,0,totqty,M4UVal,true);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14707),false);
+      OutVal(6,0,mainval,M4UVal,true);
+      EndFormat;
+      StartFormat(15);
+      OutString(0,0,USetStr(14708),false);
+      OutVal(6,0,mainval*totqty,M4UVal,true);
+      EndFormat;
+    end;
+    Gray_Divider(0,1);
+  end;
+//  if (RepSpec.flags[19]==1) then begin // Only from Operations menu.
+    StartFormat(15);
+    EndFormat;
+    Gray_Divider(0,3);
+    if (yourshares>0) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(14718),false);
+      OutVal(3,0,yourshares,M4UVal,true);
+      EndFormat;
+    end;
+    if (yourpurch>0) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(14719),false);
+      OutVal(3,0,yourpurch,M4UVal,true);
+      EndFormat;
+    end;
+    if (yoursales>0) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(14720),false);
+      OutVal(3,0,yoursales,M4UVal,true);
+      EndFormat;
+    end;
+    if (yourshares>0) then begin
+      if ((yoursales>0) or (yourpurch>0)) then begin
+        Gray_Divider(0,3);
+        StartFormat(15);
+        OutString(0,0,USetStr(14721),false);
+        OutVal(3,0,yourshares-yoursales+yourpurch,M4UVal,true);
+        EndFormat;
+      end;
+    end;
+//  end;
+  EndJob;
+  ResetCompany(oldcomp);
+  return;
+end;
+
+global
+procedure SharesDetailSellRn(Record RcVc RepSpec)
+begin
+  record SharesSellVc SSr;
+  row SharesSellVc SSrw;
+  Boolean foundf;
+  Integer i,rwcnt;
+
+  StartReportJob(USetStr(14700));
+  EndHeader;
+  SetRepCol(2,70);
+  SetRepCol(3,220);
+  SetRepCol(4,400);
+  StartFormat(15);
+  OutString(0,0,USetStr(14713),false);
+  OutString(2,0,USetStr(14714),false);
+  OutString(3,0,USetStr(14715),false);
+  OutString(4,0,USetStr(14703),true);
+  OutString(1,0,USetStr(14702),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  foundf = true;
+  while (LoopMain(SSr,1,foundf)) begin
+    rwcnt = MatRowCnt(SSr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SSr,i,SSrw);
+      if (SSrw.SellAgreement==1) then begin
+        if (SSrw.SellForPrice==0) then begin
+          SSrw.SellForPrice = GetOfficialShareValue(CurrentDate);
+        end;
+      end;
+      if (SSrw.SellForPrice==RepSpec.vals0) then begin
+        StartFormat(15);
+        OutString(0,"DblSharesSellVc",SSr.UserCode,false);
+        OutString(2,0,SSr.Name,false);
+        OutString(3,0,SSrw.Comment,false);
+        OutString(4,0,SSrw.Qty,true);
+        OutString(1,0,SSrw.SellForPrice,true);
+        EndFormat;
+      end;
+    end;
+  end;
+  EndJob;
+  return;
+end;
+
+global
+procedure SharesDetailBuyRn(Record RcVc RepSpec)
+begin
+  record SharesBuyVc SBr;
+  row SharesBuyVc SBrw;
+  Boolean foundf;
+  Integer i,rwcnt;
+
+  StartReportJob(USetStr(14700));
+  EndHeader;
+  SetRepCol(2,70);
+  SetRepCol(3,220);
+  SetRepCol(4,400);
+  StartFormat(15);
+  OutString(0,0,USetStr(14713),false);
+  OutString(2,0,USetStr(14714),false);
+  OutString(3,0,USetStr(14715),false);
+  OutString(4,0,USetStr(14704),true);
+  OutString(1,0,USetStr(14701),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  foundf = true;
+  while (LoopMain(SBr,1,foundf)) begin
+    rwcnt = MatRowCnt(SBr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SBr,i,SBrw);
+      if (SBrw.BuyForPrice==RepSpec.vals0) then begin
+        StartFormat(15);
+        OutString(0,"DblSharesSellVc",SBr.UserCode,false);
+        OutString(2,0,SBr.Name,false);
+        OutString(3,0,SBrw.Comment,false);
+        OutString(4,0,SBrw.Qty,true);
+        OutString(1,0,SBrw.BuyForPrice,true);
+        EndFormat;
+      end;
+    end;
+  end;
+  EndJob;
+  return;
+end;
+
+procedure AddSharesBuyToTotal(row SharesBuyVc SBrw,record IVVc IVr)
+begin
+  return;
+end;
+
+global
+procedure BuySellOrdersRn(record RcVc RepSpec)
+begin
+  Integer oldcomp;
+  Integer rw;
+  string 255 tstr;
+  record SharesBuyVc SBr;
+  row SharesBuyVc SBrw;
+  Boolean found;
+  Integer i,rwcnt;
+
+  oldcomp = CurrentCompany;
+  if (SetCompany(1,false)) then begin end;
+
+  StartReportJob(USetStr(14700));
+  rw = 1;
+  Header(rw,CurrentUser,1);
+  rw = rw + 1;
+  EndHeader;
+  SetRepCol(2,80);
+  SetRepCol(3,160);
+  SetRepCol(4,280);
+  SetRepCol(5,360);
+  SetRepCol(6,410);
+  StartFormat(15);
+  OutString(2,0,USetStr(14701),true);
+  OutString(3,0,USetStr(14704),true);
+  OutString(4,0,USetStr(14702),true);
+  OutString(5,0,USetStr(14703),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  
+  found = true;
+  while (LoopMain(SBr,1,found)) begin
+    rwcnt = MatRowCnt(SBr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SBr,i,SBrw);
+//      AddSharesBuyToTotal(SBrw,SoftFr);
+    end;
+  end;
+/*
+    rwcnt = MatRowCnt(SBr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SBr,i,SBrw);
+        StartFormat(15);
+        OutString(4,0,SBrw.BuyForPrice,true);
+        OutString(5,0,SBrw.Qty,true);
+        OutString(6,0,SBr.UserCode,false);
+        EndFormat;
+    end;
+*/  
+  EndJob;
+  ResetCompany(oldcomp);
+  return;
+end;

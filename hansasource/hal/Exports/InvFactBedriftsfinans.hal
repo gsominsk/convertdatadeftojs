@@ -1,0 +1,161 @@
+external procedure SplitAddress(string,var string,var string);
+external procedure FinnishBankVal(var string,val);
+
+procedure M4WriteStrMax(string instr,LongInt maxchars)
+BEGIN
+  string 255 tstr;
+  
+  tstr = Left(instr,maxchars);
+  ExportPadString(tstr,maxchars," ",false);
+  RETURN;
+END;
+
+procedure ExpFactIVBedriftsfinans(record IVVc IVp,record FactoringBlock factp)
+BEGIN
+  string 255 tstr;
+  string 5 comma,snutt;
+  string 10 curncycode;
+  
+  comma = ",";
+  snutt = "\"";
+  
+  M4WriteStrMax(IVp.CustCode,11);
+  M4WriteStrMax(comma,1);   
+  M4WriteStrMax(IVp.SerNr,11);
+  M4WriteStrMax(comma,1);   
+
+  M4WriteStrMax(snutt,1);   
+  tstr = DateToString(IVp.InvDate,"YYYYMMDD");  
+  M4WriteStrMax(tstr,8);  
+  M4WriteStrMax(snutt,1);   
+  M4WriteStrMax(comma,1);
+     
+  M4WriteStrMax(snutt,1);   
+  tstr = DateToString(IVp.PayDate,"YYYYMMDD");  
+  M4WriteStrMax(tstr,8);  
+  M4WriteStrMax(snutt,1);   
+  M4WriteStrMax(comma,1);   
+  FinnishBankVal(tstr,IVp.Sum4);  
+  M4WriteStrMax(tstr,11);
+  M4WriteStrMax(comma,1);   
+  M4WriteStrMax(snutt,1);
+  curncycode = IVp.CurncyCode;
+  if (blank(curncycode)) then begin
+    curncycode = "NOK";
+  end;  
+  M4WriteStrMax(curncycode,3);   
+  M4WriteStrMax(snutt,1);   
+  if (IVp.InvType==kInvoiceTypeCredit or IVp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    M4WriteStrMax(comma,1);   
+    M4WriteStrMax(IVp.CredInv,11);
+  end;
+  NewLine;
+  RETURN;
+END;
+
+procedure ExpFactCUBedriftsfinans(record IVVc IVp,record FactoringBlock factp)
+BEGIN
+  record CUVc CUr;
+  string 255 tstr,t2;
+  
+  CUr.Code = IVp.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    ExportPadString(IVp.CustCode,11,"0",true);
+    ExportPadString(CUr.Name,30," ",false);
+    ExportPadString(CUr.InvAddr0,30," ",false);
+    ExportPadString(CUr.InvAddr1,30," ",false);
+    SplitAddress(CUr.InvAddr2,tstr,t2);
+    ExportPadString(tstr,4,"0",true);
+    ExportPadString(t2,26," ",false);
+    ExportPadString(CUr.CountryCode,3," ",false);
+    ExportPadString(CUr.Phone,13," ",false);
+    ExportPadString(CUr.LangCode,3," ",false);
+    ExportPadString(CUr.VATNr,15,"0",true);
+    ExportPadString(CUr.CurncyCode,3," ",false);
+  end;
+  RETURN;
+END;
+
+global
+procedure ExportInvBedriftsfinans(var record RcVc RepSpec,var record FactoringBlock factp)
+BEGIN
+  record IVVc IVr;
+  Boolean TrHs,testf;
+  string 20 fromcust,tocust;
+  LongInt cnt;
+
+  cnt = 0; 
+  RepSpec.long1 = FirstInRange(RepSpec.f1,10);
+  RepSpec.long2 = LastInRange(RepSpec.f1,10);
+  fromcust = FirstInRange(RepSpec.f2,20);
+  tocust = LastInRange(RepSpec.f2,20);  
+  IVr.SerNr = RepSpec.long1;
+  IVr.InvDate = RepSpec.sStartDate;
+  TrHs = true;
+  if (RepSpec.flags[1]==0) then begin
+    while (LoopKey("InvDate",IVr,2,TrHs)) begin
+      if (IVr.TransDate>RepSpec.sEndDate) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        if (nonblank(RepSpec.f1)) then begin
+          if (IVr.SerNr>RepSpec.long2) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.f1)) then begin
+          if (IVr.SerNr<RepSpec.long1) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.f2)) then begin
+          if ((IVr.CustCode<fromcust) or (IVr.CustCode>tocust)) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.ObjStr)) then begin
+          if (SetInSet(RepSpec.ObjStr,IVr.Objects)==false) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.CurncyCode)) then begin
+          if (IVr.CurncyCode!=RepSpec.CurncyCode) then begin testf = false; end;
+        end;
+        if (IVr.OKFlag==0) then begin testf = false; end;
+        if (IVr.Invalid!=0) then begin testf = false; end;
+        if (IVr.InvType==kInvoiceTypeCash) then begin testf = false; end;
+        if (testf) then begin
+          ExpFactCUBedriftsfinans(IVr,factp);
+          UserTrace(IVr.CustCode,M4Str);
+        end;
+      end;
+    end;
+  end;
+  if (RepSpec.flags[1]==1) then begin//all in one      
+    IVr.SerNr = RepSpec.long1;
+    IVr.InvDate = RepSpec.sStartDate;
+    TrHs = true;
+    while (LoopKey("InvDate",IVr,2,TrHs)) begin
+      if (IVr.TransDate>RepSpec.sEndDate) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        if (nonblank(RepSpec.f1)) then begin
+          if (IVr.SerNr>RepSpec.long2) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.f1)) then begin
+          if (IVr.SerNr<RepSpec.long1) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.f2)) then begin
+          if ((IVr.CustCode<fromcust) or (IVr.CustCode>tocust)) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.ObjStr)) then begin
+          if (SetInSet(RepSpec.ObjStr,IVr.Objects)==false) then begin testf = false; end;
+        end;  
+        if (nonblank(RepSpec.CurncyCode)) then begin
+          if (IVr.CurncyCode!=RepSpec.CurncyCode) then begin testf = false; end;
+        end;
+        if (IVr.OKFlag==0) then begin testf = false; end;
+        if (IVr.Invalid!=0) then begin testf = false; end;
+        if (IVr.InvType==kInvoiceTypeCash) then begin testf = false; end;
+        if (testf) then begin
+          ExpFactIVBedriftsfinans(IVr,factp);
+          UserTrace(IVr.SerNr,M4Long);
+        end;
+      end;
+    end;
+    factp.LastSerNr = factp.LastSerNr + 1;
+    factp.LastDate = CurrentDate;
+  end;
+  RETURN;
+END;

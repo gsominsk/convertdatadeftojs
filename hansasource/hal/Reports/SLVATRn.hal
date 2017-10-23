@@ -1,0 +1,646 @@
+external function roundmode GetTotalRoundMode(record RoundBlock);
+external function roundmode GetVATRoundMode(record RoundBlock);
+external function val FindVAT(string,val,Integer,Integer);
+external function string 255 CreateInvoiceNumber(LongInt,string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTOKF(Integer,Integer, var string);
+external procedure HTInvTypes2(Integer,Integer,Integer,Integer,Integer,Integer,var string);
+external procedure HTVATTypes(Integer,Integer, var string);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure AddVATVat(var record SMVc,string,val,Integer);
+external procedure PrintVCR(record RcVc,string,string,val,Integer,var val);
+external procedure VATBaseMulRate(record SMVc,string,val,val,val,val,val,Integer);
+
+procedure AddLocSMVcToTotSMVc(record SMVc SMLocr,var record SMVc SMTotr,Integer vatcnt,Integer InclVAT,Integer NoTAXonVAT)
+begin
+  row SMVc SMrw;
+  Integer i;
+  val t;
+  
+  for (i = 0; i<vatcnt; i = i + 1) begin
+    MatRowGet(SMLocr,i,SMrw);
+    t = SMrw.DebVal;
+    if (t!=0) then begin
+      if (InclVAT==0) then begin
+        t = t + FindVAT(SMrw.VATCode,t,InclVAT,NoTAXonVAT);
+      end;
+      AddVATBase(SMTotr,SMrw.VATCode,t,blankval,vatcnt,1,0);
+    end;
+  end;
+end;
+
+procedure AddReciptsVAT(record IVVc IVr,record SMVc VATTmpr,Integer locvatcnt,record SMVc VATTotr,Integer totvatcnt,Date startdate,Date enddate,
+                        var Boolean printf,var val tmpSum4,var Date IPTransDate)
+begin
+  Integer i,iprwcnt;
+  Integer j,ivrwcnt;
+  row IVVc IVrw;
+  record IPrsVc IPrsr;
+  Boolean found;
+  record IPVc IPr;
+  row IPVc IPrw;
+  val tnv,v,vv;
+  
+  ivrwcnt = MatRowCnt(IVr);  
+  IPrsr.IVNr = IVr.SerNr;
+  IPrsr.TransType = kIPrsTransTypeReceipt;
+  IPrsr.TransDate = startdate;
+  found = true;
+  while (LoopKey("IVDateKey",IPrsr,3,found)) begin
+    if (IPrsr.IVNr!=IVr.SerNr) then begin found = false; end;
+    if (IPrsr.TransType!=kIPrsTransTypeReceipt) then begin found = false; end;
+    if (IPrsr.TransDate>enddate) then begin found = false; end;
+    if (found) then begin
+      IPr.SerNr = IPrsr.TransNr;
+      if (ReadFirstMain(IPr,1,true)) then begin
+        iprwcnt = MatRowCnt(IPr);  
+        for (i=0;i<iprwcnt;i=i+1) begin
+          MatRowGet(IPr,i,IPrw);
+          for (j=0;j<ivrwcnt;j=j+1) begin
+            MatRowGet(IVr,j,IVrw);
+            tnv = IVrw.Sum*(IPrw.InvVal/IVr.Sum4);
+            v = MulRateToBase1(IVr.CurncyCode,tnv,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);              
+            AddVATBase(VATTmpr,IVrw.VATCode,tnv,blankval,locvatcnt,0,0);
+          end;
+          tmpSum4 = tmpSum4 + IPrw.InvVal;
+          IPTransDate = IPr.TransDate;
+          printf = true;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure SLVATRn(record RcVc RepSpec)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+  Boolean TrHs;
+  string 255 tstr;
+  Boolean testf;
+  val s0,s1,s2,s3,s4,t,TotGP;
+  record SMVc SMLocr;
+  row SMVc SMrw;
+  record SMVc SMTotr;
+  Integer totvatcnt,locvatcnt;
+  Integer i,rwcnt;
+  LongInt afr,ato;
+  string 255 ckey;
+  Integer datesort,rw;
+  LongInt transcnt;
+  val totvval,totnvval;
+  val totnovcsum,vbsum,totsum,tmpSum4;
+  record AccBlock ARAccb;
+  Boolean printf;
+  record RoundBlock Rb;
+  string 60 offnrfr,offnrto;
+  Date IPTransDate;
+
+  BlockLoad(Rb);
+  BlockLoad(ARAccb);
+  transcnt = 0;
+  SetupVATBase(SMTotr,totvatcnt);
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  offnrfr = FirstInRange(RepSpec.f3,60);
+  offnrto = LastInRange(RepSpec.f3,60);
+  if (RepSpec.flags[7]!=0) then begin
+    datesort = 1;
+  end;  
+  if (nonblank(RepSpec.f2)) then begin
+    tstr = RepSpec.f2;
+  end else begin
+    tstr = USetStr(5200);
+  end;
+  StartReportJob(tstr);
+   rw = 1;    
+   HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   HTInvTypes2(RepSpec.flags[5],0,RepSpec.flags[6],0,RepSpec.flags[8],RepSpec.flags[9],tstr);
+   Header(rw,tstr,0);
+   HTVATTypes(RepSpec.flags[3],RepSpec.flags[4],tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   HTOKF(RepSpec.flags[2],RepSpec.flags[1],tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   if (nonblank(RepSpec.f1)) then begin
+     Header(rw,RepSpec.f1,1);
+     rw = rw + 1;
+   end;
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(5201),false);
+  OutString(80,0,USetStr(5202),false);
+  OutString(160,0,USetStr(5203),false);
+  OutString(240,0,USetStr(5204),false);
+  EndFormat;
+  StartFormat(15);
+  OutString(80,0,USetStr(5205),false);
+  OutString(160,0,USetStr(5206),false);
+  OutString(240,0,USetStr(5207),false);
+  EndFormat;
+
+  if (datesort!=0) then begin
+    IVr.TransDate = RepSpec.sStartDate;
+    IVr.SerNr = afr;
+    ckey = "TransDate";
+  end else begin
+    if (RepSpec.flags[8]!=0) then begin
+      IVr.OfficialSerNr = offnrfr;
+      ckey = "OfficialSerNrDate";
+    end else begin
+      IVr.SerNr = afr;
+      ckey = "SerNr";
+    end;
+  end;
+  
+  if (RepSpec.flags[5]!=0 or RepSpec.flags[6]!=0) then begin
+    TrHs = true;
+  end else begin
+    TrHs = false;
+  end;
+  while (LoopKey(ckey,IVr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (datesort!=0) then begin
+        if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          TrHs = false;
+        end;  
+      end else begin
+        if (RepSpec.flags[8]!=0) then begin
+          if (nonblank(offnrto)) then begin
+            if (IVr.OfficialSerNr>offnrto) then begin
+              TrHs = false;
+            end;
+          end;
+        end else begin
+          if (ato!=-1) then begin
+            if (IVr.SerNr>ato) then begin
+              TrHs = false;
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (ARAccb.IPBookVAT==0) then begin 
+        if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          testf = false;
+        end;  
+      end;
+      if (afr!=-1) then begin
+        if (IVr.SerNr<afr) then begin testf = false; end;
+      end;
+      if (ato!=-1) then begin
+        if (IVr.SerNr>ato) then begin testf = false; end;
+      end;
+      if (nonblank(offnrfr)) then begin
+        if (IVr.OfficialSerNr<offnrfr) then begin testf = false; end;
+      end;
+      if (nonblank(offnrto)) then begin
+        if (IVr.OfficialSerNr>offnrto) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[1]==0) then begin
+        if (IVr.OKFlag!=0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[2]==0) then begin
+        if (IVr.OKFlag==0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[3]==0) then begin
+        if (IVr.InclVAT==0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[4]==0) then begin
+        if (IVr.InclVAT!=0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[5]==0) then begin
+        if (IVr.InvType!=kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[6]==0) then begin
+        if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin testf = false; end;
+      end;  
+      if (IVr.InvType==kInvoiceTypePrepayment) then begin testf = false; end;
+      if (IVr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        printf = false;
+        IPTransDate = "";
+        SetupVATBase(SMLocr,locvatcnt);
+        if (ARAccb.IPBookVAT!=0) then begin
+          AddReciptsVAT(IVr,SMLocr,locvatcnt,SMTotr,totvatcnt,RepSpec.sStartDate,RepSpec.sEndDate,printf,tmpSum4,IPTransDate);
+          if (DateInRange(IPTransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            printf = false;
+          end;
+        end else begin
+          printf = true;
+          tmpSum4 = IVr.BaseSum4;
+          rwcnt = MatRowCnt(IVr);
+          if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(IVr,i,IVrw);
+              IVrw.Sum = MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+              AddVATBase(SMLocr,IVrw.VATCode,-IVrw.Sum,blankval,locvatcnt,IVr.InclVAT,IVr.NoTAXonVAT);
+            end;
+          end else begin
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(IVr,i,IVrw);
+              IVrw.Sum = MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+              AddVATBase(SMLocr,IVrw.VATCode,IVrw.Sum,blankval,locvatcnt,IVr.InclVAT,IVr.NoTAXonVAT);
+            end;
+          end;
+        end;
+        AddLocSMVcToTotSMVc(SMLocr,SMTotr,locvatcnt,IVr.InclVAT,IVr.NoTAXonVAT);
+        if (printf) then begin
+          Gray_Divider(0,1);
+          transcnt = transcnt + 1;
+          StartFormat(15);
+//          tstr = CreateInvoiceNumber(IVr.SerNr,IVr.OfficialSerNr);
+//          if (RepSpec.flags[8]!=0 and nonblank(IVr.OfficialSerNr)) then begin tstr = IVr.OfficialSerNr; end;
+          OutString(0,"DblIVVc",IVr.SerNr,false);
+          if (blank(IPTransDate)) then begin
+            OutDate(80,0,IVr.TransDate,false);
+          end else begin
+            OutDate(80,0,IPTransDate,false);
+          end;
+          OutString(160,0,IVr.CustCode,false);
+          OutString(240,0,IVr.Addr0,false);
+          EndFormat;
+          tstr = IVr.Addr1;
+          if (nonblank(IVr.Addr2)) then begin
+            tstr = tstr & ", ";
+            tstr = tstr & IVr.Addr2;
+          end;
+          if (nonblank(IVr.Addr3)) then begin
+            tstr = tstr & ", ";
+            tstr = tstr & IVr.Addr3;
+          end;
+          StartFormat(15);
+          if (HasLocalization("ROU")) then begin
+            OutLongInt(0,0,transcnt,false); // only used in Romania 
+          end else begin
+            if (RepSpec.flags[8]!=0) then begin
+              OutString(0,"DblIVVc",IVr.OfficialSerNr,false);
+            end;
+          end;
+          OutDate(80,0,IVr.InvDate,false);
+          OutString(160,0,IVr.VATNr,false);
+          OutString(240,0,tstr,false);
+          EndFormat;
+          StartFormat(10);
+          EndFormat;
+          StartFormat(15);
+          OutString(120,0,USetStr(5208),false);
+          OutString(340,0,USetStr(5209),true);
+          OutString(400,0,USetStr(5210),true);
+          OutString(480,0,USetStr(5211),true);
+          EndFormat;
+          Gray_Divider(120,480);
+          for (i=0;i<locvatcnt;i=i+1) begin
+            MatRowGet(SMLocr,i,SMrw);
+            t = blankval;
+            PrintVCR(RepSpec,SMrw.VATCode,SMrw.Comment,SMrw.DebVal,IVr.InclVAT,t);
+          end;
+          Gray_Divider(120,480);
+          if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+            tmpSum4 = -tmpSum4;
+          end;  
+          StartFormat(15);
+          OutString(340,0,USetStr(5233),false);
+          if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+            OutVal(480,0,IVr.Sum3,M4NegVal,true);
+          end else begin
+            OutVal(480,0,IVr.Sum3,M4Val,true);
+          end;
+          EndFormat;
+          StartFormat(15);
+          OutString(340,0,USetStr(5234),false);
+          OutVal(480,0,tmpSum4,M4Val,true);
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  
+  if (datesort!=0) then begin
+    IVCashr.TransDate = RepSpec.sStartDate;
+    IVCashr.SerNr = afr;
+    ckey = "TransDate";
+  end else begin
+    if (RepSpec.flags[8]!=0) then begin
+      IVCashr.OfficialSerNr = offnrfr;
+      ckey = "OfficialSerNr";
+    end else begin
+      IVCashr.SerNr = afr;
+      ckey = "SerNr";
+    end;
+  end;
+  
+  if (RepSpec.flags[8]!=0) then begin
+    TrHs = true;
+  end else begin
+    TrHs = false;
+  end;
+  while (LoopKey(ckey,IVCashr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (datesort!=0) then begin
+        if (DateInRange(IVCashr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          TrHs = false;
+        end;  
+      end else begin
+        if (RepSpec.flags[8]!=0) then begin
+          if (nonblank(offnrto)) then begin
+            if (IVCashr.OfficialSerNr>offnrto) then begin
+              TrHs = false;
+            end;
+          end;
+        end else begin
+          if (ato!=-1) then begin
+            if (IVCashr.SerNr>ato) then begin
+              TrHs = false;
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (DateInRange(IVCashr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (afr!=-1) then begin
+        if (IVCashr.SerNr<afr) then begin testf = false; end;
+      end;
+      if (ato!=-1) then begin
+        if (IVCashr.SerNr>ato) then begin testf = false; end;
+      end;
+      if (nonblank(offnrfr)) then begin
+        if (IVCashr.OfficialSerNr<offnrfr) then begin testf = false; end;
+      end;
+      if (nonblank(offnrto)) then begin
+        if (IVCashr.OfficialSerNr>offnrto) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[1]==0) then begin
+        if (IVCashr.OKFlag!=0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[2]==0) then begin
+        if (IVCashr.OKFlag==0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[3]==0) then begin
+        if (IVCashr.InclVAT==0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[4]==0) then begin
+        if (IVCashr.InclVAT!=0) then begin testf = false; end;
+      end;
+      if (IVCashr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        printf = false;
+        IPTransDate = "";
+        SetupVATBase(SMLocr,locvatcnt);
+        printf = true;
+        tmpSum4 = IVCashr.BaseSum4;
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          IVCashrw.Sum = MulRateToBase1(IVCashr.CurncyCode,IVCashrw.Sum,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+          AddVATBase(SMLocr,IVCashrw.VATCode,IVCashrw.Sum,blankval,locvatcnt,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+        end;
+        AddLocSMVcToTotSMVc(SMLocr,SMTotr,locvatcnt,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+        if (printf) then begin
+          Gray_Divider(0,1);
+          transcnt = transcnt + 1;
+          StartFormat(15);
+          tstr = CreateInvoiceNumber(IVCashr.SerNr,IVCashr.OfficialSerNr);
+          if (RepSpec.flags[8]!=0 and nonblank(IVCashr.OfficialSerNr)) then begin tstr = IVCashr.OfficialSerNr; end;
+          OutString(0,"DblIVCashVc",tstr,false);
+          if (blank(IPTransDate)) then begin
+            OutDate(80,0,IVCashr.TransDate,false);
+          end else begin
+            OutDate(80,0,IPTransDate,false);
+          end;
+          OutString(160,0,IVCashr.CustCode,false);
+          OutString(240,0,IVCashr.Addr0,false);
+          EndFormat;
+          tstr = IVCashr.Addr1;
+          if (nonblank(IVCashr.Addr2)) then begin
+            tstr = tstr & ", ";
+            tstr = tstr & IVCashr.Addr2;
+          end;
+          if (nonblank(IVCashr.Addr3)) then begin
+            tstr = tstr & ", ";
+            tstr = tstr & IVCashr.Addr3;
+          end;
+          StartFormat(15);
+          OutLongInt(0,0,transcnt,false); // only used in Romania 
+          OutDate(80,0,IVCashr.InvDate,false);
+          OutString(160,0,IVCashr.VATNr,false);
+          OutString(240,0,tstr,false);
+          EndFormat;
+          StartFormat(10);
+          EndFormat;
+          StartFormat(15);
+          OutString(120,0,USetStr(5208),false);
+          OutString(340,0,USetStr(5209),true);
+          OutString(400,0,USetStr(5210),true);
+          OutString(480,0,USetStr(5211),true);
+          EndFormat;
+          Gray_Divider(120,480);
+          for (i=0;i<locvatcnt;i=i+1) begin
+            MatRowGet(SMLocr,i,SMrw);
+            t = blankval;
+            PrintVCR(RepSpec,SMrw.VATCode,SMrw.Comment,SMrw.DebVal,IVCashr.InclVAT,t);
+          end;
+          Gray_Divider(120,480);
+          StartFormat(15);
+          OutString(340,0,USetStr(5233),false);
+          OutVal(480,0,IVCashr.Sum3,M4Val,true);
+          EndFormat;
+          StartFormat(15);
+          OutString(340,0,USetStr(5234),false);
+          OutVal(480,0,tmpSum4,M4Val,true);
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  
+  if (datesort!=0) then begin
+    RestAccr.TransDate = RepSpec.sStartDate;
+    RestAccr.SerNr = afr;
+    ckey = "TransDate";
+  end else begin
+    if (RepSpec.flags[8]!=0) then begin
+      RestAccr.OfficialSerNr = offnrfr;
+      ckey = "OfficialSerNr";
+    end else begin
+      RestAccr.SerNr = afr;
+      ckey = "SerNr";
+    end;
+  end;
+  
+  if (RepSpec.flags[9]!=0) then begin
+    TrHs = true;
+  end else begin
+    TrHs = false;
+  end;
+  while (LoopKey(ckey,RestAccr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (datesort!=0) then begin
+        if (DateInRange(RestAccr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          TrHs = false;
+        end;  
+      end else begin
+        if (RepSpec.flags[8]!=0) then begin
+          if (nonblank(offnrto)) then begin
+            if (RestAccr.OfficialSerNr>offnrto) then begin
+              TrHs = false;
+            end;
+          end;
+        end else begin
+          if (ato!=-1) then begin
+            if (RestAccr.SerNr>ato) then begin
+              TrHs = false;
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (DateInRange(RestAccr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false;
+      end;
+      if (afr!=-1) then begin
+        if (RestAccr.SerNr<afr) then begin testf = false; end;
+      end;
+      if (ato!=-1) then begin
+        if (RestAccr.SerNr>ato) then begin testf = false; end;
+      end;
+      if (nonblank(offnrfr)) then begin
+        if (RestAccr.OfficialSerNr<offnrfr) then begin testf = false; end;
+      end;
+      if (nonblank(offnrto)) then begin
+        if (RestAccr.OfficialSerNr>offnrto) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[1]==0) then begin
+        if (RestAccr.Closed!=0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[2]==0) then begin
+        if (RestAccr.Closed==0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[3]==0) then begin
+        if (RestAccr.InclVAT==0) then begin testf = false; end;
+      end;  
+      if (RepSpec.flags[4]==0) then begin
+        if (RestAccr.InclVAT!=0) then begin testf = false; end;
+      end;
+      if (RestAccr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        printf = false;
+        IPTransDate = "";
+        SetupVATBase(SMLocr,locvatcnt);
+        printf = true;
+        tmpSum4 = RestAccr.Sum4;
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          RestAccrw.Sum = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+          AddVATBase(SMLocr,RestAccrw.VATCode,RestAccrw.Sum,blankval,locvatcnt,RestAccr.InclVAT,0);
+        end;
+        AddLocSMVcToTotSMVc(SMLocr,SMTotr,locvatcnt,RestAccr.InclVAT,0);
+        if (printf) then begin
+          Gray_Divider(0,1);
+          transcnt = transcnt + 1;
+          StartFormat(15);
+          OutString(0,"DblRestAccVc",RestAccr.SerNr,false);
+          if (blank(IPTransDate)) then begin
+            OutDate(80,0,RestAccr.TransDate,false);
+          end else begin
+            OutDate(80,0,IPTransDate,false);
+          end;
+          OutString(160,0,RestAccr.CustCode,false);
+          OutString(240,0,RestAccr.Addr0,false);
+          EndFormat;
+          tstr = RestAccr.Addr1;
+          if (nonblank(RestAccr.Addr2)) then begin
+            tstr = tstr & ", ";
+            tstr = tstr & RestAccr.Addr2;
+          end;
+          if (nonblank(RestAccr.Addr3)) then begin
+            tstr = tstr & ", ";
+            tstr = tstr & RestAccr.Addr3;
+          end;
+          StartFormat(15);
+          OutLongInt(0,0,transcnt,false); // only used in Romania 
+          OutDate(80,0,RestAccr.TransDate,false);
+          OutString(160,0,RestAccr.VATNr,false);
+          OutString(240,0,tstr,false);
+          EndFormat;
+          StartFormat(10);
+          EndFormat;
+          StartFormat(15);
+          OutString(120,0,USetStr(5208),false);
+          OutString(340,0,USetStr(5209),true);
+          OutString(400,0,USetStr(5210),true);
+          OutString(480,0,USetStr(5211),true);
+          EndFormat;
+          Gray_Divider(120,480);
+          for (i=0;i<locvatcnt;i=i+1) begin
+            MatRowGet(SMLocr,i,SMrw);
+            t = blankval;
+            PrintVCR(RepSpec,SMrw.VATCode,SMrw.Comment,SMrw.DebVal,RestAccr.InclVAT,t);
+          end;
+          Gray_Divider(120,480);
+          StartFormat(15);
+          OutString(340,0,USetStr(5233),false);
+          OutVal(480,0,RestAccr.Sum3,M4Val,true);
+          EndFormat;
+          StartFormat(15);
+          OutString(340,0,USetStr(5234),false);
+          OutVal(480,0,tmpSum4,M4Val,true);
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  
+  Gray_Divider(0,1);
+  StartFormat(15);
+  EndFormat;  
+  StartFormat(15);
+  OutString(120,0,USetStr(5208),false);
+  OutString(340,0,USetStr(5209),true);
+  OutString(400,0,USetStr(5210),true);
+  OutString(480,0,USetStr(5211),true);
+  EndFormat;  
+  Gray_Divider(0,1);  
+  for (i=0;i<totvatcnt;i=i+1) begin
+    MatRowGet(SMTotr,i,SMrw);
+    t = blankval;    
+    PrintVCR(RepSpec,SMrw.VATCode,SMrw.Comment,SMrw.DebVal,1,t);
+    vbsum = vbsum + SMrw.DebVal;
+    totsum = totsum + Round(t,GetVATRoundMode(Rb));
+  end;
+  Gray_Divider(120,480);
+  StartFormat(15);
+  OutVal(340,0,vbsum - totsum,M4Val,true);
+  OutVal(480,0,totsum,M4Val,true);
+  EndFormat;
+  StartFormat(15);
+  OutVal(480,0,Round(vbsum,GetTotalRoundMode(Rb)),M4Val,true);
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutVal(200,0,totvval,M4Val,true);
+  OutVal(300,0,totnvval,M4Val,true);
+  EndFormat;
+  EndJob;
+  RETURN;
+END;

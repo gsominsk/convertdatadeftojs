@@ -1,0 +1,321 @@
+external function Boolean SetInSet2(string,string);
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+
+updating procedure AddISToStockTak(var record StockTakeVc STr,record ItemStatusVc ISr,string ingroup,string location,string shelfcode,string itemclass,
+                   var string lastlocation,string position,var Integer flushcnt)
+begin
+  record INVc INr;
+  record SerBalVc SerBalr;
+  row StockTakeVc STrw;
+  string 30 serial;
+  Boolean res,TrHs, skipf,addrowf,found,testf;
+  integer rwcnt;
+  record LocationVc Locr;
+  record PISVc PISr;
+
+  addrowf = true;
+  if (lastlocation!=ISr.Location) then begin
+    if (MatRowCnt(STr)>0) then begin
+      if (STr.SerNr==-1) then begin
+        STr.SerNr = NextSerNr("StockTakeVc",STr.TransDate,-1,false,"");
+      end;
+      if (STr.SerNr>0) then begin
+        if (RecordStore(STr,false)) then begin end;
+      end;
+    end;
+    RecordNew(STr);
+    STr.SerNr = -1;
+  end;
+  lastlocation = ISr.Location;
+  STr.Location = ISr.Location;
+  rwcnt = MatRowCnt(STr);
+  ClearRow(STr,STrw,1);
+  if (ReadFirstItem(ISr.Code & ISr.Variety,INr,true,false)) then begin
+    STrw.ArtCode = ISr.Code & ISr.Variety;
+    STrw.Spec = INr.Name;
+  end else begin
+    if (ReadFirstMain(INr,1,true)) then begin
+      if (INr.Terminated!=0) then begin
+        STrw.ArtCode = ISr.Code;
+        STrw.Spec = INr.Name;
+      end;
+    end;
+  end;
+  if (nonblank(ingroup)) then begin
+    if (INr.Group!=ingroup) then begin goto LSKIP; end;
+  end;
+  if (nonblank(shelfcode)) then begin
+    if (INr.InvCode!=shelfcode) then begin goto LSKIP; end;
+  end;
+  if (nonblank(itemclass)) then begin
+    if (SetInSet2(itemclass,INr.DispGroups)==false) then begin goto LSKIP; end;
+  end;
+  if (INr.SerNrf <> 0) then begin
+    serial = "";
+    skipf = true;
+    SerBalr.Item = ISr.Code;
+    SerBalr.Location = ISr.Location;
+    ResetLoop(SerBalr);
+    while (LoopMain(SerBalr,2,skipf)) begin
+      TrHs = true;
+      if (SerBalr.Item <> ISr.Code) then begin
+        skipf = false;
+      end;
+      if (nonblank(location)) then begin
+        if (SerBalr.Location!=location) then begin
+          skipf = false;
+        end;
+      end;
+      if (SerBalr.Location!=ISr.Location) then begin
+        TrHs = false;
+      end;
+      if (SerBalr.Quant <= 0) then begin
+        TrHs = false;
+      end;
+      if (skipf) and (TrHs) then begin
+        if (SerBalr.Serial <> serial) then begin
+          serial = SerBalr.Serial;
+          STrw.Qty = SerBalr.Quant;
+          STrw.InStock = SerBalr.Quant;
+          STrw.SerialNr = SerBalr.Serial;
+          STrw.BasePrice = INr.UPrice1;
+          STrw.UnitXval = INr.Width;
+          STrw.UnitYval = INr.Height;
+          STrw.UnitZval = INr.Depth;
+          STrw.Coefficient = INr.UnitCoefficient;
+          MatRowPut(STr,rwcnt,STrw);
+          rwcnt = rwcnt + 1;
+          addrowf = false;
+        end;
+        if (rwcnt>=198) then begin
+          if (STr.SerNr==-1) then begin
+            STr.SerNr = NextSerNr("StockTakeVc",STr.TransDate,-1,false,"");
+          end;
+          if (STr.SerNr>0) then begin
+            res = RecordStore(STr,true);
+          end;
+          CheckFlush(flushcnt,10);
+          RecordNew(STr);
+          STr.SerNr = -1;
+          rwcnt = 0;
+        end;
+      end;
+    end;
+  end;
+  if (addrowf) then begin
+    if (nonblank(location)) then begin
+      Locr.Code = location;
+      ReadFIrstMain(Locr,1,true);
+    end;
+    if (Locr.RequirePos!=0) then begin
+      found = true;
+      PISr.Location = location;
+      PISr.ArtCode = ISr.Code;
+      PISr.Variety = ISr.Variety;
+      while (LoopKey("CodeVariety",PISr,3,found)) begin
+        if (PISr.Location!=location) then begin found = false; end;
+        if (PISr.ArtCode!=ISr.Code) then begin found = false; end;
+        if (PISr.Variety!=ISr.Variety) then begin found = false; end;
+        if (found) then begin
+          testf = true;
+          if (nonblank(position)) then begin
+            if (PISr.Position!=position) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            STrw.Qty = PISr.Instock;
+            STrw.InStock = PISr.Instock;
+            STrw.BasePrice = INr.UPrice1;
+            STrw.UnitXval = INr.Width;
+            STrw.UnitYval = INr.Height;
+            STrw.UnitZval = INr.Depth;
+            STrw.Coefficient = INr.UnitCoefficient;
+            STrw.Position = PISr.Position;
+            MatRowPut(STr,rwcnt,STrw);
+            rwcnt = rwcnt + 1;
+          end;
+        end;
+      end;
+
+    end else begin
+      STrw.Qty = ISr.Instock;
+      STrw.InStock = ISr.Instock;
+      STrw.BasePrice = INr.UPrice1;
+      STrw.UnitXval = INr.Width;
+      STrw.UnitYval = INr.Height;
+      STrw.UnitZval = INr.Depth;
+      STrw.Coefficient = INr.UnitCoefficient;
+      MatRowPut(STr,rwcnt,STrw);
+    end;
+    rwcnt = rwcnt + 1;
+  end;
+  if (rwcnt==198) then begin
+    if (STr.SerNr==-1) then begin
+      STr.SerNr = NextSerNr("StockTakeVc",STr.TransDate,-1,false,"");
+    end;
+    if (STr.SerNr>0) then begin
+      res = RecordStore(STr,true);
+    end;
+    CheckFlush(flushcnt,10);
+    RecordNew(STr);
+    STr.SerNr = -1;
+    rwcnt = 0;
+  end;
+LSKIP:;
+  return;
+end;
+
+global
+updating procedure GenSTMn(record RcVc RepSpec)
+begin
+  record ItemStatusVc ISr;
+  record INVc INr;
+  record LocationVc Locr;
+  record StockTakeVc STr;
+  Boolean foundf,testf,infoundf,locfoundf;
+  Boolean res;
+  string 30 lastlocation;
+  Integer flushcnt;
+  array string 20 alocstr;
+  Integer acnt,apos;
+  string 20 frin,toin;
+  vector Boolean vvarietyf;
+
+  frin = FirstInRange(RepSpec.f2,20);
+  toin = LastInRange(RepSpec.f2,20);
+  foundf = true;
+  RecordNew(STr);
+  switch (RepSpec.flags[1]) begin
+    case 0:
+      ISr.Location = RepSpec.f1;
+      while (LoopKey("Location",ISr,1,foundf)) begin
+        testf = true;
+        if (nonblank(RepSpec.f1)) then begin
+          if (ISr.Location <> RepSpec.f1) then begin
+            foundf = false;
+          end;
+        end;
+        if (ISr.Instock <= 0) then begin
+          testf = false;
+        end;
+        if (foundf==false) then begin
+          testf = false;
+        end;
+        if (ISr.Location==";;;") then begin
+          testf = false;
+        end;
+        if (nonblank(RepSpec.f2)) then begin
+          if (ISr.Code<frin) then begin testf = false; end;
+          if (ISr.Code>toin) then begin testf = false; end;
+        end;
+        if (vvarietyf[ISr.Code & ISr.Variety & ISr.Location]==true) then begin testf = false; end;
+        if (testf) then begin
+          vvarietyf[ISr.Code & ISr.Variety & ISr.Location] = true;
+          AddISToStockTak(STr,ISr,RepSpec.FirstAcc,ISr.Location,RepSpec.LastAcc,RepSpec.f6,lastlocation,RepSpec.AccStr,flushcnt);
+        end;
+      end;
+    case 1:
+      acnt = 0;
+      alocstr[acnt] = "";
+      locfoundf = true;
+      Locr.Code = RepSpec.f1;
+      while (LoopMain(Locr,1,locfoundf)) begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (Locr.Code!=RepSpec.f1) then begin
+            locfoundf = false;
+          end;
+        end;
+        if (locfoundf) then begin
+          alocstr[acnt] = Locr.Code;
+          acnt = acnt + 1;
+        end;
+      end;
+      apos = 0;
+      while ((nonblank(alocstr[apos])) or (apos==0)) begin
+        infoundf = true;
+        ResetLoop(INr);
+        INr.Group = RepSpec.FirstAcc;
+        while (LoopKey("Group",INr,1,infoundf)) begin
+          if (nonblank(RepSpec.FirstAcc)) then begin
+            if (INr.Group!=RepSpec.FirstAcc) then begin
+              infoundf = false;
+            end;
+          end;
+          if (infoundf) then begin
+            testf = true;
+            if (nonblank(RepSpec.f2)) then begin
+              if (ISr.Code<frin) then begin testf = false; end;
+              if (ISr.Code>toin) then begin testf = false; end;
+            end;
+            if (testf) then begin
+              ISr.Code = INr.Code;
+              ISr.Location = alocstr[apos];
+              if (ReadFirstMain(ISr,2,true)) then begin
+                testf = true;
+                if (ISr.Instock>0) then begin
+                  AddISToStockTak(STr,ISr,INr.Group,alocstr[apos],RepSpec.LastAcc,RepSpec.f6,lastlocation,RepSpec.AccStr,flushcnt);
+                end;
+              end;
+            end;
+          end;
+        end;
+        apos = apos + 1;
+      end;
+    case 2:
+      acnt = 0;
+      alocstr[acnt] = "";
+      locfoundf = true;
+      Locr.Code = RepSpec.f1;
+      while (LoopMain(Locr,1,locfoundf)) begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (Locr.Code!=RepSpec.f1) then begin
+            locfoundf = false;
+          end;
+        end;
+        if (locfoundf) then begin
+          alocstr[acnt] = Locr.Code;
+          acnt = acnt + 1;
+        end;
+      end;
+      apos = 0;
+      while ((nonblank(alocstr[apos])) or (apos==0)) begin
+        infoundf = true;
+        ResetLoop(INr);
+        INr.InvCode = RepSpec.LastAcc;
+        while (LoopKey("InvCode",INr,1,infoundf)) begin
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (INr.InvCode!=RepSpec.LastAcc) then begin
+              infoundf = false;
+            end;
+          end;
+          if (infoundf) then begin
+            testf = true;
+            if (nonblank(RepSpec.f2)) then begin
+              if (ISr.Code<frin) then begin testf = false; end;
+              if (ISr.Code>toin) then begin testf = false; end;
+            end;
+            if (testf) then begin
+              ISr.Code = INr.Code;
+              ISr.Location = alocstr[apos];
+              if (ReadFirstMain(ISr,2,true)) then begin
+                testf = true;
+                if (ISr.Instock>0) then begin
+                  AddISToStockTak(STr,ISr,INr.Group,alocstr[apos],RepSpec.LastAcc,RepSpec.f6,lastlocation,RepSpec.AccStr,flushcnt);
+                end;
+              end;
+            end;
+          end;
+        end;
+        apos = apos + 1;
+      end;
+  end;
+  if (MatRowCnt(STr)>0) then begin
+    if (STr.SerNr==-1) then begin
+      STr.SerNr = NextSerNr("StockTakeVc",STr.TransDate,-1,false,"");
+    end;
+    if (STr.SerNr>0) then begin
+      res = RecordStore(STr,true);
+    end;
+  end;
+  return;
+end;

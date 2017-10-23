@@ -1,0 +1,268 @@
+external procedure FindTargetTimeOverView(record RcVc,string,var val,string,string,string);
+external function val UserActTypesNumber(string,string,Date,Date);
+external function val UserSales(string,Date,Date,string,string,string);
+external procedure ForecastPrintNote(record ForecastUserVc,string);
+external function val UserActTypesHours(string,string,Date,Date);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external function val TimeToVal2(Time);
+external procedure HT2Per(Date, Date , var string);
+
+procedure PrintRow(Integer col1,Integer col2,Integer col3,Integer col4,Integer col5,
+                   Integer id1,Integer id2,Integer id3,val forecast,val result)
+BEGIN
+  StartFormat(15);
+  if (id1>0) then begin
+    OutString(col1,0,USetStr(id1),false);
+  end;
+  if (id2>0) then begin
+    OutString(col2,0,USetStr(id2),false);
+    OutVal(col4,0,forecast,M4Val,true);
+  end;
+  if (id3>0) then begin
+    OutString(col3,0,USetStr(id3),false);
+    OutVal(col5,0,result,M4Val,true);
+  end;
+  EndFormat;
+  RETURN;
+END;
+
+global
+procedure QuotesForCustomers(Integer what,string person,Date startd,Date endd,var LongInt nrofnewq,var val amountnewq,string custcat)
+BEGIN
+  record QTVc QTr;
+  record CUVc CUr;
+  record IVVc IVr;
+  Boolean TrHs,testf;
+    
+  nrofnewq = 0;
+  amountnewq = blankval;
+  QTr.SalesMan = person;
+  QTr.QTDate = startd;
+  TrHs = true;
+  while (LoopKey("SalesMan",QTr,2,TrHs)) begin
+    if (QTr.SalesMan!=person) then begin TrHs= false; end;
+    if (DateInRange(QTr.QTDate,startd,endd)==false) then begin 
+      TrHs = false; 
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(custcat)) then begin
+        CUr.Code = QTr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin
+          if (CUr.CustCat!=custcat) then begin 
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        IVr.CustCode = QTr.CustCode;
+        if (ReadFirstKey("CustCode",IVr,1,true)) then begin
+          switch (what) begin
+            case 1:
+              if (IVr.InvDate<startd) then begin
+                testf = false;//existing customer
+              end;
+            case 2:
+              if (IVr.InvDate>startd) then begin
+                testf = false;//new customer
+              end;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        nrofnewq = nrofnewq + 1;
+        amountnewq = amountnewq + MulRateToBase2(QTr.CurncyCode,QTr.Sum4,QTr.FrRate,QTr.ToRateB1,QTr.ToRateB2,QTr.BaseRate1,QTr.BaseRate2,DefaultCurRoundOff);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+function val UserHours(string person,Date startd,Date endd)
+BEGIN
+  string 255 tstr,keystr;
+  record ActVc Actr;
+  Boolean TrHs,testf;
+  val res;
+  Date enddate;
+
+  TrHs = true;
+  keystr = "DateUserMain:" & person;
+  Actr.CalTimeFlag = 1;
+  Actr.TransDate = startd;
+  while (LoopKey(keystr,Actr,2,TrHs)) begin
+    if (DateInRange(Actr.TransDate,startd,endd)==false) then begin 
+      TrHs = false; 
+    end;
+    if (SetInSet(person,Actr.MainPersons)==false) then begin
+      if (SetInSet(person,Actr.CCPersons)==false) then begin
+        TrHs = false;
+      end;
+    end;
+    if (Actr.CalTimeFlag!=1) then begin TrHs = false; end;    
+    if (TrHs) then begin
+      testf = true;
+      if (Actr.TodoFlag!=0) then begin testf = false; end;
+      if (testf) then begin
+        if (nonblanktime(Actr.CostTime)) then begin
+          res = res + TimeToVal2(Actr.CostTime);
+        end else begin
+          res = res + (TimeToVal2(Actr.EndTime)-TimeToVal2(Actr.StartTime));
+        end;
+      end;
+    end;
+  end;
+  UserHours = res;
+  RETURN;
+END;
+
+
+global
+procedure MonthSupportRn(record RcVc RepSpec)
+BEGIN
+  string 255 tstr;
+  Integer rw;
+  record CountryVc Countryr;
+  record UserVc Userr;
+  record ForecastUserVc ForecastUserr;
+  record ResultUserVc ResultUserr;
+  record MonthlyUserSetVc MonthlyUserSetr;
+  Boolean forecastf;
+  val suppres,tothours,targtime;
+  LongInt canvres,leadres;
+  Integer adjhead,col1,col2,col3,col4,col5,col6,col7,col8;
+  LongInt nrofnewq;
+  val amountnewq;
+  val licenses,services;
+  
+  Userr.Code = RepSpec.TransStr;
+  if (ReadFirstMain(Userr,1,true)) then begin end;
+  ForecastUserr.Person = RepSpec.TransStr;
+  ForecastUserr.Month = GetMonth(RepSpec.sStartDate);
+  forecastf = ReadFirstKey("PersonMonth",ForecastUserr,2,true);
+
+  Countryr.Code = ForecastUserr.Country;
+  if (ReadFirstMain(Countryr,1,true)) then begin end;
+  StartReportJob(USetStr(13430));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  Header(rw,Userr.Name,0);
+  Header(rw,Countryr.Comment,1);
+  EndHeader;
+  col1 = 0;
+  col2 = 200;
+  col3 = 350;
+  col4 = 320;
+  col5 = 480;
+  adjhead = 0;
+  if (blank(RepSpec.TransStr)) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(13431),false);
+    EndFormat;
+    goto LEND;
+  end;
+  if (forecastf==false) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(13432),false);
+    EndFormat;
+    goto LEND;
+  end;
+  ResultUserr.Person = RepSpec.TransStr;
+  ResultUserr.Month = GetMonth(RepSpec.sStartDate);
+  forecastf = ReadFirstKey("PersonMonth",ResultUserr,2,true);
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(13433),false);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (RepSpec.flags[0]==0) then begin
+    StartFormat(15);
+    OutString(300,0,USetStr(13434),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(13435),false);
+    EndFormat;
+    PrintRow(col1,col2,col3,col4,col5,13438,13436,13437,ForecastUserr.CanvasCalls,ResultUserr.CanvasCalls);
+    PrintRow(col1,col2,col3,col4,col5,13439,13436,13437,ForecastUserr.SupportCalls,ResultUserr.SupportCalls);
+    PrintRow(col1,col2,col3,col4,col5,13440,13436,13437,ForecastUserr.NewLeads,ResultUserr.NewLeads);
+    PrintRow(col1,col2,col3,col4,col5,13441,13436,13437,ForecastUserr.QuotesNewCU,ResultUserr.QuotesNewCU);
+    PrintRow(col1,col2,col3,col4,col5,13442,13436,13437,ForecastUserr.QuotesSumNewCU,ResultUserr.QuotesSumNewCU);
+    PrintRow(col1,-1,col3,col4,col5,13445,13436,13437,blankval,ResultUserr.TotalSales);//ForecastUserr.LicensesNewCU + ForecastUserr.LicensesOldCU + ForecastUserr.ConsultingNewCU + ForecastUserr.ConsultingOldCU
+
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(13443),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(15,0,ForecastUserr.Development1,false);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(13444),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(15,0,ForecastUserr.Development2,false);
+    EndFormat;
+    ForecastPrintNote(ForecastUserr,"");
+  end else begin
+    MonthlyUserSetr.Person = RepSpec.TransStr;
+    if (ReadFirstMain(MonthlyUserSetr,1,true)) then begin end;    
+    if (nonblank(MonthlyUserSetr.Support)) then begin
+      suppres = UserActTypesHours(RepSpec.TransStr,MonthlyUserSetr.Support,RepSpec.sStartDate,RepSpec.sEndDate);
+    end;
+    if (nonblank(MonthlyUserSetr.CanvasCalls)) then begin
+      canvres = UserActTypesNumber(RepSpec.TransStr,MonthlyUserSetr.CanvasCalls,RepSpec.sStartDate,RepSpec.sEndDate);
+    end;
+    if (nonblank(MonthlyUserSetr.Leads)) then begin
+      leadres = UserActTypesNumber(RepSpec.TransStr,MonthlyUserSetr.Leads,RepSpec.sStartDate,RepSpec.sEndDate);
+    end;
+    tothours = UserHours(RepSpec.TransStr,RepSpec.sStartDate,RepSpec.sEndDate);
+    FindTargetTimeOverView(RepSpec,RepSpec.TransStr,targtime,"","","");
+    
+    StartFormat(15);
+    OutString(300,0,USetStr(13434),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(13435),false);
+    OutVal(480,0,(suppres/targtime)*100,M4Val,true);
+    EndFormat;
+
+    PrintRow(col1,col2,col3,col4,col5,13438,13436,13437,ForecastUserr.CanvasCalls,canvres);
+    PrintRow(col1,col2,col3,col4,col5,13439,13436,13437,ForecastUserr.SupportCalls,suppres);
+
+    PrintRow(col1,col2,col3,col4,col5,13440,13436,13437,ForecastUserr.NewLeads,leadres);
+    QuotesForCustomers(1,RepSpec.TransStr,RepSpec.sStartDate,RepSpec.sEndDate,nrofnewq,amountnewq,"");
+    PrintRow(col1,col2,col3,col4,col5,13441,13436,13437,ForecastUserr.QuotesNewCU,nrofnewq);
+    PrintRow(col1,col2,col3,col4,col5,13442,13436,13437,ForecastUserr.QuotesSumNewCU,amountnewq);
+
+    licenses = UserSales(RepSpec.TransStr,RepSpec.sStartDate,RepSpec.sEndDate,"3010:3026","74010","");
+    licenses = licenses + UserSales(RepSpec.TransStr,RepSpec.sStartDate,RepSpec.sEndDate,"3010:3026","74000","");
+
+    services = UserSales(RepSpec.TransStr,RepSpec.sStartDate,RepSpec.sEndDate,"3070:3088","74010","");
+    services = services + UserSales(RepSpec.TransStr,RepSpec.sStartDate,RepSpec.sEndDate,"3070:3088","74000","");
+    PrintRow(col1,-1,col3,col4,col5,13445,13436,13437,blankval,licenses + services);
+
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(13443),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(15,0,ForecastUserr.Development1,false);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(13444),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(15,0,ForecastUserr.Development2,false);
+    EndFormat;
+    ForecastPrintNote(ForecastUserr,"");
+  end;
+
+LEND:;  
+  EndJob;
+  RETURN;
+END;
+

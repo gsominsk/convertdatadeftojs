@@ -1,0 +1,117 @@
+external function Boolean SetInSet2(string,string);
+external function Boolean GetItemNameStr(Integer,var string,string,string,string);
+
+updating procedure CreateProductFromItem(record INVc INr,string category,boolean overwritef)
+begin
+  record WebNGProductVc WPr;
+  boolean foundf;
+  string 255 tstr;
+  Integer pictnr;
+  record RLinkVc RLr;
+  record Attach2Vc Attachr;
+  
+  foundf = false;
+  if (overwritef==false) then begin
+    WPr.Code = INr.Code;
+    if (ReadFirstMain(WPr,1,true)) then begin
+      foundf = true;
+    end;
+  end;
+  
+  if (foundf==false or overwritef==true) then begin
+    RecordNew(WPr);
+    WPr.Code = INr.Code;
+    if (GetItemNameStr(1,tstr,"",INr.Name,INr.Code)) then begin
+      WPr.Comment = tstr;
+    end else begin
+      WPr.Comment = INr.Name;
+    end;
+    WPr.ProductCategory = category;
+  
+    if (RecordStore(WPr,true)) then begin
+      pictnr = 1;
+      foundf = true;
+      while ((ReadRecordLink(INr,pictnr,Attachr,RLr)) and (foundf)) begin
+        if (LowerCase(Right(Attachr.FileName,4))==".jpg") then begin
+          RLr.FromRecidStr = BuildRecordIdStr(WPr,CurrentCompany);
+          RecordStore(RLr,true);
+          foundf = false;
+        end;
+        pictnr = pictnr + 1;
+      end;
+    end;
+  end;
+
+  return;
+end;
+
+global
+updating procedure CreateNextWebProduct(record RcVc RepSpec,var string last)
+begin
+  record INVc INr;
+  string 255 frin,toin,res;
+  string 255 frit,toit;
+  boolean skipfirst,foundf,testf;
+  
+  res = "";
+  frit = FirstInRange(RepSpec.LastAcc,10);
+  toit = LastInRange(RepSpec.LastAcc,10);
+  
+  if (nonblank(last)) then begin
+    frin = last;
+    skipfirst = true;
+  end else begin
+    frin = FirstInRange(RepSpec.f1,100);
+    skipfirst = false;
+  end;
+  toin = LastInRange(RepSpec.f1,100);
+
+  foundf = true;
+  INr.Code = frin;
+  while (LoopMain(INr,1,foundf)) begin
+    if (skipfirst==false) then begin
+      if (nonblank(RepSpec.f1)) and ((nonblank(RepSpec.f6)) or (nonblank(RepSpec.LastAcc))) then begin
+        if (INr.Code>toin) then begin
+          foundf = false;
+        end;
+      end;
+      if (foundf) then begin
+        testf = true;
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (INr.Group<frit) or (INr.Group>toit) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f6)) then begin
+          if (SetInSet2(RepSpec.f6,INr.DispGroups)==false) then begin
+            testf = false;
+          end;
+        end;
+        if (INr.Terminated!=0) then begin testf = false; end;
+        if (testf) then begin
+          CreateProductFromItem(INr,RepSpec.f2,RepSpec.flags[1]==1);
+        end;
+        if (INr.Code!=toin) then begin
+          res = INr.Code;
+        end;
+        foundf = false;
+      end;
+    end else begin
+      skipfirst = false;
+    end;
+  end;
+  
+  last = res;
+  return;
+end;
+
+global
+procedure CreateWebProductsMn(record RcVc RepSpec)
+begin
+  string 255 last;
+
+  qupdating.CreateNextWebProduct(RepSpec,last);
+  while (nonblank(last)) begin
+    qupdating.CreateNextWebProduct(RepSpec,last);
+  end;
+  
+  return;
+end;

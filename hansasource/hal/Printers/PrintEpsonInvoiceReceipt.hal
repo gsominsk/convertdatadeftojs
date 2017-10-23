@@ -1,0 +1,959 @@
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure GetVATproc(string,Integer,var val);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function LongInt POSNETHexToLong(string);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external function string 255 NumToHex(string);
+
+enum begin
+  E_STX = 2,  // 0x02
+  E_ETX = 3,  // 0x03
+  E_ACK = 6,  // 0x06
+  E_DC2 = 18, // 0x12
+  E_DC4 = 20, // 0x14
+  E_NAK = 21, // 0x15
+  E_FS = 28,  // 0x1C
+  E_STATPRN = 161
+end;
+
+procedure Add_ASC(var Array Integer aArray,var Integer aCount,Integer AscCode)
+begin
+  aArray[aCount] = AscCode;
+  aCount = aCount + 1;
+  return;
+end;
+
+procedure Add_CHR(var Array Integer aArray,var Integer aCount,string s)
+begin                                                                              
+  Integer i,cnt;
+  
+  cnt = len(s);
+  for (i=0;i<cnt;i=i+1) begin
+    Add_ASC(aArray,aCount,asc(mid(s,i,1)));
+  end;                                                  
+  return;                                                                          
+end; 
+
+procedure Add_STR(var Array Integer aArray,var Integer aCount,string s)
+begin                                                       
+  if (NonBlank(s)) then begin
+    Add_CHR(aArray,aCount,ConvertStringToCodePage("CP437",s));
+  end else begin
+    Add_CHR(aArray,aCount,"_");
+  end;
+  return;                                                                          
+end;
+
+procedure Add_VAL(var Array Integer aArray,var Integer aCount,val v)
+begin
+  string 20 tstr;
+  
+  tstr = ValToString(v,M4Val,"","",0);
+  Add_CHR(aArray,aCount,tstr);
+  return;
+end;
+
+function string 255 ArrayToStr(Array Integer aArray,Integer aCount)
+begin
+  string 255 res;
+  Integer i;
+  
+  for (i=0;i<aCount;i=i+1) begin
+    res = res & chr(aArray[i]);
+  end;
+  
+  ArrayToStr = res;
+  return;
+end;
+
+function string 255 StringToHex(string s)
+begin
+  string 255 res;
+  Integer i,cnt;
+  
+  cnt = Len(s);
+  for (i=0;i<cnt;i=i+1) begin
+    res = res & asc(Mid(s,i,1)) & " ";
+  end;
+  
+  StringToHex = res;
+  return;
+end;
+
+procedure EpsonDisplayErrorMsg(Integer err,string msg)
+begin
+  MessageBox(err,msg);
+  return;
+end;
+
+function Integer AddCmdSeq(var Integer cmdnr)
+begin
+  if (cmdnr<32 or cmdnr>=127) then begin
+    cmdnr = 32;
+  end else begin
+    cmdnr = cmdnr + 1;
+  end;
+  AddCmdSeq = cmdnr;
+  return;
+end;
+
+function Integer ReplyInEpsonBuffer(var string replystr,Integer l)
+begin
+  Integer noErr;
+  
+  replystr = replystr & ReadComPort(0,l-len(replystr));
+  ReplyInEpsonBuffer = noErr;
+  return;
+end;
+
+function Integer OutComPortInteger(Integer EscSeq)
+begin
+  Integer res;
+  res = OutComPort(0,uchr(EscSeq));
+  OutComPortInteger = res;
+  return;
+end;
+
+function Integer OutComPortArray(array Integer aEscSeq,Integer aCount)
+BEGIN
+  Integer res;
+  Integer noErr,i;
+  
+  for (i=0;i<aCount;i=i+1) begin
+    res = OutComPortInteger(aEscSeq[i]);
+  end;
+  if (res!=0) then begin
+    res = noErr;
+  end else begin
+    res = 1;
+  end;
+  OutComPortArray = res;
+  RETURN;
+END;
+
+procedure ClearComPort()
+begin
+  string 1 c;
+  
+  c = ReadComPort(0,1);
+  while (c!="") begin
+    c = ReadComPort(0,1);
+  end;
+  
+  return;
+end;
+
+function Integer WaitEpsonTime(var string replystr,Integer replylen)
+begin
+  Integer res;
+  Integer noErr;
+  LongInt timeout;
+  LongInt tickcount, tick;
+
+  res = 12400;
+  replystr = "";
+  timeout = 800;
+  tick = GetCurTick;
+  tickcount = tick;
+  while ((tickcount-tick)<timeout) begin
+    tickcount = GetCurTick;
+    res = ReplyInEpsonBuffer(replystr,replylen);
+    if (len(replystr)>=replylen) or ((replylen==255) and (len(replystr)>0)) then begin
+      res = noErr;
+      goto LWaitEpsonTime;
+    end;
+  end;
+LWaitEpsonTime:;
+  WaitEpsonTime = res;
+  return;
+end;
+
+function Integer TestPrinterStatus(string printerstatus)
+begin
+  Integer res;
+  LongInt l;
+
+  l = POSNETHexToLong(Left(printerstatus,4));
+
+  if (BitAnd(l,1)) then begin res = 0; end;//transmit buffer is empty //res = 22108;
+  if (BitAnd(l,2)) then begin res = 0; end;//receipt buffer is empty  //res = 22109;
+  if (BitAnd(l,4)) then begin res = 0; end;//DTR line is active");//res = 22130;
+  if (BitAnd(l,8)) then begin res = 0; end;//RTS line is active//res = 22131;
+  if (BitAnd(l,16)) then begin res = 0; end;//DSR line is active//res = 22132;
+  if (BitAnd(l,32)) then begin res = 0; end;//CTS line is active  //res = 22133;
+  TestPrinterStatus = res;
+  return;
+end;
+
+function Integer TestFiscMemoryStatus(string fiscalstatus)
+begin
+  Integer res;
+  LongInt l;
+
+  l = POSNETHexToLong(Left(fiscalstatus,4));
+
+  if (BitAnd(l,1)) then begin res = 22110; goto LTestFiscMemoryStatus; end;//fiscal printer memory error  
+  if (BitAnd(l,2)) then begin res = 22116; goto LTestFiscMemoryStatus; end;//error in working memory  
+  if (BitAnd(l,4)) then begin res = 22134; goto LTestFiscMemoryStatus; end;//battery low  
+  if (BitAnd(l,8)) then begin res = 22112; goto LTestFiscMemoryStatus; end;//Unknown Command  
+  if (BitAnd(l,16)) then begin res = 22113; goto LTestFiscMemoryStatus; end;//Invalid Data  
+  if (BitAnd(l,32)) then begin res = 22114; goto LTestFiscMemoryStatus; end;//Invalid Command  
+  if (BitAnd(l,64)) then begin res = 22115; goto LTestFiscMemoryStatus; end;//total overflow 
+  if (BitAnd(l,128)) then begin res = 22116; goto LTestFiscMemoryStatus; end;//memory full, blocked or down  
+  
+  if (BitAnd(l,256)) then begin res = 0; end;//memory almost full  
+  if (BitAnd(l,512)) then begin res = 0; end;//certified terminal
+  if (BitAnd(l,1024)) then begin res = 0; end;//fiscalized terminal    
+//  if (BitAnd(l,2048)) then begin res = 22135; goto LTestFiscMemoryStatus; end;//daily report is necesary
+//  if (BitAnd(l,4096)) then begin res = 22119; goto LTestFiscMemoryStatus; end;//Document Already Opened  
+//  if (BitAnd(l,8192)) then begin res = 22120; goto LTestFiscMemoryStatus; end;//nonfiscal document already open  
+  if (BitAnd(l,16384)) then begin res = 0; end;//invoice open in a single paper
+  if (BitAnd(l,32768)) then begin res = 0; end;
+LTestFiscMemoryStatus:;
+  TestFiscMemoryStatus = res;
+  return;
+end;
+
+function Integer TestEpsonSuccess(string escseq,var string replystr)
+begin
+  Integer res,err;
+  Integer noErr;
+  Integer enqint;
+  string 255 printerstatus,fiscalstatus;
+
+  if (Left(escseq,3)==Left(replystr,3)) then begin
+    printerstatus = Mid(replystr,4,4);
+    res = TestPrinterStatus(printerstatus);
+    if (res!=0) then begin
+      goto LTestEpsonSuccess;
+    end;
+    fiscalstatus = Mid(replystr,9,4);
+    res = TestFiscMemoryStatus(fiscalstatus);
+    if (res!=0) then begin
+      goto LTestEpsonSuccess;
+    end;
+  end else begin
+    res = 12400;
+    goto LTestEpsonSuccess;
+  end;
+  res = noErr;
+LTestEpsonSuccess:;
+  TestEpsonSuccess = res;
+  return;
+end;
+
+procedure SeqWithEpsonCheckSum(var array Integer aEscSeq,var Integer aCount)
+begin
+  string 255 res;
+  string 255 cchex;
+  Integer cc,i;
+  
+  for (i=0;i<aCount;i=i+1) begin
+    cc = cc + aEscSeq[i];
+  end;
+  cchex = NumToHex(cc);
+  for(i=0;i<len(cchex);i=i+1)begin
+    Add_ASC(aEscSeq,aCount,asc(Mid(cchex,i,1)));
+  end;
+  return;
+end;
+
+function Integer EpsonWrite(var array Integer aEscSeq,var Integer aCount,Boolean cancelstrf,var Integer cmdnr,var string replystr,Integer replylen)
+begin
+  Integer res;
+  Integer noErr,err;
+  Integer attempts;
+  Integer enqint;
+  Boolean testf;
+  string 255 tstr;
+  LongInt starttick;  
+  array Integer aCancelSeq;
+  Integer aCancelCount;
+  
+//  res = SendEpsonString(chr(E_NAK));//to empty buffor
+//  res = WaitEpsonTime(replystr,255);
+  SeqWithEpsonCheckSum(aEscSeq,aCount);
+  res = OutComPortArray(aEscSeq,aCount);
+  if (res!=noErr) then begin
+    goto LEpsonWrite;
+  end;
+  MilliSleep(800);
+  
+  res = 12400;
+  starttick = GetCurTick;
+  testf = true;
+  while (testf) begin
+    err = WaitEpsonTime(replystr,1);
+    if (nonblank(replystr)) then begin
+      enqint = asc(Left(replystr,1));
+      switch (enqint) begin
+        case E_DC2: //continue
+        case E_DC4: //continue
+        case E_NAK: //retransmit
+          res = OutComPortArray(aEscSeq,aCount);
+          if (res!=noErr) then begin
+            goto LEpsonWrite;
+          end;
+        case E_STATPRN: 
+          testf = false;
+          res = 12400;
+        case E_ACK: //continue
+        
+        otherwise 
+          testf = false;
+          err = WaitEpsonTime(replystr,replylen);
+          replystr = chr(enqint) & replystr;
+          res = noErr;
+      end;
+    end;
+    if ((GetCurTick-starttick)>60000) then begin
+      testf = false;
+    end;
+  end;
+LEpsonWrite:;
+  if (res==noErr) then begin
+    res = TestEpsonSuccess(ArrayToStr(aEscSeq,aCount),replystr);
+    err = OutComPortInteger(E_ACK);
+  end;
+  if (res==noErr) then begin
+    ClearComPort;
+  end else begin
+    if (cancelstrf) then begin
+      Add_ASC(aCancelSeq,aCancelCount,E_STX);
+      Add_ASC(aCancelSeq,aCancelCount,AddCmdSeq(cmdnr));
+      Add_ASC(aCancelSeq,aCancelCount,100); // 0x64
+      Add_ASC(aCancelSeq,aCancelCount,E_FS);
+      M4PadString("",25," ",false,tstr);
+      Add_CHR(aCancelSeq,aCancelCount,tstr);
+      Add_ASC(aCancelSeq,aCancelCount,E_FS);
+      Add_VAL(aCancelSeq,aCancelCount,0);
+      Add_ASC(aCancelSeq,aCancelCount,E_FS);
+      Add_CHR(aCancelSeq,aCancelCount,"C");
+      Add_ASC(aCancelSeq,aCancelCount,E_ETX);
+      err = EpsonWrite(aCancelSeq,aCancelCount,false,cmdnr,replystr,255);
+      res = 22114;
+    end;
+    EpsonDisplayErrorMsg(res,"");
+  end;
+  EpsonWrite = res;
+  return;
+end;
+
+procedure GetEpsonDate(string replystr,var Integer year,var Integer month,var Integer day)
+begin
+  Integer i,l,what;
+  string 1 nc;
+  string 255 tstrY,tstrM,tstrD;
+  Boolean getdatef;
+  
+  l = len(replystr);
+  for (i=14;i<=15;i=i+1) begin
+    nc = Mid(replystr,i,1);
+    if ((asc(nc)>=asc("0")) and (asc(nc)<=asc("9"))) then begin
+      tstrY = tstrY & nc;
+    end;
+  end;        
+  for (i=16;i<=17;i=i+1) begin
+    nc = Mid(replystr,i,1);
+    if ((asc(nc)>=asc("0")) and (asc(nc)<=asc("9"))) then begin
+      tstrM = tstrM & nc;
+    end;
+  end;
+  for (i=18;i<=19;i=i+1) begin
+    nc = Mid(replystr,i,1);
+    if ((asc(nc)>=asc("0")) and (asc(nc)<=asc("9"))) then begin
+      tstrD = tstrD & nc;
+    end;
+  end;          
+  year = 2000 + StringToInt(tstrY);
+  month = StringToInt(tstrM);
+  day = StringToInt(tstrD);
+  return;
+end;
+
+function val DownPaymentAmount(record IVVc IVr,Integer ordrow)
+begin
+  val res;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+
+  if (ordrow>=0) then begin
+    rwcnt =  MatRowCnt(IVr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(IVr,i,IVrw);
+      if (IVrw.stp==5) then begin
+        if (IVrw.OrdRow==ordrow) then begin
+          res = res + IVrw.Sum;
+        end;
+      end;
+    end;
+  end;
+  DownPaymentAmount = res;
+  RETURN;
+END;
+
+function Integer EpsonOpen(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res;
+  
+  res = OpenComPort(0,LSPDr.Port,LSPDr.BaudRate,LSPDr.Parity,LSPDr.ByteSize,LSPDr.StopBits,LSPDr.FlowControl);
+//  res = OpenComPort(0,LSPDr.Port,9600,-1,8,0,kFlowControlDefault);
+  EpsonOpen = res;
+  return;
+end;
+
+procedure EpsonClose()
+begin
+  Integer res;
+
+  res = CloseComPort(0);
+  return;
+end;
+
+function string 255 CUVATRules(record MachineCashVc MCr,string regnr2)
+begin
+  string 255 res;
+  Integer i,rwcnt;
+  row MachineCashVc MCrw;
+  
+  rwcnt = MatRowCnt(MCr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(MCr,i,MCrw);
+    if (MCrw.RegDef==regnr2) then begin
+      switch (MCrw.CUVATRules) begin
+        case 0: res = "";
+        case 1: res = "I";
+        case 2: res = "R";
+        case 3: res = "E";
+        case 4: res = "N";
+        case 5: res = "F";
+        case 7: res = "M";  
+        otherwise res = "I";      
+      end;
+    end;
+  end;  
+  CUVATRules = res;
+  return;
+end;
+
+function string 1 GetFiscalDocumentLetter(record IVVc IVr)
+begin
+  string 1 res,c;
+  Integer i,cnt;
+  
+  cnt = len(IVr.OfficialSerNr);
+  for (i=0;i<cnt;i=i+1) begin
+    c = Mid(IVr.OfficialSerNr,i,1);
+    if (c=="-") then begin
+      i = cnt;
+    end else begin
+      res = c;
+    end;
+  end;
+  
+  GetFiscalDocumentLetter = res;
+  return;
+end;
+
+function Integer EpsonCheckClock(record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res;
+  Date td;
+  Integer pY,pM,pD;
+  Integer noErr;
+  string 255 replystr,msg;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  td = CurrentDate;
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,89); // 0x59
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,false,cmdnr,replystr,32);
+  GetEpsonDate(replystr,pY,pM,pD);
+  if ((GetYear(td)==pY) and (GetMonth(td)==pM) and (GetDay(td)==pD)) then begin
+    res = noErr;
+  end else begin
+    msg = USetStr(12402);
+    msg = msg & chr(10) & USetStr(12403) & pY & pM & pD;
+    msg = msg & chr(10) & USetStr(12404) & GetYear(td) & GetMonth(td) & GetDay(td);
+    res = 1;
+  end;
+  td.year = pY;
+  td.month = pM;
+  td.day = pD;
+  if (td==IVr.TransDate) then begin
+    res = noErr;
+  end else begin
+    msg = msg & chr(10) & USetStr(20852) & " " & IVr.TransDate & " " & USetStr(12403) & " " & td;
+    res = 1;
+  end;
+LEpsonCheckClock:;
+  if (NonBlank(msg)) then begin
+    EpsonDisplayErrorMsg(0,msg);
+  end;
+  EpsonCheckClock = res;
+  return;
+end;
+
+function Integer EpsonOpenFiscalReceipt(record MachineCashVc MCr,record IVVc IVr,var Integer cmdnr,var Boolean AddPerceptions)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  record CUVc CUr;
+  record CYBlock CYb;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  CUr.Code = IVr.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin end;
+  BlockLoad(CYb);
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,96); // 0x60
+  Add_ASC(aEscSeq,aCount,E_FS);
+  switch (Left(IVr.OfficialSerNr,1)) begin
+    case "T": tstr = "T";
+    otherwise tstr = "F";
+  end;
+  Add_CHR(aEscSeq,aCount,tstr);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"S");//C = contionous, S = A4 page, used to be T = ignore
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,GetFiscalDocumentLetter(IVr));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"2");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"P");//F = preprinted form, A = no header
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"10");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  tstr = CUVATRules(MCr,CYb.OrgNr2);
+  Add_CHR(aEscSeq,aCount,tstr);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  tstr = CUVATRules(MCr,CUr.RegNr2);
+  Add_CHR(aEscSeq,aCount,tstr);
+  AddPerceptions = (tstr=="M" or tstr=="I");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,Left(IVr.Addr0,36));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,Mid(IVr.Addr0,40,40));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  switch (CUr.DocType) begin
+    case "80": tstr = "CUIT";
+    case "86": tstr = "CUIL";
+    case "87": tstr = "CDI";
+    case "89": tstr = "LE";
+    case "90": tstr = "LC";
+    case "94": tstr = "Pasap";
+    case "96": tstr = "DNI";
+    otherwise
+      switch (CUr.CustType) begin
+        case 1: tstr = "DNI";
+        otherwise tstr = "CUIT";
+      end;
+  end;
+  Add_CHR(aEscSeq,aCount,tstr);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,StripNonDigits(IVr.VATNr));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"N");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,Left(IVr.Addr1,20));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,Left(IVr.Addr2,20));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,Left(IVr.Addr3,20));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,"");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,"");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"C");
+  Add_ASC(aEscSeq,aCount,E_ETX);  
+  res = EpsonWrite(aEscSeq,aCount,false,cmdnr,replystr,18);
+  EpsonOpenFiscalReceipt = res;
+  return;
+end;
+
+function Integer EpsonPrintInoiceLineDiscount(val discount,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  val t;
+  array Integer aEscSeq;
+  Integer aCount;
+
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,100); // 0x64
+  Add_ASC(aEscSeq,aCount,E_FS);
+  tstr = USetStr(1870);
+  Add_STR(aEscSeq,aCount,Left(tstr,20));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_VAL(aEscSeq,aCount,discount);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"D");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,true,cmdnr,replystr,18);
+  EpsonPrintInoiceLineDiscount = res;
+  return;
+end;
+
+function Integer EpsonPrintInvoiceLines(record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  record INVc INr;
+  Integer i,rwcnt;
+  row IVVc IVrw;
+  string 255 replystr,tstr;
+  val downpay,t,t1,discount;
+  array Integer aEscSeq;
+  Integer aCount;
+
+  rwcnt =  MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    if (blank(IVrw.ArtCode)) then begin
+      goto LSKIPROW;
+    end;
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;
+        downpay = DownPaymentAmount(IVr,IVrw.OrdRow);
+        if (downpay!=0) then begin
+          IVrw.Sum = IVrw.Sum + downpay;
+          IVrw.Price = IVrw.Sum/IVrw.Quant;
+        end;
+      case kInvoiceRowTypeCorrection: ;
+      case kInvoiceRowTypeDownpayment: 
+        if (IVrw.Sum<0) then begin 
+          goto LSKIPROW;
+        end;
+        IVrw.Price = IVrw.Sum/IVrw.Quant;
+      otherwise 
+        goto LSKIPROW;
+    end;
+    aCount = 0;
+    Add_ASC(aEscSeq,aCount,E_STX);
+    Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+    Add_ASC(aEscSeq,aCount,98); // 0x62
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_STR(aEscSeq,aCount,Left(IVrw.Spec,40));
+    Add_ASC(aEscSeq,aCount,E_FS);
+    tstr = ValToString(IVrw.Quant,M4Val,"","",0) & "0";
+    Add_CHR(aEscSeq,aCount,tstr);
+    Add_ASC(aEscSeq,aCount,E_FS);
+    if (GetFiscalDocumentLetter(IVr)=="A") then begin
+      t = IVrw.Sum / IVrw.Quant;
+    end else begin
+      if (IVr.InclVAT==0) then begin
+        MulVATIV(IVrw.VATCode,IVrw.Sum / IVrw.Quant,t,t1,IVr.InclVAT,IVr.NoTAXonVAT);
+        t = t + IVrw.Sum / IVrw.Quant;
+      end else begin
+        t = IVrw.Sum / IVrw.Quant;
+      end;
+    end;
+    Add_VAL(aEscSeq,aCount,t);
+    Add_ASC(aEscSeq,aCount,E_FS);
+    GetVATproc(IVrw.VATCode,IVr.InclVAT,t);
+    if (t==BlankVal) then begin
+      GetVATproc(IVrw.VATCode,0,t);
+    end;
+    if (t==BlankVal) then begin
+      t = 0;
+    end;
+    Add_VAL(aEscSeq,aCount,t);
+    Add_ASC(aEscSeq,aCount,E_FS);
+    tstr = "";
+    if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+      if (IVrw.stp==11) then begin
+        if (IVrw.Sum<0) then begin tstr = "m"; end;      
+      end else begin
+        if (IVrw.Sum>0) then begin tstr = "m"; end;      
+      end;
+    end else begin
+      if (IVrw.Sum<0) then begin tstr = "m"; end;
+    end;
+    if (blank(tstr)) then begin tstr = "M"; end;   //R discount, r = negative discount 
+    Add_CHR(aEscSeq,aCount,tstr);
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"0");
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"0");
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"");
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"");
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"");
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"");
+    Add_ASC(aEscSeq,aCount,E_FS);
+    Add_CHR(aEscSeq,aCount,"0");
+    Add_ASC(aEscSeq,aCount,E_ETX);
+    res = EpsonWrite(aEscSeq,aCount,true,cmdnr,replystr,18);
+    if (res==0) then begin
+      if (IVrw.vRebate!=0) then begin
+        discount = discount + IVrw.Quant * IVrw.Price * IVrw.vRebate / 100;
+      end;
+    end else begin
+      goto LEpsonPrintInvoiceLines;
+    end;
+LSKIPROW:;    
+  end;
+  if (discount!=BlankVal) then begin
+//    res = EpsonPrintInoiceLineDiscount(discount,cmdnr);
+  end;
+LEpsonPrintInvoiceLines:;  
+  EpsonPrintInvoiceLines = res;
+  return;
+end;
+
+function Integer EpsonTotalCancel(record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,100); // 0x64
+  Add_ASC(aEscSeq,aCount,E_FS);
+  M4PadString("",25," ",false,tstr);
+  Add_CHR(aEscSeq,aCount,tstr);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_VAL(aEscSeq,aCount,IVr.Sum4);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"C");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,true,cmdnr,replystr,255);
+  EpsonTotalCancel = res;
+  return;
+end;
+
+function Integer EpsonPerceptions(record IVVc IVr,var Integer cmdnr,Boolean AddPerceptions,string TaxType)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+  val TaxSum;
+  string 255 TaxDescr;
+  
+  if (!AddPerceptions) then begin
+    goto LEpsonPerceptions;
+  end;
+  switch (TaxType) begin
+    case "I": 
+      TaxSum = IVr.TAX1Sum;
+      TaxDescr = "VAT Perception";
+    case "O": 
+      TaxSum = IVr.TAX2Sum;
+      TaxDescr = "Gross Income Perception";
+  end;
+  if (TaxSum==BlankVal) then begin
+    goto LEpsonPerceptions;
+  end;
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,102); // 0x66
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_STR(aEscSeq,aCount,TaxDescr);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,TaxType);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_VAL(aEscSeq,aCount,TaxSum);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_VAL(aEscSeq,aCount,0);
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,true,cmdnr,replystr,255);
+LEpsonPerceptions:;
+  EpsonPerceptions = res;
+  return;
+end;
+
+function Integer EpsonTotalTender(record IVVc IVr,var Integer cmdnr,Boolean AddPerceptions)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+  val t;
+
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,100); // 0x64
+  Add_ASC(aEscSeq,aCount,E_FS);
+  M4PadString("",25," ",false,tstr);
+  Add_STR(aEscSeq,aCount,"");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  if (AddPerceptions) then begin
+    t = IVr.Sum4;
+  end else begin
+    t = IVr.Sum4 - IVr.TAX1Sum - IVr.TAX2Sum;
+  end;
+  Add_VAL(aEscSeq,aCount,t);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"T");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,true,cmdnr,replystr,255);
+  EpsonTotalTender = res;
+  return;
+end;
+
+function Integer EpsonCloseFiscalReceipt(record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,101); // 0x65
+  Add_ASC(aEscSeq,aCount,E_FS);
+  switch (Left(IVr.OfficialSerNr,1)) begin
+    case "T": tstr = "T";
+    otherwise tstr = "F";
+  end;
+  Add_CHR(aEscSeq,aCount,tstr);
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,GetFiscalDocumentLetter(IVr));
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"-");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,true,cmdnr,replystr,50);
+  EpsonCloseFiscalReceipt = res;
+  return;
+end;
+
+global
+updating procedure PrintEPSONINVOICEReceipt(record IVVc IVr,record LSerialPortDeviceVc LSPDr)
+begin
+  record IVVc curIVr;
+  record IVVc oldIVr;
+  Integer noErr,res;
+  record CashPrintBlock CPb;
+  record LocalMachineBlock LMb;
+  record MachineCashVc MCr;
+  Integer cmdnr;
+  Boolean AddPerceptions;
+ 
+  if (blank(LSPDr.Port)) then begin
+    LSPDr.Port = "COM1";
+  end;  
+  noErr = 1;
+  res = EpsonOpen(LSPDr);
+  if (res==noErr) then begin
+    noErr = 0;
+    cmdnr = 33;
+    BlockLoad(LMb);
+    MCr.Code = LMb.LocalMachineCode;
+    ReadFirstMain(MCr,1,true);
+    if (EpsonCheckClock(IVr,cmdnr)!=noErr) then begin goto LPrintEpsonReceipt; end;
+    if (EpsonOpenFiscalReceipt(MCr,IVr,cmdnr,AddPerceptions)!=noErr) then begin goto LPrintEpsonReceipt; end;
+    if (EpsonPrintInvoiceLines(IVr,cmdnr)!=noErr) then begin goto LPrintEpsonReceipt; end;
+    if (EpsonPerceptions(IVr,cmdnr,AddPerceptions,"I")!=noErr) then begin goto LPrintEpsonReceipt; end;
+    if (EpsonPerceptions(IVr,cmdnr,AddPerceptions,"O")!=noErr) then begin goto LPrintEpsonReceipt; end;
+    if (EpsonTotalTender(IVr,cmdnr,AddPerceptions)!=noErr) then begin goto LPrintEpsonReceipt; end;
+    if (EpsonCloseFiscalReceipt(IVr,cmdnr)!=noErr) then begin goto LPrintEpsonReceipt; end;
+    curIVr.SerNr = IVr.SerNr;
+    if (ReadFirstMain(curIVr,1,true)) then begin
+      RecordCopy(oldIVr,curIVr);
+      curIVr.Prntdf = 1;
+      RecordUpdate(oldIVr,curIVr,false);
+    end;
+LPrintEpsonReceipt:;
+    EpsonClose;
+  end;
+  return;
+end;
+
+global
+procedure EpsonDailyReport(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer cmdnr,res;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+
+  res = EpsonOpen(LSPDr);
+  if (res!=1) then begin
+    goto LEpsonDailyReport;
+  end;
+  cmdnr = 31;
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,57); // 0x39
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"X");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"P");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,false,cmdnr,replystr,117);
+LEpsonDailyReport:;  
+  EpsonClose;
+  return;
+end;
+
+global
+procedure EpsonMonthlyReport(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer cmdnr,res;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = EpsonOpen(LSPDr);
+  if (res!=1) then begin
+    goto LEpsonMonthlyReport;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,57); // 0x39
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"Z");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"Z");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,false,cmdnr,replystr,117);
+LEpsonMonthlyReport:;  
+  EpsonClose;
+  return;
+end;
+
+global
+procedure EpsonReset(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res,cmdnr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = EpsonOpen(LSPDr);
+  if (res!=1) then begin
+    goto LEpsonReset;
+  end;
+  cmdnr = 34;
+  Add_ASC(aEscSeq,aCount,E_STX);
+  Add_ASC(aEscSeq,aCount,AddCmdSeq(cmdnr));
+  Add_ASC(aEscSeq,aCount,68); // 0x44
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"Test");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"000");
+  Add_ASC(aEscSeq,aCount,E_FS);
+  Add_CHR(aEscSeq,aCount,"C");
+  Add_ASC(aEscSeq,aCount,E_ETX);
+  res = EpsonWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+LEpsonReset:;  
+  EpsonClose;
+  return;
+end;

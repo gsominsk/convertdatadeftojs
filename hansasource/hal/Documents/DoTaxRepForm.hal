@@ -1,0 +1,269 @@
+
+external Function val FCALCWITHVAR(string,var record SMVc,string);
+external procedure getvarval(string,record SMVc,var string);
+external procedure addvarval(string,var record SMVc,string); 
+external procedure CommonDocumentFields(record RcVc);
+
+//-------------------------------------------------------------------
+global
+function string 60 FormatValue(val v,string formatstr)
+begin 
+  string 1 thousSep,decimalPt,cs;
+  integer ln,i,stpos,endpos,cnt,declen,pow;
+  longint vint,vdec;
+  string 60 res,begstr,endstr,tstr;
+  boolean IsDec;
+  val dec;
+ 
+  decimalPt = "";
+  thousSep = "";  
+  ln = len(formatstr);
+
+  for (i=0;i<ln;i=i+1) begin
+    cs = mid(formatstr,i,1);
+    if (cs<>"#") then begin
+      begstr = begstr & cs;
+    end else begin
+      stpos = i;
+      i = ln;
+    end;  
+  end;  
+  for (i=ln-1;i>=0;i=i-1) begin
+    cs = mid(formatstr,i,1);
+    if (cs<>"#") then begin
+      endstr = cs & endstr;
+    end else begin
+      endpos = i;
+      i = -1;
+    end;  
+  end;  
+  tstr = mid(formatstr,stpos,endpos-stpos);
+  ln = len(tstr);
+  cnt = 0;
+  declen = 0;
+  for (i=0;i<ln;i=i+1) begin
+    cs = mid(tstr,i,1);
+    if (cs<>"#") then begin
+      if cnt==1 then begin
+        thousSep = cs;
+      end;
+      if cnt ==4  or cnt==3 then begin
+        decimalPt = cs;
+        declen = ln - i ;
+      end;
+      cnt = 0;
+    end else begin
+      cnt = cnt + 1;
+    end;
+  end;
+
+  vint = v;
+  pow =1;
+  for (i=0;i<declen;i=i+1) begin
+    pow = pow *10;
+  end;
+  vdec = (v - vint)*pow;  
+  res = begstr & ValToString(vint,M4UVal,thousSep,"",1);
+  if (declen>0) then begin
+    tstr = ValToString(vdec,M4UVal,"","",1); 
+    tstr = left(tstr & "0000000",declen);
+    res = res & decimalPt & tstr;
+  end;
+  res = res & endstr;
+
+  FormatValue = res;
+  return;
+end;
+ 
+global
+function string 60 FormatOutputValue(val v,string formatstr)
+begin
+  string 255 tstr;
+  string 20 plusformat,zeroformat,minusformat;
+  integer cnt,i;
+  string 1 s;
+  
+  cnt = len(formatstr);
+  plusformat = "";
+  zeroformat = "";
+  minusformat = "";
+  for (i=0;i<cnt;i=i+1) begin
+    s = mid(formatstr,i,1);
+    if (s<>";") then begin
+      plusformat = plusformat & s;
+    end else begin
+      i = cnt;
+    end;
+  end;
+  tstr = right(formatstr,cnt-len(plusformat));
+  cnt = len(tstr); 
+  if (cnt>0) then begin
+		for (i=1;i<cnt;i=i+1) begin
+			s = mid(tstr,i,1);
+			if (asc(s)<>59) then begin
+				zeroformat = zeroformat & s;
+			end else begin
+				i = cnt;
+			end;
+		end;
+		minusformat = right(formatstr,cnt-len(zeroformat)-2);
+  end;
+  if (v==0) then begin
+    FormatOutputValue = zeroformat;
+  end;
+  if (v>0) then begin
+    FormatOutputValue = FormatValue(v,plusformat);
+  end;
+  if (v<0) then begin
+    FormatOutputValue = FormatValue(-v,minusformat);
+  end;
+    
+	return;	
+end;
+
+
+procedure SpecialFormat(var string outstr,string fieldname,record TaxRepVc TaxRepr)
+begin
+  row TaxRepVc TaxReprw;
+  Integer i,amrow;
+  val v;
+  string 60 fstr; 
+  string 1 fs,ls;
+  
+	amrow=MatrowCnt(TaxRepr);
+	for (i=0;i<amrow;i=i+1) begin
+		MatRowGet(TaxRepr,i,TaxReprw);
+		if (TaxReprw.FCode==fieldname) then begin
+		  fstr = TaxReprw.FormatStr;
+		  if (nonblank(fstr)) then begin
+		    v = StringToVal(outstr,M4Val);
+		    outstr = FormatOutputValue(v,fstr);
+		  end;  
+		  i=amrow;
+		end;
+	end;
+	 
+  return;
+end;
+
+procedure DoTaxRepForm_Header(record RcVc RepSpec)
+begin
+  string 255 tstr;
+  
+  CommonDocumentFields(RepSpec);
+  if (GetMonth(RepSpec.sEndDate)-GetMonth(RepSpec.sStartDate)==0) then begin
+    tstr = USetStr(2780+GetMonth(RepSpec.sStartDate));
+  end else begin
+    tstr = USetStr(9137) & " ";
+    switch (GetMonth(RepSpec.sStartDate)) begin
+      case 1: tstr = tstr & "1";
+      case 4: tstr = tstr & "2";
+      case 7: tstr = tstr & "3";
+      case 10: tstr = tstr & "4";
+    end;
+  end;
+  tstr = tstr & " " & GetYear(RepSpec.sStartDate);
+  OUTFORMFIELD("F_DOCVATREPPERIOD",tstr);
+  if (RepSpec.flags[10]!=0) then begin
+    OUTFORMFIELD("F_DOCVATREPCORRECTION",USetStr(17331));
+  end;
+  if (RepSpec.flags[11]!=0) then begin
+    OUTFORMFIELD("F_DOCVATREPALLDOCS",USetStr(17331));
+  end;
+  if (RepSpec.flags[12]!=0) then begin
+    OUTFORMFIELD("F_DOCVATREPTOTHIRDPARTY",USetStr(17331));
+  end;
+  if (RepSpec.flags[13]!=0) then begin
+    OUTFORMFIELD("F_DOCVATREPNODIRECTDEBIT",USetStr(17331));
+  end;
+  return;
+end;
+
+
+global
+procedure DoTaxRepForm(record RcVc RepSpec,record TaxRepVc TaxRepr)
+BEGIN
+  record TAXRepDefBlock TAXRepDefRec;
+  row TAXRepDefBlock TAXRepDefrw;
+  Integer i,rwcnt,amrow,j;
+  LongInt lastseqnr;
+  row TaxRepVc TaxReprw;
+  record SMVc vararray;
+  row SMVc vr;
+  Date d1,d2,d3,d4;
+  string 10 sd1,sd2,sd3,sd4;
+  Boolean isok,printf;  
+  string 50 tempa,docf;
+  string 255 tstr;
+  val t;
+  transaction string 1 gDelimCharacter;
+
+  d1=RepSpec.sStartDate;
+  d2=RepSpec.sEndDate;
+  d3=RepSpec.d1;
+  d4=RepSpec.d2;
+
+  sd1=d1;sd2=d2;sd3=d3;sd4=d4;
+
+  docf="";
+  isok=false;
+  BlockLoad(TAXRepDefRec);
+  rwcnt = MatRowCnt(TAXRepDefRec);
+  printf=true;
+  
+	for (j=0;j<rwcnt;j=j+1) begin  //checking
+		MatRowGet(TAXRepDefRec,j,TAXRepDefrw);
+		if (TAXRepDefrw.TaxRepCode==TaxRepr.Code) then begin
+			j= rwcnt; isok=true;   
+		end;
+	end;
+	
+	if (isok==false) then begin
+	  MessageBox(0,USetStr(17330) & " : " & TaxRepr.Code);
+	end else begin       	
+	  if (blank(TaxRepr.Delimiter)) then begin
+	    gDelimCharacter = ",";
+	  end else begin
+	  	gDelimCharacter = TaxRepr.Delimiter;
+	  end;
+
+	  RecordClear(vararray); 
+		addvarval("D1",vararray,sd1); 
+    addvarval("D2",vararray,sd2); 
+    addvarval("D3",vararray,sd3);
+    addvarval("D4",vararray,sd4);
+	  addvarval("YEARD1",vararray,datetostring(d1,"YYYY")); 
+    addvarval("YEARD2",vararray,datetostring(d2,"YYYY")); 
+    addvarval("YEARD3",vararray,datetostring(d3,"YYYY")); 
+    addvarval("YEARD4",vararray,datetostring(d4,"YYYY")); 
+		//-----calculation
+		amrow = MatrowCnt(TaxRepr);
+		for (i=0;i<amrow;i=i+1) begin
+			MatRowGet(TaxRepr,i,TaxReprw);
+			tempa = FCALCWITHVAR(TaxReprw.Formula,vararray,TaxReprw.FCode);  
+	  end;
+	
+	  for (j=0;j<rwcnt;j=j+1) begin 
+		  MatRowGet(TAXRepDefRec,j,TAXRepDefrw);
+		  if (TAXRepDefrw.TaxRepCode==TaxRepr.Code) then begin
+			  docf= TAXRepDefrw.FPCode;      
+        if (OpenForm(docf)) then begin
+          DoTaxRepForm_Header(RepSpec);
+          amrow = MatrowCnt(vararray);
+          for (i=0;i<amrow;i=i+1) begin
+            MatRowGet(vararray,i,vr);
+            tstr = vr.Comment;
+            SpecialFormat(tstr,vr.AccNumber,TaxRepr);
+            OUTFORMFIELD(vr.AccNumber,tstr);
+          end;
+          CloseForm;    
+        end else begin
+          MessageBox(1546,docf);
+        end;
+		  end;
+	  end;
+	end;
+
+  return;
+END;
+

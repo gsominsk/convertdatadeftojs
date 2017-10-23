@@ -1,0 +1,532 @@
+remote function Integer OYApprovalStatus(record OYVc,var record AcceptanceRulesVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean  AllowCurChange(string,Boolean);
+external function Boolean UserCanChangePendingRecord(Integer);
+remote procedure OYVc_PasteTaxTemplateCode(var record OYVc,Integer,var Boolean);
+external procedure RecalcOYSubtotal(var record OYVc);
+external procedure OYVc_PastevRebate(var record OYVc,Integer,var Boolean);
+external procedure RowCalculateTaxMatrix_OYVc(var record OYVc,Integer,row OYVc);
+external function roundmode SetRoundModeD(Integer);
+external procedure CalcPrice(val,val,val,var val,Integer);
+external procedure CalcExtra(val,string,var val);
+external procedure RoundRowSum(string,string,string,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+remote function val GetTax1Discount(string,Date,string);
+remote procedure OYSumup(var record OYVc);
+external procedure OYDchsum(record OYVc,Integer);
+
+global
+function Boolean OYDchrsum(var record OYVc OYr,Integer rownr,Integer UseDiscount)
+begin
+  Boolean chsum;
+  row OYVc OYrw;
+  val s,v,p;
+
+  chsum = false;
+  MatRowGet(OYr,rownr,OYrw);
+  p = OYrw.Price; 
+  CalcPrice(OYrw.BasePrice,OYrw.PriceFactor,OYrw.vRebate,p,UseDiscount);
+  OYrw.Price = p;  
+  CalcSum(OYrw.Quant,OYrw.Price,OYrw.PriceFactor,OYrw.vRebate,s,UseDiscount);
+  if (blank(OYrw.Quant)) or (blank(OYrw.Price)) then begin
+    s = blankval;
+  end;
+  CalcExtra(s,OYrw.Markup,v);
+  s = s + v;
+  RoundRowSum(OYr.CurncyCode,OYr.PayDeal,"OYVc",s);
+  if (s<>OYrw.Sum) or ((s==0.00) and (blank(OYrw.Sum))) then begin
+    OYrw.Sum = s;
+    RowCalculateTaxMatrix_OYVc(OYr,rownr,OYrw);
+    MatRowPut(OYr,rownr,OYrw);
+    chsum = true;
+  end;
+  if (OYrw.Price==0) then begin chsum = true; end;
+  OYDchrsum = chsum;
+  return;
+end;
+
+global
+procedure OYVc_PasteMarkup(var record OYVc OYr,Integer rownr,var Boolean chsum)
+begin
+  record GeneralOptionBlock GenOptRec;
+  row OYVc OYrw;
+  Boolean chrsum,lchsum;
+  Integer i,rwcnt;
+  
+  BlockLoad(GenOptRec);
+  if (rownr==-1) then begin
+    rwcnt = MatRowCnt(OYr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(OYr,i,OYrw);
+      OYrw.Markup = OYr.Markup;
+      MatRowPut(OYr,i,OYrw);
+      lchsum = OYDchrsum(OYr,i,GenOptRec.UseDiscount);
+      if (lchsum) then begin
+        OYDchsum(OYr,i);
+      end;
+    end; 
+    chsum = true;
+  end else begin
+    chrsum = true;//it is needed
+  end;
+  if (chrsum) then begin
+    chsum = OYDchrsum(OYr,rownr,GenOptRec.UseDiscount);
+    if (chsum) then begin
+      OYDchsum(OYr,rownr);
+    end;
+  end;
+  OYSumup(OYr);
+    
+  return;
+end;
+
+global
+procedure OYVc_PastePrice(var record OYVc OYr,Integer rownr,var Boolean chsum)
+begin
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  chsum = OYDchrsum(OYr,rownr,GenOptRec.UseDiscount);
+  return;
+end;
+
+global
+function Boolean OYDClassvRebateEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record OYVc OYr;
+  Boolean chsum;
+
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,OYr);
+    OYVc_PastevRebate(OYr,rownr,chsum);
+    if (chsum) then begin
+      OYDchsum(OYr,rownr);
+      OYSumup(OYr);
+    end;
+    PutWindowRecord(wn,OYr);
+  end;
+  OYDClassvRebateEFAfter = true;
+  return;
+end;
+
+global
+function Boolean OYDClassVATCodeEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record OYVc OYr;
+  row OYVc OYrw;
+
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,OYr);  
+    if (OYr.NoTax1==0) then begin
+      MatRowGet(OYr,rownr,OYrw);
+      OYrw.TAX1Reb = GetTax1Discount(OYr.CustCode,OYr.OYDate,OYrw.VATCode);
+      MatRowPut(OYr,rownr,OYrw);
+    end;
+    OYDchsum(OYr,rownr);
+    OYSumup(OYr);
+    PutWindowRecord(wn,OYr);
+  end;
+  OYDClassVATCodeEFAfter = true;
+  return;
+end;
+
+global
+function Boolean OYDClassTaxTemplateCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin  
+  record OYVc OYr;
+  Boolean chsum;
+
+  if (changedf) then begin  
+    GetWindowRecord(wn,OYr);
+    OYVc_PasteTaxTemplateCode(OYr,rownr,chsum);
+    if (chsum) then begin
+      OYDchsum(OYr,rownr);
+    end;    
+    OYSumup(OYr);
+    PutWindowRecord(wn,OYr);
+  end;  
+  OYDClassTaxTemplateCodeEFAfter = true;
+  return;
+end;
+
+procedure OYVc_PasteSum(var record OYVc OYr,Integer rownr)
+begin
+  record GeneralOptionBlock GenOptr;
+  row OYVc OYrw;
+  val s,t;
+
+  MatRowGet(OYr,rownr,OYrw);
+  if ((OYrw.Quant!=0) and (OYrw.Price!=0)) then begin
+    OYrw.vRebate = blankval;
+    BlockLoad(GenOptr);    
+    CalcSum(OYrw.Quant,OYrw.Price,OYrw.PriceFactor,OYrw.vRebate,t,GenOptr.UseDiscount);
+    RoundRowSum(OYr.CurncyCode,OYr.PayDeal,"OYVc",t); 
+    s = OYrw.Sum;// /OYrw.Quant;not good
+    s = t - s;
+    s = s*100;
+    s = s/t;
+    OYrw.vRebate = Round(s,SetRoundModeD(1));
+    RowCalculateTaxMatrix_OYVc(OYr,rownr,OYrw);
+    if (OYrw.vRebate==0) then begin OYrw.vRebate = blankval; end;
+    MatRowPut(OYr,rownr,OYrw);
+  end;
+  return;
+end;
+
+global
+function Boolean OYDClassSumEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record OYVc OYr;
+  Boolean chsum;
+
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,OYr);
+    OYVc_PasteSum(OYr,rownr);
+//    OYVc_PastevRebate(OYr,rownr,chsum);
+    OYDchsum(OYr,rownr);
+    OYSumup(OYr);
+    PutWindowRecord(wn,OYr);
+  end;
+  OYDClassSumEFAfter = true;
+  return;
+end;
+
+procedure OYVc_PasteUnitFactPrice(var record OYVc OYp,Integer rownr)
+begin
+  row OYVc OYrw;
+  Boolean chsum;
+
+  MatRowGet(OYp,rownr,OYrw);
+  OYrw.Price = OYrw.UnitFactPrice/(OYrw.Quant/OYrw.UnitFactQuant);
+  MatRowPut(OYp,rownr,OYrw);
+  OYVc_PastePrice(OYp,rownr,chsum);  
+  if (chsum) then begin
+    OYDchsum(OYp,rownr);
+    OYSumup(OYp);
+  end;
+  return;
+end;
+
+global
+function Boolean OYDClassUnitFactPriceEFAfter(Integer wn,Integer rownr,Integer changedf)
+begin  
+  record OYVc OYr;
+
+  if (changedf!=0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,OYr);
+    OYVc_PasteUnitFactPrice(OYr,rownr);
+    PutWindowRecord(wn,OYr);
+  end;
+  OYDClassUnitFactPriceEFAfter = true;
+  return;
+end;
+
+global
+procedure OYVc_PastevRebate(var record OYVc OYr,Integer rownr,var Boolean chsum)
+begin
+  record GeneralOptionBlock GenOptRec;
+  row OYVc OYrw;
+
+  BlockLoad(GenOptRec);
+  MatRowGet(OYr,rownr,OYrw);
+  if (OYrw.vRebate>100.00) then begin
+    OYrw.vRebate = blankval;
+    MatRowPut(OYr,rownr,OYrw);
+    MessageBox(1019,"");
+  end;
+  chsum = OYDchrsum(OYr,rownr,GenOptRec.UseDiscount);
+  return;
+end;
+
+global
+function string 255 OYLClassSumExclVAT(var record OYVc OYr)
+begin
+  val v;
+  
+  v = OYr.Sum1;
+  if (OYr.InclVAT>0) then begin
+    v = OYr.Sum1 - OYr.Sum3;
+  end;
+  OYLClassSumExclVAT = v;
+  return;
+end;
+
+function Boolean OYApprovalStarted(record OYVc OYr)
+begin
+  Boolean res;
+  record AcceptanceRulesVc Acptr;
+
+  res = false;
+  if (OYApprovalStatus(OYr,Acptr)>=kAcceptanceStatePending) then begin
+    res = true;
+  end;
+  OYApprovalStarted = res;
+  return;
+end;
+
+global
+function Boolean OYDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record OYVc OYr;
+  row OYVc OYrw;
+  record INVc INr;
+  Integer nwn;
+  
+  res = true;
+  nwn = FindWindow("SelectApproverWClass");
+  if (nwn>0) then begin
+    if (MotherWindow(nwn)==wn) then begin
+      res = false;
+      goto LOYDClassActiveEditField;
+    end;
+  end;
+  switch (wnst) begin
+    case Rs_insert:
+      GetWindowRecord(wn,OYr);
+      if (OYr.Closed!=0) then begin
+        res = false;
+        goto LOYDClassActiveEditField;
+      end;
+      if (OYr.Rejected!=0) then begin
+        res = false;
+        goto LOYDClassActiveEditField;
+      end;
+    case Rs_update:
+      GetPrevWindowRecord(wn,OYr);
+      if (OYr.Closed!=0) then begin
+        res = false;
+      end;
+      if (OYr.Rejected!=0) then begin
+        res = false;
+        goto LOYDClassActiveEditField;
+      end;
+  end;
+  
+  GetWindowRecord(wn,OYr);
+  if (OYApprovalStarted(OYr) and UserCanChangePendingRecord(rownr)==false) then begin
+    res = false;
+    goto LOYDClassActiveEditField;
+  end;
+  
+  if (blank(OYr.ProformaOfficialSerNr)) then begin
+    switch (fieldname) begin
+      case "rowGP": res = false;
+      case "Invoiced": res = false;
+      case "InvDate": res = false;
+      case "Invd": res = false;
+      case "SerNr": 
+        if (wnst!=Rs_insert) then begin//insertmode
+          res = false;
+        end;
+        if (UserCanAction("AllowOYSerNrChange",true)==false) then begin res = false; end;
+      case "FrRate": 
+        res = AllowCurChange(OYr.CurncyCode,false);
+      case "ToRateB1": 
+        res = AllowCurChange(OYr.CurncyCode,false);
+      case "ToRateB2": 
+        res = AllowCurChange(OYr.CurncyCode,false);
+      case "BaseRate1": 
+        res = AllowCurChange(OYr.CurncyCode,true);
+      case "BaseRate2": 
+        res = AllowCurChange(OYr.CurncyCode,true);
+      case "PriceList": 
+        res = UserCanAction("ChangePrices",true);
+      case "Price": 
+        res = UserCanAction("ChangeUnitPrices",true);
+      case "vRebate": 
+        res = UserCanAction("ChangeUnitPrices",true);
+      case "Spec": 
+        if (HasLocalization("PRT")) then begin
+          MatRowGet(OYr,rownr,OYrw);
+          if (nonblank(OYrw.ArtCode)) then begin
+            res = false;
+          end;
+        end else begin
+          if (UserCanAction("ChangeOYItemSpec",true)==false) then begin res = false; end;
+        end;
+      case "BranchID": 
+        res = UserCanAction("AllowOYBranchIDChange",false);
+      case "Sum": 
+        res = UserCanAction("ChangeUnitPrices",true);      
+      case "MotherArtCode": res = false;
+      case "RecipeQuant": res = false;
+      case "Recepy": res = false;
+      case "VATNr": res = HasLocalization("PRT")==false;
+      case "Addr0": res = HasLocalization("PRT")==false;
+      case "Addr1": res = HasLocalization("PRT")==false;
+      case "Addr2": res = HasLocalization("PRT")==false;
+      case "Addr3": res = HasLocalization("PRT")==false;
+      case "InvAddr3": res = HasLocalization("PRT")==false;
+      case "InvAddr4": res = HasLocalization("PRT")==false;
+      case "InvCountry": res = HasLocalization("PRT")==false;
+
+      case "ArtCode": 
+        MatRowGet(OYr,rownr,OYrw);
+        switch (OYrw.stp) begin
+          case kInvoiceRowTypeStructuredItemComponent:
+            res = false;
+        end;
+      case "Quant": 
+        MatRowGet(OYr,rownr,OYrw);
+        switch (OYrw.stp) begin
+          case kInvoiceRowTypeStructuredItemComponent:
+            res = false;
+        end;
+    end;
+  end else begin
+    res = false;
+    switch (fieldname) begin
+      case "QuoteClass": res = true;
+      case "Priority": res = true;
+      case "MakeContactDate": res = true;
+      case "RejectDate": res = true;
+      case "Probability": res = true;
+    end;
+  end;
+LOYDClassActiveEditField:;  
+  OYDClassActiveEditField = res;
+  return;
+end;
+
+global 
+function Boolean OYDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record OYVc OYr;
+  row OYVc OYrw;
+  Boolean res,puf;
+  record INVc INr;
+  Integer i,rwcnt;
+
+  res = true;
+  if (rownr>-1) then begin
+    GetWindowRecord(wn,OYr);
+    MatRowGet(OYr,rownr,OYrw);
+    if (OYrw.Invoiced>0) then begin
+      res = false;
+      MessageBox(1092,"");
+      goto LOYDClassDeleteRowTest;
+    end;
+  end;
+  switch (WindowState(wn)) begin
+    case Rs_update:
+      GetPrevWindowRecord(wn,OYr);    
+    case Rs_insert:
+      GetWindowRecord(wn,OYr);    
+    case Rs_normal:
+      GetWindowRecord(wn,OYr);    
+  end;
+  if (OYr.Rejected!=0) then begin
+    res = false;
+  end;
+  if (OYApprovalStarted(OYr) and UserCanAction("ChangeRecordMatrixWhenPending",false)==false) then begin
+    res = false;
+  end;
+  if (res) then begin
+    MatRowGet(OYr,rownr,OYrw);
+    switch (OYrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        res = false;
+    end;
+  end;
+  if (res) then begin
+    GetWindowRecord(wn,OYr);    
+    MatRowGet(OYr,rownr,OYrw);
+    if (OYrw.Quant!=0) then begin
+      if (ReadFirstItem(OYrw.ArtCode,INr,false,false)) then begin
+        if (INr.ItemType==kItemTypeStructured) then begin
+          if (INr.ExplodeRec!=0) then begin
+            rwcnt = MatRowCnt(OYr);
+            i = rownr + 1;
+            while (i<rwcnt) begin
+              MatRowGet(OYr,i,OYrw); 
+              if (OYrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+                MatRowDelete(OYr,i);
+                puf = true;
+              end else begin
+                i = rwcnt;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (puf) then begin
+      PutWindowRecord(wn,OYr);    
+    end;
+  end;
+LOYDClassDeleteRowTest:;  
+  OYDClassDeleteRowTest = res;
+  return;
+end;
+
+/*
+global 
+function Boolean OYDClassInsertRowTest(Integer wn,Integer rownr)
+begin
+  Boolean res;
+  record OYVc OYr;
+  
+  res = true;
+  switch (WindowState(wn)) begin
+    case Rs_update:
+      GetPrevWindowRecord(wn,OYr);    
+    case Rs_insert:
+      GetWindowRecord(wn,OYr);    
+    case Rs_normal:
+      GetWindowRecord(wn,OYr);    
+  end;
+  if (OYr.Rejected==1) then begin
+    res = false;
+  end;
+  OYDClassInsertRowTest = res;
+  return;
+end;
+*/
+global 
+function Boolean OYDClassInsertRowTest(Integer wn,Integer rownr)
+begin
+  Boolean res;
+  record OYVc OYr;
+  row OYVc OYrw;
+  
+  res = true;
+  switch (WindowState(wn)) begin
+    case Rs_update:
+      GetPrevWindowRecord(wn,OYr);    
+    case Rs_insert:
+      GetWindowRecord(wn,OYr);    
+    case Rs_normal:
+      GetWindowRecord(wn,OYr);    
+  end;
+  if (OYr.Rejected==1) then begin
+    res = false;
+  end;
+  if (OYApprovalStarted(OYr) and UserCanAction("ChangeRecordMatrixWhenPending",false)==false) then begin
+    res = false;
+  end;
+  if (res) then begin
+    MatRowGet(OYr,rownr,OYrw);
+    switch (OYrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        res = false;
+    end;
+  end;
+  OYDClassInsertRowTest = res;
+  return;
+end;
+
+global
+function Boolean OYDClassExportFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+//vat zone should be as it is on customer card
+//otherwise u can paste customer  , filled all, change vat zone and get crap
+  res = false;
+  OYDClassExportFlagButtonAction = res;
+  return;
+end;

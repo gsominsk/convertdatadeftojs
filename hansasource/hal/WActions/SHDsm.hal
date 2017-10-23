@@ -1,0 +1,674 @@
+external procedure IVOpenPrepExists(string);
+remote updating function Integer PasteSHInInvoice(record SHVc,var record IVVc);
+remote updating function Boolean CheckEShipPRTItems(record RcVc,var LongInt,var string,
+                                                  var integer,var string);
+external function Boolean IsStandardUnused();
+external function Boolean IsEnterprise();
+external function Boolean FindTheUser(var record UserVc);
+external function Integer OpenArtStat(Integer,record RcVc,Boolean);
+external function roundmode DefaultRoundMode();
+remote procedure CalcSHWeight(var record SHVc,Boolean);
+remote updating function Integer PasteSHInRet(var record SHVc,var record RetVc,string);
+remote procedure RefillSHRow(Integer,var record SHVc);
+external procedure FindBatchBestBeforeDate(string,string,var Date);
+remote procedure SplitRowSHDsmRemote(record SHVc,var record SHVc,Integer);
+external procedure RetCalcCostPrice(string,val,Integer,string,string,val,val,val,val,val,var val);
+external procedure SendArtStat(string,string,string,val,val,val,Date,Integer);
+external procedure CalcProc(val,val,var val);
+external procedure DivM4OneRate(val,val,var val);
+external function Boolean GetFirstItem(var string,var record INVc);
+external procedure SHSumUp(var record SHVc);
+remote updating function Boolean RecordAction_rlSHLOK(var record SHVc);
+external updating function boolean DoFedex(record SHVc);
+
+// Moved CalcSHWeight to Tools...
+
+global 
+procedure CalcSHMan()
+begin
+  record SHVc SHr;
+  row SHVc SHrw;
+  Integer i,rwcnt;
+  Integer wn,newwn;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  SHr.Packages = BlankVal;
+  rwcnt = MatRowCnt(SHr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SHr,i,SHrw);
+    if (nonblank(SHrw.ArtCode)) then begin
+      SHrw.Ship = BlankVal;
+      SHrw.RowPackages = BlankVal;
+      MatRowPut(SHr,i,SHrw);
+    end;
+  end;
+  if (rwcnt>0) then begin
+    CalcSHWeight(SHr,true);
+    SHSumUp(SHr);
+  end;
+  PutWindowRecord(wn,SHr);
+  
+  newwn = OpenWindow("ReadSHBarRClass",0,wn,"","",RepSpec);
+  GetWindowRecord(newwn,RepSpec);
+  ReportDefaults(RepSpec,"ReadSHBarRClass");
+  RepSpec.long1 = wn;  
+  RepSpec.Media = 6;
+  RepSpec.repname = "NoReportRn";
+  PutWindowRecord(newwn,RepSpec);
+  return;
+end;
+
+global 
+function Boolean ReadSHBarRClassf1EFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin  
+  record RcVc Rcr;
+  record INVc INr;
+  record SHVc SHr;
+  row SHVc SHrw;
+  Integer i,rwcnt;
+  Boolean chrsum,chsum;
+  string 60 barcode;
+  string 60 qty;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Rcr);
+    GetWindowRecord(Rcr.long1,SHr);
+    barcode = Mid(Rcr.f1,2,5);
+    qty = Mid(Rcr.f1,7,5);
+    if (GetFirstItem(barcode,INr)) then begin end;
+    rwcnt = MatRowCnt(SHr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SHr,i,SHrw);
+      if (nonblank(SHrw.ArtCode)) then begin
+        if (SHrw.ArtCode==INr.Code) then begin
+          SHrw.Ship = SHrw.Ship + (StringToVal(qty,M4UVal)/1000);
+          SHrw.RowPackages = SHrw.RowPackages + 1;
+          SHr.Packages = SHr.Packages + 1;
+          MatRowPut(SHr,i,SHrw);
+          i = rwcnt;
+        end;
+      end;
+    end;
+    CalcSHWeight(SHr,true);
+    SHSumUp(SHr);
+    PutWindowRecord(Rcr.long1,SHR);
+  end;
+  ReadSHBarRClassf1EFAfter = true;
+  return;
+end;
+
+global
+function Boolean ReadSHBarRClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "f1": res = ReadSHBarRClassf1EFAfter(wn,fn,rownr,changed);
+  end;
+  ReadSHBarRClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+updating procedure RetFromSHDsm()
+begin
+  record SHVc SHr;
+  record RetVc Retr;
+  Integer r,wn,nwn;
+  record LocalMachineBlock LMb;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  if ((WindowState(wn)==Rs_normal) and (SHr.OKFlag!=0)) then begin
+    BlockLoad(LMb);
+    r = PasteSHInRet(SHr,Retr,LMb.DefReturnLocation);
+    switch (r) begin
+      case 0:
+        if (MatRowCnt(Retr)!=0) then begin
+          nwn = OpenWindow("RetDClass",1,0,"","",Retr);
+        end else begin
+          Beep;
+        end;
+      otherwise
+        MessageBox(r,"");
+    end;
+  end;  
+//  PutWindowRecord(wn,SHr);
+  return;
+end;
+
+global
+updating procedure RetFromSHSpec()
+begin
+  RetFromSHDsm;
+  return;
+end;
+
+global
+updating procedure IVFromSHDsm()
+begin
+  record SHVc SHr;
+  record IVVc IVr;
+  Integer err,wn,nwn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  if (UserCanAction("SHToInv",true)) then begin
+    if ((WindowState(wn)==Rs_normal) and (SHr.OKFlag!=0)) then begin
+      err = PasteSHInInvoice(SHr,IVr);
+      switch (err) begin
+        case 0:
+          if (MatRowCnt(IVr)!=0) then begin
+            nwn = OpenWindow("IVDClass",1,0,"","",IVr);
+            UpdateBrowses("ORVc");
+            IVOpenPrepExists(IVr.CustCode);
+          end else begin
+            Beep;
+          end;
+        otherwise
+          MessageBox(err,"");
+      end;
+    end else begin
+      MessageBox(1274,StringFromStringSet(3,"SHToInv"));
+    end;      
+  end;
+  return;
+end;
+
+global
+procedure INBatchSHSpec()
+BEGIN
+  record SHVc SHr;
+  Integer wn,rownr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  if (SHr.OKFlag==0) then begin
+    rownr = GetWindowCurRow(wn);
+    DeselectWindow(wn,false);
+    RefillSHRow(rownr,SHr);
+    PutWindowRecord(wn,SHr);    
+  end;  
+  RETURN;
+END;
+
+global
+procedure SHCalcWeightDsm()
+BEGIN
+  record SHVc SHr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  SHr.Weight = blankval;
+  SHr.Volyme = blankval;
+  CalcSHWeight(SHr,true);
+  PutWindowRecord(wn,SHr);
+  RETURN;
+END;
+
+global
+updating procedure SHOKLsm()
+BEGIN
+  Integer wn,i;
+  record SHVc SHr;
+  record AutoActionBlock AutoActionRec;
+  Boolean tmpf;
+
+  wn = CurWindow;
+  if (UserCanAction("SHOK",true)) then begin
+    i = 1;
+    while (GetRecordFromBrowse(SHr,wn,i)) begin  
+      if (RecordAction_rlSHLOK(SHr)) then begin
+        BlockLoad(AutoActionRec);
+        if (AutoActionRec.ShipPrinting==1) then begin
+          tmpf = PrintDocument(SHr,"SH1Form",false);    
+        end;
+        if (AutoActionRec.FreightPrinting==1) then begin
+//          tmpf = PrintDocument(SHr,"SHLabForm",false);    
+        end;
+      end;
+      i = i + 1;
+    end;  
+    UpdateBrowses("SHVc");
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"SHOK"));
+  end;
+  
+  RETURN;
+END;
+
+global
+procedure PrintSHLabSHDsm()
+BEGIN
+  record AutoActionBlock AutoActionRec;
+  record RcVc RepSpec;
+  record SHVc SHr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  BlockLoad(AutoActionRec);
+  RepSpec.Media = mtPrinter;
+  RepSpec.f1 = SHr.SerNr;
+  RepSpec.ArtMode = 0;
+  RepSpec.repname = "SHLabForm";
+  if (AutoActionRec.FreightPrinting>0) then begin
+    RepSpec.ArtMode = AutoActionRec.FreightPrinting - 1;
+  end;  
+  if (PrintDocument(RepSpec,"SHLabForm",false)) then begin end;
+  RETURN;
+END;
+
+global
+function Boolean SHDClassSwitchRow(Integer wn,Integer rownr)
+begin        
+  record SHVc SHr;  
+  row SHVc SHrw; 
+  Integer rwcnt;
+  Boolean res;
+  val t,tproc,unitprdisc,s,rowsum,sum;
+  string 255 recepy,location;
+
+  res = true;
+  GetWindowRecord(wn,SHr);
+  rwcnt = MatRowCnt(SHr);  
+  if ((rownr<rwcnt) and (rownr>=0)) then begin
+    MatRowGet(SHr,rownr,SHrw);
+    DivM4OneRate(SHrw.FIFORowVal,SHrw.Ship,sum);
+    sum = Round(sum,DefaultRoundMode);
+    s = sum;
+    rowsum = sum;
+    CalcProc(rowsum,t,tproc);    
+    recepy = SHrw.Recepy;
+/*  This makes one extra call, I can see why but we need another solution
+      if (blank(recepy)) then begin
+        GetRecepy(SHrw.ArtCode,recepy);
+      end;  
+*/
+    location = SHrw.Location;
+    if (blank(location)) then begin   
+      location = SHr.Location;
+    end;
+    SendArtStat(SHrw.ArtCode,location,recepy,t,tproc,unitprdisc,SHr.ShipDate,0);
+    SetWindowNameArg(wn,SHrw.ArtCode & ":" & location);
+  end;
+  SHDClassSwitchRow = res;  
+  return;
+end;
+
+global
+procedure ItemStatusSHDsm()
+BEGIN
+  Integer wn,nwn;
+  Boolean testf;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  nwn = OpenArtStat(wn,RepSpec,false);
+  testf = SHDClassSwitchRow(wn,WindowActiveRow(wn));
+  RETURN
+END;
+
+/*
+global
+procedure ASGEnSHDsm()
+BEGIN
+  record SHVc SHr;
+  record RcVc RepSpec;
+  Integer wn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  ReportDefaults(RepSpec,"ExpASGEClass");  
+  RepSpec.Media = mtFile;
+  RepSpec.f1 = SHr.SerNr;
+  RepSpec.repname = "ExpASGEn";
+  RunReport(RepSpec,0);
+  RETURN;
+END;
+*/
+
+global
+procedure ASGEnSHDsm()
+BEGIN
+  record SHVc SHr;
+  record RcVc RepSpec;
+  Integer wn,nwn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  ReportDefaults(RepSpec,"ExpASGEClass");
+  nwn = OpenWindow("ExpASGEClass",0,0,"","",RepSpec);
+  DeselectWindow(nwn,false);
+  RepSpec.f1 = SHr.SerNr;
+  RepSpec.Media = mtFile;
+  RepSpec.repname = "ExpASGEn";
+  PutWindowRecord(nwn,RepSpec);
+  RETURN;
+END;
+
+global
+procedure WinEDIEnSHDsm()
+BEGIN
+  record SHVc SHr;
+  record RcVc RepSpec;
+  Integer wn,nwn;
+  record WinediBlock Winedib;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  ReportDefaults(RepSpec,"WinEDIEClass");
+  nwn = OpenWindow("WinEDIEClass",0,0,"","",RepSpec);
+  BlockLoad(Winedib);
+  DeselectWindow(nwn,false);
+  RepSpec.f1 = SHr.SerNr;
+  RepSpec.f2 = Winedib.Path;
+  RepSpec.Media = mtFile;
+  RepSpec.repname = "ExpWinEDIEn";
+  PutWindowRecord(nwn,RepSpec);
+  RETURN;
+END;
+
+// Should be one call, not one remote call per line...
+global
+procedure SplitRowSHDsm()
+BEGIN
+  record SHVc SHr;
+  record SHVc prevSHr;
+  Integer wn,rownr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  GetPrevWindowRecord(wn,prevSHr);
+  rownr = WindowActiveRow(wn);
+  DeselectWindow(wn,false);
+//  WindowDeactivatefield(wn);
+  if (SHr.OKFlag==0) then begin  
+    if (rownr>=0) then begin
+      SplitRowSHDsmRemote(prevSHr,SHr,rownr);
+      PutWindowRecord(wn,SHr);
+    end else begin
+      Beep;
+    end;
+  end;
+  RETURN
+END;
+
+global
+updating procedure EShipRegisterDsm()
+begin
+  integer wn;
+  record SHVc SHr;
+  record FreightCompanyVc FCr;
+  record SHPackagesVc SHPr;
+  boolean foundf;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,SHr);
+  
+  if (WindowState(wn)==Rs_normal and SHr.OKFlag!=0) then begin
+    FCr.Code = SHr.FreightCode;
+    if (ReadFirstMain(FCr,1,true)==false) then begin
+      MessageBox(24050,"");
+      goto LEShipRegisterDsm;
+    end;
+    if (FCr.WebService==0) then begin
+      MessageBox(24051,"");
+      goto LEShipRegisterDsm;
+    end;
+    if (blank(FCr.WebServiceKey)) then begin
+      MessageBox(24051,""); //Security Key
+      goto LEShipRegisterDsm;
+    end;
+    if (blank(FCr.WebServicePasswd)) then begin
+      MessageBox(24051,""); //Password
+      goto LEShipRegisterDsm;
+    end;
+    if (blank(FCr.WebServiceAccNr)) then begin
+      MessageBox(24051,""); //Account number
+      goto LEShipRegisterDsm;
+    end;
+    SHPr.SHSerNr = SHr.SerNr;
+    foundf = ReadFirstMain(SHPr,1,true);
+    if (foundf) then begin
+      if (MatRowCnt(SHPr)==0) then begin
+        foundf = false;
+      end;
+    end;
+    if (foundf==false) then begin
+      MessageBox(24052,"");
+      goto LEShipRegisterDsm;
+    end;
+    if (SHr.Packages<=0) then begin
+      MessageBox(1058,"");
+      goto LEShipRegisterDsm;
+    end;
+    if (nonblank(SHr.TransportNumber)) then begin
+      MessageBox(2010,"");
+      goto LEShipRegisterDsm;
+    end;
+    if (DoFedex(SHr)) then begin
+      PutWindowRecord(wn,SHr);
+    end;
+  end else begin
+    Beep;
+  end;
+LEShipRegisterDsm:;
+  return;
+end;
+
+global
+function boolean SHPackagesDClassOnOKWindow(Integer wn)
+begin
+  Integer mwn;
+  integer i,cnt,qty;
+  val sum;
+  record SHPackagesVc SHPr;
+  row SHPackagesVc SHPrw;
+  record SHVc SHr;
+
+  mwn = MotherWindow(wn);
+
+  if (GetWindowClass(mwn)=="SHDClass") then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,SHPr);
+  
+    sum = 0;
+    cnt = MatRowCnt(SHPr);
+    for (i=0;i<cnt;i=i+1) begin
+      MatRowGet(SHPr,i,SHPrw);
+      qty = qty + SHPrw.Quant;
+      sum = sum + (SHPrw.Quant * SHPrw.DeclaredVal);
+    end;
+  
+    GetWindowRecord(mwn,SHr);
+    SHr.Packages = qty;
+    SHr.DeclaredVal = sum;
+    PutWindowRecord(mwn,SHr);
+    
+  end;
+  SHPackagesDClassOnOKWindow = true;
+  return;
+end;
+
+global
+procedure UpdateSHPackages()
+begin
+  Integer wn,nwn;
+  record SHVc SHr;
+  record SHPackagesVc SHPr;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,SHr);
+    SHPr.SHSerNr = SHr.SerNr;
+    if (ReadFirstMain(SHPr,1,true)==false) then begin
+      RecordNew(SHPr);
+      SHPr.SHSerNr = SHr.SerNr;
+    end;
+    nwn = OpenWindow("SHPackagesDClass",1,wn,"","",SHPr);
+  end;
+  return;
+end;
+
+global
+updating procedure SignSHDsm()
+begin
+  record RcVc RepSpec;
+  Integer nwn,wn;
+  record SHVc SHr;
+  
+  wn = CurWindow;
+  if (WindowState(wn)!=Rs_insert) then begin
+    GetWindowRecord(wn,SHr);
+    RepSpec.vals0 = SHr.TotQty;
+    nwn = OpenWindow("SignatureWClass",1,wn,"","",RepSpec);
+    PutWindowRecord(nwn,RepSpec); //Shouldn't be needed?
+  end else begin
+    Beep;
+  end;
+end;
+
+global
+function Boolean SHDClassOpenRecord(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  record SHVc SHr;
+  record CUVc CUr;
+  Integer nwn;
+  
+  switch (fieldname) begin
+    case "CustCode":
+      GetWindowRecord(wn,SHr);  
+      CUr.Code = SHr.CustCode;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        nwn = OpenWindow("CUDClass",0,0,"","",CUr);    
+      end;
+  end;
+  SHDClassOpenRecord = res;
+  return;
+end;
+
+global
+updating procedure EShipPRTDsm()
+begin
+  integer wn,nmw,Err,rownr;
+  record RcVc RepSpec;
+  record EshipPrtBlock EPBlock;
+  record SHVc SHr;
+  record UserVc Userr;
+  boolean checkUser;
+  record CYBlock CYb;
+  record StockMovVc StockMovr;
+  record RetPUVc RetPUr;
+  LongInt error;
+  string 255 errorstr,fieldstr;
+  
+  wn = CurWindow;
+  Err = 0;
+  if (WindowState(wn)==Rs_normal) then begin
+    checkUser = false;
+    if (IsEnterprise or IsStandardUnused) then begin 
+      checkUser = true;
+    end;
+    if (BuildProductCode=="StandardAccounts" and (checkUser == false)) then begin 
+      if (ClientMode) then begin 
+        checkUser = true;
+      end else begin  
+        BlockLoad(CYb);
+        RepSpec.f2 = CYb.EInvoiceAccount; 
+      end;
+    end;
+    if (checkUser) then begin 
+      Userr.Code = CurrentUser;
+      if (FindTheUser(Userr)) then begin
+        RepSpec.f2 = Userr.Spec; 
+      end;
+    end;
+    BlockLoad(EPBlock);
+    if (EPBlock.Status==0) then begin  //Live
+      if (blank(EPBlock.LiveServerAddress)) then begin 
+        Err = -1;
+      end;
+      if (EPBlock.LiveServerPort<=0) then begin 
+        Err = -1;
+      end;
+      if (blank(EPBlock.LiveServerUrl)) then begin 
+        Err = -1;
+      end;
+      if (blank(EPBlock.LiveServerSOAPAction)) then begin 
+        Err = -1;
+      end;  
+      if (blank(EPBlock.PublicCertificate)) then begin 
+        Err = -1;
+      end;        
+      RepSpec.f1 = USetStr(33422);   
+    end;
+    if (EPBlock.Status==1) then begin  //Test
+      if (blank(EPBlock.TestServerAddress)) then begin 
+        Err = -1;
+      end;
+      if (EPBlock.TestServerPort<=0) then begin 
+        Err = -1;
+      end;
+      if (blank(EPBlock.TestServerUrl)) then begin 
+        Err = -1;
+      end;
+      if (blank(EPBlock.TestServerSOAPAction)) then begin 
+        Err = -1;
+      end; 
+      if (blank(EPBlock.PublicCertificate)) then begin 
+        Err = -1;
+      end;   
+      RepSpec.f1 = USetStr(33421);  
+    end;  
+    if (Err!=0) then begin 
+      MessageBox(33420,"");
+      goto LEShipRegisterDsm;
+    end;
+    if (GetWindowClass(wn)=="SHDClass") then begin 
+      RepSpec.f5 = "SHVc";
+      GetWindowRecord(wn,SHr);
+      RepSpec.long1 = SHr.SerNr;
+      if (CheckEShipPRTItems(RepSpec,error,errorstr,rownr,fieldstr)) then begin 
+        nmw = OpenWindow("EShipPRTWClass",0,wn,"","",RepSpec); 
+        WindowFieldGoto(nmw,RepSpec,-1,"f3",false);      
+      end else begin
+        WindowFieldGoto(wn,SHr,rownr,fieldstr,false);  
+      end;      
+    end; 
+    if (GetWindowClass(wn)=="StockMovDClass") then begin 
+      RepSpec.f5 = "StockMovVc";
+      GetWindowRecord(wn,StockMovr);
+      RepSpec.long1 = StockMovr.SerNr;
+      if (CheckEShipPRTItems(RepSpec,error,errorstr,rownr,fieldstr)) then begin 
+        nmw = OpenWindow("EShipPRTWClass",0,wn,"","",RepSpec); 
+        WindowFieldGoto(nmw,RepSpec,-1,"f3",false);
+      end else begin
+        WindowFieldGoto(wn,StockMovr,rownr,fieldstr,false);          
+      end;
+    end;
+    if (GetWindowClass(wn)=="RetPUDClass") then begin 
+      RepSpec.f5 = "RetPUVc";
+      GetWindowRecord(wn,RetPUr);
+      RepSpec.long1 = RetPUr.SerNr;
+      if (CheckEShipPRTItems(RepSpec,error,errorstr,rownr,fieldstr)) then begin 
+        nmw = OpenWindow("EShipPRTWClass",0,wn,"","",RepSpec); 
+        WindowFieldGoto(nmw,RepSpec,-1,"f3",false); 
+      end else begin
+        WindowFieldGoto(wn,RetPUr,rownr,fieldstr,false);             
+      end;
+    end;
+    if (error>0) then begin 
+      MessageBox(error,errorstr);      
+    end;
+  end else begin
+    MessageBox(30225,"");
+  end;
+LEShipRegisterDsm:;
+  return;
+end;

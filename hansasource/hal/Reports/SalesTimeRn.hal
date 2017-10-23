@@ -1,0 +1,707 @@
+external procedure HTArtGroup(string, var string);
+external procedure HTItemClass(string,var string);
+external function Boolean HasItemClassification();
+external function Boolean HasItemGroups();
+external function Boolean ItemInItemGroupOrClass(string,string,string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external procedure HT2Per(Date, Date , var string);
+external procedure HTArts(string, string, var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function LongInt FindReservation(string,Date,Time);
+external procedure InitValArray(Integer,var Array val);
+external procedure FindFiscalYear(Date,var Date,var Date);
+external function LongInt DateDiff(Date,Date);
+external function integer GetGuestsInJob(record JobVc);
+
+procedure AddRestAccToArray(record RestAccVc RestAccr,var array val vst,var array val qst,Integer pos,Boolean perioddata,var val qstfwd,
+                            var val vstfwd,Integer insel,string itemcode,string class,string itemgroup)
+begin
+  record INVc INr;
+  row RestAccVc RestAccrw;
+  Integer rwcnt,i;
+  Boolean testf;
+  
+  if (insel==0) then begin
+    if (perioddata) then begin
+      vst[pos] = vst[pos] + RestAccr.Sum4;
+      if (RestAccr.Persons<1) then begin
+        qst[pos] = qst[pos] + 1;
+      end else begin
+        qst[pos] = qst[pos] + RestAccr.Persons;
+      end;
+    end else begin
+      if (RestAccr.Persons<1) then begin
+        qstfwd = qstfwd + 1;
+      end else begin
+        qstfwd = qstfwd + RestAccr.Persons;
+      end;
+      vstfwd = vstfwd + RestAccr.Sum4;
+    end;
+  end else begin
+    rwcnt = MatRowCnt(RestAccr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RestAccr,i,RestAccrw);
+      testf = true;
+      if (nonblank(itemcode)) then begin
+        if (RestAccrw.ArtCode!=itemcode) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        testf = ItemInItemGroupOrClass(RestAccrw.ArtCode,itemgroup,class);
+      end;
+      if (RestAccrw.stp!=1) and (RestAccrw.stp!=3) then begin testf = false; end;
+      if (testf) then begin
+        switch (RestAccrw.stp) begin
+          case 1:
+            if (perioddata) then begin
+              vst[pos] = vst[pos] + (RestAccrw.Price * RestAccrw.Quant);
+              qst[pos] = qst[pos] + RestAccrw.Quant;
+            end else begin
+              qstfwd = qstfwd + RestAccrw.Quant;
+              vstfwd = vstfwd + (RestAccrw.Price * RestAccrw.Quant);
+            end;
+          case 3:
+            if (perioddata) then begin
+              vst[pos] = vst[pos] - (RestAccrw.Price * RestAccrw.Quant);
+              qst[pos] = qst[pos] - RestAccrw.Quant;
+            end else begin
+              qstfwd = qstfwd - RestAccrw.Quant;
+              vstfwd = vstfwd - (RestAccrw.Price * RestAccrw.Quant);
+            end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintCoverQtyRow(string com,array val qst,val qstfwd,Integer rwcnt,Boolean reportf,Boolean printyear)
+begin
+  Integer i,pos;
+  val tot;
+  
+    if (reportf) then begin
+      StartFormat(15);
+      OutString(0,0,com,false);
+      for (i=0;i<rwcnt;i=i+1) begin
+        pos = (i*45)+100;
+        if (pos<=380) then begin
+          OutValBiDi(pos,0,Round(qst[i],SetRoundModeD(2)),M4UVal,true,pos+40);
+        end;
+        tot = tot + qst[i];
+      end;
+      OutValBiDi(420,0,Round(tot,SetRoundModeD(2)),M4UVal,true,460);
+      if (printyear) then begin
+        OutValBiDi(480,0,Round(tot+qstfwd,SetRoundModeD(2)),M4UVal,true,510);
+      end else begin
+        OutString(480,0,"",true);
+      end;
+      EndFormat;
+    end else begin
+      ExportString(com);
+      for (i=0;i<rwcnt;i=i+1) begin
+        ExportVal(Round(qst[i],SetRoundModeD(2)),M4UVal);
+        tot = tot + qst[i];
+      end;
+      ExportVal(Round(tot,SetRoundModeD(2)),M4UVal);
+      if (printyear) then begin
+        ExportVal(Round(tot+qstfwd,SetRoundModeD(2)),M4UVal);
+      end else begin
+        ExportString("");
+      end;
+      NewLine;
+    end;
+  return;
+end;
+
+procedure PrintCoverAvgRow(string com,array val qst,array val vst,val qstfwd,val vstfwd,Integer rwcnt,Boolean reportf,Boolean prcf,Boolean printyear)
+begin
+  Integer i,pos;
+  val qtot,vtot,v;
+  
+    if (reportf) then begin
+      StartFormat(15);
+      OutString(0,0,com,false);
+      for (i=0;i<rwcnt;i=i+1) begin
+        pos = (i*45)+100;
+        if (pos<=380) then begin
+          if (prcf) then begin 
+            v = Round(vst[i]/qst[i],SetRoundModeD(2));
+            v = v *100; 
+          end else begin
+            v = Round(vst[i]/qst[i],DefaultRoundMode);
+          end;
+          OutValBiDi(pos,0,v,M4UVal,true,pos+40);
+        end;
+        qtot = qtot + qst[i];
+        vtot = vtot + vst[i];
+      end;
+      if (prcf) then begin 
+        v = Round(vtot/qtot,SetRoundModeD(2));
+        v = v *100; 
+      end else begin
+        v = Round(vtot/qtot,DefaultRoundMode);
+      end;
+      OutValBiDi(420,0,v,M4UVal,true,460);
+      if (prcf) then begin 
+        v = Round((vtot+vstfwd)/(qtot+qstfwd),SetRoundModeD(2));
+        v = v *100; 
+      end else begin
+        v = Round((vtot+vstfwd)/(qtot+qstfwd),DefaultRoundMode);
+      end;
+      if (printyear) then begin
+        OutValBiDi(480,0,v,M4UVal,true,520);
+      end else begin
+        OutString(480,0,"",false);
+      end;
+      EndFormat;
+    end else begin
+      ExportString(USetStr(12601));
+      for (i=0;i<rwcnt;i=i+1) begin
+        v = Round(vst[i]/qst[i],SetRoundModeD(2));
+        if (prcf) then begin v = v *100; end;
+        ExportVal(v,M4UVal);
+        qtot = qtot + qst[i];
+        vtot = vtot + vst[i];
+      end;
+      if (prcf) then begin 
+        v = Round(vtot/qtot,SetRoundModeD(2));
+        v = v *100; 
+      end else begin
+        v = Round(vtot/qtot,DefaultRoundMode);
+      end;
+      ExportVal(v,M4UVal);
+      if (prcf) then begin 
+        v = Round((vtot+vstfwd)/(qtot+qstfwd),SetRoundModeD(2));
+        v = v *100; 
+      end else begin
+        v = Round((vtot+vstfwd)/(qtot+qstfwd),DefaultRoundMode);
+      end;
+      if (printyear) then begin
+        ExportVal(v,M4UVal);
+      end else begin
+        ExportString("");
+      end;
+      NewLine;
+    end;
+  return;
+end;
+
+procedure PrintCoverTotRow(string com,array val vst,val vstfwd,Integer rwcnt,Boolean reportf,Boolean prcf,Boolean printyear)
+begin
+  Integer i,pos;
+  val vtot,v;
+  
+    if (reportf) then begin
+      StartFormat(15);
+      OutString(0,0,com,false);
+      for (i=0;i<rwcnt;i=i+1) begin
+        pos = (i*45)+100;
+        if (pos<=380) then begin
+          OutValBiDi(pos,0,vst[i],M4UVal,true,pos+40);
+        end;
+        vtot = vtot + vst[i];
+      end;
+      OutValBiDi(420,0,vtot,M4UVal,true,460);
+      v = vtot+vstfwd;
+      if (printyear) then begin
+        OutValBiDi(480,0,v,M4UVal,true,510);
+      end else begin
+        OutString(480,0,"",false);
+      end;
+      EndFormat;
+    end else begin
+      ExportString(USetStr(12601));
+      for (i=0;i<rwcnt;i=i+1) begin
+        ExportVal(vst[i],M4UVal);
+        vtot = vtot + vst[i];
+      end;
+      ExportVal(vtot,M4UVal);
+      v = vtot+vstfwd;
+      if (printyear) then begin
+        ExportVal(v,M4UVal);
+      end else begin
+        ExportString("");
+      end;
+      NewLine;
+    end;
+  return;
+end;
+
+procedure RoomsInPeriod(date StartDate,date EndDate,string RoomTypes,record SalesTimeBlock SalesTimer,array val qrtot,array val qrlet,array val qrOOO,array val qrcomp,array val qrstaff,array val qrmeet,
+                        array val vrlet,array val qrguest,Integer rwcnt,Boolean reportf)
+begin
+  record JobVc Jobr;
+  record ResVc Room;
+  record HotelBlock HotelRec;
+  Boolean found,testf,letf;
+  Time btime;
+  Date td;
+  Integer i,j,k;
+  
+  BlockLoad(HotelRec);
+  found = true;
+  while (LoopMain(Room,1,found)) begin
+    if (found) then begin
+      testf = false;
+      if (nonblank(RoomTypes)) then begin
+        if (SetInSet(Room.Type,RoomTypes)) then begin
+          testf = true;
+        end;
+      end else begin
+        testf = true;
+      end;
+      if (Room.Type==SalesTimer.MeetingType) then begin
+        testf = true;
+      end;
+      if (testf) then begin
+        td = StartDate;
+        testf = true;
+        while (testf) begin
+          if (td>EndDate) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            letf = true;
+            i = DateDiff(td,StartDate);
+//            j = i/7;            
+//            if (i>=7) then begin i = i - j*7; end;
+            Jobr.SerNr = FindReservation(Room.Code,td,btime);
+            if (ReadFirstMain(Jobr,1,true)) then begin
+              if (Room.Type==SalesTimer.MeetingType) then begin
+                qrmeet[i] = qrmeet[i] + 1;
+                letf = false;
+              end;
+              if (Jobr.ResStatus==HotelRec.BlockStatus) then begin
+                qrOOO[i] = qrOOO[i] + 1;
+                letf = false;
+              end;
+              if (Jobr.ResUsage==SalesTimer.ComplimentaryUsage) then begin
+                qrcomp[i] = qrcomp[i] + 1;
+                letf = false;
+              end;
+              if (Jobr.ResUsage==SalesTimer.StaffUsage) then begin
+                qrstaff[i] = qrstaff[i] + 1;
+                letf = false;
+              end;
+              if (letf) then begin
+                k = i;
+                if (k>=0) and (Jobr.EndDate!=td) then begin
+                  vrlet[k] = vrlet[k] + MulRateToBase1(Jobr.CurncyCode,Jobr.PLPrice,Jobr.FrRate,Jobr.ToRateB1,Jobr.ToRateB2,Jobr.BaseRate1,Jobr.BaseRate2,DefaultCurRoundOff);;
+                  qrguest[k] = qrguest[k] + GetGuestsInJob(Jobr);
+                  qrlet[k] = qrlet[k] + 1;
+                end;
+              end;     
+            end;
+//            if (Room.Type!=SalesTimer.MeetingType) then begin
+              qrtot[i] = qrtot[i] + 1;
+//            end;
+          end;
+          td = AddDay(td,1);
+        end;  
+      end;
+    end;
+  end;  
+  return;
+end;
+
+procedure WineBarAvarage(record RcVc RepSpec,record RestAccVc RestAccr,array val qwine,array val vwine,array val qbar,array val vbar,Integer rownr)
+begin
+  record INVc INr;
+  row RestAccVc RestAccrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(RestAccr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RestAccr,i,RestAccrw);
+    if (RestAccrw.stp==1) then begin
+      if (ReadFirstItem(RestAccrw.ArtCode,INr,true,true)) then begin
+        if (SetInSet(RepSpec.f5,INr.DispGroups)) then begin
+  //StopAlert("w.RestAccr.SerNr " & RestAccr.SerNr);      
+          vwine[rownr] = vwine[rownr] + Round(RestAccrw.Quant*RestAccrw.Price,DefaultRoundMode);
+          qwine[rownr] = qwine[rownr] + RestAccrw.Quant;
+        end;
+        if (SetInSet(RepSpec.f5,INr.DispGroups)) then begin
+  //StopAlert("b.RestAccr.SerNr " & RestAccr.SerNr);      
+          vbar[rownr] = vbar[rownr] + Round(RestAccrw.Quant*RestAccrw.Price,DefaultRoundMode);
+          qbar[rownr] = qbar[rownr] + RestAccrw.Quant;
+        end;
+      end;
+    end;
+    if (RestAccrw.stp==3) then begin
+      if (ReadFirstItem(RestAccrw.ArtCode,INr,true,true)) then begin
+        if (SetInSet(RepSpec.f5,INr.DispGroups)) then begin
+  //StopAlert("w.RestAccr.SerNr " & RestAccr.SerNr);      
+          vwine[rownr] = vwine[rownr] - Round(RestAccrw.Quant*RestAccrw.Price,DefaultRoundMode);
+          qwine[rownr] = qwine[rownr] - RestAccrw.Quant;
+        end;
+        if (SetInSet(RepSpec.f5,INr.DispGroups)) then begin
+  //StopAlert("b.RestAccr.SerNr " & RestAccr.SerNr);      
+          vbar[rownr] = vbar[rownr] - Round(RestAccrw.Quant*RestAccrw.Price,DefaultRoundMode);
+          qbar[rownr] = qbar[rownr] - RestAccrw.Quant;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure SalesTimeRealFunction2(date StartDate,date EndDate,string RoomTypes,Boolean reportf,Integer insel,string itemcode,string class,string itemgroup)
+begin
+  record RestAccVc RestAccr;
+  record SalesTimeBlock SalesTimer;
+  Boolean foundf;
+  Date lastdat;
+  val qstfwd1;
+  val qstfwd2;
+  val qstfwd3;
+  val qstfwd4;
+  val qstfwd5;
+  val vstfwd1;
+  val vstfwd2;
+  val vstfwd3;
+  val vstfwd4;
+  val vstfwd5;
+  array val qst1;
+  array val qst2;
+  array val qst3;
+  array val qst4;
+  array val qst5;
+  array val vst1;
+  array val vst2;
+  array val vst3;
+  array val vst4;
+  array val vst5;
+
+  array val qrtot;
+  array val qrlet;
+  array val qrOOO;
+  array val qrcomp;
+  array val qrstaff;
+  array val qrmeet;
+  array val qrguest;
+  array val vrlet;
+
+  array val qwine;
+  array val qbar;
+  array val vwine;
+  array val vbar;
+  
+  Integer i,j,rwcnt,pos;
+  Date curYearstartdate,curYearenddate;
+  Boolean perioddata;
+
+  BlockLoad(SalesTimer);
+  rwcnt = DateDiff(EndDate,StartDate)+1;
+/* Should be able to handle as many days as you like!! It should just print the first 7 while the export should export all....
+  if (rwcnt>7) then begin
+    rwcnt = 7;
+  end;
+*/
+  InitValArray(rwcnt,qst1);
+  InitValArray(rwcnt,qst2);
+  InitValArray(rwcnt,qst3);
+  InitValArray(rwcnt,qst4);
+  InitValArray(rwcnt,qst5);
+  InitValArray(rwcnt,vst1);
+  InitValArray(rwcnt,vst2);
+  InitValArray(rwcnt,vst3);
+  InitValArray(rwcnt,vst4);
+  InitValArray(rwcnt,vst5);
+  i = 0;
+  foundf = true;
+  FindFiscalYear(StartDate,curYearstartdate,curYearenddate);
+  RestAccr.TransDate = curYearstartdate;
+  while (LoopKey("TransDate",RestAccr,1,foundf)) begin
+    if (RestAccr.TransDate>EndDate) then begin
+      foundf = false;
+    end;
+    if (DateInRange(RestAccr.TransDate,StartDate,EndDate)) then begin
+      perioddata = true;
+    end;
+    if (blankdate(lastdat)) then begin
+      lastdat = RestAccr.TransDate;
+    end;
+    i = DateDiff(RestAccr.TransDate,StartDate);
+    if (reportf) then begin
+      j = i/7;              
+      if (i>=7) then begin i = i - j*7; end;
+    end;
+    if (foundf) then begin
+      if ((RestAccr.TransTime>=SalesTimer.FrTime1) and (RestAccr.TransTime<=SalesTimer.ToTime1)) then begin
+        AddRestAccToArray(RestAccr,vst1,qst1,i,perioddata,qstfwd1,vstfwd1,insel,itemcode,class,itemgroup);
+      end;
+      if ((RestAccr.TransTime>=SalesTimer.FrTime2) and (RestAccr.TransTime<=SalesTimer.ToTime2)) then begin
+        AddRestAccToArray(RestAccr,vst2,qst2,i,perioddata,qstfwd2,vstfwd2,insel,itemcode,class,itemgroup);
+      end;
+      if ((RestAccr.TransTime>=SalesTimer.FrTime3) and (RestAccr.TransTime<=SalesTimer.ToTime3)) then begin
+        AddRestAccToArray(RestAccr,vst3,qst3,i,perioddata,qstfwd3,vstfwd3,insel,itemcode,class,itemgroup);
+      end;
+      if ((RestAccr.TransTime>=SalesTimer.FrTime4) and (RestAccr.TransTime<=SalesTimer.ToTime4)) then begin
+        AddRestAccToArray(RestAccr,vst4,qst4,i,perioddata,qstfwd4,vstfwd4,insel,itemcode,class,itemgroup);
+      end;
+      if ((RestAccr.TransTime>=SalesTimer.FrTime5) and (RestAccr.TransTime<=SalesTimer.ToTime5)) then begin
+        AddRestAccToArray(RestAccr,vst5,qst5,i,perioddata,qstfwd5,vstfwd5,insel,itemcode,class,itemgroup);
+      end;
+      if (perioddata) then begin
+//        WineBarAvarage(RepSpec,RestAccr,qwine,vwine,qbar,vbar,i);  
+      end;    
+    end;
+    if (lastdat!=RestAccr.TransDate) then begin
+      lastdat = RestAccr.TransDate;
+    end;
+  end;
+  lastdat = StartDate;
+  if (reportf) then begin
+    StartFormat(15);
+  end else begin
+    ExportString("");
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    if (Mod(i,6)==0) then begin
+      if (reportf) then begin
+        pos = (i*45)+100;
+        if (pos<=380) then begin
+          OutDateBiDi(pos,0,lastdat,true,pos+40);
+        end;
+      end else begin
+        ExportDate(lastdat);
+      end;
+    end else begin
+      if (reportf==false) then begin
+        ExportString("");
+      end;
+    end;
+    lastdat = AddDay(lastdat,1);
+  end;
+  if (reportf) then begin
+    EndFormat;
+  end else begin
+    NewLine;
+  end;   
+  lastdat = StartDate;
+  if (reportf) then begin
+    StartFormat(15);
+  end else begin
+    ExportString("");
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    if (reportf) then begin
+      pos = (i*45)+100;
+      if (pos<=380) then begin
+        OutStringAdjustBiDi(pos,0,USetStr(12601+GetDateId(lastdat)),true,M4Val,pos+40);
+      end;
+    end else begin
+      ExportString(USetStr(12601+GetDateId(lastdat)));
+    end;
+    lastdat = AddDay(lastdat,1);
+  end;
+  if (reportf) then begin
+    OutStringAdjustBiDi(420,0,USetStr(12609),true,M4Val,460);
+    OutStringAdjustBiDi(480,0,USetStr(12610),true,M4Val,510);
+    EndFormat;
+    Gray_Divider(0,1);
+  end else begin
+    ExportString(USetStr(12609));
+    ExportString(USetStr(12610));
+    NewLine;    
+  end;
+  if (insel==0) then begin
+    RoomsInPeriod(StartDate,EndDate,RoomTypes,SalesTimer,qrtot,qrlet,qrOOO,qrcomp,qrstaff,qrmeet,vrlet,qrguest,rwcnt,reportf);  
+    PrintCoverQtyRow(USetStr(14380),qrtot,0,rwcnt,reportf,false);
+    PrintCoverQtyRow(USetStr(14381),qrlet,0,rwcnt,reportf,false);
+    PrintCoverQtyRow(USetStr(14382),qrOOO,0,rwcnt,reportf,false);
+    PrintCoverQtyRow(USetStr(14383),qrcomp,0,rwcnt,reportf,false);
+    PrintCoverQtyRow(USetStr(14384),qrstaff,0,rwcnt,reportf,false);
+    PrintCoverQtyRow(USetStr(14385),qrmeet,0,rwcnt,reportf,false);
+    PrintCoverAvgRow(USetStr(14386),qrlet,vrlet,0,0,rwcnt,reportf,false,false);
+    PrintCoverAvgRow(USetStr(14387),qrtot,qrlet,0,0,rwcnt,reportf,true,false);
+    PrintCoverQtyRow(USetStr(14388),qrguest,0,rwcnt,reportf,false);
+    PrintCoverAvgRow(USetStr(14389),qrlet,qrguest,0,0,rwcnt,reportf,true,false);
+  end;
+  if (reportf) then begin
+    StartFormat(10);
+    EndFormat;
+  end;    
+  if (nonblank(SalesTimer.Comment1)) then begin
+    Gray_Divider(0,1);
+    PrintCoverQtyRow(SalesTimer.Comment1,qst1,qstfwd1,rwcnt,reportf,true);
+    PrintCoverTotRow(USetStr(12611),vst1,vstfwd1,rwcnt,reportf,false,true);
+    if (insel==0) then begin
+      PrintCoverAvgRow(USetStr(12601),qst1,vst1,qstfwd1,vstfwd1,rwcnt,reportf,false,true);
+    end;
+  end;
+  if (nonblank(SalesTimer.Comment2)) then begin
+    Gray_Divider(0,1);
+    PrintCoverQtyRow(SalesTimer.Comment2,qst2,qstfwd2,rwcnt,reportf,true);
+    PrintCoverTotRow(USetStr(12611),vst2,vstfwd2,rwcnt,reportf,false,true);
+    if (insel==0) then begin
+      PrintCoverAvgRow(USetStr(12601),qst2,vst2,qstfwd2,vstfwd2,rwcnt,reportf,false,true);
+    end;
+  end;
+  if (nonblank(SalesTimer.Comment3)) then begin
+    Gray_Divider(0,1);
+    PrintCoverQtyRow(SalesTimer.Comment3,qst3,qstfwd3,rwcnt,reportf,true);
+    PrintCoverTotRow(USetStr(12611),vst3,vstfwd3,rwcnt,reportf,false,true);
+    if (insel==0) then begin
+      PrintCoverAvgRow(USetStr(12601),qst3,vst3,qstfwd3,vstfwd3,rwcnt,reportf,false,true);
+    end;
+  end;
+  if (nonblank(SalesTimer.Comment4)) then begin
+    Gray_Divider(0,1);
+    PrintCoverQtyRow(SalesTimer.Comment4,qst4,qstfwd4,rwcnt,reportf,true);
+    PrintCoverTotRow(USetStr(12611),vst4,vstfwd4,rwcnt,reportf,false,true);
+    if (insel==0) then begin
+      PrintCoverAvgRow(USetStr(12601),qst4,vst4,qstfwd4,vstfwd4,rwcnt,reportf,false,true);
+    end;
+  end;
+  if (nonblank(SalesTimer.Comment5)) then begin
+    Gray_Divider(0,1);
+    PrintCoverQtyRow(SalesTimer.Comment5,qst5,qstfwd5,rwcnt,reportf,true);
+    PrintCoverTotRow(USetStr(12611),vst5,vstfwd5,rwcnt,reportf,false,true);
+    if (insel==0) then begin
+      PrintCoverAvgRow(USetStr(12601),qst5,vst5,qstfwd5,vstfwd5,rwcnt,reportf,false,true);
+    end;
+  end;
+//  PrintCoverAvgRow("Wine Av. Spend",vwine,qwine,0,0,rwcnt,reportf,false,true);
+//  PrintCoverAvgRow("Bar Av. Spend",vbar,qbar,0,0,rwcnt,reportf,false,true);
+  return;
+end;
+
+global
+procedure SalesTimeRealFunction(date StartDate,date EndDate,string RoomTypes,Boolean reportf,Integer insel,string itemcode,string class)
+begin
+  SalesTimeRealFunction2(StartDate,EndDate,RoomTypes,reportf,insel,itemcode,class,"");
+  return;
+end;
+
+global
+procedure SalesTimeFunction(var record RcVc RepSpec,Boolean reportf)
+begin
+  string 255 tstr;
+  Integer rw;
+
+  if (nonblankdate(RepSpec.d1)) then begin
+    RepSpec.sStartDate = RepSpec.d1;
+  end;
+  if (RepSpec.long1>0) then begin
+    RepSpec.sEndDate = AddDay(RepSpec.sStartDate,7*RepSpec.long1);
+  end else begin
+    RepSpec.sEndDate = AddDay(RepSpec.sStartDate,7);
+  end;
+  if (reportf) then begin
+    StartReportJob(USetStr(12600));
+    rw = 1;
+    HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+    EndHeader;
+  end;
+  SalesTimeRealFunction(RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.f1,reportf,0,"","");
+  if (reportf) then begin
+    Gray_Divider(0,1);
+    EndJob;
+  end;
+  return;
+end;
+
+global
+procedure SalesTimeRn(record RcVc RepSpec)
+begin
+  SalesTimeFunction(RepSpec,true);
+  return;
+end;
+
+global
+procedure SalesTimeEn(record RcVc RepSpec)
+begin
+  SalesTimeFunction(RepSpec,false);
+  return;
+end;
+
+global
+procedure DetSalesTimeRn(record RcVc RepSpec)
+begin
+  record INVc INr;
+  Boolean foundf,testf;
+  string 20 frin,toin;
+  Integer rw;
+  string 200 tstr;
+  
+  frin = FirstInRange(RepSpec.f2,20);   
+  toin = LastInRange(RepSpec.f2,20);   
+  if (nonblankdate(RepSpec.d1)) then begin
+    RepSpec.sStartDate = RepSpec.d1;
+  end;
+  if (RepSpec.long1>0) then begin
+    RepSpec.sEndDate = AddDay(RepSpec.sStartDate,7*RepSpec.long1);
+  end else begin
+    RepSpec.sEndDate = AddDay(RepSpec.sStartDate,7);
+  end;
+  StartReportJob(USetStr(12612));   
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.f2)) then begin
+    HTArts(frin,toin,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (HasItemGroups) then begin
+    HTArtGroup(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasItemClassification) then begin
+    HTItemClass(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (RepSpec.flags[1]!=0) then begin
+    Header(rw,USetStr(4888),1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  if (RepSpec.flags[1]!=0) then begin
+    INr.Code = frin;
+    foundf = true;
+    while (LoopMain(INr,1,foundf)) begin
+      if ((nonblank(RepSpec.f2)) and (INr.Code>toin)) then begin foundf = false; end;
+      testf = true;
+      if (foundf==false) then begin
+        testf = false;
+      end;
+      if (testf and nonblank(RepSpec.f3)) then begin
+        testf = SetInSet(RepSpec.f3,INr.DispGroups);
+      end;
+      if (testf and nonblank(RepSpec.f4)) then begin
+        testf = (RepSpec.f4==INr.Group);
+      end;       
+      if (testf) then begin
+        StartFormat(15);
+        OutString(0,0,INr.Code,false);
+        OutString(100,0,INr.Name,false);
+        EndFormat;
+        SalesTimeRealFunction2(RepSpec.sStartDate,RepSpec.sEndDate,"",true,1,INr.Code,RepSpec.f3,RepSpec.f4);
+        Gray_Divider(0,1);
+        StartFormat(15);
+        EndFormat;
+      end;
+    end;
+  end else begin
+    SalesTimeRealFunction2(RepSpec.sStartDate,RepSpec.sEndDate,"",true,2,RepSpec.f2,RepSpec.f3,RepSpec.f4);
+  end;
+  Gray_Divider(0,1);
+  EndJob;
+  return;
+end;
+

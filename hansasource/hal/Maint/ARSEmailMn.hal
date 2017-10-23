@@ -1,0 +1,257 @@
+external procedure MailTextRow2(string,string,string,string,var row MailTextVc,var Integer);
+external function boolean AddEMailRecipients(var record MailVc,string,string,integer);
+external procedure FindUserMailboxName(string,var string,var string);
+external procedure ResolveMailboxNumber(var row MailVc);
+external function Integer SclassInEclass(Array string,string);
+external procedure SplitEclass(string,var Array string);
+external procedure GetOnAccBalance(record RcVc,string,string,Boolean,Integer,var val,var val,var val,var val,var val,var val,var val,record SMVc,
+                   Array string,Array val,var Integer);
+external procedure CustAged(record CUVc,Date,Date,Date,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val,boolean);
+
+function Boolean CheckIVNr(string cucode,LongInt minivnr)
+begin
+  Boolean res;
+  Boolean TrHs;
+  record IVVc IVr;
+  LongInt ivnr;
+  
+  ivnr = 0;
+  TrHs = true;
+  IVr.CustCode = cucode;
+  while (LoopKey("CustCode",IVr,1,TrHs)) begin
+    if (IVr.CustCode!=cucode) then begin TrHs = false; end;
+    if (TrHs) then begin
+      ivnr = ivnr + 1;
+      if (ivnr>=minivnr) then begin 
+        res = true; 
+        goto LCheckIVNr;
+      end;
+    end;
+  end;
+LCheckIVNr:;  
+  CheckIVNr = res;
+  return;
+end;
+
+function val GetCustomerBalance(record RcVc RepSpec,record CUVc CUr)
+begin
+  val ARSARSum;
+  val ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151;
+  val ARSOnAccBal;
+  val rval,rval2;
+  val sumbooked,sumnow,sumcurncy,sumdiff;
+  record SMVc CurTotalsr;
+  Date bd;
+  Array string 10 debaccs;
+  Array val debbal;
+  Integer debcnt;
+  
+  GetOnAccBalance(RepSpec,CUr.Code,CUr.CurncyCode,false,RepSpec.flags[4],rval,rval2,ARSOnAccBal,sumbooked,sumnow,sumcurncy,sumdiff,CurTotalsr,debaccs,debbal,debcnt);
+  if (rval==0) then begin ARSOnAccBal = 0; end;
+  if (RepSpec.flags[4]==0) then begin ARSOnAccBal = rval; end;
+  
+  CustAged(CUr,CurrentDate,bd,bd,ARSARSum,ARSsact,ARSs0,ARSs1,ARSs16,ARSs31,ARSs61,ARSs91,ARSs121,ARSs151,false);
+  ARSARSum = ARSARSum + ARSOnAccBal;
+  
+  GetCustomerBalance = ARSARSum;
+end;
+
+global
+updating function Boolean ARSEmailMn_Run(var record RcVc RepSpec,string mailboxname)
+begin
+  Boolean res;
+  record MailVc Mailr,OldMailr;
+  row MailVc Mailrw;
+  string 255 fname;
+  record RcVc theRepSpec;
+  record CUVc CUr;
+  Boolean CUs;
+  string 255 frcc,tocc;
+  string 255 a,b,tstr;
+  val TotSum;
+  Boolean skip;
+  Boolean skip2;
+  Array string 20 ac;
+  row MailTextVc MTrw;
+  Integer IgnoreRecordDetails;
+  record LTxtVc LTxtr;
+  Integer i,rwcnt;
+
+  SplitEclass(RepSpec.f4,ac);
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc = LastInRange(RepSpec.f1,20);
+  a = FirstInRange(RepSpec.f2,20);
+  b = LastInRange(RepSpec.f2,20);
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;
+  SetLoopPosition(CUr,RepSpec.long2);
+  CUr.Code = frcc;
+  CUs = true;
+  while (LoopMain(CUr,1,CUs)) begin
+    skip2 = false;
+    if (nonblank(tocc)) then begin
+      if (CUr.Code>tocc) then begin CUs = false; end;
+    end;
+    if (nonblank(RepSpec.f4)) then begin
+      if (SclassInEclass(ac,CUr.Classification)==0) then begin skip2 = true; end;
+    end;;
+    if (nonblank(RepSpec.f2)) then begin
+      if (nonblank(b)) then begin
+        if (CUr.SalesMan>b) then begin skip2 = true; end;
+        if (CUr.SalesMan<a) then begin skip2 = true; end;
+      end;
+      if (blank(b)) then begin
+        if (CUr.SalesMan!=a) then begin skip2 = true; end;
+      end;
+    end;
+    if (RepSpec.vals0!=0) then begin
+//      if (CompCUTurnover(CUr,RepSpec.vals0,RepSpec.sStartDate,RepSpec.sEndDate)<0) then begin skip2 = true; end;
+    end;
+    if (RepSpec.long1!=-1) then begin
+      if (CheckIVNr(CUr.Code,RepSpec.long1)==false) then begin skip2 = true; end;
+    end;
+    if (CUr.CUType==0) then begin skip2 = true; end;
+    if (CUs==false) then begin skip2 = true; end;
+    if (skip2==false) then begin
+      if (blank(RepSpec.f3) or (RepSpec.f3==CUr.CustCat)) then begin
+        skip = false;
+        if (RepSpec.flags[3]==1) then begin
+          if (CUr.RemndrFlag==0) then begin skip = true; end;
+        end;
+        if (blank(CUr.eMail)) then begin skip = true; end;
+        if (nonblank(RepSpec.vals2)) then begin
+          if (RepSpec.vals2>GetCustomerBalance(RepSpec,CUr)) then begin skip = true; end;
+        end;
+        if (skip==false) then begin          
+
+          RecordCopy(theRepSpec,RepSpec);
+          theRepSpec.f1 = CUr.Code;
+          theRepSpec.flags[17] = 0; // Resetting since Maint flag and the Document flag are not representing the same setting
+          RecordNew(Mailr);
+
+          ClearRow(Mailr,Mailrw,1);
+          Mailrw.RowTyp = kMailRowTypeFrom;
+          Mailrw.AddrCode = mailboxname;
+          ResolveMailboxNumber(Mailrw);
+          MatRowPut(Mailr,0,Mailrw);
+          if (AddEMailRecipients(Mailr,CUr.Code,CUr.eMail,kMailOpenInvCustStatement)) then begin 
+          end;
+
+          MailTextRow2("",USetStr(2541),CUr.LangCode,theRepSpec.Language,MTrw,IgnoreRecordDetails);
+          Mailr.Header = MTrw.Header;
+          if (blank(Mailr.Header)) then begin 
+            Mailr.Header = USetStr(2541);
+          end;
+          
+          LTxtr.Code = MTrw.FirstTxt;
+          if (ReadFirstMain(LTxtr,1,true)) then begin
+            Mailr.HtmlFlag = LTxtr.HtmlFlag;
+          end;
+          if (Mailr.HtmlFlag==0) then begin
+            LTxtr.Code = MTrw.LastTxt;
+            if (ReadFirstMain(LTxtr,1,true)) then begin
+              Mailr.HtmlFlag = LTxtr.HtmlFlag;
+            end;
+          end;
+          
+          Mailr.TransDate = CUrrentDate;
+          Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");          
+          RecordStore(Mailr,false);
+          RecordCopy(OldMailr,Mailr);
+          
+          LTxtr.Code = MTrw.FirstTxt;
+          if (ReadFirstMain(LTxtr,1,true)) then begin
+            if (Mailr.HtmlFlag==0) then begin
+              rwcnt = LineTextCnt(LTxtr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                tstr = LineTextGet(LTxtr,i);
+                LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+              end;    
+              AddCRToText(Mailr);
+            end else begin
+              if (LTxtr.HtmlFlag==0) then begin
+                AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+              end else begin
+                AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+              end;
+            end;
+          end;
+          
+          LTxtr.Code = MTrw.LastTxt;
+          if (ReadFirstMain(LTxtr,1,true)) then begin
+            if (Mailr.HtmlFlag==0) then begin
+              rwcnt = LineTextCnt(LTxtr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                tstr = LineTextGet(LTxtr,i);
+                LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+              end;    
+              AddCRToText(Mailr);
+            end else begin
+              if (LTxtr.HtmlFlag==0) then begin
+                AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+              end else begin
+                AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+              end;
+            end;
+          end;
+          
+          if (RecordUpdate(OldMailr,Mailr,false)==0) then begin
+            fname = "tmp/" & Mailr.Header & "-" & CUr.Code & ".pdf";
+            SetDocumentFilename(fname);
+            SetMedia(mtPdf);         
+            theRepSpec.repname = "ARSForm";
+            PrintDocument(theRepSpec,"ARSForm",false);
+            if (FileExists(fname)) then begin
+              RecordLinkFile(fname,0,Mailr,CurrentCompany);
+              if (RepSpec.flags[17] != 0) then begin
+                RecordCopy(OldMailr,Mailr);
+                Mailr.SendFlag = 1;
+                RecordUpdate(OldMailr,Mailr,true);
+              end;
+            end else begin
+              RecordDelete(Mailr);
+            end;
+          end else begin
+            RecordDelete(Mailr);
+          end;
+          
+          SetDocumentFilename("");    
+          Delete_File(fname);
+
+          res = true;
+          CUs = false;
+          RepSpec.long2 = GetLoopPosition(CUr);
+        end;
+      end;
+    end;
+  end;
+  ARSEmailMn_Run = res;
+  return;
+end;
+
+global
+procedure ARSEmailMn(record RcVc RepSpec)
+begin
+  record MailSettingsBlock MSb;
+  string 255 mailboxnr,mailboxname;
+  
+  FindUserMailboxName(CurrentUser,mailboxnr,mailboxname);
+  if (blank(mailboxname)) then begin
+    BlockLoad(MSb);
+    mailboxname = MSb.FromSystem;
+  end;
+  if (blank(mailboxname)) then begin
+    goto LARSEmailMn;
+  end;
+
+  while (qupdating.ARSEmailMn_Run(RepSpec,mailboxname)) begin
+
+    //LogText(0,"loops = " & loops);
+    //loops = loops + 1;
+    //
+  end;
+
+LARSEmailMn:;
+  return;
+end;

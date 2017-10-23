@@ -1,0 +1,571 @@
+remote updating procedure RecordActionVATIV_Print(var record VATIVVc,string,string,Boolean);
+external function Boolean VATIVDchrsum(var record VATIVVc,Integer);
+external function roundmode DefaultRoundMode();
+external procedure RoundRowSum(string,string,string,var val);
+remote procedure VATIV_PasteArtCode(var record VATIVVc,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure CalcVATBaseVAT2(record SMVc,Integer,Integer,Integer,Boolean,var val,var val);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+remote procedure PasteIVRowToVATIV(record IVVc,var record VATIVVc,Integer,var Integer,Integer,var val);
+remote procedure PasteIVToVATIV(record IVVc,var record VATIVVc);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+
+global
+procedure VATIVSumup(record VATIVVc VATIVr)
+begin
+  record SMVc VATr;
+  record SMVc RvrsVATr;
+  row VATIVVc VATIVrw;
+  Integer i,rwcnt;
+  Integer vcrwcnt;
+  roundmode roundlines,rndtotal,roundvat;
+  val vatv,t,t1;
+  record CUVc CUr;
+  
+  VATIVr.Sum1 = blankval;
+  VATIVr.Sum2 = blankval;
+  VATIVr.Sum3 = blankval;
+  VATIVr.Sum4 = blankval;
+  VATIVr.TAX1Sum = blankval;
+  VATIVr.RvrsVAT = blankval;
+  CUr.Code = VATIVr.CustCode;
+  ReadFirstMain(CUr,1,true);
+  SetupVATBase(VATr,vcrwcnt);  
+  SetupVATBase(RvrsVATr,vcrwcnt);  
+  rwcnt = MatRowCnt(VATIVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATIVr,i,VATIVrw);
+    if (VATIVrw.stp==11) then begin
+      VATIVrw.Sum = -VATIVrw.Sum;
+    end;
+    MulVATIV(VATIVrw.VATCode,VATIVrw.Sum,vatv,t,VATIVr.InclVAT,VATIVr.NoTAXonVAT);
+    switch (VATIVr.InclVAT) begin
+      case 0:
+        VATIVr.Sum1 = VATIVr.Sum1 + VATIVrw.Sum;
+        if ((VATIVr.ExportFlag==0) or (VATIVr.ExportFlag==3) or (VATIVr.ExportFlag==4)) then begin
+          if (vatv==0) then begin 
+            VATIVr.Sum2 = VATIVr.Sum2 + VATIVrw.Sum;
+          end;
+//          VATIVr.Sum3 = VATIVr.Sum3 + vatv;
+          if (blank(VATIVrw.RvrsVATCode)) then begin
+            AddVATBase(VATr,VATIVrw.VATCode,VATIVrw.Sum,blankval,vcrwcnt,VATIVr.InclVAT,VATIVr.NoTAXonVAT);
+          end;
+          if (nonblank(VATIVrw.RvrsVATCode)) then begin
+            AddVATBase(RvrsVATr,VATIVrw.VATCode,VATIVrw.Sum,blankval,vcrwcnt,VATIVr.InclVAT,VATIVr.NoTAXonVAT);
+          end;
+        end;
+      otherwise
+        if (blank(VATIVrw.RvrsVATCode)) then begin
+          AddVATBase(VATr,VATIVrw.VATCode,VATIVrw.Sum,blankval,vcrwcnt,VATIVr.InclVAT,VATIVr.NoTAXonVAT);
+        end;
+        VATIVr.Sum4 = VATIVr.Sum4 + VATIVrw.Sum;
+//        VATIVr.Sum3 = VATIVr.Sum3 + vatv;
+        if ((VATIVr.ExportFlag==0) or (VATIVr.ExportFlag==3) or (VATIVr.ExportFlag==4)) then begin
+        end else begin
+          VATIVr.Sum4 = VATIVr.Sum4 + vatv;
+        end;
+        if (vatv==0) then begin 
+          VATIVr.Sum2 = VATIVr.Sum2 + VATIVrw.Sum;
+          if (VATIVrw.stp==5) then begin
+            VATIVr.Sum1 = VATIVr.Sum1 + VATIVrw.Sum;
+          end;
+        end else begin
+          VATIVr.Sum1 = VATIVr.Sum1 + VATIVrw.Sum;
+        end;
+    end;
+  end;
+  CalcVATBaseVAT(VATr,VATIVr.InclVAT,VATIVr.NoTAXonVAT,vcrwcnt,vatv,t1);
+  VATIVr.TAX1Sum = t1;
+  VATIVr.Sum3 = vatv;
+  CalcVATBaseVAT2(RvrsVATr,VATIVr.InclVAT,VATIVr.NoTAXonVAT,vcrwcnt,CUr.RvrsVAT!=0,VATIVr.RvrsVAT,t1);  
+  if (VATIVr.FrPrice!=0) then begin
+    VATIVr.Sum4 = VATIVr.Sum4 + VATIVr.FrPrice;
+    MulVATIV(VATIVr.FrVATCode,VATIVr.FrPrice,vatv,t,VATIVr.InclVAT,VATIVr.NoTAXonVAT);
+    VATIVr.Sum3 = VATIVr.Sum3 + vatv;
+    AddVATBase(VATr,VATIVr.FrVATCode,VATIVr.FrPrice,blankval,vcrwcnt,VATIVr.InclVAT,VATIVr.NoTAXonVAT);
+    switch (VATIVr.InclVAT) begin
+      case 1:
+        VATIVr.Sum4 = VATIVr.Sum4 + vatv;
+    end;
+    if (vatv==0) then begin 
+      VATIVr.Sum2 = VATIVr.Sum2 + VATIVr.FrPrice;
+    end else begin
+      VATIVr.Sum1 = VATIVr.Sum1 + VATIVr.FrPrice;
+    end;        
+  end;
+  GetCurncyRoundoff(VATIVr.CurncyCode,"","VATIVVc",rndtotal,roundlines,roundvat);
+  VATIVr.Sum3 = Round(VATIVr.Sum3,roundvat);
+  
+  switch (VATIVr.InclVAT) begin
+    case 0:
+      t = VATIVr.Sum1 + VATIVr.Sum3;
+      t = VATIVr.Sum4 + t;            
+      t = t + VATIVr.TAX1Sum;            
+      VATIVr.Sum4 = Round(t,DefaultRoundMode);
+      t = VATIVr.Sum4 - t;
+      VATIVr.Sum0 = VATIVr.Sum0 + t;
+    otherwise
+      t = VATIVr.Sum4 + VATIVr.TAX1Sum;            
+      VATIVr.Sum4 = Round(t,DefaultRoundMode);
+      t = VATIVr.Sum4 - t;
+      VATIVr.Sum0 = VATIVr.Sum0 + t;
+  end;
+  VATIVr.Sum0 = Round(VATIVr.Sum0,DefaultRoundMode);
+  VATIVr.Sum1 = Round(VATIVr.Sum1,DefaultRoundMode);
+  VATIVr.Sum2 = Round(VATIVr.Sum2,DefaultRoundMode);
+  if (nonblank(VATIVr.CurncyCode)) then begin
+    VATIVr.BaseSum4 = MulRateToBase1(VATIVr.CurncyCode,VATIVr.Sum4,VATIVr.FrRate,VATIVr.ToRateB1,VATIVr.ToRateB2,VATIVr.BaseRate1,VATIVr.BaseRate2,DefaultCurRoundOff);
+  end;
+  return;
+end;
+
+//ROWS
+function Boolean VATIVDClassIVRowEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record IVVc IVr;
+  record VATIVVc VATIVr;
+  row VATIVVc VATIVrw;
+  Boolean chsum;
+  Integer vati;
+  val sum1;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,VATIVr);
+    if (rownr>-1) then begin
+      MatRowGet(VATIVr,rownr,VATIVrw);
+      IVr.SerNr = VATIVr.IVNr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        vati = rownr;
+        PasteIVRowToVATIV(IVr,VATIVr,VATIVrw.IVRow,vati,kVATTypeNoVAT,sum1);
+        chsum = true;
+      end;      
+    end;
+    if (chsum) then begin
+      VATIVSumup(VATIVr);
+    end;    
+    PutWindowRecord(wn,VATIVr);
+  end;
+  VATIVDClassIVRowEFAfter = res;
+  RETURN;
+END;
+
+function Boolean VATIVDClassTransDateEFAfter(Integer wn,Boolean changedf)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  record VATIVVc VATIV2r;
+  record IVVc IVr;
+  record VATIVTBlock VATIVb;
+  
+  GetWindowRecord(wn,VATIV2r);
+  if (changedf) then begin
+  if (VATIV2r.OKFlag==0) then begin
+    BlockLoad(VATIVb);
+    if (VATIVb.TRforVATCorrwithDateinPast==0) then begin
+      GetWindowRecord(wn,VATIVr);
+      IVr.SerNr = VATIVr.IVNr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        if (VATIVr.TransDate<VATIVr.IVTransDate) then begin
+          MessageBox(20850,"");
+        end;
+      end;
+    end;
+  end;
+  end;
+  VATIVDClassTransDateEFAfter = res;
+  return;
+end;
+
+function Boolean VATIVDClassQuantEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATIVVc VATIVr;
+  row VATIVVc VATIVrw;
+  val t;
+  Boolean chsum;
+  record GeneralOptionBlock GenOptRec;
+
+  if (changed!=0) then begin
+    BlockLoad(GenOptRec);
+    GetWindowRecord(wn,VATIVr);
+    if (rownr>-1) then begin
+      MatRowGet(VATIVr,rownr,VATIVrw);
+      CalcSum(VATIVrw.Quant,VATIVrw.Price,VATIVrw.PriceFactor,VATIVrw.vRebate,t,GenOptRec.UseDiscount);
+      VATIVrw.Sum = t;
+      MatRowPut(VATIVr,rownr,VATIVrw);
+      chsum = true;
+    end;
+    if (chsum) then begin
+      VATIVSumup(VATIVr);
+    end;
+    PutWindowRecord(wn,VATIVr);    
+  end;  
+  VATIVDClassQuantEFAfter = res;
+  RETURN;
+END;
+
+function Boolean VATIVDClassArtCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (changedf) then begin
+  if (VATIVr.OKFlag==0) then begin
+    if (VATIVr.IVNr<=0) then begin
+      VATIV_PasteArtCode(VATIVr,rownr);
+      PutWindowRecord(wn,VATIVr);    
+    end;
+  end;
+  end;
+  VATIVDClassArtCodeEFAfter = res;
+  return;
+end;
+
+function Boolean VATIVDClassvRebateEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (changedf) then begin
+  if (VATIVr.OKFlag==0) then begin
+    if (VATIVr.IVNr<=0) then begin
+      if (VATIVDchrsum(VATIVr,rownr)) then begin
+        VATIVSumup(VATIVr);
+      end;  
+      PutWindowRecord(wn,VATIVr);    
+    end;
+  end;
+  end;
+  VATIVDClassvRebateEFAfter = res;
+  return;
+end;
+
+function Boolean VATIVDClassVATCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (changedf) then begin
+  if (VATIVr.OKFlag==0) then begin
+    if (VATIVr.IVNr<=0) then begin
+      if (VATIVDchrsum(VATIVr,rownr)) then begin
+      end;  
+      VATIVSumup(VATIVr);
+      PutWindowRecord(wn,VATIVr);    
+    end;
+  end;
+  end;
+  VATIVDClassVATCodeEFAfter = res;
+  return;
+end;
+
+function Boolean VATIVDClassSumEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (changedf) then begin
+  if (VATIVr.OKFlag==0) then begin
+    if (VATIVr.IVNr<=0) then begin
+      if (VATIVDchrsum(VATIVr,rownr)) then begin
+      end;  
+      VATIVSumup(VATIVr);
+      PutWindowRecord(wn,VATIVr);    
+    end;
+  end;
+  end;
+  VATIVDClassSumEFAfter = res;
+  return;
+end;
+
+function Boolean VATIVDClassPriceEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (changedf) then begin
+  if (VATIVr.OKFlag==0) then begin
+    if (VATIVr.IVNr<=0) then begin
+      if (VATIVDchrsum(VATIVr,rownr)) then begin
+      end;  
+      VATIVSumup(VATIVr);
+      PutWindowRecord(wn,VATIVr);    
+    end;
+  end;
+  end;
+  VATIVDClassPriceEFAfter = res;
+  return;
+end;
+
+//HEADER
+function Boolean VATIVDClassIVNrEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATIVVc VATIVr;
+  record IVVc IVr;
+  LongInt oldnr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,VATIVr);
+    IVr.SerNr = VATIVr.IVNr;
+    if (ReadFirstMain(IVr,1,true)) then begin
+      PasteIVToVATIV(IVr,VATIVr);
+    end else begin
+      oldnr = VATIVr.SerNr;
+      RecordNew(VATIVr);
+      VATIVr.SerNr = oldnr;
+    end;
+    VATIVSumup(VATIVr);
+    PutWindowRecord(wn,VATIVr);
+  end;  
+  VATIVDClassIVNrEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean VATIVDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "IVNr": res = VATIVDClassIVNrEFAfter(wn,fn,rownr,changed);
+    case "Quant": res = VATIVDClassQuantEFAfter(wn,fn,rownr,changed);
+    case "IVRow": res = VATIVDClassIVRowEFAfter(wn,fn,rownr,changed);
+    case "TransDate": res = VATIVDClassTransDateEFAfter(wn,changed!=0);
+    case "ArtCode": res = VATIVDClassArtCodeEFAfter(wn,rownr,changed!=0);
+    case "vRebate": res = VATIVDClassvRebateEFAfter(wn,rownr,changed!=0);
+    case "VATCode": res = VATIVDClassVATCodeEFAfter(wn,rownr,changed!=0);
+    case "Price": res = VATIVDClassPriceEFAfter(wn,rownr,changed!=0);
+    case "Sum": res = VATIVDClassSumEFAfter(wn,rownr,changed!=0);
+  end;
+  VATIVDClassAfterEditField = res;
+  RETURN;
+END;
+
+function Boolean VATIVDClassEFActive(Integer wn)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (VATIVr.OKFlag==0) then begin
+    res = true;
+  end;
+  VATIVDClassEFActive = res;
+  return;
+end;
+
+function Boolean VATIVDClassTransDateEFActive(Integer wn,Integer changed)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  row VATIVVc VATIVrw;
+  Integer oldrwcnt,rwcnt;
+  Boolean umf;
+  record VATIVTBlock  VATIVTb;
+  
+  GetWindowRecord(wn,VATIVr);
+  if (VATIVr.OKFlag==0) then begin
+    res = true;
+    umf = true;
+  end else begin
+    oldrwcnt = WindowOldRowCnt(wn);
+    rwcnt = MatRowCnt(VATIVr);
+    if (oldrwcnt<rwcnt) then begin
+      MatRowGet(VATIVr,oldrwcnt,VATIVrw);
+      if (VATIVrw.stp==2) then begin umf = true; end;
+    end;
+  end;
+  BlockLoad(VATIVTb);
+  if (VATIVTb.NoUpdatingTransDate!=0) then begin
+    umf = false;
+    res = false;
+  end;
+  if (umf==false) then begin
+    if (changed!=0) then begin MessageBox(1512,""); end;
+  end else begin
+    res = true;
+  end;
+  VATIVDClassTransDateEFActive = res;
+  return;
+end;
+
+global
+function Boolean VATIVDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record VATIVVc VATIVr;
+  
+  switch (fieldname) begin
+    case "IVNr": res = VATIVDClassEFActive(wn);
+    case "TransDate": res = VATIVDClassTransDateEFActive(wn,changed);
+    case "SerNr": res = VATIVDClassEFActive(wn,);
+    case "VATIVType": res = VATIVDClassEFActive(wn,);
+    case "Reason": res = VATIVDClassEFActive(wn,);
+    case "CorrectionReason": res = VATIVDClassEFActive(wn,);
+    otherwise 
+      switch (wnst) begin
+        case Rs_update:
+          GetPrevWindowRecord(wn,VATIVr);
+        otherwise
+          GetWindowRecord(wn,VATIVr);
+      end;
+      if (VATIVr.OKFlag==0) then begin      
+        res = VATIVr.IVNr<=0;
+      end else begin
+        res = false;
+     end;
+  end;
+  VATIVDClassActiveEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean VATIVDClassOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  Integer normalmode,updatemode;
+  record VATIVVc VATIVr;
+
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,VATIVr);
+    if (VATIVr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;    
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,VATIVr);
+    if (VATIVr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  VATIVDClassOKFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean VATIVDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record VATIVVc VATIVr;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,VATIVr);    
+    VATIVSumup(VATIVr);
+    PutWindowRecord(wn,VATIVr);    
+  end;
+  res = true;
+  VATIVDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global
+procedure UpdateVATIVDsm()
+BEGIN  
+  record VATIVVc VATIVr;
+  row VATIVVc VATIVrw;
+  Integer wn;
+  record VATIVTBlock VATIVTb;
+
+  wn = CurWindow;
+  if (WindowState(wn)!=1) then begin  //Rs_insert
+    GetWindowRecord(wn,VATIVr);
+    if (VATIVr.OKFlag!=0) then begin
+      BlockLoad(VATIVTb);
+      if (VATIVTb.NoUpdatingTransDate==0) then begin
+        ClearRow(VATIVr,VATIVrw,2);
+        VATIVrw.OldTransDate = VATIVr.TransDate;
+        VATIVrw.Sign = CurrentUser;
+        MatRowPut(VATIVr,MatRowCnt(VATIVr),VATIVrw);
+        PutWindowRecord(wn,VATIVr);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Boolean VATIVDClassOpenRecord(Integer wn,string fieldname,Integer fn,Integer rownr)
+begin
+  Boolean res;
+  record VATIVVc VATIVr;
+  Integer nwn;
+  record IVVc IVr;
+  record IPVc IPr;
+  
+  GetWindowRecord(wn,VATIVr);  
+  switch (fieldname) begin
+    case "IVNr":
+      if (VATIVr.IVNr!=-1) then begin
+        IVr.SerNr = VATIVr.IVNr;
+        if (ReadFirstMain(IVr,1,true)) then begin
+          nwn = OpenWindow("IVDClass",0,0,"","",IVr);    
+        end;
+      end;
+    case "IPNr":
+      if (VATIVr.IPNr!=-1) then begin
+        IPr.SerNr = VATIVr.IPNr;
+        if (ReadFirstMain(IPr,1,true)) then begin
+          nwn = OpenWindow("IPDClass",0,0,"","",IPr);    
+        end;
+      end;
+  end;
+  VATIVDClassOpenRecord = res;
+  return;
+end;
+
+global
+updating function Boolean VATIVDClassPrint(Integer wn,Boolean previewf)
+begin
+  record VATIVVc VATIVr;
+  Integer tf;
+  string 20 docname;
+  record LocalMachineBlock LMb;
+  record LSerialPortDeviceVc LSPDr;
+  record VATIVVc credVATIVr;
+  Boolean testf;
+
+  BlockLoad(LMb); 
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,VATIVr); 
+  testf = true;
+  if (testf) then begin
+    docname = "VATIVForm";
+    switch (VATIVr.InvType) begin
+      case 0: docname = "VATCIVForm";
+      case kInvoiceTypeCredit: docname = "VATCIVForm";
+      case kInvoiceTypeCreditSpecialSales: docname = "VATCIVForm";
+    end;
+    if ((WindowState(wn)==Rs_normal) and (previewf==false)) then begin
+      RecordActionVATIV_Print(VATIVr,"",docname,true);
+    end else begin  
+      tf = VATIVr.OKFlag;
+      if (previewf==false) then begin
+        VATIVr.OKFlag = 0;
+      end else begin
+        VATIVr.OKFlag = 1;
+      end;
+      if (PrintDocument(VATIVr,docname,true)) then begin end;
+      VATIVr.OKFlag = tf;
+    end;
+  end;
+LVATIVDClassPrint:; 
+  VATIVDClassPrint = true;
+  return;
+end;

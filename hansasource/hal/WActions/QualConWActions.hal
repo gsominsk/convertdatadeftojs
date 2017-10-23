@@ -1,0 +1,206 @@
+remote function Boolean PasteQCTemplateToQualCon(var record QualConVc);
+external function string 40 SerialNrSClassSpecPName(string);
+external function Boolean DidYouAuthorize(string);
+external procedure NormalizeObjstr(var string);
+remote procedure NewRentalCharge(Integer,var record RentChrgVc,Date,LongInt,LongInt,var string,string);
+
+global
+function Boolean QualConDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record QualConVc QualConr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,QualConr);
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,QualConr);
+  end;  
+  if (QualConr.OKFlag!=0) then begin
+    res = false;
+  end else begin
+    if (DidYouAuthorize(QualConr.TestedBy)==false) then begin res = false; end;
+    if (UserCanAction("AuthQualCon",true)==false) then begin res = false; end;
+  end;
+  QualConDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean QualConDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record QualConVc QualCon2r;
+  
+  res = true;
+  if (wnst==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,QualCon2r);
+    if (QualCon2r.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;
+  QualConDClassActiveEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean InspectConDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  
+  res = QualConDClassOKFlagButtonAction(wn,value);
+  InspectConDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean InspectConDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  
+  res = QualConDClassActiveEditField(wn,fieldname,fn,wnst,rownr,changed);
+  InspectConDClassActiveEditField = res;
+  RETURN;
+END;
+
+global 
+procedure AuthorizeQualConDsm()
+BEGIN
+  record QualConVc QualConr;
+  Integer wn;
+  string 255 tstr;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,QualConr);  
+  if (UserCanAction("AuthQualCon",true)) then begin
+    if (WindowState(wn)==0) then begin//Rs_normal
+      if (SetInSet(CurrentUser,QualConr.TestedBy)==false) then begin
+        if (len(QualConr.TestedBy)<58) then begin
+          tstr = QualConr.TestedBy;
+          if (nonblank(tstr)) then begin
+            tstr = tstr & ",";
+          end;
+          tstr = tstr & CurrentUser;
+          NormalizeObjstr(tstr);
+          QualConr.TestedBy = tstr;
+          PutWindowRecord(wn,QualConr);  
+        end else begin
+          Beep;
+        end;
+      end;
+    end else begin
+      Beep;
+    end;
+    Beep;
+  end;
+  RETURN;
+END;
+
+global
+procedure QualConChargeDsm()
+BEGIN
+  record QualConVc QualConr;
+  record RentChrgVc RentChrgr;
+  string 255 warn;
+  Integer wn;
+  Integer nwn;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,QualConr);
+  if (QualConr.AgreementNr>0) then begin
+    NewRentalCharge(6,RentChrgr,CurrentDate,QualConr.SerNr,QualConr.AgreementNr,warn,"");
+    nwn = OpenWindow("RentChrgDClass",1,0,"","",RentChrgr);
+  end;
+  RETURN;
+END;
+
+
+global
+function string 40 QualConDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 255 psname;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "SerialNr": psname = SerialNrSClassSpecPName(defpsname);
+  end;
+  QualConDClassSpecPasteName = psname;
+  return;
+end;
+
+function Boolean QualConDClassQCTestEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record QualConVc QCr;
+  row QualConVc QCrw;
+  record QCTestVc QCTestr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,QCr);
+    MatRowGet(QCr,rownr,QCrw);
+    QCTestr.Code = QCrw.QCTest;
+    if (ReadFirstMain(QCTestr,1,true)) then begin
+      QCrw.Comment = QCTestr.Comment;
+      QCrw.QCUnit = QCTestr.QCUnit;
+      MatRowPut(QCr,rownr,QCrw);
+      res = true;
+    end;
+    PutWindowRecord(wn,QCr);
+  end;
+  QualConDClassQCTestEFAfter = res;
+  return;
+end;
+
+function Boolean QualConDClassQCTemplateEFAfter(Integer wn,Integer rownr,Boolean changedf)
+begin
+  Boolean res;
+  record QualConVc QCr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,QCr);
+    res = PasteQCTemplateToQualCon(QCr);
+    PutWindowRecord(wn,QCr);
+  end;
+  QualConDClassQCTemplateEFAfter = res;
+  return;
+end;
+
+global
+function Boolean QualConDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+begin
+  Boolean res;
+
+  switch (fieldname) begin
+    case "QCTemplate": res = QualConDClassQCTemplateEFAfter(wn,rownr,changed!=0);
+    case "QCTest": res = QualConDClassQCTestEFAfter(wn,rownr,changed!=0);
+  end;
+  QualConDClassAfterEditField = res;
+  return;
+end;
+
+global
+procedure QualConResQualConDsm()
+begin
+  record QualConVc QCr;
+  record RcVc RepSpec;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,QCr);
+  ReportDefaults(RepSpec,"QualConResRClass");
+  RepSpec.repname = "QualConResRn";
+  RepSpec.f1 = QCr.ArtCode;
+  RepSpec.f3 = QCr.SerialNr;
+  RepSpec.FirstAcc = QCr.StatusCode;
+  RepSpec.AccStr = QCr.TestedBy;
+  RepSpec.LastAcc = QCr.Vc;
+  RepSpec.long1 = QCr.VcSerNr;
+  RepSpec.Media = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;

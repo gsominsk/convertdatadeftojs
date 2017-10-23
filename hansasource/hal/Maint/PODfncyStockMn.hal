@@ -1,0 +1,376 @@
+external function Boolean POVc_PasteLocation(var record POVc);
+external function Boolean PasteVEInPO(var record POVc,Boolean);
+//external procedure PasteINinPO(var record POVc,string,Integer);
+external function Boolean POVc_PasteArtCode(var record POVc,Integer,Boolean);
+
+procedure AddDfncyStock(record DfncyStockVc DSr,record DfncyStockVc sumDSr,Integer flags0,Array LongInt adsnr,var Integer adscnt)
+begin
+  switch (flags0) begin
+    case 1:
+      sumDSr.ArtCode = DSr.ArtCode;
+    case 2:
+      sumDSr.ArtCode = DSr.ArtCode;
+      sumDSr.VECode = DSr.VECode;
+      aDSnr[adscnt] = DSr.SerNr;
+      adscnt = adscnt + 1;
+  end;
+  sumDSr.Quant = sumDSr.Quant + DSr.Quant;
+  return;
+end;
+
+updating function Boolean AddToPurchaseOrderDfncyStock(var record DfncyStockVc DSr,record RcVc RepSpec,var LongInt startfrompo,string purloc)
+begin
+  Boolean res;
+  record POVc POr;
+  record POVc oldPOr;
+  row POVc POrw;
+  Integer i,rwcnt,samein;
+  Boolean updf,sameitemf,found,testf;
+
+  switch (RepSpec.flags[0]) begin
+    case 0:
+    case 1:
+    case 2:
+      POr.VECode = DSr.VECode;
+      POr.SerNr = startfrompo;
+      found = true;
+      while (LoopKey("VECodeOpen",POr,2,found)) begin
+        testf = false;
+        if (POr.VECode==DSr.VECode) then begin
+          testf = true;
+          if (POr.Location!=purloc) then begin
+            testf = false;
+          end;
+          if (MatRowCnt(POr)>=198) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            found = false;
+          end;
+        end else begin
+          found = false;
+        end;
+      end;
+      if (testf) then begin
+        RecordCopy(oldPOr,POr);
+        updf = true;
+      end else begin
+        RecordNew(POr);
+        POr.VECode = DSr.VECode;
+        if (PasteVEInPO(POr,false)) then begin end;
+        POr.Location = purloc;
+        POVc_PasteLocation(POr);
+      end;
+      rwcnt = MatRowCnt(POr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(POr,i,POrw);
+        if (POrw.ArtCode==DSr.ArtCode) then begin
+          samein = i;
+          i = rwcnt;
+          sameitemf = true;
+        end;
+      end;
+      if (sameitemf) then begin
+        MatRowGet(POr,samein,POrw);  
+        POrw.Quant = POrw.Quant + DSr.Quant;
+        MatRowPut(POr,samein,POrw);  
+      end else begin
+        ClearRow(POr,POrw,1);
+        POrw.ArtCode = DSr.ArtCode;
+        POrw.Quant = DSr.Quant;
+        if (nonblank(POrw.ArtCode)) and (POrw.Quant>0) then begin
+          MatRowPut(POr,rwcnt,POrw);  
+//          PasteINinPO(POr,POr.Location,rwcnt);
+          POVc_PasteArtCode(POr,rwcnt,false);
+        end;
+      end;
+      if (updf) then begin
+        RecordUpdate(oldPOr,POr,true);
+      end else begin
+        POr.SerNr = NextSerNr("POVc",POr.TransDate,-1,false,"");
+        startfrompo = POr.SerNr;
+        if (POr.SerNr>0) then begin
+          if (MatRowCnt(POr)>0) then begin
+            RecordStore(POr,false);
+            startfrompo = POr.SerNr;
+          end;
+        end;
+      end;
+      if (POr.SerNr>0) then begin
+        DSr.PONr = POr.SerNr;
+        DSr.PORow = rwcnt;
+        res = true;
+      end;
+  end;
+  AddToPurchaseOrderDfncyStock = res;
+  return;
+end;
+
+updating function Boolean UpdateDfncyStocks(record DfncyStockVc sumDSr,Array LongInt adsnr,var Integer adscnt)
+begin
+  Boolean res;
+  record DfncyStockVc DSr;
+  record DfncyStockVc oldDSr;
+  record StockReservVc oldSRsrvr;
+  record StockReservVc SRsrvr;
+  Integer i;
+
+  if (sumDSr.PONr>0) then begin
+    for (i=0;i<adscnt;i=i+1) begin
+      DSr.SerNr = adsnr[i];
+      if (ReadFirstMain(DSr,1,true)) then begin
+        RecordCopy(oldDSr,DSr);
+        DSr.PONr = sumDSr.PONr;
+        DSr.PORow = sumDSr.PORow;
+        DSr.OKFlag = 1;
+        RecordUpdate(oldDSr,DSr,false);
+        res = true;
+        SRsrvr.SerNr = DSr.StockReservNr;
+        if (ReadFIrstMain(SRsrvr,1,true)) then begin
+          RecordCopy(oldSRsrvr,SRsrvr);
+          SRsrvr.ToSerNr = DSr.PONr;
+          SRsrvr.ToFileName = kResTypeExistingPO;
+          RecordUpdate(oldSRsrvr,SRsrvr,false);
+        end;
+      end;
+    end;
+    for (i=0;i<adscnt;i=i+1) begin
+      adsnr[i] = -1;
+    end;
+    adscnt = 0;
+  end;
+  UpdateDfncyStocks = res;
+  return;
+end;
+
+global
+updating procedure DfncyStockMn(record RcVc RepSpec)
+begin
+  record DfncyStockVc DSr;
+  record DfncyStockVc oldDSr;
+  Boolean found,samef,testf;
+  val totq;
+  string 255 keystr;
+  Integer keys;
+  record DfncyStockVc sumDSr;
+  record DfncyStockVc lastDSr;
+  record LocationVc Locr;
+  Array LongInt adsnr;
+  Integer adscnt;
+  record POVc POr;
+  LongInt ponr,startfrompo;
+  string 255 purloc;
+  record StockReservVc SRr;
+
+  RepSpec.flags[0] = 2;
+  RecordClear(lastDSr);
+  RecordClear(sumDSr);
+  
+//Back to Back
+
+  keystr = "ActFromSerNr";
+  found = true;
+  while (LoopKey(keystr,DSr,2,found)) begin
+    if (found) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (DSr.ArtCode!=RepSpec.f1) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (DSr.Location!=RepSpec.FirstAcc) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (DSr.VECode!=RepSpec.f2) then begin testf = false; end;
+      end;
+      if (DSr.PONr>0) then begin testf = false; end;      
+      if (DSr.FromSerNr<=0) then begin testf = false; end;
+      if (testf) then begin
+        SRr.SerNr = DSr.StockReservNr;
+        ReadFirstMain(SRr,1,true);
+        if (SRr.ToFileName!=kResTypeMakeNewPO) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        Locr.Code = DSr.Location;
+        ReadFirstMain(Locr,1,true);
+        purloc = Locr.PurLoc;
+        if (blank(purloc)) then begin purloc = DSr.Location; end;
+        
+        samef = true;
+        if (lastDSr.VECode!=DSr.VECode) then begin
+          startfrompo = -1;
+        end;
+        if (nonblank(lastDSr.FromSerNr)) then begin
+//          if (lastDSr.FromFileName!=DSr.FromFileName) or (lastDSr.FromSerNr!=DSr.FromSerNr) or (lastDSr.VECode!=DSr.VECode) or (lastDSr.Location!=purloc) then begin
+          if ((lastDSr.VECode!=DSr.VECode) or (lastDSr.ArtCode!=DSr.ArtCode) or (lastDSr.Location!=purloc))  or  
+              (((lastDSr.FromFileName!=DSr.FromFileName) or (lastDSr.FromSerNr!=DSr.FromSerNr)) and (SRr.ToFileName==kResTypeMakeNewPO)) then begin
+            samef = false;
+          end;
+        end else begin
+          samef = false;
+        end;
+        if (samef) then begin
+          AddDfncyStock(DSr,sumDSr,RepSpec.flags[0],adsnr,adscnt);
+        end else begin
+          if (nonblank(lastDSr.ArtCode)) then begin
+            if (AddToPurchaseOrderDfncyStock(sumDSr,RepSpec,startfrompo,lastDSr.Location)) then begin
+              if (UpdateDfncyStocks(sumDSr,adsnr,adscnt)) then begin
+                StepBack(DSr);
+              end;
+            end;
+          end;
+          RecordClear(sumDSr);
+          AddDfncyStock(DSr,sumDSr,RepSpec.flags[0],adsnr,adscnt);
+        end;
+        RecordCopy(lastDSr,DSr);
+        lastDSr.Location = purloc;
+        totq = totq + DSr.Quant;
+      end;
+    end;
+  end;
+  if (sumDSr.Quant!=0) then begin
+    if (AddToPurchaseOrderDfncyStock(sumDSr,RepSpec,startfrompo,purloc)) then begin
+      UpdateDfncyStocks(sumDSr,adsnr,adscnt);
+    end;
+  end;
+
+//other than Back to Back
+
+  ResetLoop(DSr);
+  RecordClear(DSr);
+  RecordClear(lastDSr);
+  RecordClear(sumDSr);
+  startfrompo = -1;
+  
+  keystr = "ActFromSerNr";
+  found = true;
+  while (LoopKey(keystr,DSr,2,found)) begin
+    if (found) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (DSr.ArtCode!=RepSpec.f1) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (DSr.Location!=RepSpec.FirstAcc) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (DSr.VECode!=RepSpec.f2) then begin testf = false; end;
+      end;
+      if (DSr.PONr>0) then begin testf = false; end;      
+      if (DSr.FromSerNr<=0) then begin testf = false; end;
+      if (testf) then begin
+        SRr.SerNr = DSr.StockReservNr;
+        ReadFirstMain(SRr,1,true);
+        if (SRr.ToFileName==kResTypeMakeNewPO) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        Locr.Code = DSr.Location;
+        ReadFirstMain(Locr,1,true);
+        purloc = Locr.PurLoc;
+        if (blank(purloc)) then begin purloc = DSr.Location; end;
+        
+        samef = true;
+        if (lastDSr.VECode!=DSr.VECode) then begin
+          startfrompo = -1;
+        end;
+        if (nonblank(lastDSr.FromSerNr)) then begin
+//          if (lastDSr.FromFileName!=DSr.FromFileName) or (lastDSr.FromSerNr!=DSr.FromSerNr) or (lastDSr.VECode!=DSr.VECode) or (lastDSr.Location!=purloc) then begin
+          if ((lastDSr.VECode!=DSr.VECode) or (lastDSr.ArtCode!=DSr.ArtCode) or (lastDSr.Location!=purloc))  or  
+              (((lastDSr.FromFileName!=DSr.FromFileName) or (lastDSr.FromSerNr!=DSr.FromSerNr)) and (SRr.ToFileName==kResTypeMakeNewPO)) then begin
+            samef = false;
+          end;
+        end else begin
+          samef = false;
+        end;
+        if (samef) then begin
+          AddDfncyStock(DSr,sumDSr,RepSpec.flags[0],adsnr,adscnt);
+        end else begin
+          if (nonblank(lastDSr.ArtCode)) then begin
+            if (AddToPurchaseOrderDfncyStock(sumDSr,RepSpec,startfrompo,lastDSr.Location)) then begin
+              if (UpdateDfncyStocks(sumDSr,adsnr,adscnt)) then begin
+                StepBack(DSr);
+              end;
+            end;
+          end;
+          RecordClear(sumDSr);
+          AddDfncyStock(DSr,sumDSr,RepSpec.flags[0],adsnr,adscnt);
+        end;
+        RecordCopy(lastDSr,DSr);
+        lastDSr.Location = purloc;
+        totq = totq + DSr.Quant;
+      end;
+    end;
+  end;
+  if (sumDSr.Quant!=0) then begin
+    if (AddToPurchaseOrderDfncyStock(sumDSr,RepSpec,startfrompo,purloc)) then begin
+      UpdateDfncyStocks(sumDSr,adsnr,adscnt);
+    end;
+  end;
+
+
+  POr.SerNr = 1000000000000;
+  ReadLastMain(POr,1,false);
+  ponr = POr.SerNr + 1;
+
+//not from reservation
+
+  RecordClear(lastDSr);
+  RecordClear(sumDSr);
+  RecordClear(DSr);
+  ResetLoop(DSr);
+  keystr = "ActVEArt";
+  found = true;
+  while (LoopKey(keystr,DSr,1,found)) begin
+    if (found) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1)) then begin
+        if (DSr.ArtCode!=RepSpec.f1) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (DSr.Location!=RepSpec.FirstAcc) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (DSr.VECode!=RepSpec.f2) then begin testf = false; end;
+      end;
+      if (DSr.PONr>0) then begin testf = false; end;
+      if (DSr.FromSerNr>0) then begin testf = false; end;
+      if (testf) then begin
+
+        Locr.Code = DSr.Location;
+        ReadFirstMain(Locr,1,true);
+        purloc = Locr.PurLoc;
+        if (blank(purloc)) then begin purloc = DSr.Location; end;
+
+        samef = true;
+        if (nonblank(lastDSr.ArtCode)) then begin
+          if (lastDSr.ArtCode!=DSr.ArtCode) or (lastDSr.VECode!=DSr.VECode) or (lastDSr.Location!=purloc) then begin
+            samef = false;
+          end;
+        end else begin
+          samef = false;
+        end;
+        if (samef) then begin
+          AddDfncyStock(DSr,sumDSr,RepSpec.flags[0],adsnr,adscnt);
+        end else begin
+          if (nonblank(lastDSr.ArtCode)) then begin
+            if (AddToPurchaseOrderDfncyStock(sumDSr,RepSpec,ponr,lastDSr.Location)) then begin
+              if (UpdateDfncyStocks(sumDSr,adsnr,adscnt)) then begin
+                StepBack(DSr);
+              end;
+            end;
+          end;
+          RecordClear(sumDSr);
+          AddDfncyStock(DSr,sumDSr,RepSpec.flags[0],adsnr,adscnt);
+        end;
+        RecordCopy(lastDSr,DSr);
+        lastDSr.Location = purloc;
+        totq = totq + DSr.Quant;
+      end;
+    end;
+  end;
+  if (sumDSr.Quant!=0) then begin
+    if (AddToPurchaseOrderDfncyStock(sumDSr,RepSpec,ponr,purloc)) then begin
+      UpdateDfncyStocks(sumDSr,adsnr,adscnt);
+    end;
+  end;
+  return;
+end;

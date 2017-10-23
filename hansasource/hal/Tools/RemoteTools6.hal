@@ -1,0 +1,799 @@
+external updating procedure PasteCOCUServiceInRoyaltyException(var record RoyaltyExceptionVc,LongInt);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure SetPOFlags(record POVc,Boolean);
+external procedure INTransferSplitSerNo(var record INTransferVc,Integer);
+external procedure OffHireSumUp(var record OffHireVc);
+external procedure DispatchSumup(var record DispatchVc);
+external function LongInt GetCurUserLastNr(string);
+external function Boolean PasteRentChrgItem(var record RentChrgVc,var string);
+external function Boolean INTransferSplitSerNrLines(var record INTransferVc);
+external updating procedure PasteAgreeInIV(var record IVVc,LongInt);
+external updating function boolean PasteCOCUServiceInIV(var record IVVc,LongInt,var Integer);
+external updating function Boolean AcceptRentQT(var record AgreementVc,record RentQTVc);
+external procedure DispatchVc_PasteSite(var record DispatchVc);
+
+global
+updating procedure RentUpdatePO(LongInt PONumber,Integer PORow,LongInt ChargeNumber)
+begin
+  record POVc POr;
+  row POVc POrw;
+  record POVc OldPOr;
+  
+  POr.SerNr = PONumber;
+  if (ReadFirstMain(POr,1,true)) then begin
+    RecordCopy(OldPOr,POr);
+    MatRowGet(POr,PORow,POrw);
+    POrw.ChargeNumber = ChargeNumber;
+    MatRowPut(POr,PORow,POrw);
+    if RecordUpdate(OldPOr,POr,false) then begin
+    end;
+  end;
+  return;
+end;
+
+function Boolean AddDispatchRow(var record DispatchVc Dispatchp,var Integer srw,Integer stp,LongInt sernr,Integer rw,string itemcode,string serialnr,val qty,string comment)
+begin
+  row DispatchVc Dispatchrw;
+  Boolean res;
+
+  res = false;
+  ClearRow(Dispatchp,Dispatchrw,stp);
+  Dispatchrw.RentResSerNo = sernr;
+  Dispatchrw.RentResRow = rw;
+  Dispatchrw.ArtCode = itemcode;
+  Dispatchrw.SerialNr = serialnr;
+  Dispatchrw.Quant = qty;
+  Dispatchrw.Spec = comment;
+  if ((Dispatchrw.Quant>0) or ((blank(Dispatchrw.ArtCode)) and (blank(Dispatchrw.SerialNr)))) then begin
+    MatRowPut(Dispatchp,srw,Dispatchrw);
+    srw = srw + 1;
+    res = true;
+  end;
+  AddDispatchRow = res;
+  return;
+end;
+
+procedure AddExtraLinesToDispatch(var record DispatchVc Dispatchp,string langcode,var Integer srw,Integer stp,LongInt sernr,Integer rw,string itemcode,string serialnr)
+begin
+  record RentINVc RentINr;
+  record INVc INr;
+  row RentINVc RentINrw;
+  row INVc INrw;
+  Integer i,rwcnt;
+  Boolean addf;
+  string 20 loclangcode;
+  
+  rwcnt = 0;
+  addf = false;
+  loclangcode = langcode;
+  RentINr.Code = itemcode;
+  RentINr.SerialNr = serialnr;
+  if (ReadFirstMain(RentINr,2,true)) then begin
+    rwcnt = MatRowCnt(RentINr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentINr,i,RentINrw);
+      if (loclangcode==RentINrw.LangCode) then begin
+        addf = true;
+      end;
+    end;
+    if (addf==false) then begin
+      loclangcode = "";
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentINr,i,RentINrw);
+      if (loclangcode==RentINrw.LangCode) then begin
+        if (AddDispatchRow(Dispatchp,srw,stp,sernr,rw,"","",BlankVal,RentINrw.Text)) then begin end;
+      end;
+    end;
+  end;
+  if (rwcnt==0) then begin
+    INr.Code = itemcode;
+    if (ReadFirstMain(INr,1,true)) then begin
+      rwcnt = MatRowCnt(INr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(INr,i,INrw);
+        if (loclangcode==INrw.LangCode) then begin
+          addf = true;;
+        end;
+      end;
+      if (addf==false) then begin
+        loclangcode = "";
+      end;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(INr,i,INrw);
+        if (loclangcode==INrw.LangCode) then begin
+          if (AddDispatchRow(Dispatchp,srw,stp,sernr,rw,"","",BlankVal,INrw.Text)) then begin end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AddRentResToDispatch(var record DispatchVc Dispatchp,record RentResVc RentResr,var Integer srw)
+begin
+  row RentResVc RentResrw;
+  Integer i,rwcnt;
+
+  if (RentResr.RecepyItem==0) then begin
+    if (AddDispatchRow(Dispatchp,srw,1,RentResr.SerNr,-1,RentResr.Code,RentResr.SerialNr,RentResr.RentQuant-(RentResr.RentResDel - RentResr.RentResRet),RentResr.Name)) then begin
+      AddExtraLinesToDispatch(Dispatchp,RentResr.LangCode,srw,1,RentResr.SerNr,-1,RentResr.Code,RentResr.SerialNr);
+    end;
+  end;
+  rwcnt = MatRowCnt(RentResr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentResr,i,RentResrw);
+//    if ((nonblank(RentResrw.ArtCode)) and ((RentResrw.Type==0) or (RentResrw.Type==2))) then begin
+    if (nonblank(RentResrw.ArtCode)) then begin
+      if (AddDispatchRow(Dispatchp,srw,1,RentResr.SerNr,i,RentResrw.ArtCode,RentResrw.SerialNr,RentResrw.Quant - (RentResrw.Del - RentResrw.Ret),RentResrw.Spec)) then begin
+        AddExtraLinesToDispatch(Dispatchp,RentResr.LangCode,srw,1,RentResr.SerNr,i,RentResrw.ArtCode,RentResrw.SerialNr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AddAgreementToDispatch(var record DispatchVc Dispatchp,record AgreementVc Agreementr)
+begin
+  Dispatchp.AgreementNr = Agreementr.SerNr;
+  Dispatchp.CustCode = Agreementr.CustCode;
+  Dispatchp.Addr0 = Agreementr.Addr0;
+  Dispatchp.ClientContact = Agreementr.ClientContact;
+  Dispatchp.Addr1 = Agreementr.ShipAddr0;
+  Dispatchp.Addr2 = Agreementr.ShipAddr1;
+  Dispatchp.Addr3 = Agreementr.ShipAddr2;
+  Dispatchp.DelAddr3 = Agreementr.ShipAddr3;
+  Dispatchp.DelAddr4 = Agreementr.DelAddr3;
+  Dispatchp.Site = Agreementr.Site;
+  if (nonblank(Dispatchp.Site)) then begin
+    DispatchVc_PasteSite(Dispatchp);
+  end;
+// Setting needed
+  if (blank(Dispatchp.Addr1)) then begin
+    Dispatchp.Addr1 = Agreementr.Addr1;
+    Dispatchp.Addr2 = Agreementr.Addr2;
+    Dispatchp.Addr3 = Agreementr.Addr3;
+    Dispatchp.DelAddr3 = Agreementr.InvAddr3;
+    Dispatchp.DelAddr4 = Agreementr.InvAddr4;
+  end;
+  return;
+end;
+
+procedure PasteRentResInDispatch(var record DispatchVc Dispatchp)
+BEGIN
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  Integer srw;
+
+  RentResr.SerNr = Dispatchp.AgreementNr;
+  if (ReadFirstMain(RentResr,1,true)) then begin
+  end;
+  Agreementr.SerNr = RentResr.AgreementNr;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    if ((Agreementr.OKFlag<>0) and (Agreementr.AgreeStatus<1)) then begin
+      AddAgreementToDispatch(Dispatchp,Agreementr);
+      Dispatchp.Location = RentResr.Location;
+      Dispatchp.Site = RentResr.Site;
+      if (nonblank(Dispatchp.Site)) then begin
+        DispatchVc_PasteSite(Dispatchp);
+      end;
+      Dispatchp.LangCode = Agreementr.LangCode;  //BS
+      srw = 0;
+      AddRentResToDispatch(Dispatchp,RentResr,srw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function Integer raPasteRentResInDispatch(var record DispatchVc Dispatchp,LongInt rentresnr)
+BEGIN
+  Integer res;
+  LongInt newnr;
+  
+  res = -1;
+  RecordNew(Dispatchp);
+  Dispatchp.SerNr = -1;
+  Dispatchp.AgreementNr = rentresnr;
+  if (Dispatchp.SerNr==-1) then begin
+    newnr = GetCurUserLastNr("DispatchVc");
+    Dispatchp.SerNr = NextSerNr("DispatchVc",Dispatchp.TransDate,newnr,false,"");
+    if (Dispatchp.SerNr==-1) then begin
+      goto LraPasteRentResInDispatch;
+    end;
+  end;
+  PasteRentResInDispatch(Dispatchp);
+  if ((MatRowCnt(Dispatchp)>0) and (Dispatchp.SerNr!=-1)) then begin
+    DispatchSumup(Dispatchp);
+    if (RecordInsert(Dispatchp,false)) then begin
+      res = 1;
+    end;
+  end;
+LraPasteRentResInDispatch:;
+  raPasteRentResInDispatch = res;
+  RETURN;
+END;
+
+global
+procedure AddRentResToOffHire(var record OffHireVc OffHirep,record RentResVc RentResr,var Integer srw)
+begin
+  row OffHireVc OffHirerw;
+  row RentResVc RentResrw;
+  Integer i,rwcnt;
+  record RentINVc RentINr;
+
+  if (RentResr.RecepyItem==0) then begin
+    ClearRow(OffHirep,OffHirerw,1);
+    OffHirerw.RentResSerNo = RentResr.SerNr;
+    OffHirerw.RentResRow = -1;
+    OffHirerw.ArtCode = RentResr.Code;
+    OffHirerw.SerialNr = RentResr.SerialNr;
+    OffHirerw.Quant = RentResr.RentResDel - RentResr.RentResRet;
+    OffHirerw.ReturnedQty = OffHirerw.Quant;
+    OffHirerw.Spec = RentResr.Name;
+    OffHirerw.Status = 7;
+    if (OffHirerw.Quant>0) then begin
+      RentINr.Code = OffHirerw.ArtCode;
+      RentINr.SerialNr = OffHirerw.SerialNr;
+      ReadFirstMain(RentINr,2,true);
+      OffHirerw.Cost = RentINr.Value;
+      MatRowPut(OffHirep,srw,OffHirerw);
+      srw = srw + 1;
+    end;
+  end;
+  rwcnt = MatRowCnt(RentResr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentResr,i,RentResrw);
+    if ((nonblank(RentResrw.ArtCode)) and (RentResrw.Type==0)) then begin
+      ClearRow(OffHirep,OffHirerw,1);
+      OffHirerw.RentResSerNo = RentResr.SerNr;
+      OffHirerw.RentResRow = i;
+      OffHirerw.ArtCode = RentResrw.ArtCode;
+      OffHirerw.Spec = RentResrw.Spec;
+      OffHirerw.SerialNr = RentResrw.SerialNr;
+      OffHirerw.Quant = RentResrw.Del - RentResrw.Ret;
+      OffHirerw.ReturnedQty = OffHirerw.Quant;
+      OffHirerw.Status = 7;
+      if (OffHirerw.Quant!=0) then begin              
+        MatRowPut(OffHirep,srw,OffHirerw);
+        srw = srw + 1;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AddAgreementToOffHire(var record OffHireVc OffHirep,record AgreementVc Agreementr)
+begin
+  OffHirep.AgreementNr = Agreementr.SerNr;
+  OffHirep.CustCode = Agreementr.CustCode;
+  OffHirep.Addr0 = Agreementr.Addr0;
+  OffHirep.ClientContact = Agreementr.ClientContact;
+  OffHirep.Site = Agreementr.Site;
+  OffHirep.LangCode = Agreementr.LangCode;
+  
+  return;
+end;
+
+procedure PasteRentResInOffHire(var record OffHireVc OffHirep)
+BEGIN
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  row OffHireVc OffHirerw;
+  row RentResVc RentResrw;
+  Integer i;
+  Integer srw,rwcnt;
+
+  RentResr.SerNr = OffHirep.AgreementNr;
+  if (ReadFirstMain(RentResr,1,true)) then begin
+  end;
+  Agreementr.SerNr = RentResr.AgreementNr;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    if ((Agreementr.OKFlag<>0) and (Agreementr.AgreeStatus<2)) then begin
+      AddAgreementToOffHire(OffHirep,Agreementr);
+      OffHirep.Location = RentResr.Location;
+      OffHirep.Site = RentResr.Site;
+      srw = 0;
+      AddRentResToOffHire(OffHirep,RentResr,srw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function Integer raPasteRentResInOffHire(var record OffHireVc OffHirep,LongInt rentresnr)
+BEGIN
+  Integer res;
+  LongInt newnr;
+  
+  res = -1;
+  RecordNew(OffHirep);
+  OffHirep.SerNr = -1;
+  OffHirep.AgreementNr = rentresnr;
+  if (OffHirep.SerNr==-1) then begin
+    newnr = GetCurUserLastNr("OffHireVc");
+    OffHirep.SerNr = NextSerNr("OffHireVc",OffHirep.TransDate,newnr,false,"");
+    if (OffHirep.SerNr==-1) then begin
+      goto LraPasteRentResInOffHire;
+    end;
+  end;
+  PasteRentResInOffHire(OffHirep);
+  if ((MatRowCnt(OffHirep)>0) and (OffHirep.SerNr!=-1)) then begin
+    OffHireSumUp(OffHirep);
+    if (RecordInsert(OffHirep,false)) then begin
+      res = 1;
+    end;
+  end;
+LraPasteRentResInOffHire:;
+  raPasteRentResInOffHire = res;
+  RETURN;
+END;
+
+/*
+global
+procedure AddRentResToCollection(var record CollectionVc Collectionp,record RentResVc RentResr,var Integer srw)
+begin
+  row CollectionVc Collectionrw;
+  row RentResVc RentResrw;
+  Integer i,rwcnt;
+
+  if (RentResr.RecepyItem==0) then begin
+    ClearRow(Collectionp,Collectionrw,1);
+    Collectionrw.RentResSerNo = RentResr.SerNr;
+    Collectionrw.RentResRow = -1;
+    Collectionrw.ArtCode = RentResr.Code;
+    Collectionrw.SerialNr = RentResr.SerialNr;
+    Collectionrw.Quant = RentResr.RentResDel-RentResr.RentResRet;
+    Collectionrw.Spec = RentResr.Name;
+    Collectionrw.AccountedFor = BlankVal;
+    Collectionrw.Missing = BlankVal;
+    if (Collectionrw.Quant>0) then begin
+      MatRowPut(Collectionp,srw,Collectionrw);
+      srw = srw + 1;
+    end;
+    Kjell
+  end;
+  rwcnt = MatRowCnt(RentResr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentResr,i,RentResrw);
+    if ((nonblank(RentResrw.ArtCode)) and (RentResrw.Type==0)) then begin
+      ClearRow(Collectionp,Collectionrw,1);
+      Collectionrw.RentResSerNo = RentResr.SerNr;
+      Collectionrw.RentResRow = i;
+      Collectionrw.ArtCode = RentResrw.ArtCode;
+      Collectionrw.Spec = RentResrw.Spec;
+      Collectionrw.SerialNr = RentResrw.SerialNr;
+      Collectionrw.Quant = RentResrw.Del - RentResrw.Ret;
+      Collectionrw.AccountedFor = BlankVal;
+      Collectionrw.Missing = BlankVal;
+      if (Collectionrw.Quant!=0) then begin              
+        MatRowPut(Collectionp,srw,Collectionrw);
+        srw = srw + 1;
+      end;
+    end;
+  end;
+  return;
+end;
+*/
+
+function Boolean AddCollectionRow(var record CollectionVc Collectionp,var Integer srw,Integer stp,LongInt sernr,Integer rw,string itemcode,string serialnr,val qty,string comment)
+begin
+  row CollectionVc Collectionrw;
+  Boolean res;
+
+  res = false;
+  ClearRow(Collectionp,Collectionrw,stp);
+  Collectionrw.RentResSerNo = sernr;
+  Collectionrw.RentResRow = rw;
+  Collectionrw.ArtCode = itemcode;
+  Collectionrw.SerialNr = serialnr;
+  Collectionrw.Quant = qty;
+  Collectionrw.Spec = comment;
+  Collectionrw.AccountedFor = BlankVal;
+  Collectionrw.Missing = BlankVal;
+  if ((Collectionrw.Quant>0) or ((blank(Collectionrw.ArtCode)) and (blank(Collectionrw.SerialNr)))) then begin
+    MatRowPut(Collectionp,srw,Collectionrw);
+    srw = srw + 1;
+    res = true;
+  end;
+  AddCollectionRow = res;
+  return;
+end;
+
+procedure AddExtraLinesToCollection(var record CollectionVc Collectionp,string langcode,var Integer srw,Integer stp,LongInt sernr,Integer rw,string itemcode,string serialnr)
+begin
+  record RentINVc RentINr;
+  record INVc INr;
+  row RentINVc RentINrw;
+  row INVc INrw;
+  Integer i,rwcnt;
+  Boolean addf;
+  string 20 loclangcode;
+  
+  rwcnt = 0;
+  addf = false;
+  loclangcode = langcode;
+  RentINr.Code = itemcode;
+  RentINr.SerialNr = serialnr;
+  if (ReadFirstMain(RentINr,2,true)) then begin
+    rwcnt = MatRowCnt(RentINr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentINr,i,RentINrw);
+      if (loclangcode==RentINrw.LangCode) then begin
+        addf = true;
+      end;
+    end;
+    if (addf==false) then begin
+      loclangcode = "";
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentINr,i,RentINrw);
+      if (loclangcode==RentINrw.LangCode) then begin
+        if (AddCollectionRow(Collectionp,srw,stp,sernr,rw,"","",BlankVal,RentINrw.Text)) then begin end;
+      end;
+    end;
+  end;
+  if (rwcnt==0) then begin
+    INr.Code = itemcode;
+    if (ReadFirstMain(INr,1,true)) then begin
+      rwcnt = MatRowCnt(INr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(INr,i,INrw);
+        if (loclangcode==INrw.LangCode) then begin
+          addf = true;;
+        end;
+      end;
+      if (addf==false) then begin
+        loclangcode = "";
+      end;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(INr,i,INrw);
+        if (loclangcode==INrw.LangCode) then begin
+          if (AddCollectionRow(Collectionp,srw,stp,sernr,rw,"","",BlankVal,INrw.Text)) then begin end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AddRentResToCollection(var record CollectionVc Collectionp,record RentResVc RentResr,var Integer srw)
+begin
+  row RentResVc RentResrw;
+  Integer i,rwcnt;
+
+  if (RentResr.RecepyItem==0) then begin
+    if (AddCollectionRow(Collectionp,srw,1,RentResr.SerNr,-1,RentResr.Code,RentResr.SerialNr,RentResr.RentResDel-RentResr.RentResRet,RentResr.Name)) then begin
+      AddExtraLinesToCollection(Collectionp,RentResr.LangCode,srw,1,RentResr.SerNr,-1,RentResr.Code,RentResr.SerialNr);
+    end;
+  end;
+  rwcnt = MatRowCnt(RentResr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RentResr,i,RentResrw);
+    if ((nonblank(RentResrw.ArtCode)) and ((RentResrw.Type==0) or (RentResrw.Type==2))) then begin
+      if (AddCollectionRow(Collectionp,srw,1,RentResr.SerNr,i,RentResrw.ArtCode,RentResrw.SerialNr,RentResrw.Quant - RentResrw.Del,RentResrw.Spec)) then begin
+        AddExtraLinesToCollection(Collectionp,RentResr.LangCode,srw,1,RentResr.SerNr,i,RentResrw.ArtCode,RentResrw.SerialNr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+
+procedure PasteRentResInCollection(var record CollectionVc Collectionp)
+BEGIN
+  record AgreementVc Agreementr;
+  record RentResVc RentResr;
+  row CollectionVc Collectionrw;
+  row RentResVc RentResrw;
+  Integer i;
+  Integer srw,rwcnt;
+
+  RentResr.SerNr = Collectionp.AgreementNr;
+  if (ReadFirstMain(RentResr,1,true)) then begin
+  end;
+  Agreementr.SerNr = RentResr.AgreementNr;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    if ((Agreementr.OKFlag<>0) and (Agreementr.AgreeStatus<2)) then begin
+      Collectionp.AgreementNr = RentResr.AgreementNr;
+      Collectionp.CustCode = Agreementr.CustCode;
+      Collectionp.Addr0 = Agreementr.Addr0;
+      Collectionp.Location = RentResr.Location;
+      Collectionp.LangCode = Agreementr.LangCode;
+      Collectionp.ClientContact = RentResr.ClientContact;
+      srw = 0;
+      AddRentResToCollection(Collectionp,RentResr,srw);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function Integer raPasteRentResInCollection(var record CollectionVc Collectionp,LongInt rentresnr)
+BEGIN
+  Integer res;
+  LongInt newnr;
+  
+  res = -1;
+  RecordNew(Collectionp);
+  Collectionp.SerNr = -1;
+  Collectionp.AgreementNr = rentresnr;
+  if (Collectionp.SerNr==-1) then begin
+    newnr = GetCurUserLastNr("CollectionVc");
+    Collectionp.SerNr = NextSerNr("CollectionVc",Collectionp.TransDate,newnr,false,"");
+    if (Collectionp.SerNr==-1) then begin
+      goto LraPasteRentResInCollection;
+    end;
+  end;
+  PasteRentResInCollection(Collectionp);
+  if ((MatRowCnt(Collectionp)>0) and (Collectionp.SerNr!=-1)) then begin
+//    CollectionSumUp(Collectionp);
+    if (RecordInsert(Collectionp,false)) then begin
+      res = 1;
+    end;
+  end;
+LraPasteRentResInCollection:;
+  raPasteRentResInCollection = res;
+  RETURN;
+END;
+
+global
+procedure RecAction_raINTransferSplitSerNr(var record INTransferVc INTransferr,Integer therow,Boolean readf)
+BEGIN
+  if (readf) then begin
+    if (ReadFirstMain(INTransferr,0,true)) then begin end;  
+  end;
+  INTransferSplitSerNo(INTransferr,therow);
+  RETURN;
+END;
+
+global
+procedure RecAction_raINTransferSplitLines(var record INTransferVc INTransferr,Integer therow,Boolean readf)
+BEGIN
+  if (readf) then begin
+    if (ReadFirstMain(INTransferr,0,true)) then begin end;  
+  end;
+  if (INTransferSplitSerNrLines(INTransferr)) then begin
+  end;
+  RETURN;
+END;
+
+global
+procedure NewRentalCharge(Integer filename,var record RentChrgVc RentChrgr,Date dat,LongInt recno,LongInt agreement,var string warning,string thesite)
+BEGIN
+  record RentChargesBlock RentChargesRec;
+  record BaseCurBlock BaseCurRec;
+  record AgreementVc Agreementr;
+  
+  BlockLoad(RentChargesRec);
+  BlockLoad(BaseCurRec);
+  RecordNew(RentChrgr);
+  Agreementr.SerNr = agreement;
+  RentChrgr.SerNr = -1;
+  RentChrgr.TransDate = dat;
+  RentChrgr.TransNr = recno;
+  RentChrgr.AgreementNr = agreement;
+  RentChrgr.FileName = filename;
+  RentChrgr.InvNr = -1;
+  RentChrgr.RowNr = -1;
+  RentChrgr.Price = BlankVal;
+  RentChrgr.vRebate = BlankVal;
+  RentChrgr.Sum = BlankVal;
+  if (ReadFirstMain(Agreementr,1,true)) then begin
+    RentChrgr.CurncyCode = Agreementr.CurncyCode;
+    if (blank(RentChrgr.CurncyCode)) then begin
+      RentChrgr.CurncyCode = BaseCurRec.BaseCur1;
+    end;
+    RentChrgr.Site = thesite;
+    if (blank(RentChrgr.Site)) then begin
+      RentChrgr.Site = Agreementr.Site;
+    end;
+    switch(RentChrgr.FileName) begin
+      case -1: // Rental Charges, just to remember it
+      case 0:
+        RentChrgr.Item = RentChargesRec.AgreeChargeItem;
+        RentChrgr.Quant = RentChargesRec.AgreeChargeQty;
+      case 1:
+        RentChrgr.Item = RentChargesRec.RentResChargeItem;
+        RentChrgr.Quant = RentChargesRec.RentResChargeQty;
+      case 2:
+        RentChrgr.Item = RentChargesRec.CollectionChargeItem;
+        RentChrgr.Quant = RentChargesRec.CollectionChargeQty;
+      case 3:
+        RentChrgr.Item = RentChargesRec.OffHireChargeItem;
+        RentChrgr.Quant = RentChargesRec.OffHireChargeQty;
+      case 4:
+        RentChrgr.Item = RentChargesRec.DispatchChargeItem;
+        RentChrgr.Quant = RentChargesRec.DispatchChargeQty;
+      case 5: // Chargeble Items, just to remember it
+      case 6:
+        RentChrgr.Item = RentChargesRec.QualConChargeItem;
+        RentChrgr.Quant = RentChargesRec.QualConChargeQty;
+    end;
+    if (PasteRentChrgItem(RentChrgr,warning)) then begin
+      if (nonblank(warning)) then begin
+        MessageBox(0,warning);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function Integer RecordAction_raPasteAgreeInIV(var record IVVc IVp,LongInt ordnr)
+BEGIN
+  Integer res;
+  
+  res = -1;
+  RecordNew(IVp);
+  IVp.SerNr = -1;
+  if (IVp.SerNr==-1) then begin
+    IVp.SerNr = NextSerNr("IVVc",IVp.TransDate,-1,false,"");
+    if (IVp.SerNr==-1) then begin
+      goto LRecordAction_raPasteAgreeInIV;
+    end;
+  end;
+  PasteAgreeInIV(IVp,ordnr);
+  if ((MatRowCnt(IVp)>0) and (IVp.SerNr!=-1)) then begin
+/* Gets stored in the Paste functin
+    IVSumup(IVp,true);  
+    if (RecordInsert(IVp,false)) then begin end;
+*/
+    res = 1;
+  end;
+LRecordAction_raPasteAgreeInIV:;
+  RecordAction_raPasteAgreeInIV = res;
+  RETURN;
+END;
+
+global
+updating function Integer RecordAction_raCOCUServiceToIV(var record IVVc IVp,LongInt ordnr,var Integer storedincomp)
+begin
+  Integer res;
+  
+  res = -1;
+  RecordNew(IVp);
+  IVp.SerNr = -1;
+  if (IVp.SerNr==-1) then begin
+    IVp.SerNr = NextSerNr("IVVc",IVp.TransDate,-1,false,"");
+    if (IVp.SerNr==-1) then begin
+      goto LRecordAction_raCOCUServiceToIV;
+    end;
+  end;
+  if (PasteCOCUServiceInIV(IVp,ordnr,storedincomp)) then begin 
+    //if ((MatRowCnt(IVp)>0) and (IVp.SerNr!=-1) and (IVp.Sum4>0)) then begin
+    res = 1;
+    //end;  
+  end;
+LRecordAction_raCOCUServiceToIV:;
+  RecordAction_raCOCUServiceToIV = res;
+  return;
+end;
+
+global
+updating function Integer RA_COCUSerToRoyaltyException(var record RoyaltyExceptionVc RoyaltyExceptionr,LongInt ordnr)
+BEGIN
+  Integer res;
+  
+  res = -1;
+  RecordNew(RoyaltyExceptionr);
+  RoyaltyExceptionr.SerNr = -1;
+  if (RoyaltyExceptionr.SerNr==-1) then begin
+    RoyaltyExceptionr.SerNr = NextSerNr("RoyaltyExceptionVc",RoyaltyExceptionr.TransDate,-1,false,"");
+    if (RoyaltyExceptionr.SerNr==-1) then begin
+      goto LRA_COCUSerToRoyaltyException;
+    end;
+  end;
+  PasteCOCUServiceInRoyaltyException(RoyaltyExceptionr,ordnr);
+  if ((MatRowCnt(RoyaltyExceptionr)>0) and (RoyaltyExceptionr.SerNr!=-1) and (RoyaltyExceptionr.Sum>0)) then begin
+    res = 1;
+  end;
+LRA_COCUSerToRoyaltyException:;
+  RA_COCUSerToRoyaltyException = res;
+  RETURN;
+END;
+
+global
+procedure RecAction_raINTransferSumup(var record INTransferVc INTransferr,Integer therow)
+BEGIN
+  INTransferSplitSerNo(INTransferr,therow);
+  RETURN;
+END;
+
+function Boolean acPOLOK(var record POVc POp)
+BEGIN
+  Boolean res;
+  
+  if (POp.OKFlag==0) then begin
+    POp.Printdf = 0;
+    POp.OKFlag = 1;
+    SetPOFlags(POp,false);
+    res = true; 
+  end;
+  acPOLOK = res;
+  RETURN;
+END;
+
+global
+updating function Boolean RecordAction_rlPOLOK(var record POVc POp)
+BEGIN
+  Boolean res;
+  record POVc oldPOp;
+  
+  if (IsRecordLocked(POp)==false) then begin
+    if (ReadFirstMain(POp,0,true)) then begin end;  
+    RecordCopy(oldPOp,POp);
+    res = acPOLOK(POp);
+    if (res) then begin
+      if (RecordUpdate(oldPOp,POp,false)==0) then begin // false or true....
+      end;
+    end;
+  end;  
+  RecordAction_rlPOLOK = res;
+  RETURN;
+END;
+
+function Boolean acPOLClose(var record POVc POp)
+BEGIN
+  Boolean res;
+  
+  if (POp.OKFlag==0) then begin
+    POp.OKFlag = 1;
+    POp.Closed = 1;
+    SetPOFlags(POp,false);
+    res = true; 
+  end;
+  acPOLClose = res;
+  RETURN;
+END;
+
+global
+updating function Boolean RecordAction_rlPOLClose(var record POVc POp)
+BEGIN
+  Boolean res;
+  record POVc oldPOp;
+  
+  if (IsRecordLocked(POp)==false) then begin
+    if (ReadFirstMain(POp,0,true)) then begin end;  
+    RecordCopy(oldPOp,POp);
+    res = acPOLClose(POp);
+    if (res) then begin
+      if (RecordUpdate(oldPOp,POp,false)==0) then begin
+      end;
+    end;
+  end;  
+  RecordAction_rlPOLClose = res;
+  RETURN;
+END;
+
+global
+updating function Integer RecordAction_raAcceptRentQT(LongInt rentqtserno,var record AgreementVc Agreementr)
+BEGIN
+  record RentQTVc RentQTr;
+  record RentQTVc oldRentQTr;
+  Integer res;
+  LongInt newnr;
+  
+  res = -1;
+  RentQTr.SerNr = rentqtserno;
+  if (ReadFirstMain(RentQTr,1,true)) then begin
+    RecordCopy(oldRentQTr,RentQTr);
+    if (AcceptRentQT(Agreementr,RentQTr)) then begin
+      CreateRecordLink(Agreementr,CurrentCompany,RentQTr,CurrentCompany);  
+      CreateRecordLink(RentQTr,CurrentCompany,Agreementr,CurrentCompany);  
+
+      RentQTr.Rejected = 2;
+      RentQTr.RejectDate = CurrentDate;
+      RentQTr.AgreementNr = Agreementr.SerNr;
+      if (RecordUpdate(oldRentQTr,RentQTr,false)==0) then begin end;
+      res = 1;
+    end;
+  end;
+  RecordAction_raAcceptRentQT = res;
+  RETURN;
+END;
+

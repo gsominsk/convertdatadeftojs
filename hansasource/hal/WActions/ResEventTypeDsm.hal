@@ -1,0 +1,157 @@
+external function LongInt DateDiff(Date,Date);
+
+global
+updating procedure SaveResEventTypers( var record ResEventTypeVc reg1)
+begin
+  Record ResEventTypersVc r1;
+  Row ResEventTypeVc row1;
+  Integer i,rwcnt;
+  Boolean res,Bool;
+  
+  Bool= true;
+  r1.JobNr= reg1.SerNr;
+  while(LoopMain(r1,1,Bool)) begin
+    if (r1.JobNr<>reg1.SerNr) then begin
+      Bool= false;
+    end;    
+    if (not Bool) then begin
+      RecordDelete(r1);
+    end; 
+  end;
+  
+  rwcnt= MatRowCnt(reg1);
+  for(i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(reg1,i,row1);
+    RecordNew(r1);  
+    r1.SerNr= NextSerNr("ResEventTypersVc",CurrentDate,-1,false,"");  
+    r1.JobNr= reg1.SerNr;
+    r1.EventGroup = row1.EventGroup;
+    r1.EventType = row1.EventType;
+    r1.TransDate = row1.TransDate;
+    r1.StartTime = row1.StartTime;
+    r1.EndTime = row1.EndTime;
+    res = RecordStore(r1,true);
+  end;
+     
+end;
+  
+function LongInt SearchPLProgram( String PriceList, Date CheckIn, Date CheckOut )
+begin 
+  Record PLProgramVc PLProgramr;
+  Boolean Bool,Skip;
+  LongInt res;
+  
+  res= -1;
+  Bool= true;
+  PLProgramr.PriceList= PriceList;
+  while(LoopKey("PriceList",PLProgramr,1,Bool)) begin
+    Skip= false;
+    
+    if (PLProgramr.PriceList<>PriceList) then begin
+      Bool= false;
+      Skip= true;
+    end;
+    if (not DateInRange(CheckIn,PLProgramr.StartDate,PLProgramr.EndDate)) then begin
+      Skip = true;
+    end;
+    if (not DateInRange(CheckOut,PLProgramr.StartDate,PLProgramr.EndDate)) then begin
+      Skip = true;
+    end;    
+    if (PLProgramr.Nights<>DateDiff(CheckOut,CheckIn)) then begin
+      Skip = true;
+    end;
+    
+    if (not Skip) then begin
+      res = PLProgramr.SerNr;
+    end;
+  end; // while
+  SearchPLProgram= res;
+  return;
+end;   
+
+global 
+updating procedure CreateResEventProgram( LongInt JobSerNr, LongInt ProgramNr,Date CheckIn,Date CheckOut,var Record ResEventTypeVc ResEvent )     
+begin
+  Record PLProgramVc PLProgramr;
+  Record ExcurTypeVc ExcurTyper;
+  Row PLProgramVc PLProgramrw;
+  Row ResEventTypeVc ResEventrw;
+  Record HotelBlock HotelBlockr;  
+  Integer i,rwcnt;
+  Boolean res,Bool;
+  
+  Bool= true;
+  
+  PLProgramr.SerNr= ProgramNr;
+  while(LoopMain(PLProgramr,1,Bool)) begin
+    if (PLProgramr.Nights==DateDiff(CheckOut,CheckIn)) then begin
+      RecordNew(ResEvent);
+      ResEvent.SerNr= JobSerNr;
+      rwcnt= MatRowCnt(PLProgramr);
+      for(i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(PLProgramr,i,PLProgramrw);
+        ResEventrw.EventGroup= PLProgramrw.EventGroup;
+        ResEventrw.EventType= PLProgramrw.EventType;
+        ResEventrw.TransDate= addDay(CheckIn,PLProgramrw.DayNr-1);
+        
+        ExcurTyper.Code= PLProgramrw.EventType;
+        if ReadFirstMain(ExcurTyper,1,true) then begin
+          BlockLoad(HotelBlockr);
+          if (ResEventrw.EventGroup<>HotelBlockr.OutEventGr) then begin
+            ResEventrw.StartTime= "" & ExcurTyper.StartTime;
+            ResEventrw.EndTime= "" & ExcurTyper.EndTime;
+          end else begin
+            ResEventrw.StartTime= "" & ExcurTyper.EndTime;
+            ResEventrw.EndTime= "" & ExcurTyper.StartTime;
+          end;      
+        end;
+        MatRowPut(ResEvent,i,ResEventrw);
+      end;
+      Bool= false;
+    end;
+  end;  
+  res= RecordStore(ResEvent,true);
+  return;
+end;
+
+global
+updating procedure GenResEvents()
+begin
+  Record ResEventTypeVc ResEventr,ResEventrMother;
+  Record JobVc Jobr;
+  Boolean res,Bool,Skip;
+  Integer wn,wn2;
+  LongInt res2;  
+  
+  Bool = true;
+  wn = CurWindow;
+  GetWindowRecord(wn,Jobr);
+  ResEventr.SerNr= Jobr.SerNr;
+  if (not ReadFirstMain(ResEventr,1,true)) then begin
+    
+    if (Jobr.Mother==-1) then begin
+      res2 = SearchPLProgram( Jobr.PriceList, Jobr.TransDate, Jobr.EndDate );
+      if (res2<>-1) then begin
+        CreateResEventProgram( Jobr.SerNr, res2, Jobr.TransDate, Jobr.EndDate, ResEventr );     
+      end else begin
+        RecordNew(ResEventr);
+        ResEventr.SerNr = Jobr.SerNr;
+        MessageBox(2151,"");
+      end;
+    end else begin
+      ResEventrMother.SerNr = Jobr.Mother;
+      if ReadFirstMain(ResEventrMother,1,true) then begin
+        recordcopy(ResEventr,ResEventrMother);
+        ResEventr.SerNr= Jobr.SerNr;
+        if RecordStore(ResEventr,true) then begin end;
+      end else begin
+        RecordNew(ResEventr);
+        ResEventr.SerNr = Jobr.SerNr;
+        MessageBox(2152,"");
+      end;  
+    end;
+    
+  end;
+  wn2 = OpenWindow("ResEventTypeDClass",1,0,"","",ResEventr);
+  return;
+end;

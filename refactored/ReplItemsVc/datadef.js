@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fVECode: { public: true, type: 'TEXT' },
+     fOldArtCode: { public: true, type: 'TEXT' },
+     fOldSerialNr: { public: true, type: 'TEXT' },
+     fOldQty: { public: true, type: 'FLOAT' },
+     fOldDesc: { public: true, type: 'TEXT' },
+     fArtCode: { public: true, type: 'TEXT' },
+     fSerialNr: { public: true, type: 'TEXT' },
+     fQty: { public: true, type: 'FLOAT' },
+     fDesc: { public: true, type: 'TEXT' },
+     fComment1: { public: true, type: 'TEXT' },
+     fComment2: { public: true, type: 'TEXT' },
+     fComment3: { public: true, type: 'TEXT' },
+     fComment4: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex216: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

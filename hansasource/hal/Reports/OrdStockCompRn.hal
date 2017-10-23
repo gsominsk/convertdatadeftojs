@@ -1,0 +1,268 @@
+external procedure GetStockValue(string,string,var record ItemStatusVc);
+external function Boolean CheckPlanShipRows(string,record ORVc);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+
+global
+procedure OrderStockComp(record RcVc RepSpec)
+BEGIN
+  record ItemStatusVc ISr;
+  record INVc INr;
+  record ORVc ORr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  row ORVc ORrw;
+  Boolean TrHs,testf,test2f;
+  Boolean item,found,itemout;
+  Integer i,rwcnt,keys;
+  Integer recrwcnt,j;
+  LongInt afr,ato;
+  val recqty;
+  val t,t2,iv;
+  val TotQty,TotLev,TotNotLev,TotSum;
+  string 20 frgr,togr;  
+  string 20 frin,toin;  
+  string 255 ckey,inkey;
+  record MainStockBlock MainStockRec;
+  record GeneralOptionBlock GenOptRec;
+  Boolean orderheaderprntdf;
+
+  BlockLoad(GenOptRec);
+  BlockLoad(MainStockRec);  
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);
+  frgr = FirstInRange(RepSpec.f3,10);
+  togr = LastInRange(RepSpec.f3,10);
+  frin = FirstInRange(RepSpec.LastAcc,20);
+  toin = LastInRange(RepSpec.LastAcc,20);
+  StartReportJob(USetStr(2621));
+  EndHeader;
+
+  itemout = false;      
+  ResetLoop(ORr);
+  ORr.SerNr = afr;
+  ORr.OSFlag = 1;
+  ORr.Objects = "";
+  ORr.CustCode = "";
+  ckey = "OSFlag";
+  keys = 2;
+  if (RepSpec.ArtMode==0) then begin
+    Gray_Divider(0,1);
+  end;  
+  TrHs = true;
+  TrHs = LoopKey(ckey,ORr,keys,TrHs);//TrHs = m4_ReadFirstLCKey(ORVc,ckey,&ORr,keys,false,&LLoop1);
+  while (TrHs==true) begin
+  
+//        TrHs = m4_ReadLogicalCKey(ORVc,ckey,LLoop1++,&ORr); moved to the end of the Loop, first already read
+    if (TrHs) then begin
+      if (ato!=-1) then begin
+        if (ORr.SerNr>ato) then begin
+           TrHs = false;
+        end;  
+      end;  
+    end;
+    if (TrHs) then begin
+      if (nonblank(RepSpec.ObjStr)) then begin
+        if (RepSpec.ObjStr<ORr.Objects) then begin TrHs = false; end;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[2]==1) then begin // Not Shipped 
+        if (ORr.ShipFlag==0) then begin testf = true; end;
+      end;
+      if (RepSpec.flags[3]==1) then begin // Part Shipped 
+        if ((ORr.ShipFlag==0) and ((ORr.InvFlag==0) or (ORr.InvFlag==2))) then begin testf = true; end;
+      end;
+      if (RepSpec.flags[4]==1) then begin // Not Invoiced 
+        if ((ORr.InvFlag==0) or (ORr.InvFlag==1)) then begin testf = true; end;
+      end;      
+      if (nonblank(RepSpec.f2) and (RepSpec.f2!=ORr.CustCode)) then begin testf = false; end;
+      if ((nonblank(RepSpec.AccStr)) and (RepSpec.AccStr!=ORr.SalesMan)) then begin testf = false; end;
+      if ((nonblank(RepSpec.FirstAcc)) and (RepSpec.FirstAcc!=ORr.OrderClass)) then begin testf = false; end;
+      if (nonblank(RepSpec.Stext)) then begin
+        if (CheckPlanShipRows(RepSpec.Stext,ORr)==false) then begin testf = false; end;//CheckPlanShip??
+      end;              
+      if ((nonblank(RepSpec.ObjStr)) and (SetInSet(RepSpec.ObjStr,ORr.Objects)==false)) then begin testf = false; end;
+      if ((ORr.InvFlag==2) and (ORr.ShipFlag!=0)) then begin//?? OSFlag
+        testf = false;
+      end;  
+      if (testf) then begin    
+        orderheaderprntdf = false;
+        rwcnt = MatRowCnt(ORr);
+        iv = blankval;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(ORr,i,ORrw);
+          if (ORrw.stp==1) then begin
+            if (ORr.InvBeforeShip==0) then begin
+              t = ORrw.Quant - ORrw.Invd;
+            end else begin
+              t = ORrw.Quant - ORrw.Shipd2;
+            end;  
+
+            CalcSum(t,ORrw.Price,0,ORrw.vRebate,t2,GenOptRec.UseDiscount);
+            iv = iv + t2;
+          end;
+        end;            
+        rwcnt = MatRowCnt(ORr);
+        for (i=0;i<rwcnt;i=i+1) begin                            
+          MatRowGet(ORr,i,ORrw);              
+          test2f = true;
+          if (ORrw.Quant==blankval) then begin
+            test2f = false;
+          end;  
+          if (test2f) then begin              
+            Recr.Code = ORrw.Recepy;
+            if (ReadFirstMain(Recr,1,true)) then begin
+              recrwcnt = MatRowCnt(Recr);
+              recqty = blankval;
+              for (j=0;j<recrwcnt;j=j+1) begin
+                MatRowGet(Recr,j,Recrw);
+                INr.Code = Recrw.Item;
+                ReadFirstMain(INr,1,true);
+                if (Recrw.Item==INr.Code) then begin
+                  if (Recrw.InQty!=0) then begin
+                    recqty = Recrw.InQty;
+                  end;                
+                end;          
+                if (test2f) then begin                  
+                  if (nonblank(RepSpec.f3)) then begin
+                    if (INr.Group<frgr) then begin test2f = false; end;
+                    if (INr.Group>togr) then begin test2f = false; end;
+                  end;
+                  if (nonblank(RepSpec.f9)) then begin
+                    if (SetInSet(RepSpec.f9,INr.DispGroups)==false) then begin
+                      test2f = false;
+                    end;
+                  end;
+                end;
+              
+                if (RepSpec.flags[10]==0) then begin
+                  if (ORr.InvBeforeShip==0) then begin
+                    t = ORrw.Quant - ORrw.Invd;
+                  end else begin
+                    t = ORrw.Quant - ORrw.Shipd2;
+                  end;  
+                  if (t==0) then begin
+                    test2f = false;
+                  end;      
+                end;
+                if (RepSpec.flags[10]==1) then begin
+                  t = ORrw.Quant - ORrw.Shipd1;
+                  if (t<=0) then begin
+                    test2f = false;
+                  end;  
+                end;
+                if (test2f) then begin
+                  if (orderheaderprntdf==false) then begin
+                    if (RepSpec.flags[10]==0) then begin// amounts
+                      StartFormat(15);
+                      OutString(0,0,USetStr(2622),false);
+                      OutString(50,0,USetStr(2623),false);
+                      OutString(110,0,USetStr(2638),false);
+                      OutString(175,0,USetStr(2637),false);
+                      OutString(270,0,USetStr(2639),true);
+                      OutString(380,0,USetStr(2640),true);
+                      OutString(450,0,USetStr(2625),true);
+                      EndFormat;
+                    end;
+                    if (RepSpec.flags[10]==1) then begin// quantity                       
+                      StartFormat(15);
+                      OutString(0,0,USetStr(2622),false);
+                      OutString(50,0,USetStr(2623),false);
+                      OutString(110,0,USetStr(2638),false);
+                      OutString(175,0,USetStr(2637),false);
+                      OutString(260,0,USetStr(2631),true);
+                      OutString(330,0,USetStr(2632),true);
+                      OutString(410,0,USetStr(2630),true);
+                      OutString(480,0,USetStr(2572),true);
+                      EndFormat;
+                    end;
+                    StartFormat(15);
+                    OutLongInt(0,"DblORVc",ORr.SerNr,false);
+                    OutDate(50,0,ORr.OrdDate,false);
+                    OutString(110,0,ORr.PlanShip,false);
+                    OutString(175,0,ORrw.ArtCode,false);
+                    if (RepSpec.flags[10]==0) then begin
+                      if (ORr.InvBeforeShip==0) then begin
+                        t = ORrw.Quant - ORrw.Invd;
+                      end else begin
+                        t = ORrw.Quant - ORrw.Shipd2;
+                      end;  
+                      OutVal(270,0,t,M4UVal,true);
+                      CalcSum(t,ORrw.Price,0,ORrw.vRebate,t2,GenOptRec.UseDiscount);
+                      OutVal(380,0,ORrw.Price,M4Val,true);
+                      OutVal(450,0,t2,M4Val,true);
+                      OutString(480,0,ORr.CurncyCode,true);
+                      EndFormat;
+                      TotQty = TotQty + t;
+                      TotSum = TotSum + t2;
+                    end;
+                    if (RepSpec.flags[10]==1) then begin
+                      OutVal(260,0,ORrw.Quant,M4UVal,true);
+                      TotQty = TotQty + ORrw.Quant;
+                      OutVal(330,0,ORrw.Shipd1,M4UVal,true);
+                      TotLev = TotLev + ORrw.Shipd1;
+                      t = ORrw.Quant - ORrw.Shipd1;
+                      if (t<0) then begin
+                        t = 0;
+                      end;
+                      OutVal(410,0,t,M4UVal,true);
+                      TotNotLev = TotNotLev + t;
+                      OutVal(480,0,ORrw.BasePrice,M4Val,true);
+                    end;
+                    EndFormat;
+                    StartFormat(15);
+                    OutString(15,0,USetStr(2637),false);
+                    OutString(200,0,USetStr(2569),true);
+                    OutString(300,0,USetStr(2570),true);
+                    OutString(400,0,USetStr(2571),true);
+                    EndFormat;
+                    orderheaderprntdf = true;
+                  end;
+                  if (itemout==false) then begin
+                    TotQty = blankval;
+                    TotNotLev = blankval;
+                    TotLev = blankval;
+                    TotSum = blankval;
+                    GetStockValue(INr.Code,"",ISr);
+                    StartFormat(15);
+                    OutString(15,0,INr.Code,false);
+                    t = ISr.Instock - ISr.InShipment;
+                    OutVal(200,0,t,M4Qty,true);
+                    OutVal(300,0,ISr.OrddOut,M4Qty,true);
+                    OutVal(400,0,ISr.POUnOKQty,M4Qty,true);
+                    EndFormat;
+                  end;
+                end;
+              end;
+            end;
+          end;
+          if (orderheaderprntdf) then begin
+            Gray_Divider(0,1);          
+            StartFormat(15);
+            EndFormat;
+          end;
+        end;
+      end;
+      TrHs = LoopKey(ckey,ORr,keys,TrHs);//TrHs = m4_ReadLogicalCKey(ORVc,ckey,LLoop1++,&ORr);          
+    end;
+  end;
+  if (itemout==true) then begin
+    if (RepSpec.flags[10]==0) then begin
+      StartFormat(15);
+      OutVal(270,0,TotQty,M4UVal,true);
+      OutVal(450,0,TotSum,M4Val,true);
+      EndFormat;
+    end;
+    if (RepSpec.flags[10]==1) then begin
+      StartFormat(15);
+      OutVal(260,0,TotQty,M4UVal,true);
+      OutVal(330,0,TotLev,M4UVal,true);
+      OutVal(410,0,TotNotLev,M4UVal,true);
+      EndFormat;
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;
+

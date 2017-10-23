@@ -1,0 +1,780 @@
+external function Integer InString2(string,string);
+external procedure FindNextRestAccVcOfficialSerialNr(var record RestAccVc);
+external function Boolean TestNextOfficialSerialNr_RestAccVc(row LegalInvNrBlock,string,record RestAccVc,Boolean);
+external function Boolean ValidateOfficialSerialNrChronology(string,string,LongInt,Date,var Date);
+external procedure GetLegalInvNrRow(string,var row LegalInvNrBlock);
+external updating function Boolean DoXMLExport_RestAccVc(var record RestAccVc);
+external procedure GetCurUser(var record UserVc);
+external function Boolean FindTheUser(var record UserVc);
+external function LongInt NextKitchenOrderNr(LongInt,Date,Time,string,string);
+external function LongInt GetCurUserLastNr(string);
+external function Boolean SerNrTestRestAccVc(LongInt,Date,var Boolean);
+external procedure RemoveOldCustObjects(string,var string);
+external function Boolean RestAccVc_PasteCUCode(var record RestAccVc);
+external function string 255 AddBranchObjectToObjectList(string,string);
+external function string 60 AddObjectToObjectList(string,string);
+external function Boolean OpenedPOSSession(string,string,Date,Time,var record POSEventVc);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function Boolean POSBalanceExistsAfterThis(Date,Time,string,string);
+external function string 255 CurDrawerCode(string);
+external function Boolean IsSessionOpen(string,string,Date,Time);
+external function Boolean RequireOpenSession(string);
+external function LongInt CheckIfOpenTabforTable(record RestAccVc);
+external procedure RestAccSumup(var record RestAccVc,string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function LongInt FindReservation(string,Date,Time);
+external function Boolean IsUnOKAllowed(string,Date);
+external function Integer PMCheckType(string,var string,var string);
+external function Boolean PayModeAccIsClosed(string);
+external procedure GetSalesGroup(string,var string);
+
+global
+function LongInt RestAccVcRecordInIndex(record RestAccVc RestAccr,string indexname)
+BEGIN
+  LongInt res;
+  
+  res = 1;
+  if (RestAccr.Closed!=0) or (RestAccr.Invalid!=0) then begin 
+    if (indexname=="OpenTabs")  then begin res = 0; end;
+    if (indexname=="OpenSerNr")  then begin res = 0; end;
+    if (indexname=="OpenCashier")  then begin res = 0; end;
+    if (indexname=="OpenTransDate")  then begin res = 0; end;
+  end;
+  if (RestAccr.Closed==0) or (RestAccr.Invalid!=0) then begin 
+    if (indexname=="TaxAdminServSeal")  then begin res = 0; end;
+  end;
+  RestAccVcRecordInIndex = res;
+  RETURN;
+END;
+
+global
+function LongInt RestAccVcRecordDefaults(var record RestAccVc RestAccr,record RestAccVc r2,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record RestPMBlock RestPMRec;
+  row RestPMBlock RestPMrw;
+  string 255 tstr;
+  Record CashierDefBlock CDb;
+  Record CUVc CUr;
+  Record INVc INr;
+  row RestAccVc RestAccrw;
+  record RestAccVc lRestAccr;
+  LongInt newnr;
+  Boolean nousersernr;
+  record SRBlock SRb;
+  record UserVc USr;
+
+  BlockLoad(CDb);
+  BlockLoad(SRb);
+  if (nonblank(CDb.DefCustCode)) then begin
+    CUr.Code = CDb.DefCustCode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      RestAccr.CUCode = CDb.DefCustCode;
+      RestAccr.CUName = CUr.Name;
+      RestAccr.FiscalFlag = CUr.FiscalFlag;
+    end;
+  end;
+  BlockLoad(RestPMRec);
+  RestAccr.InclVAT = CDb.RestBasePriceInclVAT;  
+  RestAccr.SerNr = -1;
+  if (SingleUserMode) then begin
+    nousersernr = false;
+    newnr = GetCurUserLastNr("RestAccVc");
+    if (newnr==-1) then begin
+      newnr = SRb.LastRestAccNr;
+    end;
+    RestAccr.SerNr = NextSerNr("RestAccVc",RestAccr.TransDate,newnr,nousersernr,"");
+  end;
+  RestAccr.ARAcc = CDb.RestAccARAcc;
+  RestAccr.ReportingDate = CurrentDate;
+  RestAccr.TransDate = CurrentDate;
+  RestAccr.TransTime = CurrentTime;
+  RestAccr.StartTime = CurrentTime;
+  RestAccr.Cashier = CurrentUser;
+  RestAccr.MachineName = CurMachineName;
+  RestAccr.TerminalID = CurTerminalID;
+  RestAccr.BranchID = CurBranchID;
+  RestAccr.DrawerCode = CurDrawerCode(RestAccr.MachineName);
+  RestAccr.PaySerNr = -1;
+  GetSalesGroup(RestAccr.Cashier,tstr);
+  RestAccr.SalesGroup = tstr;
+  RestAccr.Paid = blankval;
+  GetCurUser(USr);
+  if (nonblank(USr.Location)) then begin
+    RestAccr.Location = USr.Location;
+  end;
+  if (MatRowCnt(RestPMRec)>0) then begin
+    MatRowGet(RestPMRec,0,RestPMrw);
+    RestAccr.PayDeal = RestPMrw.PMCode;
+  end;
+  RestAccr.FiscalDeviceSeqNr = -1;
+  RestAccr.KitchenOrdNr = NextKitchenOrderNr(RestAccr.SerNr,RestAccr.TransDate,RestAccr.TransTime,RestAccr.MachineName,RestAccr.BranchID);  
+  RestAccVcRecordDefaults = res; 
+  return;
+END;
+
+global
+function LongInt RestAccVcRecordDuplicate(var record RestAccVc RestAccr,record RestAccVc RestAcc2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record RestPMBlock RestPMRec;
+  row RestPMBlock RestPMrw;
+  string 255 tstr;
+  row RestAccVc RestAccrw;
+  Integer i,rwcnt;
+  record RestAccVc lRestAccr;
+  Record CashierDefBlock CDb;
+  LongInt newnr;
+  Boolean nousersernr;
+  record SRBlock SRb;
+  record UserVc USr;
+
+  BlockLoad(CDb);
+  BlockLoad(SRb);
+  RestAccr.SerNr = -1;
+  if (SingleUserMode) then begin
+    nousersernr = false;
+    newnr = GetCurUserLastNr("RestAccVc");
+    if (newnr==-1) then begin
+      newnr = SRb.LastRestAccNr;
+    end;
+    RestAccr.SerNr = NextSerNr("RestAccVc",RestAccr.TransDate,newnr,nousersernr,"");
+  end;
+  RestAccr.ARAcc = CDb.RestAccARAcc;
+  
+  RestAccr.VATNr = "";
+  RestAccr.Addr0 = "";
+  RestAccr.Addr1 = "";
+  RestAccr.Addr2 = "";
+  RestAccr.Addr3 = "";
+  RestAccr.InvAddr3 = "";
+  RestAccr.InvAddr4 = "";
+  RestAccr.Objects = "";
+  RestAccr.LangCode = "";   
+  RestAccr.Closed = 0;
+  RestAccr.Invalid = 0;
+  RestAccr.NLFlag = 0;
+  RestAccr.StockMovFlag = 0;
+  RestAccr.ReportingDate = CurrentDate;
+  RestAccr.TransDate = CurrentDate;
+  RestAccr.TransTime = CurrentTime;
+  RestAccr.StartTime = CurrentTime;
+  RestAccr.Cashier = CurrentUser;
+  RestAccr.PaySerNr = -1;
+  GetSalesGroup(RestAccr.Cashier,tstr);
+  RestAccr.SalesGroup = tstr;
+  RestAccr.Paid = blankval;
+  RestAccSumup(RestAccr,"");
+  RestAccr.MachineName = CurMachineName;
+  RestAccr.TerminalID = CurTerminalID;
+  RestAccr.BranchID = CurBranchID;
+  RestAccr.DrawerCode = CurDrawerCode(RestAccr.MachineName);
+  RestAccr.AuthorizationCode = "";
+  RestAccr.AuthorizationCode2 = "";
+  rwcnt = MatRowCnt(RestAccr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RestAccr,i,RestAccrw);
+    if (RestAccrw.stp==kInvoiceRowTypeVoid) then begin
+      MatRowDelete(RestAccr,i);
+      i = i-1;
+      MatRowDelete(RestAccr,RestAccrw.VoidedRowNr);
+      i = i-1;
+    end;
+  end;
+  RestAccr.LoyaltyCardNr = "";
+  RestAccr.LCMLevel = "";
+  RestAccr.Points = 0;
+  GetCurUser(USr);
+  if (nonblank(USr.Location)) then begin
+    RestAccr.Location = USr.Location;
+  end;
+  RestAccr.KitchenOrdNr = NextKitchenOrderNr(RestAccr.SerNr,RestAccr.TransDate,RestAccr.TransTime,RestAccr.MachineName,RestAccr.BranchID);
+  RestAccr.FiscalFlag = 0;
+  RestAccr.FiscalDeviceSeqNr = -1;
+  RestAccVcRecordDuplicate = res; 
+  return;
+end;
+
+global
+procedure RestAccVcRecordDefaultsClientRemote(var record RestAccVc RestAccr,record LocalMachineBlock LMb)
+begin
+  record RestAccClassVc RACr;
+  string 255 tstr,defcustcode;
+  record CashierDefBlock CDb;
+  
+  BlockLoad(CDb); 
+  defcustcode = LMb.DefCustCode;
+  if (blank(defcustcode)) then begin
+    defcustcode = CDb.DefCustCode;
+  end;
+  RestAccr.Objects = AddBranchObjectToObjectList(LMb.BranchID,RestAccr.Objects);
+  if (nonblank(RestAccr.Class)) then begin
+    RACr.Code = RestAccr.Class;
+    ReadFirstMain(RACr,1,true);
+    RestAccr.PriceList = RACr.PriceList;
+    RestAccr.Objects = AddObjectToObjectList(RestAccr.Objects,RACr.Objects);        
+  end;
+  if (nonblank(defcustcode)) then begin
+    tstr = RestAccr.Objects;
+    RemoveOldCustObjects(RestAccr.CUCode,tstr);
+    RestAccr.Objects = tstr;
+
+    RestAccr.CUCode = defcustcode;
+    if (RestAccVc_PasteCUCode(RestAccr)) then begin end;
+  end;
+  if (blank(RestAccr.Location)) then begin
+    RestAccr.Location = LMb.DefLocation;
+  end;
+  return;
+end;
+
+global
+procedure RestAccVcRecordDuplicateClientRemote(var record RestAccVc RestAccr,record LocalMachineBlock LMb)
+begin
+  record RestAccClassVc RACr;
+  
+  RestAccr.Objects = AddBranchObjectToObjectList(LMb.BranchID,RestAccr.Objects);
+  if (nonblank(RestAccr.Class)) then begin
+    RACr.Code = RestAccr.Class;
+    ReadFirstMain(RACr,1,true);
+    RestAccr.PriceList = RACr.PriceList;
+    RestAccr.Objects = AddObjectToObjectList(RestAccr.Objects,RACr.Objects);        
+  end;
+  return;
+end;
+
+global
+function Integer CheckRowPayMode(string fieldname,Integer rownr,string paydeal,val value)
+BEGIN
+  Integer res,cht;
+  string 255 tstr;
+  row PMBlock PMrw;
+  
+  res = 0;
+  if (value==0) then begin
+    goto LCheckRowPayMode;
+  end;
+  if (blank(paydeal)) then begin
+    RecordCheckError(1207,"",rownr,fieldname);
+    res = -1;
+    goto LCheckRowPayMode;
+  end;
+  if (GetPMRow(paydeal,PMrw)==false) then begin
+    RecordCheckError(1207,"",rownr,fieldname);
+    res = -1;
+    goto LCheckRowPayMode;
+  end;
+/*
+  if (PayModeAccIsClosed(paydeal)) then begin
+    RecordCheckError(1258,paydeal,rownr,fieldname);    
+    res = 1258;
+    goto LCheckRowPayMode;
+  end;
+*/
+  cht = PMCheckType(paydeal,tstr,tstr);
+LCheckRowPayMode:;    
+  CheckRowPayMode = res;
+  return;
+end;
+
+function Integer CheckPayMode(record RestAccVc RestAccr,string payname,string paydeal,val value,Boolean resourcef)
+BEGIN
+  Integer res,cht;
+  string 255 tstr;
+  row PMBlock PMrw;
+  
+  res = 0;
+  if (resourcef==false) then begin
+    if (value==0) then begin
+      goto LCheckPayMode;
+    end;
+  end;
+  if (blank(paydeal)) then begin
+    RecordCheckError(1207,"",-1,payname);
+    res = -1;
+    goto LCheckPayMode;
+  end;
+  if (GetPMRow(paydeal,PMrw)==false) then begin
+    RecordCheckError(1207,"",-1,payname);
+    res = -1;
+    goto LCheckPayMode;
+  end;
+  if (PayModeAccIsClosed(paydeal)) then begin
+    RecordCheckError(1258,paydeal,-1,payname);    
+    res = 1258;
+    goto LCheckPayMode;
+  end;
+  cht = PMCheckType(paydeal,tstr,tstr);
+  switch (cht) begin
+    case 6:
+      if (blank(RestAccr.Resource)) then begin
+        RecordCheckError(1058,USetStr(8166),-1,"Resource");    
+        res = 1058;
+        goto LCheckPayMode;
+      end;
+    case 7:
+      if (blank(RestAccr.CUCode)) then begin
+        RecordCheckError(1058,USetStr(8198),-1,"CUCode");      
+        res = 1058;
+        goto LCheckPayMode;
+      end;
+  end;
+LCheckPayMode:;    
+  CheckPayMode = res;
+  RETURN;
+END;
+
+global
+function Boolean TestBarTabAllowedForHotelGuest(string guestcode,record JobVc Jobr)
+begin
+  Boolean res;
+  row JobVc Jobrw;
+  Integer i,rwcnt;
+  
+  res = false;
+  rwcnt = MatRowCnt(Jobr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Jobr,i,Jobrw);
+    if (Jobrw.GuestCode==guestcode) then begin
+      if (Jobrw.BarTab==0) then begin
+        res = true;
+        goto LTestBarTabAllowedForHotelGuest;
+      end;
+    end;
+  end;
+LTestBarTabAllowedForHotelGuest:;  
+  TestBarTabAllowedForHotelGuest = res;
+  return;
+end;
+
+function Boolean ValidRestAccDataForVATLaw_Portuguese(record RestAccVc RestAccr,var Integer errcode,var string gotofield)
+begin
+  Boolean res;
+  
+  res = true;
+/*  
+  if (blank(RestAccr.VATNr)) then begin
+    errcode = 20275;
+    gotofield = "VATNr";
+    res = false;
+    goto LValidRestAccDataForVATLaw_Portuguese;
+  end;
+*/  
+LValidRestAccDataForVATLaw_Portuguese:;  
+  ValidRestAccDataForVATLaw_Portuguese = res;
+  return;
+end;
+
+function Boolean ValidRestAccDataForVATLaw(record RestAccVc RestAccr,var Integer errcode,var string gotofield)
+begin
+  Boolean res;
+  
+  res = true;
+  if (HasLocalization("PRT")) then begin
+    res = ValidRestAccDataForVATLaw_Portuguese(RestAccr,errcode,gotofield);
+  end;
+LValidRestAccDataForVATLaw:;  
+  ValidRestAccDataForVATLaw = res;
+  return;
+end;
+
+global
+updating function LongInt RestAccVcRecordCheck(var record RestAccVc RestAccr,record RestAccVc RestAcc2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc USr;
+  record INVc INr;
+  record CUVc CUr;
+  record JobVc Jobr;
+  record RestAccVc lRestAccr;
+  row RestAccVc RestAccrw;
+  Integer i,rwcnt,errcode;
+  string 255 tstr;
+  Boolean gentrans,unokf,check,nousersernr,invalidatingf,testf,test2f;
+  LongInt oldbartab;
+  record HotelBlock Hotelb;
+  record RestBlock Restb;
+  val cash;
+  record POSEventVc POSEventr;
+  LongInt newnr;
+  record SRBlock SRb;
+  Date td;
+  record LegalInvNrBlock LINrb;
+  row LegalInvNrBlock LINrbrw;
+
+  res = 0;
+  BlockLoad(Restb);
+  BlockLoad(SRb);
+  if ((RestAcc2r.Invalid==0) and (RestAccr.Invalid!=0)) then begin
+    goto LRestAccVcRecordCheck;
+  end;
+  if (RestAccr.MachineName!=CurMachineName) then begin
+    RestAccr.MachineName = CurMachineName;
+    RestAccr.DrawerCode = CurDrawerCode(RestAccr.MachineName);
+  end;
+  if (blank(RestAccr.DrawerCode)) then begin
+    RestAccr.DrawerCode = CurDrawerCode(RestAccr.MachineName);
+  end;
+  if (RestAccr.TerminalID!=CurTerminalID) then begin
+    RestAccr.TerminalID = CurTerminalID;
+  end;
+  switch (stat) begin
+    case Rs_insert: if (RestAccr.Closed!=0) then begin check = true; end;
+    case Rs_update: if ((RestAccr.Closed!=0) and (RestAcc2r.Closed==0)) then begin check = true; end;
+  end;
+  if (RestAccr.MergedToSerNr>0) then begin
+    goto LRestAccVcRecordCheck;
+  end;
+  if (RestAccr.Closed==0) then begin
+    if (stat==Rs_update) then begin
+      if (RestAcc2r.Closed==1) then begin unokf = true; end;
+    end;
+  end;
+  if (RestAccr.SerNr<=0) then begin
+    nousersernr = false;
+    newnr = GetCurUserLastNr("RestAccVc");
+    if (newnr==-1) then begin
+      newnr = SRb.LastRestAccNr;
+    end;
+    RestAccr.SerNr = NextSerNr("RestAccVc",RestAccr.TransDate,newnr,nousersernr,"");
+  end;
+  if (SerNrTestRestAccVc(RestAccr.SerNr,RestAccr.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto LRestAccVcRecordCheck;
+  end;
+  
+  if (unokf) then begin
+    if (IsUnOKAllowed("RestAccVc",RestAccr.TransDate)==false) then begin
+      RecordCheckError(1046,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LRestAccVcRecordCheck;
+  end;  
+  if (nonblank(RestAccr.Cashier)) then begin  
+    USr.Code = RestAccr.Cashier;
+    if (FindTheUser(USr)==false) then begin    
+      RecordCheckError(1120,RestAccr.Cashier,-1,"Cashier");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;  
+  end;
+  if (nonblank(RestAccr.CUCode)) then begin  
+    CUr.Code = RestAccr.CUCode;
+    if (ReadFirstMain(CUr,1,true)==false) then begin       
+      RecordCheckError(1120,RestAccr.CUCode,-1,"CUCode");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;  
+  end;
+  if (RequireOpenSession(RestAccr.MachineName)) then begin
+    RestAccr.TransDate = CurrentDate;
+    RestAccr.TransTime = CurrentTime;
+    if (OpenedPOSSession(RestAccr.MachineName,RestAccr.DrawerCode,RestAccr.TransDate,RestAccr.TransTime,POSEventr)==false) then begin
+      RecordCheckError(2195,"",-1,"SerNr");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    RestAccr.ReportingDate = POSEventr.TransDate;
+  end;  
+  if (RestAccr.Closed!=0 and RestAcc2r.Closed==0) then begin
+    if (ValidRestAccDataForVATLaw(RestAccr,errcode,tstr)==false) then begin
+      RecordCheckError(errcode,"",-1,tstr);      
+      res = -1; 
+      goto LRestAccVcRecordCheck;
+    end;   
+  end;
+  
+    if (blank(RestAccr.Resource)) then begin
+      i = CheckPayMode(RestAccr,"PayDeal",RestAccr.PayDeal,RestAccr.CashValue,false);
+    end else begin
+      i = CheckPayMode(RestAccr,"PayDeal",RestAccr.PayDeal,RestAccr.CashValue,true);
+    end;
+    if (i!=0) then begin
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    cash = cash + RestAccr.CashValue;      
+    i = CheckPayMode(RestAccr,"PayDeal2",RestAccr.PayDeal2,RestAccr.Paid,false);
+    if (i!=0) then begin
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    cash = cash + RestAccr.Paid;      
+    i = CheckPayMode(RestAccr,"PayDeal3",RestAccr.PayDeal3,RestAccr.Paid2,false);
+    if (i!=0) then begin
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    cash = cash + RestAccr.Paid2;      
+    i = CheckPayMode(RestAccr,"PayDeal4",RestAccr.PayDeal4,RestAccr.Paid3,false);
+    if (i!=0) then begin
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    cash = cash + RestAccr.Paid3;      
+  if (nonblank(RestAccr.Resource)) then begin    
+  /*
+not needed right? 
+we just need cuernt resefcation in checkin status
+
+    Jobr.SerNr = FindReservation(RestAccr.Resource,RestAccr.TransDate,RestAccr.TransTime);
+    if (ReadFirstMain(Jobr,1,true)==false) then begin
+*/    
+    BlockLoad(Hotelb);
+    Jobr.ResStatus = Hotelb.ChInSt;
+    Jobr.ResCode = RestAccr.Resource;
+    if (ReadLastKey("ResCodeStatus",Jobr,2,true)==false) then  begin
+      RecordCheckError(2022,RestAccr.Resource,-1,"Resource");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    if (blank(RestAccr.CUCode)) then begin
+      RecordCheckError(2024,"",-1,"CUCode");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    if (Restb.AllowBarTabwoGuest!=0) then begin
+      if (blank(RestAccr.GuestCode)) then begin
+        RecordCheckError(2024,"",-1,"GuestCode");      
+        res = -1;
+        goto LRestAccVcRecordCheck;
+      end;
+      if (TestBarTabAllowedForHotelGuest(RestAccr.GuestCode,Jobr)==false) then begin
+        RecordCheckError(2026,"",-1,"GuestCode");      
+        res = -1;
+        goto LRestAccVcRecordCheck;
+      end;
+    end;
+  end;
+  if (POSBalanceExistsAfterThis(RestAccr.TransDate,RestAccr.TransTime,RestAccr.MachineName,RestAccr.DrawerCode)) then begin
+    RecordCheckError(2194,"",-1,"TransDate");      
+    res = -1;
+    goto LRestAccVcRecordCheck;
+  end;
+  if (stat>0) then begin
+    if (MatRowCnt(RestAccr)==0) then begin
+      if (blank(RestAccr.CustCode)) then begin
+        if (check) then begin
+          RecordCheckError(27323,"",-1,"CustCode");      
+          res = -1;
+          goto LRestAccVcRecordCheck;
+        end;
+      end else begin
+/*      
+        if (RestAccr.Persons<=0) and (blank(RestAccr.Resource)) then begin
+          RecordCheckError(1058,"",-1,"Persons");      
+          res = -1;
+          goto LRestAccVcRecordCheck;
+        end;
+        RecordCheckError(1058,"",0,"ArtCode");      
+        res = -1;
+        goto LRestAccVcRecordCheck;
+*/      
+      end;
+    end;
+  end;
+  BlockLoad(LINrb);
+  if (nonblank(RestAccr.OfficialSerNr)) and ((MatRowCnt(LINrb)>0) or (HasLocalization("ARG,HRV,PRT"))) then begin
+    GetLegalInvNrRow(RestAccr.OfficialSerNr,LINrbrw);
+    switch (LINrbrw.SelectionType) begin
+      case kLegalInvNrSelectionTypeManual:
+        if (blank(LINrbrw.Serie)) then begin
+          RestAccr.OfficialSerNr = "";
+        end;
+      case kLegalInvNrSelectionTypeAtOK:
+        if (check) then begin
+          RestAccr.OfficialSerNr = "";
+        end;
+      case kLegalInvNrSelectionTypeAtInsert:
+        if (blank(LINrbrw.Serie)) or (stat==Rs_insert) then begin
+          RestAccr.OfficialSerNr = "";
+        end;
+    end;
+  end;
+  if (blank(RestAccr.OfficialSerNr)) then begin
+    FindNextRestAccVcOfficialSerialNr(RestAccr);
+  end;
+  if (check) then begin
+    if (HasLocalization("ARG,HRV,PRT")) then begin
+      if (blank(RestAccr.OfficialSerNr)) then begin
+        RecordCheckError(1058,"",-1,"OfficialSerNr");  
+        res = -1;
+        goto LRestAccVcRecordCheck;
+      end;
+    end;
+  end;
+  if (ValidateOfficialSerialNrChronology("RestAccVc",RestAccr.OfficialSerNr,RestAccr.SerNr,RestAccr.TransDate,td)==false) then begin
+    RecordCheckError(26201," " & td,-1,"InvDate");  
+    res = -1;
+    goto LRestAccVcRecordCheck;
+  end;
+  if (nonblank(RestAccr.OfficialSerNr)) and (MatRowCnt(LINrb)>0) then begin    
+    errcode = 0;
+    rwcnt = MatRowCnt(LINrb);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(LINrb,i,LINrbrw);
+      test2f = true;
+      if (Left(RestAccr.OfficialSerNr,len(LINrbrw.Serie))!=LINrbrw.Serie) then begin test2f = false; end;
+      if (test2f) then begin
+        testf = true;
+        test2f = TestNextOfficialSerialNr_RestAccVc(LINrbrw,CUr.Classification,RestAccr,false);
+        if (test2f==false) then begin
+          errcode = 1557;
+          testf = false;
+        end else begin
+          i = rwcnt;
+        end;
+      end;
+    end;
+    if (testf==false) then begin
+      RecordCheckError(errcode," " & RestAccr.OfficialSerNr,-1,"OfficialSerNr");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+  end;
+  if (nonblank(RestAccr.OfficialSerNr)) then begin
+    if (InString2(RestAccr.OfficialSerNr,",")>0) then begin
+      if (InString2(RestAccr.OfficialSerNr,":")>0) then begin
+        RecordCheckError(1059," " & RestAccr.OfficialSerNr,-1,"OfficialSerNr");      
+        res = -1;
+        goto LRestAccVcRecordCheck;
+      end;
+    end;
+  end;
+  
+  
+  if (check) then begin
+    if (RestAccr.TransferToSL==0) then begin
+      if (nonblank(RestAccr.RemValue)) and (blank(RestAccr.Resource)) then begin
+        RecordCheckError(24177,"",-1,"RemValue");      
+        res = -1;
+        goto LRestAccVcRecordCheck;
+      end;
+    end;
+    rwcnt = MatRowCnt(RestAccr);
+    if (rwcnt==0) then begin
+      RecordCheckError(1030,"",-1,"SerNr");      
+      res = -1;
+      goto LRestAccVcRecordCheck;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RestAccr,i,RestAccrw);
+      switch (RestAccrw.stp) begin      
+        case 1:
+          if (nonblank(RestAccrw.ArtCode)) then begin
+            INr.Code = RestAccrw.ArtCode;
+            if (ReadFirstMain(INr,1,true)==false) then begin
+              RecordCheckError(1120,RestAccrw.ArtCode,i,"ArtCode");      
+              res = -1;
+              goto LRestAccVcRecordCheck;
+            end;
+            if (INr.Terminated==1) then begin
+              RecordCheckError(1266,RestAccrw.ArtCode,i,"ArtCode");      
+              res = -1; 
+              goto LRestAccVcRecordCheck;
+            end;
+          end;      
+        case kInvoiceRowTypeVoid:
+          if (nonblank(RestAccrw.ArtCode)) then begin
+            INr.Code = RestAccrw.ArtCode;
+            if (ReadFirstMain(INr,1,true)==false) then begin
+              RecordCheckError(1120,RestAccrw.ArtCode,i,"ArtCode");      
+              res = -1;
+              goto LRestAccVcRecordCheck;
+            end;
+            if (INr.Terminated==1) then begin
+              RecordCheckError(1266,RestAccrw.ArtCode,i,"ArtCode");      
+              res = -1; 
+              goto LRestAccVcRecordCheck;
+            end;
+          end;      
+        case kInvoiceRowTypeGiftVoucherPayment:
+//          res = IVVc_CheckRowType14(IVp,IVrw,i);
+//          if (res!=0) then begin
+//            goto L99;
+//          end;
+          res = CheckRowPayMode("Sum",i,RestAccrw.PayMode,RestAccrw.Sum);
+          if (res!=0) then begin
+            res = -1;
+            goto LRestAccVcRecordCheck;
+          end;
+//          cash = cash + RestAccrw.Sum;      
+        case kInvoiceRowTypeLoyaltyPointsPayment:
+          res = CheckRowPayMode("Sum",i,RestAccrw.PayMode,RestAccrw.Sum);
+          if (res!=0) then begin
+            res = -1;
+            goto LRestAccVcRecordCheck;
+          end;
+        case kInvoiceRowTypeCashPayment:
+          res = CheckRowPayMode("Sum",i,RestAccrw.PayMode,RestAccrw.Sum);
+          if (res!=0) then begin
+            res = -1;
+            goto LRestAccVcRecordCheck;
+          end;
+//          cash = cash + MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        case kInvoiceRowTypeChequePayment:
+          res = CheckRowPayMode("Sum",i,RestAccrw.PayMode,RestAccrw.Sum);
+          if (res!=0) then begin
+            res = -1;
+            goto LRestAccVcRecordCheck;
+          end;
+//          cash = cash + MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        case kInvoiceRowTypeCreditCardPayment:
+          res = CheckRowPayMode("Sum",i,RestAccrw.PayMode,RestAccrw.Sum);
+          if (res!=0) then begin
+            res = -1;
+            goto LRestAccVcRecordCheck;
+          end;
+//          cash = cash + RestAccrw.Sum;      
+      end;
+    end;
+  end;
+  oldbartab = CheckIfOpenTabforTable(RestAccr);
+  if (oldbartab!=-1) then begin
+    RecordCheckError(10075," open, Bar Tab: " & oldbartab,-1,"CustCode");
+    res = -1;
+  end;     
+//must be after all other tests  
+  if (HasLocalization("HRV")) then begin
+    if (RestAccr.Closed!=0 and RestAccr.TransferToSL==0 and blank(RestAccr.Resource) and blank(RestAccr.TaxAdminServSeal)) then begin
+      if (DoXMLExport_RestAccVc(RestAccr)==false) then begin
+        RestAccr.OfficialSerNr = "";
+        if (blank(RestAccr.RefStr)) then begin
+          RecordCheckError(31412,"",0,"RefStr");
+          res = -1;
+          goto LRestAccVcRecordCheck;
+        end;
+      end;
+    end;
+  end;
+LRestAccVcRecordCheck:;
+  RestAccVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt RestAccVcRecordProtectFields(var record RestAccVc RestAccr,record RestAccVc RestAcc2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  Integer i,rwcnt;
+  row RestAccVc RestAccrw;
+  row RestAccVc RestAcc2rw;
+  Integer rwcnt2;
+  
+  rwcnt = MatRowCnt(RestAccr);
+  rwcnt2 = MatRowCnt(RestAcc2r);
+  for (i=0;i<rwcnt2;i=i+1) begin
+    if (i<rwcnt) then begin
+      MatRowGet(RestAccr,i,RestAccrw);
+      MatRowGet(RestAcc2r,i,RestAcc2rw);
+      RestAcc2rw.KitchenStatus = RestAccrw.KitchenStatus;
+      RestAcc2rw.AlreadyPrinted = RestAccrw.AlreadyPrinted;
+      //AlreadyPrintedToKitchen is changed with WIndowDoOK
+      MatRowPut(RestAcc2r,i,RestAcc2rw);
+    end;
+  end;
+  RestAccVcRecordProtectFields = res;
+  return;
+end;

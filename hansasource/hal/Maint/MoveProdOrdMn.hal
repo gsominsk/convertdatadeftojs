@@ -1,0 +1,94 @@
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean ShouldBeInQueue(record ProdOrderVc);
+
+updating function LongInt MoveBackProdOrderQueuePositionRecursive(LongInt curpos,string machine,var vector Boolean vskipprodord)
+begin
+  Boolean foundf,testf;
+  record ProdOrderVc ProdOrdr2;
+  record ProdOrderVc oldProdOrdr;
+  Integer resi;
+  LongInt lastno;
+  
+  foundf = true;
+  ProdOrdr2.Machine = machine;
+  ProdOrdr2.QueuePos = curpos;
+  while (LoopKey("Queue",ProdOrdr2,2,foundf)) begin
+    if (ProdOrdr2.Machine!=machine) then begin foundf = false; end;
+    if (ProdOrdr2.QueuePos>curpos) then begin foundf = false; end;
+    if (foundf) then begin
+      testf = true;
+      if (vskipprodord[ProdOrdr2.SerNr]) then begin testf = false; end;
+      if (testf) then begin
+        RecordCopy(oldProdOrdr,ProdOrdr2);
+        lastno = ProdOrdr2.QueuePos;
+        ProdOrdr2.QueuePos = ProdOrdr2.QueuePos - 1;
+        resi = RecordUpdate(oldProdOrdr,ProdOrdr2,false);
+        if (resi==0) then begin
+          vskipprodord[ProdOrdr2.SerNr] = true;
+          lastno = MoveBackProdOrderQueuePositionRecursive(ProdOrdr2.QueuePos,ProdOrdr2.Machine,vskipprodord);
+        end;
+      end;
+    end;
+  end;
+  MoveBackProdOrderQueuePositionRecursive = lastno;
+  return;
+end;          
+
+global
+updating procedure MoveProdOrdMn(record RcVc RepSpec)
+begin
+  record ProdOrderVc ProdOrdr;
+  record ProdOrderVc ProdOrdr2;
+  record ProdOrderVc oldProdOrdr;
+  Boolean foundf,testf;
+  Integer resi;
+  LongInt lastno;
+  Integer flushcnt;
+  vector Boolean vskipprodord;
+  
+  ProdOrdr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(ProdOrdr,1,true)) then begin
+    if (ShouldBeInQueue(ProdOrdr)) then begin
+      ProdOrdr2.Machine = ProdOrdr.Machine;
+      ProdOrdr2.QueuePos = RepSpec.long2;
+      if (ReadFirstKey("Queue",ProdOrdr2,2,true)==false) then begin // Easy, no moving required
+        RecordCopy(oldProdOrdr,ProdOrdr);
+        ProdOrdr.QueuePos = RepSpec.long2;
+        resi = RecordUpdate(oldProdOrdr,ProdOrdr,false);
+        CheckFlush(flushcnt,10);
+      end else begin
+        lastno = ProdOrdr.QueuePos;
+        ProdOrdr2.Machine = ProdOrdr.Machine;
+        if (ProdOrdr.QueuePos>RepSpec.long2) then begin
+          ProdOrdr2.QueuePos = ProdOrdr.QueuePos-1;
+          foundf = true;
+          while (LoopBackKey("Queue",ProdOrdr2,2,foundf)) begin
+            if (ProdOrdr2.Machine!=ProdOrdr.Machine) then begin foundf = false; end;
+            if (ProdOrdr2.QueuePos<RepSpec.long2) then begin foundf = false; end;
+            if (foundf) then begin
+              RecordCopy(oldProdOrdr,ProdOrdr2);
+              lastno = ProdOrdr2.QueuePos;
+              ProdOrdr2.QueuePos = ProdOrdr2.QueuePos + 1;              
+              resi = RecordUpdate(oldProdOrdr,ProdOrdr2,false);
+              CheckFlush(flushcnt,10);
+            end;
+          end;
+          RecordCopy(oldProdOrdr,ProdOrdr);
+          ProdOrdr.QueuePos = lastno;
+          resi = RecordUpdate(oldProdOrdr,ProdOrdr,false);
+          CheckFlush(flushcnt,10);
+        end else begin
+          vskipprodord[ProdOrdr.SerNr] = true;
+          lastno = MoveBackProdOrderQueuePositionRecursive(RepSpec.long2,ProdOrdr.Machine,vskipprodord);
+          RecordCopy(oldProdOrdr,ProdOrdr);
+          ProdOrdr.QueuePos = RepSpec.long2;
+          resi = RecordUpdate(oldProdOrdr,ProdOrdr,false);
+        end;
+      end;
+    end else begin
+      ProdOrdr.QueuePos = -1;
+    end;
+  end;
+  RETURN;
+end;
+

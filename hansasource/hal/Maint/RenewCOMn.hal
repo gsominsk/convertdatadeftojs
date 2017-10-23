@@ -1,0 +1,367 @@
+external procedure CheckFlush(var Integer,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure COSumup(var record COVc);
+external function Boolean GetItemPriceDiscount2(string,record INVc,val,string,string,
+                                                string,string,string,var val,var string,
+                                                var val,var val,Integer,var Boolean,Date);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external updating procedure CreateSummaryActivity(string,string,string);
+external function Integer InString2(string,string);
+external procedure RoundRowSum(string,string,string,var val);
+
+procedure SearchinInvCommentString(record COVc COr,string searchstring,Integer leng,var string res)
+BEGIN
+  Integer where;
+  string 255 tstr,tstr2;
+  string 255 t2,t3;
+
+  tstr = res;
+  where = InString2(res,searchstring);
+  if (where>=0) then begin
+    tstr = Left(res,where);
+    tstr2 = Right(res,len(res) - where - len(searchstring));
+    if (searchstring=="V_PE") then begin
+      t3 = COr.startDate;
+      t3 = t3 & ":";
+      t3 = t3 & COr.endDate;
+    end;
+    if (searchstring=="V_CU") then begin
+      t3 = COr.Addr0;
+    end;
+    tstr = tstr & t3;
+    tstr = tstr & tstr2;
+  end;  
+  res = Left(tstr,leng);
+  RETURN;
+END;
+
+procedure UpdateCOItems(record RcVc RepSpec,record COVc newCOr,Integer UseDiscount)
+BEGIN
+  Integer i,rwcnt;
+  row COVc COrw;
+  record INVc INr;
+  val price,discount,baseprice;
+  val s,t,rowsum;
+  string 255 descstr;
+  Boolean calcpricef;
+  
+  if ((nonblank(RepSpec.FirstAcc)) and (nonblank(RepSpec.LastAcc))) then begin
+    rwcnt = MatRowCnt(newCOr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(newCOr,i,COrw);    
+      if (COrw.ArtCode==RepSpec.FirstAcc) then begin
+        INr.Code = RepSpec.LastAcc;
+        if (ReadFirstMain(INr,1,true)) then begin
+          COrw.ArtCode = RepSpec.LastAcc;
+          if (GetItemPriceDiscount2(INr.Code,INr,COrw.Quant,newCOr.CurncyCode,
+              newCOr.LangCode,newCOr.CustCat,newCOr.PriceList,newCOr.RebCode,
+              price,descstr,discount,
+              baseprice,newCOr.ExportFlag,calcpricef,newCOr.CODate)) then begin
+            COrw.Price = price;
+            COrw.Spec = descstr;
+            COrw.vRebate = discount;
+            COrw.BasePrice = baseprice;                   
+            CalcSum(COrw.Quant,COrw.Price,COrw.PriceFactor,COrw.vRebate,t,UseDiscount);           
+            COrw.Sum = t;
+            RoundRowSum(newCOr.CurncyCode,newCOr.PayDeal,"COVc",t);           
+            if (t!=COrw.Sum) then begin
+               COrw.Sum = t;
+            end;       
+            t = COrw.Quant*COrw.BasePrice;                     
+            s = MulRateToBase1(newCOr.CurncyCode,COrw.Sum,newCOr.FrRate,newCOr.ToRateB1,newCOr.ToRateB2,newCOr.BaseRate1,newCOr.BaseRate2,DefaultCurRoundOff);
+            t = rowsum - t;
+            COrw.rowGP = t;
+            MatRowPut(newCOr,i,COrw);
+          end;          
+        end;
+      end;
+    end;  
+  end;  
+  RETURN;
+END;
+
+procedure UpdateCOPrices(record COVc newCOr,Integer UseDiscount)
+BEGIN
+  record INVc INr;
+  row COVc COrw;
+  Integer i,rwcnt;
+  Boolean calcpricef;
+  val price,discount,baseprice;
+  val s,t,rowsum;
+  string 255 descstr;
+    
+  rwcnt = MatRowCnt(newCOr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(newCOr,i,COrw);
+    if (nonblank(COrw.ArtCode)) then begin
+      INr.Code = COrw.ArtCode;      
+      if (ReadFirstMain(INr,1,true)) then begin
+
+         if (GetItemPriceDiscount2(INr.Code,INr,COrw.Quant,newCOr.CurncyCode,
+         newCOr.LangCode,newCOr.CustCat,newCOr.PriceList,newCOr.RebCode,
+         price,descstr,discount,
+         baseprice,newCOr.ExportFlag,calcpricef,newCOr.CODate)) then begin
+           COrw.Price = price;
+           COrw.Spec = descstr;
+           COrw.vRebate = discount;
+           COrw.BasePrice = baseprice;                   
+           CalcSum(COrw.Quant,COrw.Price,COrw.PriceFactor,COrw.vRebate,t,UseDiscount);           
+           COrw.Sum = t;
+           RoundRowSum(newCOr.CurncyCode,newCOr.PayDeal,"COVc",t);           
+           if (t!=COrw.Sum) then begin
+              COrw.Sum = t;
+           end;       
+           t = COrw.Quant*COrw.BasePrice;                     
+           s = MulRateToBase1(newCOr.CurncyCode,COrw.Sum,newCOr.FrRate,newCOr.ToRateB1,newCOr.ToRateB2,newCOr.BaseRate1,newCOr.BaseRate2,DefaultCurRoundOff);
+//           FindSalesExVat(COrw.VATCode,s,newCOr.InclVAT,newCOr.NoTAXonVAT,rowsum);
+           t = rowsum - t;
+           COrw.rowGP = t;
+         end;        
+      end;
+    end else begin
+      t = 0;
+      COrw.rowGP = t;
+      COrw.BasePrice = t;    
+    end;
+    MatRowPut(newCOr,i,COrw);           
+  end;
+  RETURN;
+END;
+
+procedure CreateLogFile(var Boolean createf)
+BEGIN
+  string 255 tstr;
+  
+  if (createf) then begin 
+    tstr = "RenewCOMn" & CurrentDate & ".log";
+    CreateFile(tstr); 
+    createf = false;
+  end;
+  RETURN;
+END;
+
+function
+Boolean GetRenewClassAndComment(string frclas,var string toclas,var string comment,var Integer removeinvtocode,var LongInt perlen)
+BEGIN
+  record RenewCOVc renewCOr;
+  Boolean res;
+  
+  removeinvtocode = 0;
+  perlen = -1;
+  renewCOr.FromClas = frclas;
+  res = ReadFirstMain(renewCOr,1,true);
+  if (res) then begin
+    toclas = renewCOr.ToClas;
+    comment = renewCOr.Comment;
+    removeinvtocode = renewCOr.ReplaceInvoiceToCust;
+    perlen = renewCOr.PeriodLength;
+  end;
+  GetRenewClassAndComment = res;
+  RETURN;
+END;
+
+updating procedure RCreateActivity(record COVc COr,string codes,string comment,string curuser,Integer curcomp,var Integer flushcnt)
+BEGIN
+  record ActVc Actr;
+  
+  RecordNew(Actr);
+  Actr.TransDate = CurrentDate;
+  Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");
+  Actr.Comment = codes & "   " & comment;
+  Actr.MainPersons = COr.SalesMan;
+  Actr.CCPersons = curuser;
+  Actr.TodoFlag = 1;
+  Actr.CalTimeFlag = 0;
+  if (RecordStore(Actr,false)) then begin 
+    CreateRecordLink(Actr,curcomp,COr,curcomp);  
+  end;
+  CheckFlush(flushcnt,10);  
+  RETURN;
+END;
+
+function
+Boolean CheckIteminCO(string itemcode,record COVc COr)
+BEGIN
+  Boolean res;
+  Integer i,rwcnt;
+  row COVc COrw;
+  
+  rwcnt = MatRowCnt(COr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(COr,i,COrw);
+    if (COrw.ArtCode==itemcode) then begin
+      res = true;
+      goto LCheckIteminCO;
+    end;
+  end;
+LCheckIteminCO:;  
+  CheckIteminCO = res;
+  RETURN;
+END;
+
+global
+updating procedure RenewCOMn(record RcVc RepSpec)
+BEGIN 
+  record COVc COr;
+  record COVc newCOr;
+  record CUVc CUr;
+  record CUVc oldCUr;
+  Boolean TrHs,testf;
+  string 255 toclas,tstr;
+  string 20 keystr,frcu,tocu;
+  Boolean createf;
+  string 20 curuser;
+  Integer reminvtocode;
+  LongInt perlen,cocnt;
+  LongInt sernr;
+  Integer curcomp;
+  Boolean stepheadf;
+  record GeneralOptionBlock GenOptRec;
+  Integer flushcnt;
+
+  if (blankdate(RepSpec.d1)) then begin
+    MessageBox(0,USetStr(9610));
+    goto LRenewCOMn;
+  end;
+  BlockLoad(GenOptRec);
+  curcomp = CurrentCompany;
+  curuser = CurrentUser;
+  cocnt = 0;
+  createf = true;
+  frcu = FirstInRange(RepSpec.f1,20);  
+  tocu = LastInRange(RepSpec.f1,20);  
+  if (blank(RepSpec.f1)) then begin
+    keystr = "SerNr";
+  end else begin 
+    keystr = "CustCode";    
+  end;
+  COr.CustCode = frcu;
+  TrHs = true;
+  while (LoopKey(keystr,COr,1,TrHs)) begin
+    sernr = COr.SerNr;
+    testf = true;
+    if (nonblank(RepSpec.f1)) then begin
+      if (COr.CustCode>tocu) then begin
+        TrHs = false;
+      end;
+    end;    
+    if (nonblankdate(RepSpec.d1)) then begin
+      if (COr.endDate>RepSpec.d1) then begin 
+        testf = false;
+      end;
+    end;
+    if (nonblankdate(COr.CancelDate)) then begin
+      testf = false;
+    end;
+    if (blankdate(COr.endDate)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      CUr.Code = COr.CustCode;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        if (CUr.blockedFlag!=0) then begin 
+          testf = false; 
+          RCreateActivity(COr,CUr.Code," closed",curuser,curcomp,flushcnt)
+        end;
+      end else begin
+        RCreateActivity(COr,COr.CustCode," doesn't exist",curuser,curcomp,flushcnt)
+      end;    
+    end;  
+    if (testf) then begin
+      newCOr.SerNr = COr.SerNr;
+      newCOr.ChildSerNr = COr.ChildSerNr + 1;
+      if (newCOr.ChildSerNr<=0) then begin newCOr.ChildSerNr = 1; end;
+      if (ReadFirstKey("SerNr",newCOr,2,true)) then begin
+        testf = false;
+      end;
+    end;  
+    if (testf) then begin
+      if (RepSpec.flags[4]!=0) then begin
+        testf = CheckIteminCO(RepSpec.FirstAcc,COr);
+      end;
+    end;
+   if (testf and TrHs) then begin
+      RecordCopy(newCOr,COr);
+      newCOr.startDate = AddDay(COr.endDate,1);
+      if (COr.perType==0) then begin
+        newCOr.endDate = AddMonth(newCOr.startDate,COr.perLength);      
+        newCOr.endDate = AddDay(newCOr.endDate,-1);      
+      end;  
+      if (COr.perType==1) then begin
+        newCOr.endDate = AddDay(newCOr.startDate,COr.perLength);      
+        newCOr.endDate = AddDay(newCOr.endDate,-1);      
+      end;  
+      newCOr.lastInvDate = AddYear(COr.lastInvDate,-GetYear(COr.lastInvDate));
+      newCOr.CODate = CurrentDate;
+      newCOr.ChildSerNr = COr.ChildSerNr + 1;
+      if (COr.ChildSerNr<=0) then begin newCOr.ChildSerNr = 1; end;
+      if (nonblank(newCOr.ContractClass)) then begin
+        if (GetRenewClassAndComment(newCOr.ContractClass,toclas,tstr,reminvtocode,perlen)) then begin
+          newCOr.ContractClass = toclas;
+          newCOr.InvComment = tstr;
+          if (reminvtocode!=0) then begin
+            newCOr.InvoiceToCode = "";
+            RecordCopy(oldCUr,CUr);
+            CUr.InvoiceToCode = "";
+            if (RecordUpdate(oldCUr,CUr,true)!=0) then begin 
+            end;            
+          end;  
+          if (perlen>0) then begin
+            if (COr.perType==0) then begin          
+              newCOr.endDate = AddMonth(newCOr.startDate,perlen);
+              newCOr.endDate = AddDay(newCOr.endDate,-1);      
+              newCOr.perLength = perlen;
+            end;  
+            if (COr.perType==1) then begin          
+              newCOr.endDate = AddDay(newCOr.startDate,perlen);
+              newCOr.endDate = AddDay(newCOr.endDate,-1);      
+              newCOr.perLength = perlen;
+            end;  
+          end;
+        end;  
+      end;  
+      if (RepSpec.flags[0]==1) then begin
+        newCOr.OKFlag = 1;
+      end else begin
+        newCOr.OKFlag = 0;
+      end;
+      if (RepSpec.flags[2]==1) then begin
+        UpdateCOItems(RepSpec,newCOr,GenOptRec.UseDiscount);
+      end;
+      if (RepSpec.flags[1]==1) then begin
+        UpdateCOPrices(newCOr,GenOptRec.UseDiscount);
+      end;
+      COSumup(newCOr);
+      tstr = newCOr.InvComment;
+      SearchinInvCommentString(newCOr,"V_PE",200,tstr);
+      newCOr.InvComment = tstr;
+      tstr = newCOr.InvComment;
+      SearchinInvCommentString(newCOr,"V_CU",200,tstr);
+      newCOr.InvComment = tstr;
+      if (newCOr.perType>1) then begin
+        newCOr.perType = 0;
+      end;
+      stepheadf = false;
+      if (RecordStore(newCOr,false)) then begin 
+        cocnt = cocnt + 1;
+        stepheadf = true;
+      end else begin
+        RCreateActivity(COr,COr.SerNr," record store failed",curuser,curcomp,flushcnt)
+      end;
+      if (stepheadf) then begin
+        if (RepSpec.flags[3]!=0) then begin
+          RecordDelete(COr);
+          CheckFlush(flushcnt,10);
+        end else begin
+          StepForward(COr,1);
+        end;
+      end;  
+    end;
+    MaintTrace(sernr);
+  end;
+  CreateSummaryActivity(cocnt," contracts have been prolonged",curuser) ; 
+LRenewCOMn:;  
+  RETURN;
+END;
+

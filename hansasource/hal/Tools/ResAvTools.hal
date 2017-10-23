@@ -1,0 +1,481 @@
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean OtherExchangeRate(val,val,val,val,val,val,val,val,val,val);
+external procedure SaveExchangeRate(val,val,val,val,val,var val,var val,var val,var val,var val);
+external procedure ResAvSumup(var record ResAvVc);
+external procedure MailTextRow(string,string,string,var row MailTextVc,var Integer);
+external procedure AddTextLineToMail(string,record MailVc);
+external procedure AddNLToMail(record MailVc);
+external procedure FindUserMailboxName(string,var string,var string);
+external function roundmode DefaultRoundMode();
+external procedure ResAvRowSumup(record ResAvVc,Integer);
+external function LongInt DateDiff(Date,Date);
+external function val ValueStayResAv(record ResAvVc,string,string,Integer,var val,Integer,var val);
+external function val AddUsageItems(Date,Date,Time,Time,LongInt,String,String,String,String,var val,Integer,val,val,string,string,Integer,var val,string,val,val,val,val,val);
+external function Boolean GetCustAndBal(var record CUVc,var val,var val,Integer,Integer,Integer,Integer,Integer,Integer,var Boolean);
+external procedure GetPriceList(string,Date,Time,var string,var Integer);
+external procedure ResTypeAvail(string,string,string,Date,LongInt,Time,Time,var LongInt,var LongInt,var LongInt,var LongInt);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+
+global
+function Boolean PasteAgentOnResAv(var record ResAvVc ResAvp,var string warn)
+BEGIN
+  record CUVc CUr;
+  record CreditLimitBlock CreditLimitRec;
+  Boolean found;
+  val limit,bal;
+  string 5 pricelist;
+  Integer inclvat;
+  Boolean limitdaysf;
+ 
+  CUr.Code = ResAvp.SourceCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    BlockLoad(CreditLimitRec);
+    if (GetCustAndBal(CUr,limit,bal,CreditLimitRec.Base,CreditLimitRec.OwnCheques,CreditLimitRec.ThirdCheques,CreditLimitRec.IOUCheques,CreditLimitRec.ThirdIOUCheques,CreditLimitRec.ORSaveWarn,limitdaysf)) then begin
+      found = true;
+      ResAvp.SourceName = CUr.Name;
+      ResAvp.AgentPriceList = CUr.PLCode;
+      if (blank(ResAvp.AgentPriceList)) then begin
+        GetPriceList(CUr.CustCat,ResAvp.TransDate,ResAvp.StartTime,pricelist,inclvat);        
+        ResAvp.AgentPriceList = pricelist;    
+      end;  
+      ResAvp.BookOrigin = CUr.BookOrigin;
+      warn = CUr.WarnText1;
+    end;
+  end;  
+  PasteAgentOnResAv = found;
+  RETURN;
+END;
+
+global
+function Boolean PasteCustOnResAv(var record ResAvVc ResAvp,var string warn)
+BEGIN
+  record CUVc CUr;
+  record CreditLimitBlock CreditLimitRec;
+  Boolean found;
+  val limit,bal;
+  string 5 pricelist;
+  Integer inclvat;
+  Boolean limitdaysf;
+ 
+  CUr.Code = ResAvp.CUCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    BlockLoad(CreditLimitRec);
+    if (GetCustAndBal(CUr,limit,bal,CreditLimitRec.Base,CreditLimitRec.OwnCheques,CreditLimitRec.ThirdCheques,CreditLimitRec.IOUCheques,CreditLimitRec.ThirdIOUCheques,CreditLimitRec.ORSaveWarn,limitdaysf)) then begin
+      found = true;
+      ResAvp.CUName = CUr.Name;
+      ResAvp.AgentPriceList = CUr.PLCode;
+      if (blank(ResAvp.AgentPriceList)) then begin
+        GetPriceList(CUr.CustCat,ResAvp.TransDate,ResAvp.StartTime,pricelist,inclvat);        
+        ResAvp.AgentPriceList = pricelist;    
+      end;  
+      ResAvp.BookOrigin = CUr.BookOrigin;
+      ResAvp.CurncyCode = CUr.CurncyCode;
+      GetFullCurncyRate(ResAvp.CurncyCode,ResAvp.TransDate,ResAvp.FrRate,ResAvp.ToRateB1,ResAvp.ToRateB2,ResAvp.BaseRate1,ResAvp.BaseRate2);
+      warn = CUr.WarnText1;
+    end;
+  end;  
+  PasteCustOnResAv = found;
+  RETURN;
+END;
+
+global
+procedure UpdateRow(Integer rownr,var Record ResAvVc ResAvr) 
+begin
+  record CUVc CUr;
+  row ResAvVc ResAvrw;
+  val amount,vat;
+  Date startd,endd;
+  val price,cost,disc,tax2prc;
+  record INVc INr;
+  Boolean calcprice,dummyf;
+  string 255 tstr,tax2code,taxtemplatecode;
+  Time bltim;
+  Integer InclVAT;
+  Time blankt;
+
+  InclVAT = 1; //## 
+  MatRowGet(ResAvr,rownr,ResAvrw);
+  startd = ResAvrw.TransDate;
+  if (blankdate(startd)) then begin
+    startd = ResAvr.TransDate;
+  end;
+  endd = ResAvrw.EndDate;
+  if (blankdate(endd)) then begin
+    endd = ResAvr.EndDate;  
+  end;
+  if (nonblank(ResAvrw.ResType)) then begin
+    amount = ValueStayResAv(ResAvr,ResAvr.AgentPriceList,ResAvr.SourceCode,rownr,price,InclVAT,vat);
+    ResAvrw.AgentPrice  = Round(price,DefaultRoundMode);
+    ResAvrw.AgentSum    = Round(amount,DefaultRoundMode);
+    ResAvrw.AgentVat    = vat;
+    amount = ValueStayResAv(ResAvr,ResAvrw.PubPriceList,ResAvr.CUCode,rownr,price,InclVAT,vat);
+    ResAvrw.PubPrice    = Round(price,DefaultRoundMode);
+    ResAvrw.PubSum      = Round(amount,DefaultRoundMode);
+    ResAvrw.PubVat    = vat;
+  end;
+  if ((nonblank(ResAvrw.Usage)) and (ResAvr.IncludePackage)) then begin
+    amount = AddUsageItems(startd,endd,ResAvr.StartTime,ResAvr.EndTime,ResAvrw.Persons,ResAvrw.ResType,ResAvrw.Usage,
+                           ResAvr.AgentPriceList,ResAvr.SourceCode,price,ResAvrw.CalcType,ResAvrw.QtyWanted,0,"","",InclVAT,vat,
+                           ResAvr.CurncyCode,ResAvr.FrRate,ResAvr.ToRateB1,ResAvr.ToRateB2,ResAvr.BaseRate1,ResAvr.BaseRate2);
+    ResAvrw.AgentPrice  = ResAvrw.AgentPrice + Round(price,DefaultRoundMode);
+    ResAvrw.AgentSum    = ResAvrw.AgentSum + Round(amount,DefaultRoundMode);
+    ResAvrw.AgentVat    = ResAvrw.AgentVat + vat;
+    amount = AddUsageItems(startd,endd,ResAvr.StartTime,ResAvr.EndTime,ResAvrw.Persons,ResAvrw.ResType,ResAvrw.Usage,
+                           ResAvrw.PubPriceList,"",price,ResAvrw.CalcType,ResAvrw.QtyWanted,0,"","",InclVAT,vat,
+                           ResAvr.CurncyCode,ResAvr.FrRate,ResAvr.ToRateB1,ResAvr.ToRateB2,ResAvr.BaseRate1,ResAvr.BaseRate2);
+    ResAvrw.PubPrice    = ResAvrw.PubPrice + Round(price,DefaultRoundMode);
+    ResAvrw.PubSum      = ResAvrw.PubSum + Round(amount,DefaultRoundMode);
+    ResAvrw.PubVat      = ResAvrw.PubVat + vat;
+  end;
+  if (nonblank(ResAvrw.ArtCode)) then begin
+    INr.Code = ResAvrw.ArtCode; 
+    if (ReadFirstMain(INr,1,true)) then begin
+      CUr.Code = ResAvr.SourceCode;
+      if (blank(CUr.Code)) then begin
+        CUr.Code = ResAvr.CUCode;
+      end;
+      if (ReadFirstMain(CUr,1,true)) then begin  
+        if (GetItemPriceDiscount3(ResAvrw.ArtCode,ResAvrw.QtyWanted,INr,CUr.CurncyCode,0,0,0,0,0,
+            CUr.LangCode,CUr.CustCat,ResAvr.AgentPriceList,CUr.RebCode,
+            price,tstr,disc,tstr,cost,tstr,
+            CUr.ExportFlag,calcprice,ResAvr.TransDate,blankt,"",true,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+          ResAvrw.AgentPrice = price;
+          ResAvrw.AgentSum = ResAvrw.QtyWanted*price;
+        end;
+      end;
+      CUr.Code = ResAvr.CUCode;
+      if (blank(CUr.Code)) then begin
+        CUr.Code = ResAvr.SourceCode;
+      end;
+      if (ReadFirstMain(CUr,1,true)) then begin  
+        if (GetItemPriceDiscount3(ResAvrw.ArtCode,ResAvrw.QtyWanted,INr,CUr.CurncyCode,0,0,0,0,0,
+            CUr.LangCode,CUr.CustCat,ResAvrw.PubPriceList,CUr.RebCode,
+            price,tstr,disc,tstr,cost,tstr,
+            CUr.ExportFlag,calcprice,ResAvr.TransDate,blankt,"",true,dummyf,"",tax2code,tax2prc,"","",taxtemplatecode)) then begin
+          ResAvrw.Comment = INr.Name;
+          ResAvrw.PubPrice = price;
+          ResAvrw.PubSum = ResAvrw.QtyWanted*price;
+        end;
+      end;   
+    end;
+  end;
+  ResAvrw.Persons = ResAvrw.NoOfGuests * ResAvrw.QtyWanted;
+  MatRowPut(ResAvr,rownr,ResAvrw);
+  return;
+end;
+
+global
+procedure UpdateResAv(var record ResAvVc ResAvr)
+begin
+  Row ResAvVc ResAvrw;
+  Integer rwcnt,i;
+  
+  rwcnt = MatRowCnt(ResAvr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    UpdateRow(i,ResAvr);
+    ResAvRowSumup(ResAvr,i);
+  end;
+  return;
+end;
+
+global
+procedure FillResAvAvail(var record ResAvVc ResAvr)
+begin
+  Row ResAvVc ResAvrw;
+  Integer i,rwcnt;
+  LongInt maxdays;
+  record HotelBlock htr;
+  Time endofday,startofday;
+  LongInt rooms,booked;
+  vector val rsrved;
+  LongInt readrecs,usedrecs;
+
+  readrecs = 0;
+  usedrecs = 0;
+  maxdays = DateDiff(ResAvr.EndDate,ResAvr.TransDate);
+  BlockLoad(htr);  
+  endofday = htr.CheckOut;
+//  if (nonblanktime(htr.EndOfDay)) then begin
+//    endofday = htr.EndOfDay;
+//  end;
+  startofday = htr.CheckIn;
+//  if (nonblanktime(htr.StartNewDay)) then begin
+//    startofday = htr.StartNewDay;
+//  end;
+  rwcnt = MatRowCnt(ResAvr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ResAvr,i,ResAvrw);
+    if (nonblank(ResAvrw.ResType)) then begin
+      ResTypeAvail(ResAvrw.ResType,"","",ResAvr.TransDate,maxdays,startofday,endofday,rooms,booked,readrecs,usedrecs);
+      ResAvrw.QtyAvailable = rooms - booked - rsrved[ResAvrw.ResType];
+      rsrved[ResAvrw.ResType] = rsrved[ResAvrw.ResType] + 1;
+/* 
+  This is so wierd.....it is wrong!!
+    if (ResAvrw.QtyAvailable<ResAvrw.QtyWanted) then begin
+      ResAvrw.AgentSum = ResAvrw.QtyAvailable*ResAvrw.AgentPrice;    
+    end;
+*/
+      MatRowPut(ResAvr,i,ResAvrw);
+    end;
+  end;
+  return;
+end;
+
+global
+updating function Integer CreateMailFromResAvD(record ResAvVc RAr,var record MailVc Mailr,var string warning,string pdfform)
+begin
+  Integer res;
+  record MailVc Mail2r;
+  row ResAvVc RArw;
+  record ResTypeVc RTr;
+  record ResUsageVc RUr;
+  record CUVc CUr;
+  row MailVc Mailrw;
+  record EmailBlock EMBr;
+  string 200 tstr;
+  string 60 mailboxcode;
+  string 60 mailboxname;
+  Integer wn;
+  Integer rwcnt,i;
+  row MailTextVc MTrw;
+  record LTxtVc LTxtr;
+  Integer IgnoreRecordDetails;
+  string 255 docname,fname;
+
+  res = 1353;
+  FindUserMailboxName(CurrentUser,mailboxcode,mailboxname);
+  if (blank(mailboxcode)) then begin
+    res = 22010;
+    warning = CurrentUser;
+    goto LCreateMailFromResAvD;
+  end;
+  if (nonblank(mailboxcode)) then begin
+    CUr.Code = RAr.CUCode;
+    if (nonblank(RAr.SourceCode)) then begin
+      CUr.Code = RAr.SourceCode;
+    end;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (nonblank(CUr.eMail)) then begin
+        BlockLoad(EMBr);
+        RecordNew(Mailr);
+        Mailr.TransDate = CurrentDate;
+        Mailr.TransTime = CurrentTime;
+        Mailrw.RowTyp = 1;
+        Mailrw.AddrCode = mailboxname;
+        MatRowPut(Mailr,0,Mailrw);
+        Mailrw.RowTyp = 0;
+        Mailrw.AddrCode = CUr.eMail;
+        MatRowPut(Mailr,1,Mailrw);
+
+        MailTextRow("ResAvVc","",RAr.LangCode,MTrw,IgnoreRecordDetails);
+        Mailr.Header = MTrw.Header;
+        if (nonblank(Mailr.Header)) then begin
+          Mailr.Header = Mailr.Header & " ";
+        end;
+        Mailr.Header = Mailr.Header & USetStr(1941);
+        Mailr.Header = Mailr.Header & " " & RAr.SerNr;
+        
+        LTxtr.Code = MTrw.FirstTxt;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          Mailr.HtmlFlag = LTxtr.HtmlFlag;
+        end;
+        if (Mailr.HtmlFlag==0) then begin
+          LTxtr.Code = MTrw.LastTxt;
+          if (ReadFirstMain(LTxtr,1,true)) then begin
+            Mailr.HtmlFlag = LTxtr.HtmlFlag;
+          end;
+        end;
+        
+        Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+        if (RecordStore(Mailr,false)) then begin
+          CreateRecordLink(RAr,CurrentCompany,Mailr,CurrentCompany);  
+          CreateRecordLink(Mailr,CurrentCompany,RAr,CurrentCompany);
+        end;
+        RecordCopy(Mail2r,Mailr);
+        
+        LTxtr.Code = MTrw.FirstTxt;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          if (Mailr.HtmlFlag==0) then begin
+            rwcnt = LineTextCnt(LTxtr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              tstr = LineTextGet(LTxtr,i);
+              LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+            end;    
+            AddCRToText(Mailr);
+          end else begin
+            if (LTxtr.HtmlFlag==0) then begin
+              AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+            end else begin
+              AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+            end;
+          end;
+        end;
+        if (IgnoreRecordDetails==0) then begin
+          if (nonblank(Cur.Name))     then begin AddTextLineToMail(CUr.Name,Mailr); end;
+          if (nonblank(Cur.InvAddr0)) then begin AddTextLineToMail(Cur.InvAddr0,Mailr); end;
+          if (nonblank(Cur.InvAddr1)) then begin AddTextLineToMail(Cur.InvAddr1,Mailr); end;
+          if (nonblank(Cur.InvAddr2)) then begin AddTextLineToMail(Cur.InvAddr2,Mailr); end;
+          if (nonblank(Cur.InvAddr3)) then begin AddTextLineToMail(Cur.InvAddr3,Mailr); end;
+          if (nonblank(Cur.InvAddr4)) then begin AddTextLineToMail(Cur.InvAddr4,Mailr); end;
+          if (nonblank(Cur.Phone))    then begin AddTextLineToMail(Cur.Phone,Mailr); end;
+          if (nonblank(Cur.Fax))      then begin AddTextLineToMail(Cur.Fax,Mailr); end;
+          AddNLToMail(Mailr);
+          rwcnt = MatRowCnt(RAr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(RAr,i,RArw);
+            if (nonblank(RArw.ResType)) then begin
+              tstr = RArw.ResType;
+              RTr.Code = RArw.ResType;
+              if (ReadFirstMain(RTr,1,true)) then begin
+                if (nonblank(RTr.Comment)) then begin
+                  tstr = RTr.Comment;
+                end;
+              end;
+              AddToText(tstr & Chr(9),Mailr);
+              tstr = RArw.Usage;
+              RUr.Code = RArw.Usage;
+              if (ReadFirstMain(RUr,1,true)) then begin
+                if (nonblank(RUr.Comment)) then begin
+                  tstr = RUr.Comment;
+                end;
+              end;
+              if (Mailr.HtmlFlag==0) then begin
+                AddToText(tstr & Chr(9),Mailr);
+                AddToText(ValToString(RArw.QtyWanted,M4UVal,"","",0) & Chr(9),Mailr);
+                AddToText("" & RArw.AgentPrice & Chr(9),Mailr);
+                AddToText("" & RArw.AgentSum & Chr(9),Mailr);
+                AddNLToMail(Mailr);
+              end else begin
+                tstr = tstr & Chr(9);
+                tstr = tstr & ValToString(RArw.QtyWanted,M4UVal,"","",0) & Chr(9);
+                tstr = tstr & RArw.AgentPrice & Chr(9);
+                tstr = tstr & RArw.AgentSum & Chr(9);
+                LineTextPutToHtmlRecord(Mailr,tstr,false,true);
+              end;
+            end;
+          end;
+        end;
+        LTxtr.Code = MTrw.LastTxt;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          if (Mailr.HtmlFlag==0) then begin
+            rwcnt = LineTextCnt(LTxtr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              tstr = LineTextGet(LTxtr,i);
+              LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+            end;    
+            AddCRToText(Mailr);
+          end else begin
+            if (LTxtr.HtmlFlag==0) then begin
+              AddToHtmlRecord(Ltxtr,false,Mailr,true,true);
+            end else begin
+              AddHtmlRecordToHtmlRecord(Ltxtr,Mailr,true);
+            end;
+          end;
+        end;
+        if (RecordUpdate(Mail2r,Mailr,false)==0) then begin  
+          res = 0;
+
+          docname = pdfform;
+          if (blank(docname)) then begin
+            docname = "ResAvForm";
+          end;
+          fname = "tmp/" & USetStr(2288) & " " & RAr.SerNr & ".pdf";
+          SetDocumentFilename(fname);
+          SetMedia(mtPdf);
+          PrintDocument(RAr,docname,false);
+          if (FileExists(fname)) then begin
+            RecordLinkFile(fname,0,Mailr,CurrentCompany);
+          end;
+          SetDocumentFilename("");
+          Delete_File(fname);
+        end;
+      end else begin
+        res = 1353;
+      end;
+    end;
+  end else begin
+    res = 1353;
+  end;
+LCreateMailFromResAvD:;
+  CreateMailFromResAvD = res;
+  return;
+end;
+
+global
+procedure ResAvVc_PasteResCode(var record ResAvVc ResAvr,Integer rownr)
+begin
+  Boolean chsum;
+  record ResVc Resr;
+  record ResTypeVc ResTyper;
+  row ResAvVc ResAvrw;
+
+  MatRowGet(ResAvr,rownr,ResAvrw);
+  if (nonblank(ResAvrw.ResCode)) then begin
+    Resr.Code = ResAvrw.ResCode;
+    ReadFirstMain(Resr,1,true);
+    ResAvrw.ResType = Resr.Type;
+    ResAvrw.Comment = ResTyper.Comment;        
+    ResAvrw.QtyWanted = 1.00;
+    ResTyper.Code = ResAvrw.ResType;
+    if (ReadFirstMain(ResTyper,1,true)) then begin        
+      if (ResTyper.InvoiceBy==0) then begin/*strange but must be like that*/
+        ResAvrw.CalcType = 1;
+      end else begin
+        ResAvrw.CalcType = 0;
+      end;
+    end;      
+    MatRowPut(ResAvr,rownr,ResAvrw);
+//      UpdateRow(rownr,ResAvr);  
+    chsum = true;     
+  end;      
+  if (chsum) then begin
+    ResAvRowSumup(ResAvr,rownr);
+    ResAvSumup(ResAvr);
+  end;
+  return;
+end;
+
+global
+procedure ResAvGetRate(var record ResAvVc ResAvp)
+begin
+  GetFullCurncyRate(ResAvp.CurncyCode,ResAvp.TransDate,ResAvp.FrRate,ResAvp.ToRateB1,ResAvp.ToRateB2,ResAvp.BaseRate1,ResAvp.BaseRate2);
+  return;
+end;
+
+global
+procedure ResAvVc_PasteCurncyCode(var record ResAvVc ResAvp,string oldcurncy)
+begin
+  val fr,to1,to2,br1,br2;
+  record ItemSettingBlock ISr;
+  
+  if (ResAvp.CurncyCode!=oldcurncy) then begin
+    ResAvGetRate(ResAvp);
+//      ResAvDUpdatePrices(ResAvp,false);
+  end else begin
+    BlockLoad(ISr);
+    SaveExchangeRate(ResAvp.FrRate,ResAvp.ToRateB1,ResAvp.ToRateB2,ResAvp.BaseRate1,ResAvp.BaseRate2,fr,to1,to2,br1,br2);
+    ResAvGetRate(ResAvp);
+    if ((OtherExchangeRate(ResAvp.FrRate,ResAvp.ToRateB1,ResAvp.ToRateB2,ResAvp.BaseRate1,ResAvp.BaseRate2,fr,to1,to2,br1,br2)) and (ISr.UpdCurPrWithDate!=0)) then begin
+//      ResAvDUpdatePrices(ResAvp,false);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure ResAvPasteTransDate(var record ResAvVc ResAvr,Integer rownr,Boolean updratef)
+begin  
+  if (updratef) then begin
+    GetFullCurncyRate(ResAvr.CurncyCode,ResAvr.TransDate,ResAvr.FrRate,ResAvr.ToRateB1,ResAvr.ToRateB2,ResAvr.BaseRate1,ResAvr.BaseRate2);
+  end;
+  if (rownr<0) then begin
+    UpdateResAv(ResAvr);
+  end else begin
+    UpdateRow(rownr,ResAvr);
+    ResAvRowSumup(ResAvr,rownr);
+  end;
+  ResAvSumup(ResAvr);
+  return;
+end;

@@ -1,0 +1,438 @@
+external procedure GetProjMaterialsUsageAcc(record AccBlock,record INVc,Integer,var string,var string);
+external function Integer CheckObjs(string,string,var string);
+external function string 60 AddObjectToObjectList(string,string);
+external function val ItemHist_ComponentItem_CostPrice(record CostAccBlock,string,LongInt,LongInt,string,val,string);
+external function roundmode DefaultRoundMode();
+external function Integer ItemPrimaryCostModel(record INVc,var Integer);
+external updating procedure RetRowInvalidateBuyBack(record RetVc,row RetVc);
+external function val FindCostPrice(string,string,string,val,val,Boolean);
+external procedure GetStockedItemFromRecepy(record SHVc,var string,var val);
+external function Integer TRVc_AddRoundOffRow(var record TRVc,val,val,string,Boolean,Boolean,Boolean,val,var val);
+external procedure CombineStructure(var record SHVc);
+external function Boolean ExpandStructItem(string,string,val,var record SHVc);
+external function Boolean CheckTTRPerRow(string,string,string,Boolean,var string,Integer);
+external function string 255 FindINObjects(string,string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure GetITCostAcc(string,var string);
+external procedure GetITStockAcc(string,var string);
+external procedure AddEuroTrRowType(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string,Integer);
+external procedure AddEuroTrRowTypeQty(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string,Integer,val);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure GetFullCurncyRateText(Boolean,var string,val,val,val,val,val);
+external function Boolean TransInFiscal(Date);
+external function Boolean GetCOSAcc(string,string,string,record AccBlock,record INVc,Integer,Boolean,Integer,var string,var string);
+
+global
+procedure FindAdjstockvQtyRetVc(record RetVc Retp,string stockartcodep,Integer currow,var val adjstockvp)
+BEGIN
+  Integer j;
+  record SHVc RecSHp;
+  row RetVc Retrw;
+  Boolean isstruct;
+  string 20 locartcode;
+  val recqty;
+
+  adjstockvp = blankval;
+  for (j=0;j<currow;j=j+1) begin
+    MatRowGet(Retp,j,Retrw);
+    isstruct = ExpandStructItem(Retrw.ArtCode,Retrw.Recepy,Retrw.Quant,RecSHp);
+    if (isstruct) then begin
+      GetStockedItemFromRecepy(RecSHp,locartcode,recqty); 
+      if (stockartcodep==locartcode) then begin
+        adjstockvp = adjstockvp + recqty;
+      end;  
+    end;  
+LFindAdjstockvQtyRetVc:;    
+  end;  
+  RETURN;
+END;
+
+procedure GetRetCostAcc(Integer ItemGroupAccounts,string incostacc,string itcode,string ReturnedAcc,string StockCostAcc,var string costacc)
+BEGIN
+  costacc = incostacc;
+  if (nonblank(costacc)) then begin
+    goto LGetRetCostAcc;
+  end;  
+  if (ItemGroupAccounts!=0) then begin
+    GetITCostAcc(itcode,costacc);
+    if (nonblank(costacc)) then begin
+      goto LGetRetCostAcc;
+    end;
+  end;
+  costacc = ReturnedAcc;
+  if (nonblank(costacc)) then begin
+    goto LGetRetCostAcc;
+  end;  
+  costacc = StockCostAcc;
+  if (nonblank(costacc)) then begin
+    goto LGetRetCostAcc;
+  end;  
+LGetRetCostAcc:;  
+  RETURN;
+END;
+
+procedure GetRetStockAcc(Integer ItemGroupAccounts,record LocationVc Locp,string MainStock,string itcode,string accusageacc,var string stockacc,var string locobjstr)
+BEGIN
+  record LocationVc MainLocr;
+  
+  stockacc = "";
+  locobjstr = "";
+  if (nonblank(Locp.Code)) then begin
+    stockacc = Locp.StockAcc;
+    locobjstr = Locp.Objects;      
+    if (nonblank(stockacc)) then begin
+      goto LGetRetStockAcc;
+    end;    
+  end else begin
+    MainLocr.Code = MainStock;
+    if (ReadFirstMain(MainLocr,1,true)) then begin
+      stockacc = MainLocr.StockAcc;      
+      locobjstr = MainLocr.Objects;      
+    end;
+    if (nonblank(stockacc)) then begin
+      goto LGetRetStockAcc;
+    end;    
+  end;
+  if (ItemGroupAccounts!=0) then begin
+    GetITStockAcc(itcode,stockacc);
+    if (nonblank(stockacc)) then begin
+      goto LGetRetStockAcc;
+    end;
+  end;
+  stockacc = accusageacc;
+  if (nonblank(stockacc)) then begin
+    goto LGetRetStockAcc;
+  end;  
+LGetRetStockAcc:;  
+  RETURN;
+END;
+
+function
+Integer AddRetITRow(record TRVc gTRp,record RetVc Retp,record INVc INp,record AccBlock ARAccRecp,record CostAccBlock CAb,record MainStockBlock MSb,
+                    record LocationVc Locp,string defCostAcc,string puextreobjstr,val prs2,val bbrs,Boolean dc1,Boolean dc2,Boolean sumupf,
+                    val TotSump,Integer rownr,Boolean bbtrf,string pbbvaracc,val br1p,val br2p)
+BEGIN
+  row RetVc Retrwp;
+  string 255 tstr,itacc,errstr;
+  Integer res,primarycostmodel,queuecostmodel;
+  val rs,tmpv,rs2,trs2;
+  string 60 objects,stockobjects,objs,locobjstr;
+  string 10 stockacc,costacc,taccnumber,bbvaracc,prcode;
+  record ORVc ORr;
+  record SHVc SHr;
+
+  rs2 = prs2;
+  bbvaracc = pbbvaracc;
+  if (blank(bbvaracc)) then begin
+    bbvaracc = ARAccRecp.BBVarAcc;
+  end;
+  MatRowGet(Retp,rownr,Retrwp);
+  res = 1085;
+  GetRetStockAcc(CAb.ItemGroupAccounts,Locp,MSb.MainStock,INp.Group,ARAccRecp.StockAcc,stockacc,locobjstr);
+  if (CAb.ObjOnStock!=0) then begin
+    stockobjects = AddObjectToObjectList(puextreobjstr,locobjstr);
+    stockobjects = AddObjectToObjectList(Retrwp.Objects,stockobjects);
+  end;
+  if (GetAccName(stockacc,tstr,60)==false) then begin
+    res = 2120;
+    goto LAddRetITRow;
+  end;
+  res = CheckObjs(stockacc,stockobjects,errstr);
+  if (res!=0) then begin
+    goto LAddRetITRow;
+  end;
+  primarycostmodel = ItemPrimaryCostModel(INp,queuecostmodel);
+  if (CAb.BookInPriceVariance!=0) and (CAb.RetCostPriceFromSH!=0) and (primarycostmodel==1) and (queuecostmodel!=20) then begin
+    if (Retrwp.Quant*Retrwp.BasePrice!=rs2) then begin
+      if (CheckTTRPerRow("RetVc",stockacc,stockobjects,dc1,taccnumber,1)) then begin end;      
+      AddEuroTrRowTypeQty(gTRp,stockacc,stockobjects,"",tstr,Retrwp.Quant*Retrwp.BasePrice,br1p,br2p,sumupf,dc1,TotSump,true,taccnumber,"","",kTransactionRowTypeStock,Retrwp.Quant);
+
+      if (GetAccName(ARAccRecp.InPriceVarAcc,tstr,60)==false) then begin
+        res = 22048;
+        goto LAddRetITRow;
+      end;        
+      if (CheckTTRPerRow("RetPUVc",ARAccRecp.InPriceVarAcc,objects,dc1,taccnumber,1)) then begin end;      
+      AddEuroTrRowType(gTRp,ARAccRecp.InPriceVarAcc,objects,"",tstr,rs2-Retrwp.Quant*Retrwp.BasePrice,br1p,br2p,sumupf,dc1,TotSump,true,taccnumber,"","",kTransactionRowTypeStock);
+    end else begin
+      if (CheckTTRPerRow("RetVc",stockacc,stockobjects,dc1,taccnumber,1)) then begin end;      
+      AddEuroTrRowTypeQty(gTRp,stockacc,stockobjects,"",tstr,rs2,br1p,br2p,sumupf,dc1,TotSump,true,taccnumber,"","",kTransactionRowTypeStock,Retrwp.Quant);
+    end;
+  end else begin
+    if (CheckTTRPerRow("RetVc",stockacc,stockobjects,dc1,taccnumber,1)) then begin end;      
+    AddEuroTrRowTypeQty(gTRp,stockacc,stockobjects,"",tstr,rs2,br1p,br2p,sumupf,dc1,TotSump,true,taccnumber,"","",kTransactionRowTypeStock,Retrwp.Quant);
+  end;
+  tmpv = StringToVal(Retrwp.Extra,M4Val);
+  rs = Retrwp.Quant*tmpv;      
+
+  if (rs!=0) then begin
+    if (GetAccName(ARAccRecp.PUExtraAcc,tstr,60)==false) then begin
+      res = 2121;
+      goto LAddRetITRow;
+    end;
+    if (CheckTTRPerRow("RetVc",ARAccRecp.PUExtraAcc,"",dc2,taccnumber,0)) then begin end;      
+    AddEuroTrRowType(gTRp,ARAccRecp.PUExtraAcc,"","",tstr,rs,br1p,br2p,sumupf,dc2,TotSump,false,taccnumber,"","",kTransactionRowTypeStock);
+  end;
+  rs2 = rs2 - rs;      //??
+  trs2 = rs2;
+  if (bbtrf) then begin
+    if (bbrs!=0) then begin
+      rs2 = bbrs;
+    end;
+  end;
+
+
+  if (Retp.SHNr>0) then begin
+    SHr.SerNr = Retp.SHNr;
+    ReadFirstMain(SHr,1,true);
+    prcode = SHr.PRCode;
+  end else begin
+    ORr.SerNr = Retp.OrdNr;
+    ReadFirstMain(ORr,1,true);
+    prcode = ORr.PRCode;
+  end;
+  if (nonblank(prcode)) then begin
+    GetProjMaterialsUsageAcc(ARAccRecp,INp,CAb.ItemGroupAccounts,costacc,tstr);
+  end;
+  if (blank(costacc)) then begin
+    costacc = defCostAcc;
+    if (blank(costacc)) then begin
+      costacc = ARAccRecp.ReturnedAcc;
+    end;
+    if (blank(costacc)) then begin
+      if (GetCOSAcc(Retrwp.CostAcc,Retp.CustCode,Locp.Code,ARAccRecp,INp,CAb.ItemGroupAccounts,false,0,costacc,tstr)==false) then begin
+      end;
+    end;
+  end;
+
+  if (GetAccName(costacc,tstr,60)==false) then begin
+    res = 2129;
+    goto LAddRetITRow;
+  end;
+  if (CheckTTRPerRow("RetVc",costacc,puextreobjstr,dc2,taccnumber,1)) then begin end;      
+  AddEuroTrRowType(gTRp,costacc,puextreobjstr,"",tstr,rs2,br1p,br2p,true,dc2,TotSump,true,taccnumber,"","",kTransactionRowTypeStock);
+
+  if (bbtrf) then begin
+    if (bbrs!=0) then begin
+      rs2 = trs2 - bbrs;
+      if (GetAccName(bbvaracc,tstr,60)==false) then begin
+        res = 20104;
+        goto LAddRetITRow;
+      end;
+      if (CheckTTRPerRow("RetVc",bbvaracc,puextreobjstr,dc2,taccnumber,1)) then begin end;      
+      AddEuroTrRowType(gTRp,bbvaracc,puextreobjstr,"",tstr,rs2,br1p,br2p,false,dc2,TotSump,true,taccnumber,"","",kTransactionRowTypeStock);
+    end;
+  end;
+
+  res = 0;
+LAddRetITRow:;
+  AddRetITRow = res;
+  RETURN;
+END;
+
+function Integer AddRetCostRows(record TRVc gTRp,record MainStockBlock MSb,record CostAccBlock CAb,record AccBlock ARAccRec,
+                                record LocationVc Locp,record RetVc Retp,row RetVc Retrw,string artcode,val costp,val bbcostp,
+                                Integer rownr,Boolean bbtrf,string bbvaracc,Boolean dc1,Boolean dc2,Boolean sumupf,val br1,val br2,var val TotSum)
+BEGIN
+  Integer res;
+  val rs,bbrs;
+  record INVc INr;
+  string 255 puextreobjstr;
+  record APAccBlock APAccb;  
+  
+  BlockLoad(APAccb);
+  rs = Round(costp,DefaultRoundMode);
+  bbrs = Round(bbcostp,DefaultRoundMode);
+  if (ReadFirstItem(artcode,INr,true,true)==false) then begin
+    INr.Objects = "";
+    INr.ItemType = 0;
+  end;
+//  if ((INr.ItemType==kItemTypeStocked) or (INr.ItemType==0) or (INr.ItemType==3)) then begin
+  if (INr.ItemType==kItemTypeStocked) then begin // service and plain items destroy stock apparently
+    puextreobjstr = AddObjectToObjectList(puextreobjstr,Retrw.Objects);
+    if (APAccb.SkipObjectsOnVIFromHeader==0) then begin
+      puextreobjstr = AddObjectToObjectList(puextreobjstr,Retp.Objects);
+    end;    
+    res = AddRetITRow(gTRp,Retp,INr,ARAccRec,CAb,MSb,Locp,Retrw.CostAcc,puextreobjstr,rs,bbrs,dc1,dc2,sumupf,TotSum,rownr,bbtrf,bbvaracc,br1,br2);
+    if (res!=0) then begin
+      goto LAddRetCostRows;
+    end;
+  end;
+LAddRetCostRows:;
+  AddRetCostRows = res;  
+  RETURN;
+END;
+
+global
+function Integer MakeTransFromRet(record TRVc gTRp,record RetVc Retp,Boolean rpt)
+BEGIN
+  Integer res;
+  record MainStockBlock MSb;
+  record CostAccBlock CAb;
+  record TRGenBlock TRGenRec;
+  record AccBlock ARAccRec;
+  row RetVc Retrw;
+  Integer i,rwcnt;
+  string 255 ftxt,bbvaracc;
+  string 255 tstr;
+  string 10 stockacc,location,stockartcode;
+  val frrate,to1,to2,br1,br2;
+  Boolean dc1,dc2,sumupf,plf;
+  val t,TotSum,temp,adjstockv;
+  record SHVc recSHr;
+  row SHVc recSHrw;
+  Boolean isstruct,bbtrf;
+  Integer j,rwcnt2;
+  record LocationVc Locp;
+  record ORVc ORr;
+  record PLDefVc PLDefr;
+  record PLVc PLr;
+  record TRVc lTRr;
+  transaction string 255 gRuniningMaint;
+  record INVc INr;
+    
+  BlockLoad(ARAccRec);
+  BlockLoad(TRGenRec);
+  BlockLoad(CAb);
+  BlockLoad(MSb);
+  sumupf = true;
+  if (CAb.CorespondingAccounts!=0) then begin
+    sumupf = false;
+  end;
+  frrate = Retp.FrRate;
+  to1 = Retp.ToRateB1;
+  to2 = Retp.ToRateB2;
+  br1 = Retp.BaseRate1;
+  br2 = Retp.BaseRate2;
+  RecordNew(gTRp);
+  if (rpt==false) then begin
+    if (TRGenRec.RetGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromRet;
+    end;
+    if ((nonblankdate(TRGenRec.RetStartDate)) and
+        (Retp.TransDate<TRGenRec.RetStartDate)) then begin
+      res = 0;
+      goto LMakeTransFromRet;
+    end;
+  end;
+  if (true) then begin
+    gTRp.IntYc = RetYc;
+    gTRp.Number = Retp.SerNr;
+    gTRp.RefStr = "";
+  end;
+  if (rpt==false) then begin
+    lTRr.IntYc = gTRp.IntYc;
+    lTRr.Number = gTRp.Number;
+    if (ReadFirstMain(lTRr,2,true)) then begin
+      switch (gRuniningMaint) begin    
+        case "RecalcStockMn":  ;
+        otherwise
+          res = 1032;
+          goto LMakeTransFromRet;
+      end;
+    end;
+  end;  
+  gTRp.RegDate = CurrentDate;
+  gTRp.RegTime = CurrentTime;
+  gTRp.TransDate = Retp.TransDate;
+  if (rpt==false) then begin
+    if (TransInFiscal(gTRp.TransDate)==false) then begin
+      res = 1075;
+      goto LMakeTransFromRet;
+    end;
+  end;
+  ORr.SerNr = Retp.OrdNr;
+  if (ReadFirstMain(ORr,1,true)) then begin
+    if (nonblank(ORr.PriceList)) then begin
+      PLDefr.Code = ORr.PriceList;
+      if (ReadFirstMain(PLDefr,1,true)) then begin
+        switch (PLDefr.DepPrice) begin
+          case 2: 
+            bbtrf = true;
+        end;
+      end;
+    end;
+  end;
+  ftxt = Retp.CustCode;
+  ftxt = ftxt & " ";
+  ftxt = ftxt & Retp.CustName;
+  if (nonblank(Retp.CurncyCode)) then begin
+    ftxt = ftxt & ", ";
+    ftxt = ftxt & Retp.CurncyCode;
+    ftxt = ftxt & " ";
+    GetFullCurncyRateText(true,tstr,Retp.FrRate,Retp.ToRateB1,Retp.ToRateB2,Retp.BaseRate1,Retp.BaseRate2);
+    ftxt = ftxt & tstr;
+  end;
+  gTRp.Comment = ftxt;
+  dc1 = true;
+  dc2 = false;
+  rwcnt = MatRowCnt(Retp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Retp,i,Retrw);  
+    isstruct = ExpandStructItem(Retrw.ArtCode,Retrw.Recepy,Retrw.Quant,recSHr);  
+    if (isstruct==false) then begin
+      location = Retrw.Location;
+      if (blank(location)) then begin location = Retp.Location; end;
+      if (blank(location)) then begin location = MSb.MainStock; end;
+      if (nonblank(location)) then begin
+        Locp.Code = location;
+        if (ReadFirstMain(Locp,1,true)) then begin
+        end;
+      end;
+      switch (PLDefr.DepPrice) begin
+        case 2: 
+          PLr.PLCode = PLDefr.Code;
+          PLr.ArtCode = Retrw.ArtCode;
+          PLr.CustCode = Retp.CustCode;
+          plf = ReadFirstMain(PLr,3,true);
+          if (!plf) then begin
+            PLr.PLCode = PLDefr.Code;
+            PLr.ArtCode = Retrw.ArtCode;
+            plf = ReadFirstMain(PLr,2,true);
+          end;
+          if (plf) then begin
+            bbvaracc = PLr.BBVarAcc;
+          end;
+          if (blank(bbvaracc)) then begin
+            bbvaracc = PLDefr.BBVarAcc;
+          end;      
+      end;
+      res = AddRetCostRows(gTRp,MSb,CAb,ARAccRec,Locp,Retp,Retrw,Retrw.ArtCode,Retrw.Quant * Retrw.CostPrice,Retrw.Quant * Retrw.BBCostPrice,i,bbtrf,bbvaracc,dc1,dc2,sumupf,br1,br2,TotSum);
+      if (res!=0) then begin
+        goto LMakeTransFromRet;
+      end;
+    end else begin
+      CombineStructure(recSHr);
+      location = Retrw.Location;
+      if (blank(location)) then begin
+        location = Retp.Location;
+      end;
+      if (blank(location)) then begin
+        location = MSb.MainStock;
+      end;
+      recSHr.Location = location;
+      rwcnt2 = MatRowCnt(recSHr);
+      for (j=0;j<rwcnt2;j=j+1) begin
+        MatRowGet(recSHr,j,recSHrw);
+        GetStockedItemFromRecepy(recSHr,stockartcode,temp);
+        FindAdjstockvQtyRetVc(Retp,stockartcode,i,adjstockv);
+        
+        t = ItemHist_ComponentItem_CostPrice(CAb,"SHVc",Retp.SHNr,Retrw.SHRow,RecSHrw.ArtCode,RecSHrw.Ship,location);
+        t = Round(t,DefaultRoundMode);
+        res = AddRetCostRows(gTRp,MSb,CAb,ARAccRec,Locp,Retp,Retrw,recSHrw.ArtCode,t,blankval,i,false,bbvaracc,dc1,dc2,sumupf,br1,br2,TotSum);
+        
+        if (res!=0) then begin
+          goto LMakeTransFromRet;
+        end;
+      end;
+    end;
+  end;
+  res = TRVc_AddRoundOffRow(gTRp,br1,br2,"",false,false,false,TotSum,TotSum);
+  if (res!=0) then begin
+    goto LMakeTransFromRet;
+  end;
+  res = 0;
+LMakeTransFromRet:;
+  MakeTransFromRet = res;
+  RETURN;
+END;

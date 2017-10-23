@@ -1,0 +1,142 @@
+external procedure RecVc_PasteItem(var record RecVc,Integer);
+external function roundmode GetCostRoundMode(record RoundBlock);
+external function val FindCostPrice(string,string,string,val,val,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external procedure RecSumup(record RecVc);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external function Boolean AccInRange(string,string);
+
+global
+updating procedure UpdRecepyMn(record RcVc RepSpec)
+BEGIN
+  record RoundBlock RoundRec;
+  record RecVc oldRecr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  record INVc INr;
+  record INVc oldINr;
+  record ItemStatusVc ISr;
+  Boolean TrHs;
+  val t2,totcost;
+  string 255 fromrec,torec;
+  Integer rwcnt,i,outrows,theoutrow;
+  Boolean testf;
+  Date blankd;
+  Integer flushcnt;
+
+  if (nonblank(RepSpec.FirstAcc)) then begin
+    INr.Code = RepSpec.FirstAcc;
+    if (ReadFirstMain(INr,1,true)==false) then begin
+      MessageBox(18640,"");
+      goto LUpdRecepyMn;
+    end;
+  end;
+  BlockLoad(RoundRec);
+  fromrec = FirstInRange(RepSpec.f1,20);
+  torec = LastInRange(RepSpec.f1,20);
+  Recr.Code = fromrec;
+  outrows = 0;
+  TrHs = true;
+  while (LoopMain(Recr,1,TrHs)) begin
+    RecordCopy(oldRecr,Recr);
+    if (TrHs) then begin
+      if (nonblank(torec)) then begin
+        if (Recr.Code>torec) then begin       
+          TrHs = false;
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      outrows = 0;
+      totcost = 0;
+      theoutrow = 0;
+      rwcnt = MatRowCnt(Recr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Recr,i,Recrw);
+        testf = true;
+        if (nonblank(RepSpec.f2)) then begin
+          if (AccInRange(Recrw.Item,RepSpec.f2)==false) then begin
+            testf = false;
+          end;          
+        end;
+        if (testf) then begin
+          INr.Code = Recrw.Item;
+          if (ReadFirstMain(INr,1,true)) then begin
+            if (blank(RepSpec.f3) or (RepSpec.f3==INr.Group)) then begin
+              switch (RepSpec.ArtMode) begin
+                case 0:
+                  if (Recrw.InQty!=0) then begin
+                    Recrw.ItemCost = INr.InPrice + INr.ExtraCost;                    
+                    t2 = Recrw.InQty*Recrw.ItemCost;
+                    totcost = totcost + t2;
+                    totcost = totcost + Recrw.ExtraCost;
+                  end else begin
+                    outrows = outrows + 1;
+                    theoutrow = i;
+                  end;
+                case 1:
+                  if (Recrw.InQty!=0) then begin
+                    FindStockValue(Recrw.Item,"",ISr);
+                    t2 = FindCostPrice(Recrw.Item,"","",ISr.Instock,0,true);
+                    t2 = t2/ISr.Instock;
+                    t2 = Round(t2,GetCostRoundMode(RoundRec));
+                    Recrw.ItemCost = t2;
+                    
+                    t2 = Recrw.InQty*Recrw.ItemCost;
+                    totcost = totcost + t2;
+                    totcost = totcost + Recrw.ExtraCost;
+                  end else begin
+                    outrows = outrows + 1;
+                    theoutrow = i;
+                  end;
+              end;
+            end;
+            if (RepSpec.flags[2]!=0) then begin
+              Recrw.Comment = INr.Name;
+            end;
+          end;          
+        end;
+        MatRowPut(Recr,i,Recrw);
+        if (Recr.OKFlag==0) then begin
+          MatRowGet(Recr,i,Recrw);
+          if (Recrw.InQty!=0) then begin
+            if (Recrw.Item==RepSpec.f2) then begin
+              if (nonblank(RepSpec.FirstAcc)) then begin
+                Recrw.Item = RepSpec.FirstAcc;
+                MatRowPut(Recr,i,Recrw);
+                RecVc_PasteItem(Recr,i);
+              end;
+            end;
+          end;
+        end;        
+      end;
+      if (RepSpec.flags[1]!=0) then begin      
+        if (outrows==1) then begin
+          MatRowGet(Recr,theoutrow,Recrw);
+          if (Recrw.OutQty!=0) then begin
+            Recrw.ItemCost = totcost/Recrw.OutQty;
+            MatRowPut(Recr,theoutrow,Recrw);
+            if (RepSpec.flags[1]==2) then begin
+              INr.Code = Recrw.Item;
+              if (ReadFirstMain(INr,1,true)) then begin
+                RecordCopy(oldINr,INr);
+                INr.InPrice = Recrw.ItemCost; 
+                INr.LastPriceChange = CurrentDate;
+                if (RecordUpdate(oldINr,INr,false)==0) then begin
+                end;
+                CheckFlush(flushcnt,10);
+              end;
+            end;
+          end;
+        end;
+      end;
+      RecSumup(Recr);
+      if (RecordUpdate(oldRecr,Recr,true)==0) then begin
+      end;
+      CheckFlush(flushcnt,10);
+    end;
+    UserTrace(Recr.Code,M4Code);        
+  end;
+LUpdRecepyMn:;  
+  RETURN;
+END;

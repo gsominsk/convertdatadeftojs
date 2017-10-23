@@ -1,0 +1,665 @@
+external procedure GetVATRow(string,var row VATCodeBlock);
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTLevCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass2(string,string,string,string,string,string,string);
+external function Boolean HasApprovals();
+external procedure GetVATdouble(string,var val,var val,Integer);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external function Integer VATType(string);
+external procedure VICalcVals(var record VIVc);
+external procedure VISumup(record VIVc,var val);
+external function roundmode GetVATRoundMode(record RoundBlock);
+external function roundmode DefaultRoundMode();
+external procedure HT2Per(Date, Date , var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure BeginCurncyTotals(var Integer);
+external procedure AddCurncyTotals(var array string,var array val,var Integer,string,val);
+external procedure PrintCurncyTotals(array string,array val,array val,array val,Integer,Integer,Integer,Integer,Integer,Boolean,Integer);
+external procedure HTInvTypes(Integer,Integer,Integer,Integer,var string);
+external procedure HTDetailLevel(Integer, var string);
+external procedure HTOKF(Integer,Integer, var string);
+external procedure HTSaleMan(string, var string);
+external procedure HTOBJ(string,var string);
+external procedure HTNr(Integer,Integer,LongInt,LongInt,var string);
+external procedure HTProjects(string,string,var string);
+external procedure HTCustClass(string,var string);
+external procedure HTCustClassType(string,var string);
+external function Boolean SetInSet2(string,string);
+external procedure ClassTypef(string,string,var Boolean);
+external function Boolean HasObjects();
+external function Boolean HasPLIntegratedWithNL();
+external function Boolean HasIntegratedNL();
+
+function Boolean CheckAllInvoiceLines(string costacc,string rowobj,string prcode,record VIVc VIr,Integer vivt,var val invval,var val vatval,var val ivnovat)
+begin
+  row VIVc VIrw;
+  Boolean res,rowf,prf;
+  Integer i,rwcnt;
+  record RoundBlock Rb;
+  record VIVc tmpVIr;
+  val t,tmpvatval;  
+
+  if (nonblank(prcode)) or (nonblank(rowobj)) then begin
+    RecordClear(tmpVIr);
+    BlockLoad(Rb);
+    invval = blankval;
+    vatval = blankval;
+    rwcnt = MatRowCnt(VIr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VIr,i,VIrw);
+      rowf = true;
+      prf = true;
+      if (nonblank(costacc)) then begin
+        if (costacc!=VIrw.AccNumber) then begin rowf = false; end;
+      end;
+      if (nonblank(rowobj)) then begin
+        if (SetInSet(rowobj,VIrw.Objects)==false) then begin rowf = false; end;
+      end;
+      if (nonblank(prcode)) then begin
+        if (prcode!=VIrw.PRCode) then begin rowf = false; end;
+      end;
+      if (rowf and prf) then begin
+        switch (VIr.InvType) begin
+          case 3:
+            if (VIrw.stp!=6) then begin
+  //            invval = invval - VIrw.Sum;
+  //            vatval = vatval - Round(FindVAT(VIrw.VATCode,VIrw.Sum,0,0),GetVATRoundMode(Rb));
+              MatRowPut(tmpVIr,MatRowCnt(tmpVIr),VIrw);
+              tmpvatval = tmpvatval + (VIrw.Sum*VIr.VATVal)/VIr.PayVal;
+            end;
+          otherwise
+            if (VIrw.stp!=6) then begin
+  //            invval = invval + VIrw.Sum;
+  //            vatval = vatval + FindVAT(VIrw.VATCode,VIrw.Sum,0,0);
+              MatRowPut(tmpVIr,MatRowCnt(tmpVIr),VIrw);
+              tmpvatval = tmpvatval + (VIrw.Sum*VIr.VATVal)/(VIr.PayVal-VIr.VATVal);
+            end;
+        end;
+        res = true;
+      end;  
+    end;    
+    VICalcVals(tmpVIr);
+    VISumup(tmpVIr,t);
+    if (blank(tmpvatval) or blank(VIr.VATVal)) then begin
+      if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        invval = t;
+        vatval = tmpVIr.CalcVATVal;
+      end else begin
+        invval = -t;
+        vatval = tmpVIr.CalcVATVal;
+      end;
+    end else begin
+      if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        invval = t;
+        invval = invval - tmpVIr.CalcVATVal + tmpvatval;
+        vatval = -tmpvatval;
+      end else begin
+        invval = -t;
+        invval = invval - tmpVIr.CalcVATVal + tmpvatval;
+        vatval = tmpvatval;
+      end;
+    end;
+  end;
+  if (VIr.ExportFlag==1) or (VIr.ExportFlag==2) then begin
+    vatval = 0;
+  end;
+  if (nonblank(VIr.VATVal) and blank(tmpvatval)) then begin
+    if (vatval!=VIr.VATVal) then begin
+      switch (VIr.InvType) begin
+        case kInvoiceTypeCredit:
+          vatval = -VIr.VATVal;
+        case kInvoiceTypeCreditSpecialSales:
+          vatval = -VIr.VATVal;
+        otherwise
+          vatval = VIr.VATVal;
+      end;
+    end;
+  end;
+  if (invval==0) then begin
+    invval = blankval;
+  end;
+  if (vatval==0) then begin
+    vatval = blankval;
+  end;
+  ivnovat = invval;
+  if (vivt!=kVATTypeReversed) then begin
+    ivnovat = ivnovat - vatval;
+  end;
+  CheckAllInvoiceLines = res;
+  return;
+end;
+
+global
+procedure VIJRn(record RcVc RepSpec)
+begin
+  Record VIVc VIr;
+  Record ObjVc OBr;
+  Record CUVc VEr;
+  Boolean TrHs,Accs,test2f;
+  Val TotSum, iv, ivnovat, rs,vatval;
+  Boolean testf;
+  LongInt afr,ato;
+  String 255 tstr;
+  Integer rw, rwcnt, i,vatcnt,cnt,vcnt;
+  Row VIVc VIrw;
+  val invval;
+  array val av1;
+  array val av2;
+  array val av3;
+  array string 20 acur;
+  Integer curcnt;
+  LongInt runnr;
+  string 255 frcredacc,tocredacc;
+  string 255 frcacc,tocacc;
+  Integer vivt;
+  record SMVc VATr;
+  record SMVc TotVATr;
+  row SMVc VATrw;
+  val vatv,t1;
+  row VATCodeBlock VATbrw;
+
+  RecordClear(TotVATr);
+  SetupVATBase(TotVATr,vatcnt);          
+  runnr = 1;
+  TotSum = 0;
+  iv = 0;
+  ivnovat = 0;
+  rs = 0;
+  vatval = 0;
+  afr = FirstInRange(RepSpec.f1,30);
+  ato = LastInRange(RepSpec.f1,30);
+  frcacc = FirstInRange(RepSpec.f7,10);
+  tocacc = LastInRange(RepSpec.f7,10);
+  frcredacc = FirstInRange(RepSpec.f8,10);
+  tocredacc = LastInRange(RepSpec.f8,10);
+  TotSum = 0;
+  BeginCurncyTotals(curcnt);
+  StartReportJob(USetStr(4001));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (RepSpec.flags[11]==1) then begin
+    Header(rw,USetStr(4135),0);
+  end;
+  switch (RepSpec.ArtMode) begin
+    case 2:
+      tstr = USetStr(36180);
+    case 3:
+      tstr = USetStr(36181);
+    otherwise
+      tstr = "";
+      HTDetailLevel(RepSpec.ArtMode,tstr);
+  end;
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if nonblank(RepSpec.f1) then begin
+      HTNr(1111,1112,afr,ato,tstr);
+      Header(rw,tstr,1);
+     rw = rw + 1;
+  end;
+  if nonblank(RepSpec.f2) then begin
+   tstr = USetStr(4004) & ": ";
+   tstr = tstr & RepSpec.f2;
+   Header(rw,tstr,1);
+   rw = rw + 1;
+  end;
+  if nonblank(RepSpec.f3) then begin
+   tstr = USetStr(6007) & ": ";
+   tstr = tstr & RepSpec.f3;
+   Header(rw,tstr,1);
+   rw = rw + 1;
+  end;
+  HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTInvTypes(RepSpec.flags[3],RepSpec.flags[4],RepSpec.flags[5],RepSpec.flags[6],tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (HasCategories) then begin
+    HTLevCat(RepSpec.f9,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  HTCustClassType(RepSpec.f5,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end; 
+  if (nonblank(RepSpec.AccStr)) then begin
+    HTSaleMan(RepSpec.AccStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.ObjStr)) then begin
+    HTOBJ(RepSpec.ObjStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.TransStr)) then begin
+    HTProjects(RepSpec.TransStr,RepSpec.TransStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f6)) then begin
+    HTOBJ(RepSpec.f6,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  SetRepColBiDi(5,320,360);
+  SetRepColBiDi(6,400,440);
+  SetRepColBiDi(7,450,490);
+  if (RepSpec.ArtMode==0) then begin
+    SetRepCol(2,70);
+    SetRepCol(3,140);
+    SetRepCol(4,220);
+    StartFormat(15);
+    OutString(0,0,USetStr(4002),false);
+    OutString(2,0,USetStr(4003),false);
+    OutString(3,0,USetStr(4007),false);//140
+    OutString(4,0,USetStr(4004),false);//200
+    OutString(400,0,USetStr(4005),true);//400
+    if (HasApprovals) then begin
+      OutString(440,0,UsetStr(6007),false);//430
+    end;
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  if (RepSpec.ArtMode==3) then begin
+    SetRepColBiDi(5,300,350);
+    SetRepColBiDi(6,350,420);
+    SetRepColBiDi(7,410,470);
+
+    StartFormat(15);
+    OutString(0,0,USetStr(4002),false);
+    OutString(55,0,USetStr(4003),false);
+    OutString(100,0,USetStr(4007),false);
+    OutString(160,0,USetStr(4004),false);
+    OutStringAdjust(5,0,USetStr(2356),true,M4Val);
+    OutStringAdjust(6,0,USetStr(2328),true,M4Val);
+    OutStringAdjust(7,0,USetStr(2329),true,M4Val);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  if (RepSpec.ArtMode==2) then begin
+    SetRepColBiDi(5,310,360);
+    SetRepColBiDi(6,370,440);
+    SetRepColBiDi(7,430,490);
+
+    StartFormat(15);
+    OutString(0,0,USetStr(4002),false);
+    OutString(55,0,USetStr(4003),false);
+    OutString(105,0,USetStr(4007),false);
+    OutString(165,0,USetStr(4004),false);
+    OutStringAdjust(5,0,USetStr(2356),true,M4Val);
+    OutStringAdjust(6,0,USetStr(2328),true,M4Val);
+    OutStringAdjust(7,0,USetStr(2329),true,M4Val);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    SetRepCol(2,70);
+    SetRepCol(3,140);
+    SetRepCol(4,220);
+    StartFormat(15);
+    OutString(0,0,USetStr(4002),false);
+    OutString(2,0,USetStr(4003),false);
+    OutString(3,0,USetStr(4007),false);
+    OutString(4,0,USetStr(4004),false);//200
+    OutStringAdjustBiDi(400,0,USetStr(4005),true,M4Val,440);
+    if (HasApprovals) then begin
+      OutString(430,0,UsetStr(6007),false);
+    end;
+    StartFormat(15);
+    EndFormat;
+    if (HasIntegratedNL) then begin
+      OutString(20,0,USetStr(7065),false);
+    end;
+    if (HasObjects) then begin
+      OutString(80,0,USetStr(2411),false);
+    end;
+    OutString(150,0,USetStr(2504),false);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  VIr.SerNr = afr;
+  TrHs = true;
+  while LoopMain(VIr,1,TrHs) begin
+    if (ato<>-1) then begin
+      if (VIr.SerNr>ato) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = false;
+      if (VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        VIr.InvType = kInvoiceTypeCredit;
+      end;
+      if ((VIr.InvType<kInvoiceTypeNormal) or (VIr.InvType>kInvoiceTypeCredit)) then begin
+        VIr.InvType = kInvoiceTypeNormal;
+      end;
+      if (blank(RepSpec.f2) or (RepSpec.f2==VIr.VECode)) then begin
+        if ((RepSpec.flags[1]<>0 and (VIr.OKFlag==0)) or (RepSpec.flags[2]<>0 and (VIr.OKFlag<>0))) then begin
+          if ((RepSpec.flags[3]<>0 and (VIr.InvType==kInvoiceTypeNormal or VIr.InvType==kInvoiceTypeNormalSpecialSales)) or 
+          (RepSpec.flags[4]<>0 and (VIr.InvType==kInvoiceTypeEmployee or VIr.InvType==kInvoiceTypeCash or VIr.InvType==kInvoiceTypeCashInvoiceReceiptPRT)) or (RepSpec.flags[5]<>0 and (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales))) then begin
+            testf = true;
+          end;
+        end;
+      end;
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (SetInSet(RepSpec.AccStr,VIr.SalesMan)==false) then begin testf = false; end;
+      end;  
+      if (nonblank(RepSpec.Stext)) then begin
+        if (RepSpec.Stext<>VIr.SalesGroup) then begin testf = false; end;
+      end;  
+      if (nonblank(RepSpec.f3)) then begin
+        if (RepSpec.f3<>VIr.OKPersons) then begin testf = false; end;
+      end;  
+      if ((RepSpec.flags[10]==1) and (VIr.PrelBook==0)) then begin
+         testf = false;
+      end;
+      if ((RepSpec.flags[11]==1) and (VIr.Closed==0)) then begin
+        testf = false;
+      end;
+      if (nonblankdate(RepSpec.sStartDate)) then begin
+         if (VIr.TransDate<RepSpec.sStartDate) then begin
+           testf = false;
+         end;
+      end;
+      if (nonblankdate(RepSpec.sEndDate)) then begin
+        if (VIr.TransDate>RepSpec.sEndDate) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.vals0)) then begin
+        rs = MulRateToBase1(VIr.CurncyCode,VIr.PayVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+        if (repSPec.vals0>rs) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        testf = ContactInGroupClass2(VIr.VECode,RepSpec.f9,RepSpec.f4,RepSpec.f5,"SUPP","","");
+      end;
+      if (nonblank(RepSpec.ObjStr)) then begin    
+        if (SetInSet(RepSpec.ObjStr,VIr.Objects)==false) then begin        
+          testf = false; 
+        end; 
+      end;  
+      if (nonblank(RepSpec.f8)) then begin
+        if (VIr.APAcc<frcredacc) or (VIr.APAcc>tocredacc) then begin
+          testf = false;
+        end;
+      end;
+      if ((testf==true) and (nonblank(RepSpec.ObjType))) then begin
+        testf = false;
+        OBr.OTCode = RepSpec.ObjType;
+        OBr.Code = "";
+        Accs = true;
+        ResetLoop(OBr);
+        while (LoopKey("OTCode",OBr,1,Accs)) begin
+          if ((Accs==true) and (RepSpec.ObjType==OBr.OTCode)) then begin              
+            if (SetInSet(OBr.Code,VIr.Objects)==true) then begin
+              testf = true;
+              Accs = false;
+            end;
+          end;
+        end; 
+      end;
+      if (nonblankdate(RepSpec.d1)) then begin
+        if (VIr.RcvDate<RepSpec.d1) then begin testf = false; end;
+      end;
+      if (RepSpec.ArtMode==1) then begin
+        if (testf) then begin
+          if (nonblank(RepSpec.f7)) then begin
+            testf = false;
+            rwcnt = MatRowCnt(VIr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(VIr,i,VIrw);
+              if (VIrw.AccNumber>=frcacc) and (VIrw.AccNumber<=tocacc) then begin 
+                testf = true;              
+                i = rwcnt;
+              end; 
+            end;
+          end;
+        end;        
+      end;
+      if (testf) then begin
+        RecordClear(VATr);
+        SetupVATBase(VATr,vatcnt);          
+        rwcnt = MatRowCnt(VIr);
+        if (rwcnt>0) then begin
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(VIr,i,VIrw);
+            if (VIrw.ovst==0) then begin
+              if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                AddVATBase(VATr,VIrw.VATCode,-VIrw.Sum,blankval,vatcnt,0,0);
+                AddVATBase(TotVATr,VIrw.VATCode,-VIrw.Sum,blankval,vatcnt,0,0);
+              end else begin
+                AddVATBase(VATr,VIrw.VATCode,VIrw.Sum,blankval,vatcnt,0,0);
+                AddVATBase(TotVATr,VIrw.VATCode,VIrw.Sum,blankval,vatcnt,0,0);
+              end;
+              vivt = VATType(VIrw.VATCode);
+              if (vivt==kVATTypeReversed) then begin
+                i = rwcnt;
+              end;
+            end;
+          end;
+        end;
+
+        iv = VIr.PayVal;
+        if (blank(VIr.VATVal) and (VIr.CalcVATVal <> 0 )) then begin
+          vatval = VIr.CalcVATVal;
+        end else begin
+          vatval = VIr.VATVal;
+        end;
+        if (VIr.ExportFlag==1) or (VIr.ExportFlag==2) then begin
+          vatval = 0;
+        end;        
+        if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+           iv = -iv;
+           ivnovat = -ivnovat;
+           vatval = -vatval;
+        end;
+        test2f = CheckAllInvoiceLines(RepSpec.f7,RepSpec.f6,RepSpec.TransStr,VIr,vivt,iv,vatval,ivnovat);        
+        if ((nonblank(RepSpec.f6)) or (nonblank(RepSpec.TransStr))) then begin
+          if (test2f==false) then begin
+            goto L77;
+          end;
+        end;      
+        rs = MulRateToBase1(VIr.CurncyCode,iv,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+        if (VIr.Invalid==0) then begin
+          TotSum = TotSum + rs;
+        end;
+        if (RepSpec.ArtMode==0) then begin
+          StartFormat(15);
+          OutLongIntOvst(0,"DblVIVc",VIr.SerNr,false,VIr.Invalid);
+          OutDateOvst(2,0,VIr.InvDate,false,VIr.Invalid);
+          OutStringOvst(3,0,VIr.InvoiceNr,false,VIr.Invalid);
+          OutStringOvst(4,0,VIr.VEName,false,VIr.Invalid);
+          OutValOvstBiDi(400,0,iv,M4Val,true,VIr.Invalid,445);
+          OutStringOvst(415,0,VIr.CurncyCode,false,VIr.Invalid);
+          OutStringOvst(450,0,VIr.OKPersons,false,VIr.Invalid);
+          EndFormat;
+          if (VIr.Invalid==0) then begin
+            AddCurncyTotals(acur,av1,curcnt,VIr.CurncyCode,ivnovat);
+            AddCurncyTotals(acur,av2,curcnt,VIr.CurncyCode,iv);
+            AddCurncyTotals(acur,av3,curcnt,VIr.CurncyCode,vatval);
+          end;
+        end;
+        if (RepSpec.ArtMode==2) then begin
+          StartFormat(15);
+          OutLongIntOvst(0,"DblVIVc",VIr.SerNr,false,VIr.Invalid);
+          OutDateOvst(55,0,VIr.InvDate,false,VIr.Invalid);
+          OutStringOvst(105,0,VIr.InvoiceNr,false,VIr.Invalid);
+          OutStringOvst(165,0,VIr.VEName,false,VIr.Invalid);
+          OutValOvstBiDi(5,0,vatval,M4Val,true,VIr.Invalid,5);
+          OutValOvstBiDi(6,0,ivnovat,M4Val,true,VIr.Invalid,6);
+          OutValOvstBiDi(7,0,iv,M4Val,true,VIr.Invalid,7);
+          OutStringOvst(1,0,VIr.CurncyCode,true,VIr.Invalid);
+          EndFormat;
+/*          
+          if (RepSpec.flags[15]!=0) then begin
+            vcnt = MatRowCnt(VATr);
+            for (i=0;i<vcnt;i=i+1) begin
+              MatRowGet(VATr,i,VATrw);
+              if (blank(VATrw.DebVal)==false) then begin
+                GetVATRow(VATrw.VATCode,VATbrw);
+                StartFormat(15);
+                 MulVATIV(VATrw.VATCode,VATrw.DebVal,vatv,t1,0,0);
+                 OutString(165,0,VATbrw.Comment,false);
+                 OutVal(5,0,vatv,M4Val,true);
+                 OutVal(6,0,VATrw.DebVal,M4Val,true);
+                 OutVal(7,0,VATrw.DebVal+vatv,M4Val,true);
+                EndFormat;
+              end;
+            end;
+          end;
+*/          
+          if (VIr.Invalid==0) then begin
+            AddCurncyTotals(acur,av1,curcnt,VIr.CurncyCode,ivnovat);
+            AddCurncyTotals(acur,av2,curcnt,VIr.CurncyCode,iv);
+            AddCurncyTotals(acur,av3,curcnt,VIr.CurncyCode,vatval);
+          end;
+        end;
+        if (RepSpec.ArtMode==3) then begin
+          cnt = 0;
+          testf = true;
+          rwcnt = MatRowCnt(VATr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(VATr,i,VATrw);
+            if (VATrw.DebVal!=0) then begin
+              GetVATRow(VATrw.VATCode,VATbrw);
+              StartFormat(15);
+              OutLongIntOvst(0,"DblVIVc",VIr.SerNr,false,VIr.Invalid);
+              OutDateOvst(55,0,VIr.InvDate,false,VIr.Invalid);
+              OutStringOvst(100,0,VIr.InvoiceNr,false,VIr.Invalid);
+              OutStringOvst(160,0,Left(VIr.VEName,30),false,VIr.Invalid);
+              MulVATIV(VATrw.VATCode,VATrw.DebVal,vatv,t1,0,0);
+              OutValOvstBiDi(5,0,vatv,M4Val,true,VIr.Invalid,5);
+              OutValOvstBiDi(6,0,VATrw.DebVal,M4Val,true,VIr.Invalid,6);
+              OutValOvstBiDi(7,0,VATrw.DebVal+vatv,M4Val,true,VIr.Invalid,7);
+              OutString(415,0,VATbrw.Comment,false);
+//              OutStringOvst(1,0,VIr.CurncyCode,true,VIr.Invalid);
+              EndFormat;
+            end;
+          end;
+          if (VIr.Invalid==0) then begin
+            AddCurncyTotals(acur,av1,curcnt,VIr.CurncyCode,ivnovat);
+            AddCurncyTotals(acur,av2,curcnt,VIr.CurncyCode,iv);
+            AddCurncyTotals(acur,av3,curcnt,VIr.CurncyCode,vatval);
+          end;
+        end;
+        if (RepSpec.ArtMode==1) then begin
+          Gray_Divider(0,1);
+          StartFormat(15);
+//          OutLongInt(0,0,runnr,false);
+          runnr = runnr + 1;
+          OutLongIntOvst(0,"DblVIVc",VIr.SerNr,false,VIr.Invalid);
+          OutDateOvst(2,0,VIr.InvDate,false,VIr.Invalid);
+          OutStringOvst(3,0,VIr.InvoiceNr,false,VIr.Invalid);
+          OutStringOvst(4,0,Left(VIr.VEName,25),false,VIr.Invalid);
+          OutValOvstBiDi(400,0,iv,M4Val,true,VIr.Invalid,440);
+          OutStringOvst(405,0,VIr.CurncyCode,false,VIr.Invalid);
+          OutStringOvst(430,0,VIr.OKPersons,false,VIr.Invalid);
+          EndFormat;
+          if (VIr.Invalid==0) then begin
+            AddCurncyTotals(acur,av1,curcnt,VIr.CurncyCode,ivnovat);
+            AddCurncyTotals(acur,av2,curcnt,VIr.CurncyCode,iv);
+            AddCurncyTotals(acur,av3,curcnt,VIr.CurncyCode,vatval);
+          end;
+          StartFormat(15);
+          OutDateOvst(2,0,VIr.TransDate,false,VIr.Invalid);
+          OutDateOvst(3,0,VIr.RcvDate,false,VIr.Invalid);
+          switch (VIr.InvType) begin
+            case kInvoiceTypeCredit:
+              OutStringOvst(4,0,USetStr(4013),false,VIr.Invalid);
+            case kInvoiceTypeEmployee:
+              OutStringOvst(4,0,USetStr(4012),false,VIr.Invalid);
+            case kInvoiceTypeCash:
+              OutStringOvst(4,0,USetStr(4012),false,VIr.Invalid);
+            otherwise
+              OutStringOvst(4,0,USetStr(4011),false,VIr.Invalid);
+          end;
+          OutStringOvst(300,0,USetStr(6707),false,VIr.Invalid);
+          OutValOvstBiDi(400,0,vatval,M4Val,true,VIr.Invalid,440);
+          EndFormat;
+          rwcnt = MatRowCnt(VIr);
+          for (i=0; i<rwcnt; i=i+1) begin
+            MatRowGet(VIr,i,VIrw);
+            if (VIrw.stp==1) then begin
+              testf = true;
+              if ((nonblank(RepSpec.f6)) and (SetInSet(RepSpec.f6,VIrw.Objects)==false)) then begin 
+                testf = false;
+              end;
+              if ((nonblank(RepSpec.TransStr)) and (SetInSet(RepSpec.TransStr,VIrw.PRCode)==false)) then begin 
+                testf = false;
+              end;
+              if (nonblank(RepSpec.f7)) then begin
+                if (VIrw.AccNumber<frcacc) or (VIrw.AccNumber>tocacc) then begin
+                  testf = false;
+                end; 
+              end;              
+              if (testf) then begin
+                StartFormat(15);
+                if (HasIntegratedNL) then begin
+                  OutStringOvst(20,0,VIrw.AccNumber,false,VIr.Invalid);
+                end;
+                if (HasObjects) then begin
+                  OutStringOvst(80,0,VIrw.Objects,false,VIr.Invalid);
+                end;
+                OutStringOvst(150,0,VIrw.Comment,false,VIr.Invalid);
+                if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                  OutValOvstBiDi(400,0,-VIrw.Sum,M4Val,true,VIr.Invalid,440);
+                end else begin
+                  OutValOvstBiDi(400,0,VIrw.Sum,M4Val,true,VIr.Invalid,440);
+                end;
+                OutStringOvst(1,0,VIrw.VATCode,true,VIr.Invalid);
+                EndFormat;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+L77:;
+  end;
+  Gray_Divider(0,1);
+  if (RepSpec.ArtMode==3) then begin
+    StartFormat(15);
+    rwcnt = MatRowCnt(TotVATr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TotVATr,i,VATrw);
+      if (VATrw.DebVal!=0) then begin
+        GetVATdouble(VATrw.VATCode,vatv,t1,0);
+        OutStringOvst(230,0,vatv,true,0);
+        MulVATIV(VATrw.VATCode,VATrw.DebVal,vatv,t1,0,0);
+        OutValOvstBiDi(5,0,vatv,M4Val,true,0,5);
+        OutValOvstBiDi(6,0,VATrw.DebVal,M4Val,true,0,6);
+        OutValOvstBiDi(7,0,VATrw.DebVal+vatv,M4Val,true,0,7);
+      end;
+    end;
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  OutStringAdjust(5,0,USetStr(2356),true,M4Val);
+  OutStringAdjust(6,0,USetStr(2328),true,M4Val);
+  OutStringAdjust(7,0,USetStr(2329),true,M4Val);
+  PrintCurncyTotals(acur,av3,av1,av2,curcnt,5,6,7,210,true,RepSpec.PocketPC);
+  EndJob;
+return;
+end;

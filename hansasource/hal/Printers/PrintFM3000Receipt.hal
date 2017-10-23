@@ -1,0 +1,448 @@
+external procedure GetPOSNETVATCode(Array val,Integer,record VATCodeBlock,string,var string);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+
+function Integer FM3000Open(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res,noErr;
+  
+//  res = OpenComPort(0,"COM1",9600,-1,8,1);
+//  res = OpenComPort(0,"/dev/tty.usbserial-VZDCC3V3",9600,-1,8,1,kFlowControlDTRDSR);//kFlowControlDTRDSR
+
+//  res = OpenComPort(0,device,9600,-1,8,1,kFlowControlDTRDSR);//kFlowControlDTRDSR, kFlowControlRTSCTS
+
+
+  res = OpenComPort(0,LSPDr.Port,LSPDr.BaudRate,LSPDr.Parity,LSPDr.ByteSize,LSPDr.StopBits,LSPDr.FlowControl);
+//  res = OpenComPort(0,device,9600,-1,8,1,kFlowControlDTRDSR);//kFlowControlDTRDSR, kFlowControlRTSCTS
+
+  if (res==1) then begin
+    res = noErr;
+  end else begin
+    goto LFM3000Open;
+  end;
+/*
+Baude rate is 9600
+Paryty - No
+Bits per Byte  8
+Stop Bits  1 
+Code page(for example UTF-8) - 852(optional)
+
+*/  
+LFM3000Open:;
+  FM3000Open = res;
+  return;
+end;
+
+procedure FM3000Close()
+begin
+  Integer res;
+
+  res = CloseComPort(0);
+  return;
+end;
+
+function Integer FM3000SendString(string s)
+begin
+  Integer res;
+  Integer noErr;
+
+LogText(0,s);
+//StopALert("s " & s);
+
+  if (OutComPort(0,s)!=0) then begin
+    res = noErr;
+  end else begin
+    res = 1;
+  end;
+  FM3000SendString = res;
+  return;
+end;
+
+function Integer SendCancelFP3000Receipt()
+begin
+  string 10 cancelstr;
+  Integer res;
+
+  cancelstr = chr(27) & "e";
+  res = FM3000SendString(cancelstr);
+  MessageBox(0,"Receipt cancelled");  
+  SendCancelFP3000Receipt = res;
+  return;
+end;
+
+function Integer  FM3000ReplyInBuffer(var string replystr)
+begin
+  Integer noErr;
+  
+  replystr = replystr & ReadComPort(0,255-len(replystr));
+  FM3000ReplyInBuffer = noErr;
+  return;
+end;
+
+function Integer FM3000WaitTime(LongInt par,Integer option,var string replystr)
+begin
+  Integer res;
+  Integer noErr;
+  LongInt lpar;
+  LongInt tickcount, tick;
+  Integer l,i;
+  string 1 ETXs;
+
+  res = 12400;
+  ETXs = chr(3);
+  replystr = "";
+  lpar = par;
+//  lpar = par*1000;
+  tick = GetCurTick;
+  tickcount = tick;
+  while ((tickcount-tick)<lpar) begin
+    tickcount = GetCurTick;
+    switch (option) begin
+        case 13:      
+          res = FM3000ReplyInBuffer(replystr);
+          if (len(replystr)>0) then begin
+            res = noErr;
+            goto LFM3000WaitTime;
+          end;
+        case 3:
+          res = FM3000ReplyInBuffer(replystr);
+          l = len(replystr);
+          if (Mid(replystr,l,1)==ETXs) then begin
+            res = noErr;
+            goto LFM3000WaitTime;
+          end;
+  	end;
+  end;
+LFM3000WaitTime:;
+
+  FM3000WaitTime = res;
+  RETURN;  
+END;
+
+function Integer FM3000WriteAndReadReply(string str,LongInt errtimeout,var string replystr)
+begin
+  Integer res;
+  Integer noErr;
+  
+  res = FM3000SendString(str);
+  if (res!=noErr) then begin
+    goto LFM3000WriteAndReadReply;
+  end;
+  res = FM3000WaitTime(errtimeout,3,replystr);
+  if (res!=noErr) then begin
+    goto LFM3000WriteAndReadReply;
+  end;        
+LFM3000WriteAndReadReply:;
+  FM3000WriteAndReadReply = res;
+  return;
+end;
+
+function Integer FM3000LoadVATRates(Array val FPVATRates,var string lastinvcnt)
+begin
+  Integer res,noErr;
+  string 10 getVATRate;
+  string 255 replystr,nc;
+  Integer i,l,eolcnt;
+  string 255 rate1str,rate2str,rate3str,rate4str,rate5str;
+
+  getVATRate = chr(27) & "I";  
+  res = FM3000WriteAndReadReply(getVATRate,300,replystr);  
+//StopAlert("FM3000LoadVATRates replystr " & replystr);  
+
+  if (blank(replystr)) then begin
+    goto L66FM3000LoadVATRates;
+  end;
+  if (res!=noErr) then begin
+	  goto LFM3000LoadVATRates;
+  end;
+  res = noErr;
+
+  l = len(replystr);
+  for (i=0;i<=l;i=i+1) begin
+    nc = Mid(replystr,i,1);
+    switch (eolcnt) begin
+      case 1:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          lastinvcnt = lastinvcnt & nc;
+        end;
+      case 15:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          rate1str = rate1str & nc;
+        end;
+      case 16:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          rate2str = rate2str & nc;
+        end;
+      case 17:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          rate3str = rate3str & nc;
+        end;
+      case 18:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          rate4str = rate4str & nc;
+        end;
+      case 19:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          rate5str = rate5str & nc;
+        end;
+      otherwise
+    end;
+    if (nc==chr(10)) then begin
+      eolcnt = eolcnt + 1;
+    end;
+  end;
+
+//StopAlert("lastinvcnt " & lastinvcnt & " len(replystr) " & len(replystr));
+
+  FPVATRates[0] = StringToVal(rate1str,M4Val);
+  FPVATRates[1] = StringToVal(rate2str,M4Val);
+  FPVATRates[2] = StringToVal(rate3str,M4Val);
+  FPVATRates[3] = StringToVal(rate4str,M4Val);
+  FPVATRates[4] = StringToVal(rate5str,M4Val);
+
+//StopAlert("FPVATRates[0]x " & FPVATRates[0]);  
+
+  if (FPVATRates[0]==0) or (blank(FPVATRates[0])) then begin
+    FPVATRates[0] = 19.00;
+  end;
+
+//StopAlert("FPVATRates[0]y " & FPVATRates[0]);  
+
+  if (FPVATRates[1]==0) or (blank(FPVATRates[1])) then begin
+    FPVATRates[1] = 0.00;
+  end;
+  
+  goto LFM3000LoadVATRates;  
+L66FM3000LoadVATRates:;
+  res = 12405;
+  MessageBox(0,USetStr(res));
+LFM3000LoadVATRates:;
+
+//StopAlert("FM3000LoadVATRates res " & res);  
+
+  FM3000LoadVATRates = res;
+  return;
+end;
+
+function Integer FM3000WriteAndCheck(LongInt t,string CtrlSeq)
+BEGIN
+  Integer res,noErr;
+  string 255 replystr;
+  
+  res = FM3000WriteAndReadReply(CtrlSeq,t,replystr);  
+  
+  if (res!=noErr) then begin
+    res = SendCancelFP3000Receipt;
+    res = 1;
+    goto LFM3000WriteAndCheck;
+  end;
+LFM3000WriteAndCheck:;  
+  FM3000WriteAndCheck = res;
+  RETURN
+END;
+
+function Integer FM3000WriteWithoutCheck(string CtrlSeq)
+BEGIN
+  Integer res,noErr;
+  string 255 replystr;
+  LongInt tick,tickcount;
+  
+  res = FM3000SendString(CtrlSeq);
+  if (res!=noErr) then begin
+    goto LFM3000WriteWithoutCheck;
+  end;
+LFM3000WriteWithoutCheck:;
+  
+  /*
+  tick = GetCurTick;
+  tickcount = tick;
+  while ((tickcount-tick)<300) begin
+    tickcount = GetCurTick;
+  end;
+  */
+  
+  FM3000WriteWithoutCheck = res;
+  RETURN
+END;
+
+function Integer FM3000TransBegin(record IVVc IVr)
+begin
+  Integer res;
+  string 255 CtrlSeq;
+
+  CtrlSeq = chr(27) & "b";
+
+  res = FM3000WriteWithoutCheck(CtrlSeq);
+  FM3000TransBegin = res;
+  return;
+end;
+
+function Integer FM3000PrintBOSLines(record IVVc IVr,Array val prates,record CashPrintBlock CPb,record VATCodeBlock VATCb)
+BEGIN
+  Integer res,noErr,res2;
+  Boolean headf;  
+  record INVc INr;
+  Integer i,rwcnt,jj;
+  row IVVc IVrw;
+  string 255 spec,tstr,CtrlSeq;
+  string 2 CRLF,ESCs;
+  string 10 FPVATCode;
+  string 255 replystr;
+  
+  CRLF = chr(13) & chr(10);  
+  ESCs = chr(27);  
+  headf = true;
+  
+  rwcnt =  MatRowCnt(IVr);  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    if (nonblank(IVrw.ArtCode)) then begin
+      GetPOSNETVATCode(prates,5,VATCb,IVrw.VATCode,FPVATCode);
+
+//StopAlert("VATCode = " & FPVATCode)      
+
+      if (blank(FPVATCode)) then begin
+        res = SendCancelFP3000Receipt;
+        res = 1;          
+//StopAlert("Wrong VATCode = " & FPVATCode)      
+//cancel printing        
+        goto LFM3000PrintBOSLines;
+      end;
+      if (headf) then begin
+        M4PadString("Name",12," ",false,tstr);
+        CtrlSeq = tstr;
+        M4PadString("Pcs",5," ",true,tstr);
+        CtrlSeq = CtrlSeq & tstr;
+        M4PadString("Prc/PU",8," ",true,tstr);
+        CtrlSeq = CtrlSeq & tstr;
+        M4PadString("Tax",5," ",true,tstr);
+        CtrlSeq = CtrlSeq & tstr;
+        M4PadString("Sum",10," ",true,tstr);
+        CtrlSeq = CtrlSeq & tstr;
+        CtrlSeq = CtrlSeq & CRLF;
+        res = FM3000WriteWithoutCheck(CtrlSeq);      
+        headf = false;
+        if (res!=noErr) then begin
+          goto LFM3000PrintBOSLines;
+        end;
+      end;
+
+      spec = "";
+      if (ReadFirstItem(IVrw.ArtCode,INr,true,true)) then begin    
+        spec = INr.AlternativeCode;
+      end;
+      if (blank(spec)) then begin
+        spec = IVrw.ArtCode;
+      end;
+
+      M4PadString(spec,12," ",false,CtrlSeq);
+      M4PadString(ValToString(IVrw.Quant,M4Val,"",".",0),5," ",true,tstr);
+      CtrlSeq = CtrlSeq & tstr;
+      M4PadString(ValToString(IVrw.Price,M423Val,"",".",0),8," ",true,tstr);
+      CtrlSeq = CtrlSeq & tstr;      
+
+      M4PadString(ESCs & FPVATCode,3," ",true,tstr);
+      CtrlSeq = CtrlSeq & tstr;      
+      M4PadString(ValToString(IVrw.Sum,M4Val,"",".",0),10," ",true,tstr);
+      CtrlSeq = CtrlSeq & tstr;      
+      CtrlSeq = CtrlSeq & CRLF;
+
+      res = FM3000WriteWithoutCheck(CtrlSeq);
+      
+      if (res!=noErr) then begin
+        goto LFM3000PrintBOSLines;
+      end;
+    end;
+  end;
+
+LFM3000PrintBOSLines:;  
+
+  FM3000PrintBOSLines = res;
+  RETURN;  
+END;
+
+function Integer FM3000AcceptBOS(record IVVc IVr,string lastinvcnt)
+BEGIN
+  Integer res;
+  string 255 CtrlSeq,replystr,tstr;
+  string 2 CRLF;
+  Integer i,l,eolcnt;
+  string 255 nc,lastinv;
+  LongInt tick,tickcount;
+  
+  CRLF = chr(13) & chr(10);  
+  CtrlSeq = chr(27) & "k";
+
+  M4PadString(ValToString(IVr.Sum4,M4Val,"",".",0),40," ",true,tstr);
+  CtrlSeq = CtrlSeq & tstr;
+  CtrlSeq = CtrlSeq & CRLF;
+  res = FM3000WriteWithoutCheck(CtrlSeq);
+  if (res==0) then begin
+    CtrlSeq = chr(27) & "e";
+    res = FM3000WriteWithoutCheck(CtrlSeq);
+  end;
+
+/*  tick = GetCurTick;
+  tickcount = tick;
+  while ((tickcount-tick)<300) begin
+    tickcount = GetCurTick;
+  end;
+
+  CtrlSeq = chr(27) & "I";  
+  res = FM3000WriteAndReadReply(CtrlSeq,300,replystr);  
+
+  l = len(replystr);
+  for (i=0;i<=l;i=i+1) begin
+    nc = Mid(replystr,i,1);
+    switch (eolcnt) begin
+      case 1:
+        if (nc!=chr(13)) and (nc!=chr(10)) then begin
+          lastinv = lastinv & nc;
+        end;
+    end;
+    if (nc==chr(10)) then begin
+      eolcnt = eolcnt + 1;
+    end;
+  end;
+
+StopAlert("lastinvcnt " & lastinvcnt & " lastinv  " & lastinv & " len(replystr) " & len(replystr));
+*/
+  FM3000AcceptBOS = res;
+  RETURN;
+END;
+
+global
+updating procedure PrintFM3000Receipt(record IVVc IVr,record LSerialPortDeviceVc LSPDr)
+begin
+  record IVVc lIVr;
+  record IVVc oldIVr;
+  Integer noErr;
+  Array val FPVATRates;
+  record CashPrintBlock CPb;
+  record VATCodeBlock VATCb;
+  string 255 lastinvcnt,device;
+  record LocalMachineBlock LMb;
+  record MachineCashVc MCr;
+  
+  BlockLoad(VATCb);
+  noErr = 0;
+  if (FM3000Open(LSPDr)==noErr) then begin
+    if (FM3000LoadVATRates(FPVATRates,lastinvcnt)==noErr) then begin
+      if (FM3000TransBegin(IVr)==noErr) then begin
+        if (FM3000PrintBOSLines(IVr,FPVATRates,CPb,VATCb)==noErr) then begin
+          if (FM3000AcceptBOS(IVr,lastinvcnt)==noErr) then begin
+            lIVr.SerNr = IVr.SerNr;
+            if (ReadFirstMain(lIVr,1,true)) then begin
+              RecordCopy(oldIVr,lIVr);
+              lIVr.Prntdf = 1;
+              if (RecordUpdate(oldIVr,lIVr,false)==0) then begin
+              end;
+            end;
+          end;
+        end;     
+      end;
+    end;
+    FM3000Close;
+  end;
+  return;
+end;

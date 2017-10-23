@@ -1,0 +1,827 @@
+external function val CalculateTotalVATFromTaxMatrix(record TaxMatrixVc,Integer);
+external function Boolean UseTaxTemplatesforTaxCalc();
+external procedure IVCashToIV_FromPOS(record IVCashVc,var record IVVc);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external function Boolean DateTimeInsidePeriod(Date,Time,Date,Time,Date,Time);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external function Boolean ReadFirstItemInclClosed(string,var record INVc,Boolean,Boolean);
+external function string 5 AddVATCodeToVATAccRows(string);
+external procedure ConvertSalesAcc(var string,Integer);
+external procedure GetItemSalesAcc(string,Integer,var string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure GetVATCodeSalesVatAcc(string,var string);
+external procedure AddSMRow(record SMVc,Date,string,string,string,string,val,Boolean,Boolean ,var val);
+external procedure AddRowTaxMatrixToSumTaxMatrix(record TaxMatrixVc,var record TaxMatrixVc,Integer);
+external procedure AddPMPOSToSM(string,string,string,string,val,var record SMVc);
+external procedure AddupPOSLine(Boolean,string,Integer,string,string,string,string,record TaxMatrixVc,string,string,Integer,Integer,
+                       val,val,val,var array string,var array val,var array val,var array val,var Integer,
+                       var val,var val,var array string,var array val,Integer,var val,Boolean,var record SMVc);
+external procedure AddCashupToIVArray(Boolean,string,string,string,val,val,val,var array string,var array string,var array val,var array val,var array val,var array val,var array val,var array val,var Integer);
+
+procedure PrepareAddRestTransRowNew(Boolean addtoit,Integer itemstat,record RestAccVc RestAccr,row RestAccVc RestAccrw,string object,
+                                      var array string asalesacc,var array string asalesobj,var array val asalessum,var array val asalesrowsum,var array val asalesqty,
+                                      var array string asalesvatcode,var array string asalestaxtemplatecode,var array integer asalesstp,var array val asalestax2,var array val asalestax2reb,
+                                      array record TaxMatrixVc aTMr,
+                                      var integer asalescnt,
+                                      var array string aitemgroup,var array string aitemgroupvatcode,var array val aitemgroupqty,var array val aitemgroupsum,var Integer aitemgroupcnt)
+begin
+  string 255 objstr;
+  string 10 revacc;
+  string 20 ivraccno;
+  record AccBlock ARAccb;
+  integer i;
+  val salesum,rowsum;
+  integer stp;
+  boolean testf;
+  record TaxMatrixVc TMr;
+  record INVc INr;
+
+  BlockLoad(ARAccb);
+  if (RestAccrw.ovst!=0) then begin
+    goto LPrepareAddRestTransRowNewItemGroup;
+  end;
+  if (ARAccb.BookedDiscount!=0) then begin
+    salesum = RestAccrw.Quant*RestAccrw.Price;
+    if (blank(RestAccrw.Price)) then begin
+      salesum = RestAccrw.Sum;
+    end;
+  end else begin
+    salesum = RestAccrw.Sum;
+  end;
+  rowsum = RestAccrw.Sum;
+  if (RestAccrw.stp==kInvoiceRowTypeCredit) then begin
+    goto LPrepareAddRestTransRowNewItemGroup;
+  end;
+  if (RestAccrw.stp==kInvoiceRowTypeCorrection) then begin
+    salesum = -salesum;
+    rowsum = -rowsum;
+  end;
+/*  
+  if (ARAccb.SkipObjectsOnIVFromHeader==0) then begin
+    objstr = object;
+  end;
+*/  
+/*  
+  if (RestAccrw.stp==kInvoiceRowTypeNormal) or (RestAccrw.stp==kInvoiceRowTypeStructuredItemComponent) or (RestAccrw.stp==kInvoiceRowTypeMultiBuyDiscount) then begin
+    if (nonblank(RestAccrw.Objects)) then begin
+      if (nonblank(objstr)) then begin
+        objstr = objstr & ",";
+      end;  
+      objstr = objstr & RestAccrw.Objects;
+    end;
+  end;
+  switch (RestAccrw.stp) begin
+    case kInvoiceRowTypeMultiBuyDiscount:
+      revacc = ARAccb.DiscountAcc;
+    otherwise
+      revacc = RestAccrw.SalesAcc;
+  end;
+*/    
+  if (RestAccrw.stp==kInvoiceRowTypeGiftVoucherSold) then begin 
+/*  
+    if (blank(RestAccrw.SalesAcc)) then begin
+      goto LPrepareAddRestTransRowNewItemGroup;
+    end;
+*/    
+  end else begin
+    if (blank(revacc)) then begin
+      GetItemSalesAcc(RestAccrw.ArtCode,0,revacc);
+    end;
+    if (blank(revacc)) then begin
+      revacc = ARAccb.DomSalesAcc;
+    end;
+  end;
+  stp = RestAccrw.stp;
+  if (stp==kInvoiceRowTypeCorrection) then begin
+    stp = 1;
+  end;
+  ConvertSalesAcc(revacc,0);
+  ivraccno = revacc;
+  UnpackRowFieldMatrix(RestAccrw,"TaxMatrix",TMr);
+  for (i=0;i<asalescnt;i=i+1) begin
+    testf = false;
+    if (UseTaxTemplatesforTaxCalc) then begin
+      if ((asalesacc[i]==ivraccno) and (asalesobj[i]==objstr) and (asalestaxtemplatecode[i]==RestAccrw.TaxTemplateCode)
+          and (asalesstp[i]==stp)) then begin
+        testf = true;
+      end;
+    end else begin
+      if ((asalesacc[i]==ivraccno) and (asalesobj[i]==objstr) and (asalesvatcode[i]==RestAccrw.VATCode)
+          and (asalesstp[i]==stp)) then begin
+        testf = true;
+      end;
+    end;
+    if (testf) then begin
+      asalessum[i] = asalessum[i] + salesum;
+      asalesrowsum[i] = asalesrowsum[i] + rowsum;
+      asalesqty[i] = asalesqty[i] + RestAccrw.Quant;
+      AddRowTaxMatrixToSumTaxMatrix(TMr,aTMr[i],RestAccr.InclVAT);
+      goto LPrepareAddRestTransRowNewSales;
+    end;
+  end;
+  asalessum[asalescnt] = salesum;
+  asalesrowsum[asalescnt] = rowsum;
+  asalesqty[asalescnt] = RestAccrw.Quant;
+  asalesacc[asalescnt] = ivraccno;
+  asalesobj[asalescnt] = objstr;
+  asalesvatcode[asalescnt] = RestAccrw.VATCode;
+  asalestaxtemplatecode[asalescnt] = RestAccrw.TaxTemplateCode;
+  asalesstp[asalescnt] = stp;
+//  asalestax2[asalescnt] = RestAccrw.TAX2Prc;
+//  asalestax2reb[asalescnt] = RestAccrw.TAX2Reb;
+  aTMr[asalescnt] = TMr;
+  asalescnt = asalescnt + 1;
+LPrepareAddRestTransRowNewSales:;
+  if (addtoit) then begin
+    if (itemstat==0) then begin
+      if (RestAccrw.stp==kInvoiceRowTypeNormal) or (RestAccrw.stp==kInvoiceRowTypeStructuredItemComponent) or (RestAccrw.stp==kInvoiceRowTypeMultiBuyDiscount) then begin
+        ReadFirstItemInclClosed(RestAccrw.ArtCode,INr,false,true);
+        for (i=0;i<aitemgroupcnt;i=i+1) begin
+          testf = false;
+          if (aitemgroup[i]==INr.Group) and (aitemgroupvatcode[i]==RestAccrw.VATCode) then begin testf = true; end;
+          if (testf) then begin
+            aitemgroupsum[i] = aitemgroupsum[i] + rowsum;
+            aitemgroupqty[i] = aitemgroupqty[i] + RestAccrw.Quant;
+            goto LPrepareAddRestTransRowNewItemGroup;
+          end;
+        end;
+        aitemgroup[aitemgroupcnt] = INr.Group;
+        aitemgroupvatcode[aitemgroupcnt] = RestAccrw.VATCode;
+        aitemgroupsum[aitemgroupcnt] = rowsum;
+        aitemgroupqty[aitemgroupcnt] = RestAccrw.Quant;
+        aitemgroupcnt = aitemgroupcnt + 1;
+      end;
+    end;
+  end;
+LPrepareAddRestTransRowNewItemGroup:;
+
+  return;
+end;
+
+procedure AddRestAccTransRowsNew(Boolean addtoit,Integer itemstat,var record SMVc gSMp,record RestAccVc RestAccr,var integer vatcnt,
+                               array string asalesacc,array string asalesobj,array val asalessum,array val asalesrowsum,
+                               array val asalesqty,array string asalesvatcode,var array string asalestaxtemplatecode,
+                               array integer asalesstp,array val asalestax2,array val asalestax2reb,
+                               array record TaxMatrixVc aTMr,integer asalescnt,
+                               var array string aitemgroup,var array string aitemgroupvatcode,var array val aitemgroupqty,var array val aitemgroupsum,var Integer aitemgroupcnt,
+                               var val totsum,var val totvat,var array string aitcode,var array val aitsum,var array val aitvat,var array val aitqty,var Integer aitcnt)
+begin
+  record TaxMatrixVc TMr;
+  row TaxMatrixVc TMrw;
+  record AccBlock ARAccb;
+  record RoundBlock RoundRec;
+  record VATCodeBlock VATCodeRec;
+  row VATCodeBlock VATCoderw;
+  string 255 objstr;
+  boolean UseTaxTemplatesforTaxCalcf,testf;
+  string 255 tstr;
+  string 2 vatcod,taxtemplatecode;
+  string 10 revacc;
+  string 20 ivraccno;
+  integer i,rwcnt,i2,i3,rwcnt2,vcrwcnt;
+  integer ivrwstp;
+  val salessum,quant,rowsum;
+  val smsum;
+  val tvat,t1;
+  record SMVc VATr;
+  row SMVc VATrw;
+
+  UseTaxTemplatesforTaxCalcf = UseTaxTemplatesforTaxCalc;
+  BlockLoad(ARAccb);
+  BlockLoad(VATCodeRec);
+  SetupVATBase(VATr,vcrwcnt);  
+
+  for (i=0;i<asalescnt;i=i+1) begin
+    RecordCopy(TMr,aTMr[i]);
+    salessum = asalessum[i];
+    rowsum = asalesrowsum[i];
+    quant = asalesqty[i];
+    revacc = asalesacc[i];
+    objstr = asalesobj[i];
+    ivraccno = revacc;
+    if (GetAccName(ivraccno,tstr,60)==false) then begin
+      goto LAddRestAccTransRowsNew;
+    end;
+    vatcod = asalesvatcode[i];
+    if (blank(vatcod)) then begin
+      vatcod = ARAccb.VATCodeDom;
+    end;
+    taxtemplatecode = asalestaxtemplatecode[i];
+    if (blank(taxtemplatecode)) then begin
+      taxtemplatecode = ARAccb.TaxTemplateCode;
+    end;
+    if (blank(vatcod)) then begin
+      if (UseTaxTemplatesforTaxCalcf) then begin
+      end else begin
+        rwcnt = MatRowCnt(VATCodeRec);
+        if (rwcnt>0) then begin
+          MatRowGet(VATCodeRec,0,VATCoderw);
+          vatcod = VATCoderw.VATCode;
+        end;  
+      end;
+    end;
+    if (blank(taxtemplatecode)) then begin
+      rwcnt = MatRowCnt(VATCodeRec);
+      if (rwcnt>0) then begin
+        MatRowGet(VATCodeRec,0,VATCoderw);
+        taxtemplatecode = VATCoderw.VATCode;
+      end;  
+    end;
+    ivrwstp = asalesstp[i];
+    if ((ivrwstp==kInvoiceRowTypeNormal) or (ivrwstp==kInvoiceRowTypeStructuredItemComponent) or (ivrwstp==kInvoiceRowTypeGiftVoucherSold) or (ivrwstp==kInvoiceRowTypeMultiBuyDiscount)) then begin
+      if (UseTaxTemplatesforTaxCalcf==false) then begin
+        switch (RestAccr.InclVAT) begin
+           case 2:
+/*           
+             switch (RestAccr.NoTAXonVAT) begin
+               case 2:
+                 MulVATIV(vatcod,asalessum[i],tvat,t1,RestAccr.InclVAT,0);
+               otherwise
+                 MulVATIV(vatcod,asalessum[i],tvat,t1,RestAccr.InclVAT,RestAccr.NoTAXonVAT);
+             end;
+*/             
+              MulVATIV(vatcod,asalessum[i],tvat,t1,RestAccr.InclVAT,0);
+           otherwise
+             MulVATIV(vatcod,asalessum[i],tvat,t1,RestAccr.InclVAT,0);
+        end;
+        if (RestAccr.InclVAT>0) then begin
+          AddSMRow(gSMp,gSMp.TransDate,revacc,objstr,AddVATCodeToVATAccRows(vatcod),tstr,salessum-tvat,true,false,smsum);
+        end else begin
+          AddSMRow(gSMp,gSMp.TransDate,revacc,objstr,AddVATCodeToVATAccRows(vatcod),tstr,salessum,true,false,smsum);
+        end;
+        AddVATBase(VATr,vatcod,salessum,blankval,vcrwcnt,RestAccr.InclVAT,0);
+      end else begin
+        AddSMRow(gSMp,gSMp.TransDate,revacc,objstr,AddVATCodeToVATAccRows(vatcod),tstr,salessum,true,false,smsum);
+        rwcnt2 = MatRowCnt(TMr);
+        for (i2=0;i2<rwcnt2;i2=i2+1) begin
+          MatRowGet(TMr,i2,TMrw);
+          GetVATCodeSalesVatAcc(TMrw.VATCode,revacc);
+          if (GetAccName(revacc,tstr,60)==false) then begin end;
+          objstr = "";
+          AddSMRow(gSMp,gSMp.TransDate,revacc,objstr,AddVATCodeToVATAccRows(TMrw.VATCode),tstr,TMrw.VATSum,true,false,smsum);
+        end;
+      end;
+    end;
+LAddRestAccTransRowsNewRow:;    
+  end;
+  BlockLoad(RoundRec);  
+  vcrwcnt = MatRowCnt(VATCodeRec);
+  for (i=0;i<vcrwcnt;i=i+1) begin
+    MatRowGet(VATCodeRec,i,VATCoderw);
+    MatRowGet(VATr,i,VATrw);
+    if (VATrw.DebVal!=0) then begin 
+      if (nonblank(VATCoderw.VATCode)) then begin
+        switch (RoundRec.VATCalcWay) begin
+          case 0:    
+            MulVATIV(VATCoderw.VATCode,VATrw.DebVal,tvat,t1,RestAccr.InclVAT,0);
+          case 1:
+            tvat = VATrw.CredVal2;
+            t1 = VATrw.CurCredVal;
+        end;       
+        if (tvat!=0) then begin
+          if (GetAccName(VATCoderw.SalesVATAcc,tstr,60)==false) then begin 
+          end;
+          AddSMRow(gSMp,gSMp.TransDate,VATCoderw.SalesVATAcc,objstr,AddVATCodeToVATAccRows(VATCoderw.VATCode),tstr,tvat,true,false,smsum);
+        end;       
+      end;
+    end;
+  end;
+  if (itemstat==0) then begin
+    RecordClear(TMr);
+    SetupVATBase(VATr,vcrwcnt);
+    for (i=0;i<aitemgroupcnt;i=i+1) begin
+      AddVATBase(VATr,aitemgroupvatcode[i],aitemgroupsum[i],blankval,vcrwcnt,RestAccr.InclVAT,0);
+    end;
+    vcrwcnt = MatRowCnt(VATCodeRec);
+    for (i3=0;i3<vcrwcnt;i3=i3+1) begin
+      MatRowGet(VATCodeRec,i3,VATCoderw);
+      MatRowGet(VATr,i3,VATrw);
+      if (VATrw.DebVal!=0) then begin 
+        if (nonblank(VATCoderw.VATCode)) then begin
+          switch (RoundRec.VATCalcWay) begin
+            case 0:    
+              MulVATIV(VATCoderw.VATCode,VATrw.DebVal,tvat,t1,RestAccr.InclVAT,0);
+            case 1:
+              tvat = VATrw.CredVal2;
+              t1 = VATrw.CurCredVal;
+          end;
+          if (tvat!=0) then begin
+            if (addtoit) then begin
+              switch (itemstat) begin
+                case 0:
+                  for (i=0;i<aitemgroupcnt;i=i+1) begin
+                    for (i2=0;i2<aitcnt;i2=i2+1) begin
+                      testf = true;
+                      if (aitemgroup[i]!=aitcode[i2]) then begin testf = false; end;
+                      if (testf) then begin     
+                        aitqty[i2] = aitqty[i2] + aitemgroupqty[i];
+                        aitvat[i2] = aitvat[i2] + tvat;
+                        if (RestAccr.InclVAT!=0) then begin 
+                          aitsum[i2] = aitsum[i2] + aitemgroupsum[i];
+                        end else begin
+                          aitsum[i2] = aitsum[i2] + aitemgroupsum[i];
+                        end;
+                        if (RestAccr.InclVAT!=0) then begin
+  //                        aitsum[i2] = aitsum[i2] + tvat;
+                        end;                      
+                        totsum = totsum + aitemgroupsum[i];
+                        totvat = totvat + tvat;
+                        i2 = aitcnt;
+                      end;
+                    end;        
+                  end;        
+                case 1:
+                   //other place
+              end;
+            end;
+
+          end;       
+        end;
+      end;
+    end;
+  end;
+LAddRestAccTransRowsNew:;
+  return;
+end;
+
+procedure AddSpecialItemPOSToSM(string artcode,string debugcomment,string objects,val sum,var record SMVc SMr)
+begin
+  record INVc INr;
+  string 200 locdefcode;
+  string 255 tstr;
+  val smsum;
+
+  if (sum!=0) and (nonblank(artcode)) then begin
+    INr.Code = artcode;
+    ReadFirstMain(INr,1,true);
+    if (GetAccName(INr.SalesAcc,tstr,60)==false) then begin end;
+    tstr = debugcomment;
+    AddSMRow(SMr,SMr.TransDate,INr.SalesAcc,objects,"",tstr,sum,true,false,smsum);
+  end;
+  return;
+end;
+
+procedure AttToRestAccSpecArrays(record AccBlock Accb,Integer itemstat,record RestAccVc RestAccr,string defmode,var array string aitcode,var array val aitsum,var array val aitvat,var array val aitqty,var Integer aitcnt,var val totsum,var val totvat,var array string avatcode,var array val avatsum,Integer avatcnt,var val maxsum,Boolean addtoit,var record SMVc SMr)
+begin
+  Integer rwcnt,i,lasti,vatcnt;
+  record CashierDefBlock CDb;
+  row RestAccVc RestAccrw;
+  val s,tiptemp;
+  record TaxMatrixVc TMr;
+  string 255 tstr;
+  Boolean testf;  
+  Array string 2 asalesvatcode;
+  Array string 10 asalestaxtemplatecode;
+  Array record TaxMatrixVc aTMr;
+  Array string 10 asalesacc;
+  Array string 10 asalesperiodcode;
+  Array string 255 asalesobj;
+  Array val asalessum;
+  Array val asalesrowsum;
+  Array val asalesqty;
+  Array Integer asalesstp;  
+  Array val asalestax2;
+  Array val asalestax2reb;
+  Integer asalescnt;
+  boolean UseTaxTemplatesforTaxCalcf,RetValueAddedf;
+  Array string 10 aitemgroup;
+  Array string 10 aitemgroupvatcode;
+  Array val aitemgroupqty;
+  Array val aitemgroupsum;
+  Integer aitemgroupcnt;
+
+  UseTaxTemplatesforTaxCalcf = UseTaxTemplatesforTaxCalc;
+  BlockLoad(CDb);
+  AddSpecialItemPOSToSM(CDb.RestAccServiceChargeItem,"Service Charge",RestAccr.Objects,RestAccr.ServCharge,SMr);
+  rwcnt = MatRowCnt(RestAccr);
+  for(i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RestAccr,i,RestAccrw);
+    if (RestAccrw.ovst==0) then begin
+    switch (RestAccrw.stp) begin
+      case kInvoiceRowTypeCashPayment:
+        s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        AddPMPOSToSM(RestAccrw.PayMode,RestAccrw.PayMode,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+      case kInvoiceRowTypeCreditCardPayment:
+        s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        AddPMPOSToSM(RestAccrw.PayMode,RestAccrw.PayMode,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+      case kInvoiceRowTypeChequePayment:
+        s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        AddPMPOSToSM(RestAccrw.PayMode,RestAccrw.PayMode,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+      case kInvoiceRowTypeLoyaltyPointsPayment:
+        s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        AddPMPOSToSM(RestAccrw.PayMode,RestAccrw.PayMode,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+      case kInvoiceRowTypeGiftVoucherPayment:
+        s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+        AddPMPOSToSM(RestAccrw.PayMode,RestAccrw.PayMode,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+      case kInvoiceRowTypeMultiBuyDiscount:
+        UnpackRowFieldMatrix(RestAccrw,"TaxMatrix",TMr);
+        AddupPOSLine(true,"RestAccVc",itemstat,RestAccrw.ArtCode,"",RestAccrw.VATCode,RestAccrw.TaxTemplateCode,TMr,RestAccr.Objects,"",RestAccr.InclVAT,0,RestAccrw.Sum,RestAccrw.Price,RestAccrw.Quant,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+        if (nonblank(RestAccrw.ArtCode)) then begin
+          lasti = i;
+        end;
+      case kInvoiceRowTypeVoid:
+      case 3:
+        UnpackRowFieldMatrix(RestAccrw,"TaxMatrix",TMr);
+        AddupPOSLine(true,"RestAccVc",itemstat,RestAccrw.ArtCode,"",RestAccrw.VATCode,RestAccrw.TaxTemplateCode,TMr,RestAccr.Objects,"",RestAccr.InclVAT,0,-RestAccrw.Sum,-RestAccrw.Price,-RestAccrw.Quant,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+        if (nonblank(RestAccrw.ArtCode)) then begin
+          lasti = i;
+        end;
+      otherwise
+        if (UseTaxTemplatesforTaxCalcf==false) then begin
+          PrepareAddRestTransRowNew(addtoit,itemstat,RestAccr,RestAccrw,RestAccr.Objects,
+                                      asalesacc,asalesobj,asalessum,asalesrowsum,asalesqty,
+                                      asalesvatcode,asalestaxtemplatecode,asalesstp,asalestax2,asalestax2reb,
+                                      aTMr,asalescnt,
+                                      aitemgroup,aitemgroupvatcode,aitemgroupqty,aitemgroupsum,aitemgroupcnt);
+          if (itemstat!=0) then begin
+            AddupPOSLine(true,"RestAccVc",itemstat,RestAccrw.ArtCode,"",RestAccrw.VATCode,RestAccrw.TaxTemplateCode,TMr,RestAccr.Objects,"",RestAccr.InclVAT,0,RestAccrw.Sum,RestAccrw.Price,RestAccrw.Quant,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+            if (nonblank(RestAccrw.ArtCode)) then begin
+              lasti = i;
+            end;
+          end;
+        end else begin
+          UnpackRowFieldMatrix(RestAccrw,"TaxMatrix",TMr);
+          AddupPOSLine(true,"RestAccVc",itemstat,RestAccrw.ArtCode,"",RestAccrw.VATCode,RestAccrw.TaxTemplateCode,TMr,RestAccr.Objects,"",RestAccr.InclVAT,0,RestAccrw.Sum,RestAccrw.Price,RestAccrw.Quant,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+          if (nonblank(RestAccrw.ArtCode)) then begin
+            lasti = i;
+          end;
+        end;
+    end;
+    end;
+  end;
+  if (UseTaxTemplatesforTaxCalcf==false) then begin
+    AddRestAccTransRowsNew(addtoit,itemstat,SMr,RestAccr,vatcnt,
+                          asalesacc,asalesobj,asalessum,asalesrowsum,
+                          asalesqty,asalesvatcode,asalestaxtemplatecode,
+                          asalesstp,asalestax2,asalestax2reb,
+                          aTMr,asalescnt,
+                          aitemgroup,aitemgroupvatcode,aitemgroupqty,aitemgroupsum,aitemgroupcnt,
+                          totsum,totvat,aitcode,aitsum,aitvat,aitqty,aitcnt);
+    if (itemstat!=0) then begin
+      if (lasti>-1) then begin
+        MatRowGet(RestAccr,lasti,RestAccrw);
+        UnpackRowFieldMatrix(RestAccrw,"TaxMatrix",TMr);
+        AddupPOSLine(true,"RestAccVc",itemstat,RestAccrw.ArtCode,"",RestAccrw.VATCode,RestAccrw.TaxTemplateCode,TMr,RestAccr.Objects,"",RestAccr.InclVAT,0,RestAccr.Sum0,0,0,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+      end;
+    end;
+  end else begin
+    if (lasti>-1) then begin
+//    MatRowGet(RestAccr,lasti,RestAccrw);
+//    AddupPOSLine(true,"RestAccVc",itemstat,RestAccrw.ArtCode,"",RestAccrw.VATCode,RestAccrw.TaxTemplateCode,RestAccr.Objects,"",RestAccr.InclVAT,0,RestAccr.Sum0,0,0,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+    end;
+  end;
+  if (RestAccr.Sum0!=0) then begin
+    if (RestAccr.Sum0>0) then begin
+      if (GetAccName(Accb.RndLossAcc,tstr,60)==false) then begin end;
+      AddSMRow(SMr,SMr.TransDate,Accb.RndLossAcc,"","","RestAcc " & RestAccr.SerNr & RestAccrw.Spec,RestAccr.Sum0,true,true,s);
+    end else begin
+      AddSMRow(SMr,SMr.TransDate,Accb.RndAcc,"","","RestAcc " & RestAccr.SerNr & RestAccrw.Spec,RestAccr.Sum0,true,true,s);
+    end;
+  end;
+  if (RestAccr.TransferToSL!=0) then begin
+    if (GetAccName(RestAccr.ARAcc,tstr,60)==false) then begin end;
+    AddSMRow(SMr,SMr.TransDate,RestAccr.ARAcc,RestAccr.Objects,"","RestAcc " & RestAccr.SerNr & RestAccrw.Spec,RestAccr.RemValue,true,true,s);
+  end else begin
+  
+    if (RestAccr.RetValue<0) then begin
+      s = RestAccr.CashValue;
+    end else begin
+      s = RestAccr.CashValue-RestAccr.RetValue;
+    end;
+    tiptemp = RestAccr.TipValue;
+    if (RestAccr.TipValue>0) then begin
+      if (s>0) then begin
+        if (s>RestAccr.TipValue) then begin
+          s = s - RestAccr.TipValue;
+          tiptemp = 0;
+        end else begin
+          tiptemp = RestAccr.TipValue - s;
+          RestAccr.TipValue = s;
+          s = 0;
+        end;
+      end;
+    end;
+    AddPMPOSToSM(defmode,RestAccr.PayDeal,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+    if (nonblank(CDb.TipPMCode)) then begin
+      AddPMPOSToSM(defmode,RestAccr.PayDeal,"Tip","",RestAccr.TipValue-tiptemp,SMr);
+      AddPMPOSToSM(defmode,CDb.TipPMCode,"Tip","",-(RestAccr.TipValue-tiptemp),SMr);
+    end;
+
+    s = RestAccr.Paid;
+    if (tiptemp>0) then begin
+      if (s>0) then begin
+        s = s - tiptemp;
+      end;
+    end;
+    AddPMPOSToSM(defmode,RestAccr.PayDeal2,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+    if (nonblank(CDb.TipPMCode)) then begin
+      AddPMPOSToSM(defmode,RestAccr.PayDeal2,"Tip","",tiptemp,SMr);
+      AddPMPOSToSM(defmode,CDb.TipPMCode,"Tip","",-tiptemp,SMr);
+    end;
+    s = RestAccr.Paid2;
+    AddPMPOSToSM(defmode,RestAccr.PayDeal3,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+    s = RestAccr.Paid3;
+    AddPMPOSToSM(defmode,RestAccr.PayDeal4,"RestAcc " & RestAccr.SerNr & RestAccrw.Spec,"",s,SMr);
+  end;
+  return;
+end;
+
+global
+procedure FillUpAllRestAccCash(Integer onrooms,Integer itemstat,Date dfr,Date dto,Time tfr,Time tto,Date enddat,string machine,string drawer,string paymode,
+                               var array string aivcode,var array string aivcrncy,var array val aivval,var array val aivb1val,var array val aivnr,var array val aivoutval,var array val aivb1outval,var array val atipsum,var Integer acnt,Integer detail,
+                               var array string atrsfivcode,var array string atrsfivcrncy,var array val atrsfivval,var array val atrsfivb1val,var array val atrsfivnr,var array val atrsfivoutval,var array val atrsfivb1outval,var array val atrsftipsum,var Integer atrsfcnt,
+                               var array string aitcode,var array val aitsum,var array val aitvat,var array val aitqty,var Integer aitcnt,Boolean addtoit,var val totsum,var val totvat,var array string avatcode,var array val avatsum,Integer avatcnt,var record SMVc SMr)
+
+begin
+  record RestAccVc RestAccr;
+  record DefCashBlock DCb;
+  record CashierDefBlock CDb;
+  record AccBlock Accb;
+  Boolean foundf,testf,addstatf;
+  val s,maxsum,tmp,paidsum;
+  val tiptemp,tip2;
+  val temp1,temp2,temp3,RetValue;
+  row RestAccVc RestAccrw;
+  Integer i,rwcnt;
+  Boolean RetValueAddedf;
+  string 255 cashpaymode;
+  
+  BlockLoad(CDb);
+  BlockLoad(DCb);
+  BlockLoad(Accb);
+  foundf = true;
+  RestAccr.MachineName = machine;
+  RestAccr.DrawerCode = drawer;
+  RestAccr.TransDate = dfr;
+  RestAccr.TransTime = tfr;
+  while (LoopKey("Cashup",RestAccr,4,foundf)) begin
+    if (RestAccr.MachineName!=machine) then begin
+      foundf = false;
+    end;
+    if (RestAccr.DrawerCode!=drawer) then begin
+      foundf = false;
+    end;
+    if (RestAccr.TransDate>enddat) then begin
+      foundf = false;
+    end;
+    if (nonblankdate(dto)) then begin
+      if (RestAccr.TransDate>dto) then begin
+        foundf = false;
+      end;
+      if (RestAccr.TransDate==dto) then begin
+        if (nonblanktime(tto)) then begin
+          if (RestAccr.TransTime>=tto) then begin
+            foundf = false;
+          end;
+        end;
+      end;
+    end;
+    testf = foundf;
+    if (RestAccr.Invalid!=0) then begin
+      testf = false;
+    end;
+    if (RestAccr.Closed==0) then begin
+      testf = false;
+    end;
+    if (RestAccr.MergedToSerNr>=0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      addstatf = true;
+      if (detail!=0) and (detail!=2) then begin
+        RetValueAddedf = false;
+        cashpaymode = "";
+        RetValue = blankval;
+        tmp = RestAccr.CashValue;
+        tiptemp = RestAccr.TipValue;
+        if (tiptemp>0) then begin
+          if (tmp>0) then begin
+            if (tmp>tiptemp) then begin
+              tmp = tmp - tiptemp;
+              tiptemp = 0;
+            end else begin
+              tiptemp = tiptemp - tmp;
+              tmp = 0;
+            end;
+          end;
+        end;
+        s = 0;
+        if ((blank(paymode)) or (paymode==RestAccr.PayDeal) or ((blank(RestAccr.PayDeal)) and (paymode==DCb.DefCashPayMode))) then begin
+          s = s + tmp; // All Changes should be in Cash payment mode
+        end;
+        if ((blank(paymode)) or (paymode==RestAccr.PayDeal2) or ((blank(RestAccr.PayDeal2)) and (paymode==DCb.DefCashPayMode))) then begin
+          s = s + RestAccr.Paid - tiptemp; // not 100% correct, but 99...
+          tiptemp = 0;
+        end;
+        if ((blank(paymode)) or (paymode==RestAccr.PayDeal3) or ((blank(RestAccr.PayDeal3)) and (paymode==DCb.DefCashPayMode))) then begin
+          s = s + RestAccr.Paid2;
+        end;
+        if ((blank(paymode)) or (paymode==RestAccr.PayDeal4) or ((blank(RestAccr.PayDeal4)) and (paymode==DCb.DefCashPayMode))) then begin
+          s = s + RestAccr.Paid3;
+        end;
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          switch (RestAccrw.stp) begin
+            case kInvoiceRowTypeGiftVoucherPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = s + RestAccrw.Sum;
+              end;
+            case kInvoiceRowTypeCashPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = s + RestAccrw.Sum;
+                if (RestAccr.TransferToSL!=0) then begin
+                  RetValueAddedf = true;
+                  cashpaymode = RestAccrw.PayMode;
+                end else begin
+                  if (RetValueAddedf==false) then begin
+                    RetValueAddedf = true;
+                    cashpaymode = RestAccrw.PayMode;
+                  end;
+                end;
+              end;
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = s + RestAccrw.Sum;
+              end;
+            case kInvoiceRowTypeChequePayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = s + RestAccrw.Sum;
+              end;
+            case kInvoiceRowTypeCreditCardPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = s + RestAccrw.Sum;
+              end;
+          end;
+        end;
+        if ((onrooms!=0) and (nonblank(RestAccr.Resource)) and (RestAccr.RemValue>0)) then begin
+          s = s + RestAccr.RemValue;
+        end;
+        if (blank(paymode)) or (paymode=="DBTTRS") then begin
+          if (RestAccr.TransferToSL!=0) and (RestAccr.RemValue>0) then begin
+            s = s + RestAccr.RemValue;
+          end;
+        end;
+        if (s==0) then begin addstatf = false; end;
+        if (s!=0) then begin
+          aivcode[acnt] = RestAccr.SerNr;
+          if (s<0) then begin
+            aivoutval[acnt] = aivoutval[acnt] - s;
+            aivb1outval[acnt] = aivb1outval[acnt] - s;
+            aivval[acnt] = BlankVal;
+            aivb1val[acnt] = BlankVal;
+          end else begin
+            aivval[acnt] = aivval[acnt] + s;
+            aivb1val[acnt] = aivb1val[acnt] + s;
+            aivoutval[acnt] = BlankVal;
+            aivb1outval[acnt] = BlankVal;
+          end;
+          if (CDb.InclTipInCashup==0) then begin
+            atipsum[acnt] = BlankVal;
+          end else begin
+            atipsum[acnt] = RestAccr.TipValue;
+          end;
+          if (RetValueAddedf) then begin
+            if (RestAccr.TransferToSL==0) then begin
+              aivoutval[acnt] = aivoutval[acnt] + RestAccr.RetValue;
+              aivb1outval[acnt] = aivb1outval[acnt] + RestAccr.RetValue;
+            end;
+          end;
+          acnt = acnt + 1;
+        end;
+        maxsum = s + RestAccr.RetValue;
+      end else begin
+        paidsum = blankval;
+        RetValueAddedf = false;
+        s = RestAccr.CashValue;
+        tiptemp = RestAccr.TipValue;
+        temp1 = RestAccr.Paid;
+        temp2 = RestAccr.Paid2;
+        temp3 = RestAccr.Paid3;
+        if (tiptemp>0) then begin
+          if (s>0) then begin
+            if (s>tiptemp) then begin
+              s = s - tiptemp;
+              tiptemp = 0;
+            end else begin
+              tiptemp = tiptemp - s;
+              tiptemp = s;
+              s = 0;
+            end;
+          end;
+        end;
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          switch (RestAccrw.stp) begin
+            case kInvoiceRowTypeGiftVoucherPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+                AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccrw.PayMode,RestAccrw.CurncyCode,RestAccrw.Sum,s,blankval,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+                maxsum = maxsum + s;
+                paidsum = paidsum + s;
+              end;
+            case kInvoiceRowTypeCashPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+                AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccrw.PayMode,RestAccrw.CurncyCode,RestAccrw.Sum,s,blankval,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+                maxsum = maxsum + s;
+                paidsum = paidsum + s;
+                if (RestAccr.TransferToSL!=0) then begin
+                  RetValueAddedf = true;
+                end else begin
+                  if (RetValueAddedf==false) then begin
+                    AddCashupToIVArray(false,DCb.DefCashPayMode,RestAccrw.PayMode,RestAccrw.CurncyCode,-RestAccr.RetValue,-RestAccr.RetValue,0,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+                    RetValueAddedf = true;
+                  end;
+                end;
+              end;
+            case kInvoiceRowTypeLoyaltyPointsPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+                AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccrw.PayMode,RestAccrw.CurncyCode,RestAccrw.Sum,s,blankval,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+                maxsum = maxsum + s;
+                paidsum = paidsum + s;
+              end;
+            case kInvoiceRowTypeChequePayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+                AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccrw.PayMode,RestAccrw.CurncyCode,RestAccrw.Sum,s,blankval,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+                maxsum = maxsum + s;
+                paidsum = paidsum + s;
+              end;
+            case kInvoiceRowTypeCreditCardPayment:
+              if ((blank(paymode)) or (RestAccrw.PayMode==paymode)) then begin
+                s = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+                AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccrw.PayMode,RestAccrw.CurncyCode,RestAccrw.Sum,s,blankval,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+                maxsum = maxsum + s;
+                paidsum = paidsum + s;
+              end;
+          end;
+        end;
+        
+        if ((blank(RestAccr.PayDeal2)) and (temp1!=0)) then begin
+          s = s + temp1;
+          temp1 = 0;
+        end;
+        if ((blank(RestAccr.PayDeal3)) and (temp2!=0)) then begin
+          s = s + temp2;
+          temp2 = 0;
+        end;
+        if ((blank(RestAccr.PayDeal4)) and (temp3!=0)) then begin
+          s = s + temp3;
+          temp3 = 0;
+        end;
+        if (RestAccr.TransferToSL!=0) then begin
+//sum4 - paidsum        
+          if (RestAccr.RemValue>0) then begin
+            AddCashupToIVArray(true,"DBTTRS","DBTTRS","",RestAccr.RemValue,RestAccr.RemValue,blankval,atrsfivcode,atrsfivcrncy,atrsfivval,atrsfivb1val,atrsfivnr,atrsfivoutval,atrsfivb1outval,atrsftipsum,atrsfcnt);
+            maxsum = maxsum + RestAccr.RemValue;
+          end;
+        end else begin
+          if (RetValueAddedf==false) then begin
+            AddCashupToIVArray(false,DCb.DefCashPayMode,RestAccr.PayDeal,"",-RestAccr.RetValue,-RestAccr.RetValue,blankval,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+            maxsum = maxsum - RestAccr.RetValue;
+          end;
+        end;
+
+        s = temp1;
+        if (tiptemp>0) then begin
+          if (temp1>0) then begin
+            s = s - tiptemp;
+            tiptemp = 0;
+          end;
+        end;
+        maxsum = maxsum + s;
+        AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccr.PayDeal2,"",s,s,tiptemp,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+        s = temp2;
+        maxsum = maxsum + s;
+        AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccr.PayDeal3,"",s,s,tiptemp,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+        s = temp3;
+        maxsum = maxsum + s;
+        AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccr.PayDeal4,"",s,s,tiptemp,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+        if ((onrooms!=0) and (nonblank(RestAccr.Resource)) and (RestAccr.RemValue>0)) then begin
+          s = RestAccr.RemValue;
+          maxsum = maxsum + s;
+          AddCashupToIVArray(true,DCb.DefCashPayMode,RestAccr.PayDeal4,"",s,s,tiptemp,aivcode,aivcrncy,aivval,aivb1val,aivnr,aivoutval,aivb1outval,atipsum,acnt);
+        end;
+      end;
+      if (addstatf) then begin
+        AttToRestAccSpecArrays(Accb,itemstat,RestAccr,DCb.DefCashPayMode,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,maxsum,addtoit,SMr);
+/*        
+        if (RestAccr.TransferToSL!=0) then begin
+          temp1 = -RestAccr.RetValue;
+          AttToRestAccSpecArrays(Accb,itemstat,RestAccr,DCb.DefCashPayMode,aitcode,aitsum,aitvat,aitqty,aitcnt,totsum,totvat,avatcode,avatsum,avatcnt,temp1,addtoit,SMr);
+        end;
+*/        
+      end;
+    end;
+  end;
+  return;
+end;
+

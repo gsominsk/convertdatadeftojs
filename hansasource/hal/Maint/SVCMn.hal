@@ -1,0 +1,195 @@
+external procedure CheckFlush(var Integer,Integer);
+external function Boolean PasteCuInAct(var record ActVc,var string);
+external function Boolean PasteActTypeInAct(string,var record ActVc);
+
+procedure TestAndSetRows(row SVCVc SVCrw,var Date nowdat,var Integer cnt,var Integer lcnt,var string acttype,var string mainpers,var string ccpers,var Integer todoflag,var Integer symbnr,var string comment,var Boolean res)
+begin
+  if (cnt==lcnt) then begin
+    nowdat = AddDay(nowdat,SVCrw.DaysBetween);
+    acttype = SVCrw.ActType;
+    mainpers = SVCrw.MainPersons;
+    ccpers = SVCrw.CCPersons;
+    todoflag = SVCrw.TodoFlag;
+    symbnr = SVCrw.SymbNr;
+    comment = SVCrw.Comment;
+    res = true;
+    cnt = cnt + 1;
+  end;
+  lcnt = lcnt + 1;
+  return;
+end;
+
+Function
+Boolean FindNextActDate(record SVCVc SVCr,var Date nowdat,var Integer cnt,var string acttype,var string mainpers,var string ccpers,var Integer todoflag,var Integer symbnr,var string comment)
+begin
+  Integer lcnt;
+  Integer rwcnt,i,j;
+  row SVCVc SVCrw;
+  Boolean res;
+
+  res = false;
+LFindNextActDate:;
+  lcnt = 0;
+  rwcnt = MatRowCnt(SVCr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SVCr,i,SVCrw);
+    if (SVCrw.NrOfTimes>1) then begin
+      for (j=0;j<SVCrw.NrOfTimes;j=j+1) begin
+        TestAndSetRows(SVCrw,nowdat,cnt,lcnt,acttype,mainpers,ccpers,todoflag,symbnr,comment,res);
+        if (res) then begin
+          j = SVCrw.NrOfTimes;
+          i = rwcnt;
+        end;
+      end;
+    end else begin
+      TestAndSetRows(SVCrw,nowdat,cnt,lcnt,acttype,mainpers,ccpers,todoflag,symbnr,comment,res);
+      if (res) then begin
+        i = rwcnt;
+      end;
+    end;
+  end;
+  if ((res==false) and (cnt==lcnt)) then begin
+    cnt = 0;
+    goto LFindNextActDate;
+  end;
+  FindNextActDate = res;
+  return;
+end;
+
+updating 
+Function Boolean GenerateSVCActivities(record COVc COr,string cust,row COVc COrw,record SVCVc SVCr,Date startdat,Date enddat,var Date lastactdat,var Integer flushcnt)
+begin
+  record ActVc Actr;
+  Date nowdat,lastrundat;
+  Integer cnt,lastcnt;
+  Boolean res,loopf;
+  string 20 acttype;
+  string 60 mainpers,ccpers;
+  string 200 comment;
+  Integer todoflag,symbnr,weekday;
+  
+  res = false;
+  cnt = 0;
+  nowdat = COrw.SVCStartDate;
+  nowdat = AddDay(nowdat,SVCr.DaysFromStart);
+  lastrundat = COrw.SVCLastRunDate;
+  if (blankdate(lastrundat)) then begin
+    lastrundat = nowdat;
+  end;
+  loopf = true;
+  while (loopf) begin
+    if (nowdat>enddat) then begin loopf = false; end;
+    if (FindNextActDate(SVCr,nowdat,cnt,acttype,mainpers,ccpers,todoflag,symbnr,comment)==false) then begin
+      goto LGenerateSVCActivities;
+    end;
+    if (cnt<lastcnt) then begin 
+      loopf = false; 
+      goto LGenerateSVCActivities;    
+    end;
+    lastcnt = cnt;
+    if (nonblankdate(COrw.SVCLastDate)) then begin
+      if (nowdat>COrw.SVCLastDate) then begin
+        goto LGenerateSVCActivities;
+      end;
+    end;
+    if (nowdat>enddat) then begin
+      goto LGenerateSVCActivities;
+    end;
+    if (nowdat>lastrundat) then begin
+      RecordNew(Actr);
+      lastactdat = nowdat;
+      Actr.Comment = comment;
+      if (blank(Actr.Comment)) then begin
+        Actr.Comment = SVCr.Comment;
+      end;
+      Actr.TransDate = nowdat;
+      Actr.ActType = acttype;
+      if (PasteActTypeInAct("",Actr)) then begin
+      end;
+      Actr.CUCode = cust;
+      if (PasteCuInAct(Actr,comment)) then begin
+      end;
+      Actr.MainPersons = mainpers;
+      Actr.CCPersons = ccpers;
+      Actr.TodoFlag = todoflag;
+      Actr.SymbNr = symbnr;
+//      Actr.SVOItemType = 3; // Contract
+      Actr.ArtCode = COrw.OrgArtCode;
+      Actr.SerialNr = COrw.OrgSerNr;
+      weekday = GetDateId(Actr.TransDate);
+      if ((weekday==6) or (weekday==7)) then begin
+        if (SVCr.Weekends==1) then begin
+          Actr.TransDate = AddDay(Actr.TransDate,5-weekday);
+        end;
+        if (SVCr.Weekends==2) then begin
+          Actr.TransDate = AddDay(Actr.TransDate,1+7-weekday);
+        end;
+      end;
+      Actr.EndDate = Actr.TransDate;
+      Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");  
+      if (RecordInsert(Actr,false)) then begin
+        CreateRecordLink(Actr,CurrentCompany,COr,CurrentCompany);  
+//        CreateRecordLink(COr,CurrentCompany,Actr,CurrentCompany);  
+        res = true;
+      end;
+      CheckFlush(flushcnt,10);      
+    end;
+  end;
+LGenerateSVCActivities:;
+  GenerateSVCActivities = res;
+  return;
+end;
+
+global
+updating procedure SVCMn(record RcVc RepSpec)
+BEGIN
+  record GeneralOptionBlock GenOptr;
+  record COVc oldCOr;
+  record COVc COr;
+  record SVCVc SVCr;
+  row COVc COrw;
+  LongInt frco,toco;
+  Integer rwcnt,i;
+  Boolean foundf,testf,savef;
+  Date lastactdat;
+  Integer flushcnt;
+  
+  frco = FirstInrange(RepSpec.f1,10);
+  toco = LastInrange(RepSpec.f1,10);
+  COr.SerNr = frco;
+  COr.ChildSerNr = -1;
+  foundf = true;
+  while (LoopKey("SerNr",COr,2,foundf)) begin
+    if (foundf) then begin
+      if (nonblank(RepSpec.f1)) then begin
+        if (COr.SerNr>toco) then begin foundf = false; end;
+      end;
+    end;
+    testf = true;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      RecordCopy(oldCOr,COr);
+      rwcnt = MatRowCnt(COr);
+      savef = false;
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(COr,i,COrw);
+        SVCr.Code = COrw.SVCCode;
+        if (ReadFirstMain(SVCr,1,true)) then begin
+          if (GenerateSVCActivities(COr,COr.CustCode,COrw,SVCr,RepSpec.sStartDate,RepSpec.sEndDate,lastactdat,flushcnt)) then begin
+            COrw.SVCLastRunDate = lastactdat;
+            MatRowPut(COr,i,COrw);
+            savef = true;
+          end;
+        end;
+      end;
+      if (savef) then begin
+        if (RecordUpdate(oldCOr,COr,true)==0) then begin end;
+        CheckFlush(flushcnt,10);
+      end;
+    end;
+    UserTrace(COr.SerNr,M4Long);
+  end;
+  RETURN;
+END;

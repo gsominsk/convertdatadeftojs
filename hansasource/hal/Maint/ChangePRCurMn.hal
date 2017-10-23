@@ -1,0 +1,100 @@
+external procedure CalcInCurtoTBIV(var record TBIVVc);
+external procedure TBBUGetRate(var record TBBUVc);
+external procedure TBIVGetRate(var record TBIVVc);
+external procedure TBBUDchrsum(var record TBBUVc,Integer,Boolean,Integer);
+external procedure TBBUSumup(var record TBBUVc);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+
+updating procedure RecalculateTBBU(record PRVc PRr,string newcurncy)
+begin
+  record TBBUVc oldTBBUr;
+  record TBBUVc TBBUr;
+  row TBBUVc TBBUrw;
+  Integer i,rwcnt;
+  val v;
+  record GeneralOptionBlock GenOptRec;
+  
+  BlockLoad(GenOptRec);
+  TBBUr.PRCode = PRr.Code;
+  if (ReadFirstMain(TBBUr,1,true)) then begin
+    RecordCopy(oldTBBUr,TBBUr);
+    TBBUr.CurncyCode = newcurncy;
+    TBBUGetRate(TBBUr);        
+    rwcnt = MatRowCnt(TBBUr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TBBUr,i,TBBUrw);
+      CurValToOtherCur(CurrentDate,oldTBBUr.CurncyCode,TBBUrw.Price,TBBUr.CurncyCode,v,DefaultCurRoundOff);
+      TBBUrw.Price = v;
+      MatRowPut(TBBUr,i,TBBUrw);
+      TBBUDchrsum(TBBUr,i,true,GenOptRec.UseDiscount);
+    end;
+    TBBUr.CurncyCode = newcurncy;
+    TBBUSumup(TBBUr);
+    RecordUpdate(oldTBBUr,TBBUr,false);
+  end;
+  return;
+end;
+
+updating procedure RecalculateTBIV(record BaseCurBlock BCb,record PRVc PRr,string newcurncy)
+begin
+  record TBIVVc oldTBIVr;
+  record TBIVVc TBIVr;
+  Integer i,rwcnt;
+  val v,t;
+  record GeneralOptionBlock GenOptRec;
+  Boolean found;
+  
+  BlockLoad(GenOptRec);
+  found = true;
+  TBIVr.PRCode = PRr.Code;
+  while (LoopMain(TBIVr,1,found)) begin
+    if (TBIVr.PRCode!=PRr.Code) then begin found = false; end;
+    if (found) then begin
+      RecordCopy(oldTBIVr,TBIVr);
+      TBIVr.CurncyCode = newcurncy;
+      TBIVGetRate(TBIVr);        
+      if (oldTBIVr.CurncyCode==BCb.BaseCur1) or (blank(oldTBIVr.CurncyCode)) then begin
+        CalcInCurtoTBIV(TBIVr);
+      end else begin
+        CurValToOtherCur(CurrentDate,oldTBIVr.CurncyCode,TBIVr.PriceInCur,newcurncy,v,DefaultCurRoundOff);
+        TBIVr.PriceInCur = v;
+        CurValToOtherCur(CurrentDate,oldTBIVr.CurncyCode,TBIVr.CostPriceInCur,newcurncy,v,DefaultCurRoundOff);
+        TBIVr.CostPriceInCur = v;
+        CurValToOtherCur(CurrentDate,oldTBIVr.CurncyCode,TBIVr.SumInCur,newcurncy,v,DefaultCurRoundOff);
+        TBIVr.SumInCur = v;
+        if (Mid(TBIVr.MarkupInCur,len(TBIVr.MarkupInCur)-1,1)!="%") then begin    
+          t = StringToVal(TBIVr.MarkupInCur,M45Val);      
+          CurValToOtherCur(CurrentDate,oldTBIVr.CurncyCode,t,newcurncy,v,DefaultCurRoundOff);
+          TBIVr.MarkupInCur = v;
+        end;
+        TBIVr.GPInCur = TBIVr.SumInCur - TBIVr.CostPriceInCur*TBIVr.Qty;
+      end;
+      RecordUpdate(oldTBIVr,TBIVr,false);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ChangePRCurMn(record RcVc RepSpec)
+begin
+  record PRVc oldPRr;
+  record PRVc PRr;
+  record BaseCurBlock BCb;
+  
+  if (blank(RepSpec.f1)) then begin
+    MessageBox(22084,"");
+    goto LChangePRCurMn;
+  end;
+  PRr.Code = RepSpec.f1;
+  if (ReadFirstMain(PRr,1,true)) then begin
+    BlockLoad(BCb);
+    RecordCopy(oldPRr,PRr);
+    PRr.CurncyCode = RepSpec.CurncyCode;
+    RecordUpdate(oldPRr,PRr,false);
+    RecalculateTBBU(PRr,RepSpec.CurncyCode);
+    RecalculateTBIV(BCb,PRr,RepSpec.CurncyCode);
+  end;
+LChangePRCurMn:;  
+  return;
+end;

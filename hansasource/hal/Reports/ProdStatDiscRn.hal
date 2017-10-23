@@ -1,0 +1,361 @@
+external procedure HT2Per(Date, Date , var string);
+
+function val GetProdOrderDiscardCost(LongInt sernr,Integer status)
+begin
+  record ProdVc Prodr;
+  row ProdVc Prodrw;
+  Integer rwcnt,i;
+  Boolean foundf,testf;
+  val res;
+  
+  res = 0;
+  Prodr.ProdOrder = sernr;
+  foundf = true;
+  while (LoopKey("ProdOrder",Prodr,1,foundf)) begin
+    if (Prodr.ProdOrder!=sernr) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+/*    
+    if (Prodr.PRStatusFlag!=kPRStatusFinishedandDiscarded) and (Prodr.PRStatusFlag!=kPRStatusStarted) and (Prodr.PRStatusFlag!=kPRStatusFinished) then begin
+      testf = false;
+    end;
+*/
+    if (status==kPRStatusFinishedandDiscarded) then begin
+      if (Prodr.PRStatusFlag!=kPRStatusFinishedandDiscarded) then begin
+        testf = false;
+      end;
+    end else begin
+      if (Prodr.PRStatusFlag!=kPRStatusStarted) and (Prodr.PRStatusFlag!=kPRStatusFinished) then begin
+        testf = false;
+      end;
+    end;
+    
+    if (testf) then begin
+      rwcnt = MatRowCnt(Prodr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Prodr,i,Prodrw);
+
+        switch (Prodr.PRStatusFlag) begin
+          case kPRStatusStarted:
+            if (Prodrw.OutQty!=0) then begin
+              res = res + Prodrw.ItemCost + Prodrw.ExtraCost;
+            end;
+          case kPRStatusFinished:
+            if (Prodrw.OutQty!=0) then begin
+              res = res + Prodrw.ItemCost + Prodrw.ExtraCost;
+            end;
+          case kPRStatusFinishedandDiscarded:
+            if (Prodrw.InQty!=0) then begin
+              res = res + Prodrw.InQty*Prodrw.ItemCost + Prodrw.ExtraCost;
+            end;
+        end;
+      end;
+    end;
+  end;
+  GetProdOrderDiscardCost = res;
+  return;
+end;
+
+function val GetProdDiscardCost(record ProdVc Prodr,Integer status)
+begin
+  row ProdVc Prodrw;
+  Integer rwcnt,i;
+  val res;
+  
+  res = 0;
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    switch (Prodr.PRStatusFlag) begin
+      case kPRStatusStarted:
+        if (status!=kPRStatusFinishedandDiscarded) then begin
+          if (Prodrw.OutQty!=0) then begin
+            res = res + Prodrw.ItemCost + Prodrw.ExtraCost;
+          end;
+        end;
+      case kPRStatusFinished:
+        if (status!=kPRStatusFinishedandDiscarded) then begin
+          if (Prodrw.OutQty!=0) then begin
+            res = res + Prodrw.ItemCost + Prodrw.ExtraCost;
+          end;
+        end;
+      case kPRStatusFinishedandDiscarded:
+        if (Prodrw.InQty!=0) then begin
+          res = res + Prodrw.InQty*Prodrw.ItemCost + Prodrw.ExtraCost;
+        end;
+    end;
+  end;
+  GetProdDiscardCost = res;
+  return;
+end;
+
+global
+procedure DiscardStatRn(record RcVc RepSpec)
+begin
+  record ProdOrderVc ProdOrderr;
+  record ProdVc Prodr;
+  Boolean foundf,testf;
+  Integer rw;
+  string 200 tstr;
+  val cost,totfincost,totdisccost,totfinished,totdisc,totqty;
+  
+  StartReportJob(USetStr(15170));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  EndHeader;
+  if (RepSpec.flags[1]==0) then begin
+    SetRepCol(2,50);
+    SetRepCol(3,110);
+    SetRepCol(4,170);
+    SetRepCol(5,290);
+    SetRepCol(6,330);
+    SetRepCol(7,410);
+    SetRepCol(8,450);
+    StartFormat(15);
+    OutString(0,0,USetStr(15181),false);
+    OutString(2,0,USetStr(15182),false);
+    OutString(3,0,USetStr(15171),false);
+    OutString(4,0,USetStr(15184),false);
+    OutString(5,0,USetStr(15185),true);
+    OutString(6,0,USetStr(15186),true);
+    OutString(370,0,USetStr(15189),true);
+    OutString(7,0,USetStr(15187),true);
+    OutString(8,0,USetStr(15189),true);
+    OutString(1,0,USetStr(15188),true);
+    EndFormat;
+  end else begin
+    SetRepCol(2,50);
+    SetRepCol(3,110);
+    SetRepCol(4,170);
+    SetRepCol(5,300);
+    SetRepCol(6,345);
+    SetRepCol(7,390);
+    SetRepCol(8,430);
+    StartFormat(15);
+    OutString(0,0,USetStr(15181),false);
+    OutString(2,0,USetStr(15180),false);
+    OutString(3,0,USetStr(15171),false);
+    OutString(4,0,USetStr(15184),false);
+    OutString(8,0,USetStr(15187),true);
+    OutString(1,0,USetStr(15189),true);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  if (RepSpec.flags[1]==0) then begin
+    ProdOrderr.StartDate = RepSpec.sStartDate;
+    foundf = true;
+    while (LoopKey("StartDate",ProdOrderr,1,foundf)) begin
+      if (DateInRange(ProdOrderr.StartDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        foundf = false;
+      end;
+      testf = foundf;
+      if (ProdOrderr.Discarded<=0) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (RepSpec.FirstAcc!=ProdOrderr.Machine) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        StartFormat(15);
+        OutString(0,0,ProdOrderr.Machine,false);
+        OutString(2,"DblProdOrderVc",ProdOrderr.SerNr,false);
+        OutString(3,0,ProdOrderr.Recipe,false);
+        OutString(4,0,Left(ProdOrderr.RecName,20),false);
+        OutVal(5,0,ProdOrderr.Qty,M4UVal,true);
+        OutVal(6,0,ProdOrderr.Finished,M4UVal,true);
+        cost = GetProdOrderDiscardCost(ProdOrderr.SerNr,kPRStatusFinished);
+        OutVal(370,0,cost,M4UVal,true);
+        totfincost = totfincost + cost;
+        OutVal(7,0,ProdOrderr.Discarded,M4UVal,true);
+        cost = GetProdOrderDiscardCost(ProdOrderr.SerNr,kPRStatusFinishedandDiscarded);
+        OutVal(8,0,cost,M4UVal,true);
+        totdisccost = totdisccost + cost;
+        if (ProdOrderr.Finished!=0) then begin
+          OutVal(1,0,(ProdOrderr.Discarded/ProdOrderr.Qty)*100,M4Prcnt,true);
+        end else begin
+          OutVal(1,0,(ProdOrderr.Discarded/ProdOrderr.Qty)*100,M4Prcnt,true);
+        end;
+        EndFormat;
+        totqty = totqty + ProdOrderr.Qty;
+        totfinished = totfinished + ProdOrderr.Finished;
+        totdisc = totdisc + ProdOrderr.Discarded;
+      end;
+    end;
+  end else begin
+    Prodr.StartDate = RepSpec.sStartDate;
+    foundf = true;
+    while (LoopKey("StartDate",Prodr,1,foundf)) begin
+      if (DateInRange(Prodr.StartDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        foundf = false;
+      end;
+      testf = foundf;
+      if (Prodr.PRStatusFlag!=kPRStatusFinishedandDiscarded) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (RepSpec.FirstAcc!=Prodr.FixAssCode) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        cost = GetProdDiscardCost(Prodr,kPRStatusFinishedandDiscarded);
+        StartFormat(15);
+        OutString(0,0,Prodr.FixAssCode,false);
+        OutStringID(2,"DblProdVcID",Prodr.SerNr,false,Prodr.SerNr);
+        OutString(3,0,Prodr.Recepy,false);
+        OutString(4,0,Prodr.RecName,false);
+        OutVal(8,0,Prodr.Qty,M4UVal,true);
+        OutVal(1,0,cost,M4Val,true);
+        EndFormat;
+        totdisccost = totdisccost + cost;
+        totdisc = totdisc + Prodr.Qty;
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  if (RepSpec.flags[1]==0) then begin
+    StartFormat(15);
+    OutVal(6,0,totfinished,M4UVal,true);
+    OutVal(370,0,totfincost,M4UVal,true);
+    OutVal(7,0,totdisc,M4UVal,true);
+    OutVal(8,0,totdisccost,M4UVal,true);
+    OutVal(1,0,(totdisc/(totqty))*100,M4Prcnt,true);
+    EndFormat;
+  end else begin
+    StartFormat(15);
+    OutVal(1,0,totdisc,M4UVal,true);
+    OutVal(1,0,totdisccost,M4Val,true);
+    EndFormat;
+  end;
+  EndJob;
+  return;
+end;
+
+/* I wrote a better Discarded Statistics then this one, so I comment this one out...
+procedure FindTransactions(record RcVc RepSpec,string recepy,var val qty, var val weight)
+begin
+  record ProdVc Prodr;
+  boolean TrHs, testf;
+  Prodr.ProdDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("ProdDate",Prodr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (Prodr.ProdDate > RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (Prodr.Recepy <> recepy) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.f4)) then begin
+        if (Prodr.FixAssCode <> RepSpec.f4) then begin
+          testf = false;
+        end;
+      end;  
+      if (Prodr.PRStatusFlag <> kPRStatusFinishedandDiscarded) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+         qty  = qty + Prodr.Qty;
+         weight = weight + Prodr.TotOutWeight;
+      end;
+    end;  
+  end;
+  return;
+end; 
+
+global
+procedure ProdStatDiscRn(record RcVc RepSpec)
+begin
+  record RecVc Recr;
+  record INVc INr;
+  boolean TrHs, testf;
+  val qty, weight;
+  val tqty, tweight;
+  string 255 tstr;
+  integer rw;
+  
+  StartReportJob(USetStr(15170));
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (nonblank(RepSpec.f2)) then begin
+    tstr = USetStr(15177) & RepSpec.f2;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f4)) then begin
+    tstr = USetStr(15178) & RepSpec.f4;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f3)) then begin
+    tstr = USetStr(15179) & RepSpec.f4;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  StartFormat(15);
+  OutString(0,0,USetStr(15171),false);
+  OutString(120,0,USetStr(15172),false);
+  OutString(410,0,USetStr(15173),true);
+  OutString(1,0,USetStr(15174),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  TrHs = true;
+  Recr.Code = RepSpec.f2;
+  while (LoopMain(Recr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f2)) then begin
+        if (RepSpec.f2 <> Recr.Code) then begin
+          TrHs = false;
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f3)) then begin
+        INr.Code = Recr.Code;
+        if (ReadFirstMain(INr,1,true)) then begin
+          if (INr.Group <> RepSpec.f3) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        qty = 0;
+        weight = 0;
+        FindTransactions(RepSpec,Recr.Code,qty,weight);
+        if (qty <> 0) then begin
+          StartFormat(15);
+          OutString(0,0,Recr.Code,false);
+          OutString(120,0,Recr.Comment,false);
+          OutVal(410,0,qty,M40Val,true);
+          OutVal(1,0,weight,M40Val,true);
+          EndFormat;
+          tqty = tqty + qty;
+          tweight = tweight + weight;
+        end;
+      end;
+    end;
+   
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(400,0,USetStr(15175),true);
+  OutVal(1,0,tqty,M40Val,true);
+  EndFormat;
+  StartFormat(15);
+  OutString(400,0,USetStr(15176),true);
+  OutVal(1,0,tweight,M40Val,true);
+  EndFormat;
+  EndJob;
+  Return;
+end;
+*/

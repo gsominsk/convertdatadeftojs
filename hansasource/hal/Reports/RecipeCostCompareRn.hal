@@ -1,0 +1,708 @@
+external function string 255 HTProds(LongInt, LongInt);
+external function roundmode SetRoundModeD(Integer);
+external procedure HT2Per(Date, Date , var string);
+external function val FindCostPrice(string,string,string,val,val,Boolean);
+external function Boolean PasteRecInProd(var record ProdVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+
+procedure SumupProdByGroup(record ProdVc Prodr)
+begin
+  record ITVc ITr;
+  record INVc INr;
+  record ProdVc Prod2r;
+  row ProdVc Prodrw;
+  row ProdVc Prod2rw;
+  Integer i,rwcnt,j;
+  Boolean foundf,testf;
+  Boolean addedf;
+  
+  rwcnt = MatRowCnt(Prodr);
+  RecordCopy(Prod2r,Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prod2r,i,Prodrw);
+    if (ReadFirstItem(Prodrw.Item,INr,false,false)) then begin
+      Prodrw.OutBatchStatus = INr.Group;
+      MatRowPut(Prod2r,i,Prodrw);
+    end;
+  end;
+  while (MatRowCnt(Prodr)>0) begin
+    MatRowDelete(Prodr,0);
+  end;
+  foundf = true;
+  ITr.Code = "";
+  while (LoopMain(ITr,1,foundf)) begin
+    addedf = false;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prod2r,i,Prodrw);
+      if (Prodrw.OutBatchStatus==ITr.Code) then begin
+        if (addedf==false) then begin
+          Prod2rw.Item = ITr.Code;
+          Prod2rw.OutBatchStatus = ITr.Code;
+          Prod2rw.PosCode = "GROUP";
+          Prod2rw.Comment = ITr.Comment;
+          MatRowPut(Prodr,MatRowCnt(Prodr),Prod2rw);
+          addedf = true;
+        end;
+        MatRowPut(Prodr,MatRowCnt(Prodr),Prodrw);
+        MatRowDelete(Prod2r,i);
+        i = i - 1;
+        rwcnt = rwcnt - 1;
+      end;
+    end;
+  end;
+  addedf = false;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prod2r,i,Prodrw);
+    if (addedf==false) then begin
+      Prod2rw.Item = "*";
+      Prod2rw.OutBatchStatus = "*";
+      Prod2rw.PosCode = "GROUP";
+      Prod2rw.Comment = USetStr(5119);
+      MatRowPut(Prodr,MatRowCnt(Prodr),Prod2rw);
+      addedf = true;
+    end;
+    MatRowPut(Prodr,MatRowCnt(Prodr),Prodrw);
+  end;
+  return;
+end;
+
+procedure CalculateCostProc(record ProdVc Prodr,Integer costtype,Integer quantities)
+begin
+  record ITVc ITr;
+  record INVc INr;
+  row ProdVc Prodrw;
+  Integer i,rwcnt,j;
+  Boolean foundf,testf;
+  Boolean addedf;
+  val totcost,totoutcost;
+  
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    switch (quantities) begin
+      case 0:
+        if (costtype!=0) then begin
+          if (ReadFirstItem(Prodrw.Item,INr,false,false)) then begin
+            Prodrw.ItemCost = INr.InPrice;
+          end;
+          MatRowPut(Prodr,i,Prodrw);
+        end;
+        if (Prodrw.InQty!=0) then begin
+          totcost = totcost + (Prodrw.InQty * Prodrw.ItemCost) + Prodrw.ExtraCost;
+        end else begin
+          totoutcost = totoutcost + (Prodrw.OutQty * Prodrw.ItemCost) + Prodrw.ExtraCost;
+        end;
+      case 1:
+        if (Prodrw.InQty!=0) then begin
+          totcost = totcost + Prodrw.InQty;
+        end else begin
+          totoutcost = totoutcost + Prodrw.OutQty;
+        end;
+    end;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    if (Prodrw.PosCode!="GROUP") then begin
+      switch (quantities) begin
+        case 0:
+          if (Prodrw.InQty!=0) then begin
+            Prodrw.Weight = (Prodrw.InQty * Prodrw.ItemCost) + Prodrw.ExtraCost;
+            Prodrw.Coefficient = Round(Prodrw.Weight / totcost * 100,SetRoundModeD(2));
+          end else begin
+            Prodrw.Weight = (Prodrw.OutQty * Prodrw.ItemCost) + Prodrw.ExtraCost;
+            Prodrw.Coefficient = Round(Prodrw.Weight / totoutcost * 100,SetRoundModeD(2));
+          end;
+        case 1:
+          if (Prodrw.InQty!=0) then begin
+            Prodrw.Weight = Prodrw.InQty;
+            Prodrw.Coefficient = Round(Prodrw.Weight / totcost * 100,SetRoundModeD(2));
+          end else begin
+            Prodrw.Weight = Prodrw.OutQty;
+            Prodrw.Coefficient = Round(Prodrw.Weight / totoutcost * 100,SetRoundModeD(2));
+          end;
+      end;
+      MatRowPut(Prodr,i,Prodrw);
+    end;
+  end;
+  return;
+end;
+
+procedure PrintProdCost(record ProdVc Prodr,Boolean comparef)
+begin
+  row ProdVc Prodrw;
+  Integer i,rwcnt;
+  Boolean firstf;
+  val totprc,icost,ecost,totcost,t;
+  
+  firstf = true;
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    if (Prodrw.PosCode=="GROUP") then begin
+      if (firstf==false) then begin
+        Gray_Divider(2,1);
+        if (comparef) then begin
+          StartFormat(15);
+          OutVal(5,0,totcost,M45Val,true);
+          OutString(6,0,"" & totprc & "%",true);
+          OutVal(7,0,icost,M45Val,true);
+          OutString(8,0,"" & ecost & "%",true);
+          t = icost / totcost * 100;
+          if (t==0) then begin
+            OutString(1,0,"",true);
+          end else begin
+            OutString(1,0,"" & icost / totcost * 100 & "%",true);
+          end;
+          EndFormat;
+        end else begin
+          StartFormat(15);
+          OutVal(6,0,icost,M45Val,true);
+          OutVal(7,0,ecost,M45Val,true);
+          OutVal(8,0,totcost,M45Val,true);
+          OutString(1,0,"" & totprc & "%",true);
+          EndFormat;
+        end;
+        icost = 0;
+        ecost = 0;
+        totprc = 0;
+        totcost = 0;
+      end;
+      firstf = false;
+      StartFormat(15);
+      if (Prodrw.Item!="*") then begin
+        OutString(9,"DblITVc",Prodrw.Item,false);
+      end else begin
+        OutString(9,0,Prodrw.Item,false);
+      end;
+      OutString(3,0,Prodrw.Comment,false);
+      EndFormat;
+      Gray_Divider(9,1);
+    end else begin
+      if (comparef) then begin
+        StartFormat(15);
+        OutString(2,"DblINVc",Prodrw.Item,false);
+        OutString(3,0,"   " & Prodrw.Comment,false);
+        OutVal(5,0,Prodrw.Weight,M45Val,true);
+        OutString(6,0,"" & Prodrw.Coefficient & "%",true);
+        OutVal(7,0,Prodrw.ItemCost,M45Val,true);
+        OutString(8,0,"" & Prodrw.ExtraCost & "%",true);
+        t = Prodrw.ItemCost / Prodrw.Weight * 100;
+        if (t==0) then begin
+          OutString(1,0,"",true);
+        end else begin
+          OutString(1,0,"" & t  & "%",true);
+        end;
+        EndFormat;
+      end else begin
+        StartFormat(15);
+        OutString(2,"DblINVc",Prodrw.Item,false);
+        OutString(3,0,"   " & Prodrw.Comment,false);
+        OutVal(4,0,Prodrw.InQty,M4UVal,true);
+        OutVal(5,0,Prodrw.OutQty,M4UVal,true);
+        OutVal(6,0,Prodrw.ItemCost,M45Val,true);
+        OutVal(7,0,Prodrw.ExtraCost,M45Val,true);
+        OutVal(8,0,Prodrw.Weight,M45Val,true);
+        OutString(1,0,"" & Prodrw.Coefficient & "%",true);
+        EndFormat;
+      end;
+      icost = icost + Prodrw.ItemCost;
+      ecost = ecost + Prodrw.ExtraCost;
+      totcost = totcost + Prodrw.Weight;
+      totprc = totprc + Prodrw.Coefficient;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  return;
+end;
+
+procedure BuildCompareProdCost(var record ProdVc RecipeProdr,record ProdVc Prod2r,Integer quantities)
+begin
+  row ProdVc Prodrw;
+  row ProdVc Prod2rw;
+  Integer i,j,rwcnt,rwcntj;
+  val totcost,totoutcost,totrelprices,v;
+  Boolean foundf;
+  vector Integer vrecsameitemcnt;
+  vector Integer vprodsameitemcnt;
+  
+  rwcnt = MatRowCnt(RecipeProdr);
+  rwcntj = MatRowCnt(Prod2r);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RecipeProdr,i,Prodrw);
+    Prodrw.ItemCost = 0;
+    Prodrw.ExtraCost = 0;
+    MatRowPut(RecipeProdr,i,Prodrw);
+  end;
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prod2r,i,Prod2rw);
+    if (Prod2rw.OutQty!=0) then begin
+      totrelprices = totrelprices + Prod2rw.OutQty*Prod2rw.RelVal;
+    end;
+  end;
+
+  for (j=0;j<rwcntj;j=j+1) begin
+    MatRowGet(Prod2r,j,Prod2rw);
+    switch (quantities) begin
+      case 0:
+        if (Prod2rw.InQty!=0) then begin
+          totcost = totcost + (Prod2rw.InQty * Prod2rw.ItemCost) + Prod2rw.ExtraCost;
+        end else begin
+          if (Prod2rw.RelVal>0) then begin
+            totoutcost = totoutcost + (Prod2rw.ItemCost*Prod2rw.OutQty) + Prod2rw.ExtraCost;
+          end else begin
+            totoutcost = totoutcost + (Prod2rw.OutQty * Prod2rw.ItemCost) + Prod2rw.ExtraCost;
+          end;
+        end;
+      case 1:
+        if (Prod2rw.InQty!=0) then begin
+          totcost = totcost + Prod2rw.InQty;
+        end else begin
+          totoutcost = totoutcost + Prod2rw.OutQty;
+        end;
+    end;
+  end;
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RecipeProdr,i,Prodrw);
+    for (j=0;j<rwcntj;j=j+1) begin
+      MatRowGet(Prod2r,j,Prod2rw);
+      if (Prodrw.Item==Prod2rw.Item) then begin
+      if (vrecsameitemcnt[Prodrw.Item]==vprodsameitemcnt[Prod2rw.Item]) then begin
+        switch (quantities) begin
+          case 0:
+            if (Prodrw.InQty!=0 and Prod2rw.InQty!=0) then begin
+              Prodrw.ItemCost = Prodrw.ItemCost + (Prod2rw.InQty * Prod2rw.ItemCost) + Prod2rw.ExtraCost;
+              Prodrw.ExtraCost = Round(Prodrw.ItemCost / totcost * 100,SetRoundModeD(2));
+            end else begin
+              v = Prod2rw.OutQty*Prod2rw.RelVal;
+              v = v / totrelprices;
+              Prodrw.ItemCost = Prodrw.ItemCost + (Prod2rw.OutQty * Prod2rw.ItemCost) + Prod2rw.ExtraCost;
+              Prodrw.ExtraCost = Round(Prodrw.ItemCost / totoutcost * 100,SetRoundModeD(2));
+            end;
+          case 1:
+            if (Prodrw.InQty!=0 and Prod2rw.InQty!=0) then begin
+              Prodrw.ItemCost = Prodrw.ItemCost + Prod2rw.InQty;
+              Prodrw.ExtraCost = Round(Prodrw.ItemCost / totcost * 100,SetRoundModeD(2));
+            end else begin
+              Prodrw.ItemCost = Prodrw.ItemCost + Prod2rw.OutQty;
+              Prodrw.ExtraCost = Round(Prodrw.ItemCost / totoutcost * 100,SetRoundModeD(2));
+            end;
+        end;
+        MatRowPut(RecipeProdr,i,Prodrw);
+        vprodsameitemcnt[Prod2rw.Item] = vprodsameitemcnt[Prod2rw.Item] + 1;
+      end;
+      end;
+    end;
+    vrecsameitemcnt[Prodrw.Item] = vrecsameitemcnt[Prodrw.Item] + 1;
+  end;
+  return;
+end;
+
+procedure AddMissingLinesToProd(var record ProdVc Prodr,record ProdVc Prod2r)
+begin
+  row ProdVc Prodrw;
+  row ProdVc Prod2rw;
+  Integer i,j,rwcnt,rwcntj;
+  Boolean foundf;
+  
+  rwcnt = MatRowCnt(Prodr);
+  rwcntj = MatRowCnt(Prod2r);
+  for (j=0;j<rwcntj;j=j+1) begin
+    MatRowGet(Prod2r,j,Prod2rw);
+    foundf = false;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Prodr,i,Prodrw);
+      if (Prodrw.Item==Prod2rw.Item) then begin
+        foundf = true;
+        i = rwcnt;
+      end;
+    end;
+    if (foundf==false) then begin
+      Prod2rw.ItemCost = BlankVal;
+      Prod2rw.ExtraCost = BlankVal;
+      Prod2rw.InQty = BlankVal;
+      Prod2rw.OutQty = BlankVal;
+      MatRowPut(Prodr,rwcnt,Prod2rw);
+      rwcnt = rwcnt + 1;
+    end;
+  end;
+  return;
+end;
+
+procedure CombineProd(var record ProdVc Prodr,record ProdVc Prod2r,Integer quantities)
+begin
+  row ProdVc Prodrw;
+  row ProdVc Prod2rw;
+  Integer i,j,rwcnt,rwcntj;
+  
+  rwcnt = MatRowCnt(Prodr);
+  rwcntj = MatRowCnt(Prod2r);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    for (j=0;j<rwcntj;j=j+1) begin
+      MatRowGet(Prod2r,j,Prod2rw);
+      if (Prodrw.Item==Prod2rw.Item) then begin
+        switch (quantities) begin
+          case 0:
+            Prodrw.ItemCost = (Prodrw.ItemCost + Prod2rw.ItemCost);
+            Prodrw.ExtraCost = (Prodrw.ExtraCost + Prod2rw.ExtraCost);
+          case 1:
+            Prodrw.InQty = (Prodrw.InQty + Prod2rw.InQty);
+            Prodrw.OutQty = (Prodrw.OutQty + Prod2rw.OutQty);
+        end;
+        MatRowPut(Prodr,i,Prodrw);
+        j = rwcntj;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure CalcAvarageProd(var record ProdVc Prodr,Integer quantities,val nrofprods)
+begin
+  row ProdVc Prodrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(Prodr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Prodr,i,Prodrw);
+    switch (quantities) begin
+      case 0:
+        Prodrw.ItemCost = Prodrw.ItemCost/nrofprods;
+        Prodrw.ExtraCost = Prodrw.ExtraCost/nrofprods;
+      case 1:
+        Prodrw.InQty = Prodrw.InQty/nrofprods;
+        Prodrw.OutQty = Prodrw.OutQty/nrofprods;
+    end;
+    MatRowPut(Prodr,i,Prodrw);
+  end;
+  return;
+end;
+
+procedure BuildProdFromSeveral(string recepy,var record ProdVc Prodr,LongInt fromprod,LongInt toprod,Integer quantities)
+begin
+  record ProdVc Prod2r;
+  Boolean foundf,testf,firstf;
+  val nrofprods;
+  
+  firstf = true;
+  Prod2r.SerNr = fromprod;
+  foundf = true;
+  while (LoopMain(Prod2r,1,foundf)) begin
+    if (toprod>0) then begin
+      if (Prod2r.SerNr>toprod) then begin
+        foundf = false;
+      end;
+    end;
+    testf = foundf;
+    if (Prod2r.Recepy!=recepy) then begin
+      testf = false;
+    end;
+    if ((Prod2r.PRStatusFlag!=3) and (Prod2r.PRStatusFlag!=5)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      if (firstf) then begin
+        RecordCopy(Prodr,Prod2r);
+      end else begin
+        AddMissingLinesToProd(Prodr,Prod2r);
+        CombineProd(Prodr,Prod2r,quantities);
+      end;
+      nrofprods = nrofprods + 1.00;
+      firstf = false;
+    end;
+  end;
+  CalcAvarageProd(Prodr,quantities,nrofprods);
+  return;
+end;
+
+procedure SumupProd(var record ProdVc Prod2r)
+begin
+  record ProdVc tmpProdr;
+  Integer i,rwcnt;
+  Integer j,jrwcnt;
+  row ProdVc tmpProdrw;
+  row ProdVc Prod2rw;
+
+  RecordCopy(tmpProdr,Prod2r);
+  RecordClear(Prod2r);
+  rwcnt = MatRowCnt(tmpProdr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(tmpProdr,i,tmpProdrw);
+        
+    jrwcnt = MatRowCnt(Prod2r);
+    for (j=0;j<jrwcnt;j=j+1) begin
+      MatRowGet(Prod2r,j,Prod2rw);
+      if (Prod2rw.Item==tmpProdrw.Item) then begin
+        Prod2rw.ExtraCost = Prod2rw.ExtraCost + tmpProdrw.ExtraCost;
+        Prod2rw.RelVal = Prod2rw.RelVal + tmpProdrw.RelVal;
+        if (Prod2rw.InQty!=0) then begin
+          Prod2rw.ItemCost = Prod2rw.InQty*Prod2rw.ItemCost + tmpProdrw.InQty*tmpProdrw.ItemCost;
+          Prod2rw.InQty = Prod2rw.InQty + tmpProdrw.InQty;
+          Prod2rw.ItemCost = Prod2rw.ItemCost / Prod2rw.InQty;
+        end;
+        if (Prod2rw.OutQty!=0) then begin
+          Prod2rw.ItemCost = Prod2rw.OutQty*Prod2rw.ItemCost + tmpProdrw.OutQty*tmpProdrw.ItemCost;
+          Prod2rw.OutQty = Prod2rw.OutQty + tmpProdrw.OutQty;
+          Prod2rw.ItemCost = Prod2rw.ItemCost / Prod2rw.OutQty;
+        end;
+        MatRowPut(Prod2r,j,Prod2rw);
+        goto LSumupProd;
+      end;
+    end;
+    CopyRow(tmpProdr,tmpProdrw,Prod2rw);
+    MatRowPut(Prod2r,jrwcnt,Prod2rw);    
+LSumupProd:;
+  end;
+  return;
+end;
+
+procedure BuildProdFromPeriod(string recepy,var record ProdVc Prodr,Date startdate,Date enddate,Integer quantities)
+begin
+  record ProdVc Prod2r;
+  Boolean foundf,testf,firstf;
+  val nrofprods;
+  
+  firstf = true;
+  Prod2r.ProdDate = startdate;
+  foundf = true;
+  while (LoopMain(Prod2r,1,foundf)) begin
+    if (Prod2r.ProdDate>enddate) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (Prod2r.Recepy!=recepy) then begin
+      testf = false;
+    end;
+    if ((Prod2r.PRStatusFlag!=3) and (Prod2r.PRStatusFlag!=5)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      if (firstf) then begin
+//        SumupProd(Prod2r);
+        RecordCopy(Prodr,Prod2r);
+      end else begin
+//        SumupProd(Prod2r);
+        AddMissingLinesToProd(Prodr,Prod2r);
+        CombineProd(Prodr,Prod2r,quantities);
+      end;
+      nrofprods = nrofprods + 1.00;
+      firstf = false;
+    end;
+  end;
+  CalcAvarageProd(Prodr,quantities,nrofprods);
+  return;
+end;
+
+procedure PrintThisHeader(Integer comparef,Boolean costf,Boolean itemgroupf)
+begin
+  if (comparef==0) then begin
+    if (itemgroupf) then begin
+      StartFormat(15);
+      OutString(9,0,USetStr(2474),false);
+      EndFormat;
+    end;
+    StartFormat(15);
+    OutString(2,0,USetStr(5386),false);
+    OutString(3,0,USetStr(5104),false);
+    OutString(4,0,USetStr(5108),true);
+    OutString(5,0,USetStr(5109),true);
+    OutString(6,0,USetStr(5111),true);
+    OutString(7,0,USetStr(5112),true);
+    OutString(8,0,USetStr(5115),true);
+    OutString(1,0,USetStr(5114),true);
+    EndFormat;
+  end else begin
+    StartFormat(15);
+    if (itemgroupf) then begin
+      OutString(9,0,USetStr(2474),false);
+    end;
+    if (costf) then begin
+      OutString(5,0,USetStr(8704),false);
+    end else begin
+      OutString(5,0,USetStr(8716),false);
+    end;
+    switch (comparef) begin
+      case 1: OutString(7,0,USetStr(8711),false);
+      case 2: 
+        if (costf) then begin
+          OutString(7,0,USetStr(8715),false);
+        end else begin
+          OutString(7,0,USetStr(8717),false);
+        end;
+      case 3: 
+        if (costf) then begin
+          OutString(7,0,USetStr(8715),false);
+        end else begin
+          OutString(7,0,USetStr(8717),false);
+        end;
+    end;
+    EndFormat;
+    StartFormat(15);
+    OutString(2,0,USetStr(5386),false);
+    OutString(3,0,USetStr(5104),false);
+    if (costf) then begin
+      OutString(5,0,USetStr(5115),true);
+      OutString(6,0,USetStr(5114),true);
+      OutString(7,0,USetStr(5115),true);
+      OutString(8,0,USetStr(5114),true);
+    end else begin
+      OutString(5,0,USetStr(8707),true);
+      OutString(6,0,USetStr(8708),true);
+      OutString(7,0,USetStr(8707),true);
+      OutString(8,0,USetStr(8708),true);
+    end;
+    OutString(1,0,USetStr(5118),true);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  return;
+end;
+
+global
+procedure RecCostCompRn(record RcVc RepSpec)
+begin
+  record RecVc Recr;
+  record ProdVc RecipeProdr;
+  record ProdVc Prod2r;
+  Boolean foundf,testf;
+  String 20 fromart,toart;
+  String 255 tstr;
+  Integer rw;
+  LongInt frprod,toprod;
+
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart   = LastInRange(RepSpec.f1,20);
+  frprod = FirstInRange(RepSpec.f2,20);
+  toprod = LastInRange(RepSpec.f2,20);
+  
+  StartReportJob(USetStr(8699));
+  
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (blank(fromart) and blank(toart)) then begin
+    tstr = USetStr(5385);
+  end else begin
+    tstr = USetStr(5106);
+    tstr = tstr & " ";
+    tstr = tstr & fromart;
+    if (fromart<>toart) then begin
+      tstr = tstr & " : ";
+      tstr = tstr & toart;
+    end;
+  end;
+  Header(rw,tstr,0);
+  Header(rw,HTProds(frprod,toprod),1);
+  rw = rw + 1;
+  tstr = USetStr(8709);
+  switch (RepSpec.flags[1]) begin
+    case 0: tstr = tstr & " " & USetStr(8710);
+    case 1: tstr = tstr & " " & USetStr(8711);
+    case 2: tstr = tstr & " " & USetStr(8712);
+    case 3: tstr = tstr & " " & USetStr(8713);
+  end;
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  EndHeader;
+  if (RepSpec.flags[2]==0) then begin
+    SetRepCol(2,25);
+  end else begin
+    SetRepCol(2,20);
+  end;
+  SetRepCol(3,80);
+  SetRepCol(4,200);
+  SetRepCol(5,240);
+  SetRepCol(6,300);
+  SetRepCol(7,360);
+  SetRepCol(8,420);
+  SetRepCol(9,15);
+  foundf = true;
+  Recr.Code = fromart;
+  while (LoopMain(Recr,1,foundf)) begin
+    if (nonblank(fromart)) then begin
+      if (Recr.Code > toart) then begin
+        foundf = false;
+      end;
+    end;
+    testf = foundf;
+    if (testf) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(5381),false);
+      OutString(80,0,USetStr(5104),false);
+      OutString(320,0,USetStr(5382),true);
+      OutString(410,0,USetStr(5383),true);
+      EndFormat;
+      Black_Divider(0,1);
+      StartFormat(15);
+      OutString(0,"DblRecVc",Recr.Code,false);
+      OutString(80,0,Recr.Comment,false);
+      OutString(320,0,Recr.MinProdQty,true);
+      OutString(410,0,Recr.NormProdQty,true);
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+      PrintThisHeader(RepSpec.flags[1],RepSpec.flags[3]==0,RepSpec.flags[2]==0);
+      RecordNew(Prod2r);
+      RecipeProdr.Recepy = Recr.Code;
+      PasteRecInProd(RecipeProdr);
+//      SumupProd(RecipeProdr);
+      if (RecipeProdr.Qty==0) then begin
+        RecipeProdr.Qty = 1;
+      end;
+      switch (RepSpec.flags[1]) begin
+        case 0:
+          if (RepSpec.flags[3]==0) then begin
+            if (RepSpec.flags[2]==0) then begin
+              SumupProdByGroup(RecipeProdr);
+            end;
+            CalculateCostProc(RecipeProdr,0,RepSpec.flags[3]);
+            PrintProdCost(RecipeProdr,false);
+          end;
+        case 1:
+          if (RepSpec.flags[3]==0) then begin
+            if (RepSpec.flags[2]==0) then begin
+              SumupProdByGroup(RecipeProdr);
+            end;
+            RecordCopy(Prod2r,RecipeProdr);
+            CalculateCostProc(RecipeProdr,0,RepSpec.flags[3]);
+            CalculateCostProc(Prod2r,1,RepSpec.flags[3]);
+            BuildCompareProdCost(RecipeProdr,Prod2r,RepSpec.flags[3]);
+            PrintProdCost(RecipeProdr,true);
+          end;
+        case 2:
+          BuildProdFromSeveral(RecipeProdr.Recepy,Prod2r,frprod,toprod,RepSpec.flags[3]);
+          AddMissingLinesToProd(RecipeProdr,Prod2r);
+          if (RepSpec.flags[2]==0) then begin
+            SumupProdByGroup(RecipeProdr);
+            SumupProdByGroup(Prod2r);
+          end;
+          CalculateCostProc(RecipeProdr,0,RepSpec.flags[3]);
+          CalculateCostProc(Prod2r,0,RepSpec.flags[3]);
+          BuildCompareProdCost(RecipeProdr,Prod2r,RepSpec.flags[3]);
+          PrintProdCost(RecipeProdr,true);
+        case 3:
+          BuildProdFromPeriod(RecipeProdr.Recepy,Prod2r,RepSpec.sStartDate,RepSpec.sEndDate,RepSpec.flags[3]);
+          AddMissingLinesToProd(RecipeProdr,Prod2r);
+          if (RepSpec.flags[2]==0) then begin
+            SumupProdByGroup(RecipeProdr);
+            SumupProdByGroup(Prod2r);
+          end;
+          CalculateCostProc(RecipeProdr,0,RepSpec.flags[3]);
+          CalculateCostProc(Prod2r,0,RepSpec.flags[3]);
+          BuildCompareProdCost(RecipeProdr,Prod2r,RepSpec.flags[3]);
+          PrintProdCost(RecipeProdr,true);
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  EndJob;
+  return;
+end;
+

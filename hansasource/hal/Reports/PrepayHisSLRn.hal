@@ -1,0 +1,553 @@
+external function string 255 GetCustomerOnAccountAC(string);
+external procedure GetCustName(String,var String);
+external procedure AddCurTotalsRow(string,val,val,val,var record SMVc);
+external procedure PrintCurTotalsRow(record SMVc,Integer,Integer,Integer,Integer,Integer);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTCustClass(string,var string);
+external procedure HTCustClassType(string,var string);
+external function Boolean SetInSet2(string,string);
+external procedure ClassTypef(string,string,var Boolean);
+external procedure HTCusts(string, string, var string);
+
+function val FindPrepaymentFwdBalance(record RcVc RepSpec,LongInt CUPNr,
+                                      var val tt,var record SMVc CurTotalsr,date tilldate,boolean addtot)
+begin
+  val res,sign,t;
+  record ARPayHistVc ARPayHistr;
+  Boolean testf,TrHs;
+  Integer keys;
+  string 255 mykey;
+  Date sd,ed;
+
+  sd.day = 1; sd.month = 1; sd.year = 1980;
+  ed = AddDay(RepSpec.sStartDate,-1);
+  if (RepSpec.flags[1]==2) then begin
+    ed = AddDay(tilldate,-1);
+  end;
+  keys = 2;
+  ResetLoop(ARPayHistr);
+  mykey = "CUPNrTransDate";
+  ARPayHistr.CUPNr = CUPNr;
+  ARPayHistr.TransDate = sd;
+  TrHs = true;
+  while (LoopKey(mykey,ARPayHistr,keys,TrHs)) begin
+    testf = true;
+    if ((RepSpec.f1<>ARPayHistr.CustCode) and (nonblank(RepSpec.f1))) then begin
+      testf = false;
+      if (RepSpec.flags[1]==1) then begin
+        //TrHs = false;
+      end;
+    end;
+    if (ARPayHistr.CUPNr==-1) then begin
+      testf = false;
+    end;
+    if (CUPNr>0) then begin
+      if (CUPNr<>ARPayHistr.CUPNr) then begin
+        testf = false;
+        TrHs = false;
+      end;  
+    end;
+    if ((RepSpec.f3 <> ARPayHistr.CurncyCode) and (nonblank(RepSpec.f3))) then begin
+      testf = false;
+    end;
+    if (DateInRange(ARPayHistr.TransDate,sd,ed)==false) then begin
+      testf = false;
+    end;
+    if (TrHs and testf) then begin
+      if ((ARPayHistr.FileName=="IVVc") or (ARPayHistr.FileName=="CLOutVc")) then begin
+        sign = -1;
+      end else begin
+        sign = 1;
+      end;  
+      if (RepSpec.flags[4]==1) then begin
+        t = sign * ARPayHistr.BookVal;
+      end else begin
+        t = sign * ARPayHistr.Val;
+      end;
+      if addtot then begin 
+        AddCurTotalsRow(ARPayHistr.CurncyCode,sign*ARPayHistr.Val,-1,-1,CurTotalsr); 
+        tt = tt + t;
+      end;
+      res = res + t;
+    end;
+  end;
+  FindPrepaymentFwdBalance = res;
+  return;
+end;
+
+procedure PrepLine(LongInt lastprep,string lastcurr,string lastcu,Integer itype,var string lastprintcu,val prepstart, var boolean custprinted)
+begin
+  string 255 tstr,custname;
+  
+  tstr = lastprep;
+  tstr = tstr & " (" & lastcurr & ")";
+  if (itype<>1) then begin
+    StartFormat(15);
+    OutString(0,0,tstr,false);
+    GetCustName(lastcu,custname);
+    OutString(2,0,lastcu,false);
+    OutString(3,0,custname,false);
+    EndFormat;
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(0,0,USetStr(7814),false); 
+    OutString(2,0,USetStr(7817),false);
+    OutString(3,0,USetStr(7816),false);
+    OutString(6,0,USetStr(7819),true);
+    OutString(1,0,USetStr(7828),true);
+    EndFormat;
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(2,0,USetStr(7827),false);
+    OutVal(1,0,prepstart,M4Val,true);  
+    EndFormat;
+  end else begin
+    if (custprinted==false) then begin 
+      StartFormat(15);
+      OutString(0,0,USetStr(7815),false);
+      GetCustName(lastcu,custname);
+      OutString(2,0,lastcu,false);
+      OutString(3,0,custname,false);
+      lastprintcu = lastcu;
+      EndFormat;
+      Gray_Divider(0,1);
+      StartFormat(15);
+      OutString(0,0,USetStr(7814),false); 
+      OutString(2,0,USetStr(7817),false);
+      OutString(3,0,USetStr(7816),false);
+      OutString(6,0,USetStr(7819),true);
+      OutString(1,0,USetStr(7828),true);
+      EndFormat;
+      Gray_Divider(0,1);
+      custprinted = true;
+    end;
+    StartFormat(15);
+    OutString(0,0,tstr,false);
+    OutString(2,0,USetStr(7827),false);
+    OutVal(1,0,prepstart,M4Val,true);  
+    EndFormat;
+  end;  
+  return;
+end;  
+
+procedure Print_PrepHist(var val tt,record RcVc RepSpec,record ARPayHistVc ARPayHistr,var record SMVC CurTotalsr,LongInt lastprep,string lastcu,string lastcurr,string lastprintcu,var val prepend, var val bcprepend,var boolean fwdprint,var val prepstart,var boolean custprinted1)
+begin
+  val t,sign,runbal;
+  string 255 tstr,dblstr;
+ 
+  if ((ARPayHistr.FileName=="IVVc") or (ARPayHistr.FileName=="CLOutVc")) then begin
+    sign = -1;
+  end else begin
+    sign = 1;
+  end;  
+  if (RepSpec.flags[4]==1) then begin
+    t = sign * ARPayHistr.BookVal;
+  end else begin
+    t = sign * ARPayHistr.Val;
+  end;
+  AddCurTotalsRow(ARPayHistr.CurncyCode,sign*ARPayHistr.Val,-1,-1,CurTotalsr);
+  tt = tt + sign*ARPayHistr.BookVal;
+  if fwdprint then begin 
+    PrepLine(ARPayHistr.CUPNr,ARPayHistr.CurncyCode,ARPayHistr.CustCode,RepSpec.flags[1],lastprintcu,prepstart,custprinted1);
+    fwdprint = false;
+  end;   
+  prepend = prepend + t;
+  bcprepend = bcprepend + sign * ARPayHistr.BookVal;
+  runbal = prepstart + prepend;
+  switch (ARPayHistr.FileName) begin
+    case "IPVc":
+      dblstr = "DblIPVc";
+      tstr = USetStr(1818);
+    case "CLInVc": 
+      dblstr = "DblCLInVc";
+      tstr = USetStr(1833);
+    case "CLOutVc": 
+      dblstr = "DblCLOutVc";
+      tstr = USetStr(1834);
+    case "IVVc": 
+      dblstr = "DblIVVc";
+     tstr = USetStr(1808);
+  otherwise 
+    dblstr = "";
+  end;
+  StartFormat(15); 
+  OutDate(0,0,ARPayHistr.TransDate,false);
+  OutString(2,0,tstr,false);
+  OutString(3,dblstr,ARPayHistr.SerNr,false);
+  OutVal(6,0,t,M4Val,true); 
+  OutVal(1,0,runbal,M4Val,true);  
+  EndFormat;
+  return;
+end;
+
+procedure PerPayHisSLRn_SortByPrep(record RcVc RepSpec,var val tt,var record SMVc CurTotalsr,var Boolean custprinted)
+begin
+  record ARPayHistVc ARPayHistr;
+  record CUVc CUr;
+  Boolean TrHs,printed;
+  val t,custfwdbal,bccustbal;
+  LongInt lastprep;
+  string 20 lastcu,lastbalcu;
+  val runbal;
+  Boolean testf;
+  string 250 tstr;
+  Boolean printf;
+  LongInt lastbalprep;
+  string 5 lastcurr,lastbalcurr;
+  val bcfwdbal,bcprepstart,bcprepend;
+  val prepstart,prepend;
+  Boolean printcust,fwdprint;
+  string 20 lastprintcu;
+  val custstart;
+  Boolean onlybal;
+
+  printed = false;
+  ARPayHistr.CUPNr = RepSpec.long1;
+  lastprep = -1;
+  TrHs = true;
+  fwdprint = true;
+  while (LoopKey("CUPNrTransDate",ARPayHistr,1,TrHs)) begin
+    testf = true;
+    if nonblank(RepSpec.f1) then begin 
+      if (RepSpec.f1<>ARPayHistr.CustCode) then begin
+        testf = false;
+      end;
+    end;
+    if (RepSpec.long1<>-1) then begin
+      if (RepSpec.long1<>ARPayHistr.CUPNr) then begin
+        TrHs = false;
+        testf = false;
+      end;  
+    end;
+    if (ARPayHistr.CUPNr==-1) then begin
+      testf = false;
+    end;
+    if ((RepSpec.f3<>ARPayHistr.CurncyCode) and (nonblank(RepSpec.f3))) then begin
+      testf = false;
+    end;
+    if (nonblank(RepSpec.FirstAcc)) then begin
+      if (testf) then begin
+        if (nonblank(ARPayHistr.ARAcc)) then begin
+          if (ARPayHistr.ARAcc!=RepSpec.FirstAcc) then begin testf = false; end;
+        end else begin
+          if (GetCustomerOnAccountAC(ARPayHistr.CustCode)!=RepSpec.FirstAcc) then begin
+            testf = false;
+          end;
+        end;
+      end;
+    end;
+    if testf then begin
+      if (ARPayHistr.CUPNr<>lastprep)  then begin
+        prepstart = FindPrepaymentFwdBalance(RepSpec,ARPayHistr.CUPNr,tt,CurTotalsr,ARPayHistr.TransDate,true);
+        fwdprint = true;
+      end;
+    end;
+    onlybal = false;
+    if testf then begin 
+      if (DateInRange(ARPayHistr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+        testf = false; 
+        if (prepstart!=0) then begin
+          onlybal = true;
+        end;
+      end;
+    end;  
+    if (testf) or onlybal then begin
+      if (ARPayHistr.CUPNr<>lastprep) then begin
+        if (lastprep<>-1)  then begin
+          StartFormat(15);
+          EndFormat;
+          prepend = 0;
+          bcfwdbal = 0;
+          bcprepstart = 0;
+          bcprepend = 0;
+        end;
+        fwdprint = true;
+        if (ARPayHistr.CUPNr!=-1) and onlybal then begin
+          PrepLine(ARPayHistr.CUPNr,ARPayHistr.CurncyCode,ARPayHistr.CustCode,RepSpec.flags[1],lastprintcu,prepstart,custprinted);
+          onlybal = false;
+          fwdprint = false;
+        end;
+      end;
+      lastprep = ARPayHistr.CUPNr;
+      lastcu = ARPayHistr.CustCode;
+      lastcurr = ARPayHistr.CurncyCode;
+      if testf then begin 
+        Print_PrepHist(tt,RepSpec,ARPayHistr,CurTotalsr,lastprep,lastcu,lastcurr,lastprintcu,prepend,bcprepend,fwdprint,prepstart,custprinted);
+      end;
+    end;
+  end;  
+  if onlybal then begin
+    if (ARPayHistr.CUPNr<>lastprep)  then begin
+      PrepLine(lastprep,lastcurr,lastcu,RepSpec.flags[1],lastprintcu,prepstart,custprinted);
+      OutString(2,0,USetStr(7828),false);
+      OutVal(1,0,prepstart,M4Val,true);  
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+    end;
+  end;
+ 
+  return;
+end;  
+
+procedure PerPayHisSLRn_SortByTransDate(record RcVc RepSpec,var val tt,var record SMVc CurTotalsr)
+begin
+  record ARPayHistVc ARPayHistr;
+  record CUVc CUr;
+  Boolean TrHs;
+  val t,custfwdbal,bccustbal;
+  LongInt lastprep;
+  string 20 lastcu,lastbalcu;
+  Boolean testf;
+  string 250 tstr;
+  Boolean printf;
+  LongInt lastbalprep;
+  string 5 lastcurr,lastbalcurr;
+  val bcfwdbal,bcprepstart,bcprepend;
+  val prepstart,prepend;
+  Boolean printcust,fwdprint;
+  string 20 lastprintcu;
+  val custstart;
+  Boolean onlybal,addtot;
+  record ARPayHistVc firstARPayHistr;
+  boolean custprinted1;
+  
+  custprinted1 = true;
+
+  lastprep = -1;
+  TrHs = true;
+  fwdprint = true;
+  ResetLoop(ARPayHistr);
+  while (LoopKey("TransDate",ARPayHistr,2,TrHs)) begin
+    testf = true;
+    if nonblank(RepSpec.f1) then begin 
+      if (RepSpec.f1<>ARPayHistr.CustCode) then begin
+        testf = false;
+      end;
+    end;
+    if (RepSpec.long1<>-1) then begin
+      if (RepSpec.long1<>ARPayHistr.CUPNr) then begin
+        testf = false;
+      end;  
+    end;
+    if (ARPayHistr.CUPNr==-1) then begin
+      testf = false;
+    end;
+    if ((RepSpec.f3<>ARPayHistr.CurncyCode) and (nonblank(RepSpec.f3))) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+        if (ARPayHistr.CUPNr<>lastprep) then begin 
+        if ReadFirstMain(CUr,1,true) then begin 
+        end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (SetInSet2(RepSpec.f4,CUr.Classification)==false) then begin
+            testf = false;
+          end;
+          if (nonblank(RepSpec.f5)) then begin
+            if (testf==true) then begin
+              testf = false;
+              ClassTypef(RepSpec.f5,CUr.Classification,testf);
+            end;
+          end;
+        end;
+      end;  
+    end;
+    if (nonblank(RepSpec.FirstAcc)) then begin
+      if (testf) then begin
+        if (nonblank(ARPayHistr.ARAcc)) then begin
+          if (ARPayHistr.ARAcc!=RepSpec.FirstAcc) then begin testf = false; end;
+        end else begin
+          if (GetCustomerOnAccountAC(ARPayHistr.CustCode)!=RepSpec.FirstAcc) then begin
+            testf = false;
+          end;
+        end;
+      end;
+    end;
+    onlybal = false;
+    if testf then begin 
+      fwdprint = true;
+      if (DateInRange(ARPayHistr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==true) then begin
+        prepstart = FindPrepaymentFwdBalance(RepSpec,ARPayHistr.CUPNr,tt,CurTotalsr,ARPayHistr.TransDate,false);
+        fwdprint = true;
+      end else begin 
+        testf = false;
+        firstARPayHistr.CUPNr = ARPayHistr.CUPNr;
+        if ReadFirstMain(firstARPayHistr,1,true) then begin
+          if  (firstARPayHistr.TransDate==ARPayHistr.TransDate) and (firstARPayHistr.CUPNr == ARPayHistr.CUPNr) and (firstARPayHistr.FileName == ARPayHistr.FileName) and (firstARPayHistr.SerNr == ARPayHistr.SerNr) then begin
+            prepstart = FindPrepaymentFwdBalance(RepSpec,ARPayHistr.CUPNr,tt,CurTotalsr,RepSpec.sStartDate,true);
+            if (prepstart!=0) then begin
+              onlybal = true;
+            end;
+          end;
+        end;
+      end;
+    end; 
+    if (testf) or onlybal then begin
+      if (ARPayHistr.CUPNr<>lastprep) then begin
+        if (lastprep<>-1)  then begin
+          StartFormat(15);
+          EndFormat;
+          prepend = 0;
+          bcfwdbal = 0;
+          bcprepstart = 0;
+          bcprepend = 0;
+        end;
+        fwdprint = true;
+        if (ARPayHistr.CUPNr!=-1) and onlybal then begin
+          PrepLine(ARPayHistr.CUPNr,ARPayHistr.CurncyCode,ARPayHistr.CustCode,RepSpec.flags[1],lastprintcu,prepstart,custprinted1);
+          Black_Divider(5,1);
+          onlybal = false;
+        end;
+      end;
+      lastprep = ARPayHistr.CUPNr;
+      lastcu = ARPayHistr.CustCode;
+      lastcurr = ARPayHistr.CurncyCode;
+      if testf then begin
+        Print_PrepHist(tt,RepSpec,ARPayHistr,CurTotalsr,lastprep,lastcu,lastcurr,lastprintcu,prepend,bcprepend,fwdprint,prepstart,custprinted1);
+      end;                     
+    end;
+  end;  
+  if onlybal then begin
+    if (ARPayHistr.CUPNr<>lastprep)  then begin
+      PrepLine(lastprep,lastcurr,lastcu,RepSpec.flags[1],lastprintcu,prepstart,custprinted1);
+      OutString(2,0,USetStr(7828),false);
+      OutVal(1,0,prepstart,M4Val,true);  
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+    end;
+  end;
+ 
+  return;
+end;  
+            
+global
+procedure PerPayHisSLRn(record RcVc RepSpec)
+begin
+  val tt,tt1;
+  record CUVc CUr;
+  boolean TrHs,test,custprinted;
+  record SMVc CurTotalsr;
+  integer rw;
+  string 255 tstr;
+  
+  StartReportJob(USetStr(7810));
+  rw = 1;
+
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  
+  tstr = USetStr(7823);
+  switch (RepSpec.flags[1]) begin
+    case 0:
+      tstr = tstr & USetStr(7812);
+    case 1:
+      tstr = tstr & USetStr(7815);
+    case 2:
+      tstr = tstr & USetStr(7814);
+  end;
+  Header(rw,tstr,0);
+
+  HTCusts(RepSpec.f1,RepSpec.f1,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  
+  HTCustClass(RepSpec.f4,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end; 
+  
+  HTCustClassType(RepSpec.f5,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end; 
+  
+  if (RepSpec.long1<>-1) then begin
+    tstr = RepSpec.long1;
+    tstr = USetStr(7812) & " " & tstr;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+     
+  SetRepCol(2,120);
+  SetRepCol(3,200);
+  SetRepCol(4,270);
+  SetRepCol(5,345);
+  SetRepCol(6,400);
+
+  if (RepSpec.long1!=-1) then begin
+    custprinted = true;
+    PerPayHisSLRn_SortByPrep(RepSpec,tt,CurTotalsr,custprinted);
+    goto LPerPayHisSLRn;
+  end;
+  if nonblank(RepSpec.f1) then begin 
+    custprinted = true;
+    PerPayHisSLRn_SortByPrep(RepSpec,tt,CurTotalsr,custprinted);
+    goto LPerPayHisSLRn;
+  end;
+
+  switch (RepSpec.flags[1]) begin
+    case 0:
+      custprinted = true;
+      PerPayHisSLRn_SortByPrep(RepSpec,tt,CurTotalsr,custprinted);
+    case 1:
+      CUr.Code = "";
+      CUr.CUType = 1;
+      TrHs = true;
+      while (LoopKey("ActCode",CUr,1,TrHs)) begin
+        test = true;
+        if (CUr.CUType==0) then begin 
+          TrHs = false;
+          test = false;
+        end;
+        if (CUr.OnAccount!=1) then begin 
+          test = false;
+        end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (SetInSet2(RepSpec.f4,CUr.Classification)==false) then begin
+            test = false;
+          end;
+          if (nonblank(RepSpec.f5)) then begin
+            if (test==true) then begin
+              test = false;
+              ClassTypef(RepSpec.f5,CUr.Classification,test);
+            end;
+          end;
+        end;
+        if test then begin 
+          RepSpec.f1 = CUr.Code;
+          tt1 = 0;
+          custprinted = false;
+          PerPayHisSLRn_SortByPrep(RepSpec,tt1,CurTotalsr,custprinted);
+          tt = tt + tt1;
+          if (custprinted) then begin
+            Gray_Divider(0,1);
+            StartFormat(15);
+            OutString(2,0,USetStr(7815) & " " & USetStr(7828),false);
+            OutVal(1,0,tt1,M4Val,true);
+            EndFormat;
+            StartFormat(15);
+            EndFormat;
+          end;
+        end;
+      end;
+    case 2:
+      PerPayHisSLRn_SortByTransDate(RepSpec,tt,CurTotalsr);
+  end;
+LPerPayHisSLRn:;
+  Gray_Divider(0,1);
+  if (RepSpec.flags[4]==0) then begin
+    PrintCurTotalsRow(CurTotalsr,7824,150,450,-1,-1);
+  end;  
+  StartFormat(15);
+  OutString(2+40,0,USetStr(7826),false);
+  OutVal(1,0,tt,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

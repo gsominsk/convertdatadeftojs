@@ -1,0 +1,246 @@
+remote procedure LTDClassOnOpenWindowRemote(var record LeaveTransferVc,var Integer);
+remote updating function LongInt CancelApprovalRequest(string,string,var Integer);
+remote updating function Integer RequestApproval_LTVc(record LeaveTransferVc,var record RcVc,var Integer);
+remote function Integer LTApprovalStatus(record LeaveTransferVc,var record AcceptanceRulesVc);
+remote function Integer LTTestApprovalStatus(record LeaveTransferVc);
+external function Integer CountObjects(string);
+external function Boolean UserCanChangePendingRecord(Integer);
+
+function Boolean LTApprovalStarted(record LeaveTransferVc LTr)
+begin
+  Boolean res;
+  record AcceptanceRulesVc Acptr;
+
+  res = false;
+  if (LTApprovalStatus(LTr,Acptr)>=kAcceptanceStatePending) then begin
+    res = true;
+  end;
+  LTApprovalStarted = res;
+  return;
+end;
+
+function Boolean LeaveTransferDClassEmployeeEFAfter(Integer wn,Boolean changedf)
+begin
+  record LeaveTransferVc LTr;
+  record CUVc CUr;
+  Boolean res;
+  
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,LTr);
+    CUr.Code = LTr.Employee;
+    ReadFIrstMain(CUr,1,true);
+    LTr.Name = CUr.Name;
+    PutWindowRecord(wn,LTr);
+  end;
+  LeaveTransferDClassEmployeeEFAfter = res;
+  return;
+end;
+
+global
+function Boolean LeaveTransferDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record LeaveTransferVc LTr;
+
+  GetWindowRecord(wn,LTr);    
+  if (LTApprovalStarted(LTr) and UserCanChangePendingRecord(rownr)==false) then begin 
+    res = false; 
+    goto LLeaveTransferDClassAfterEditField; 
+  end;
+  switch (fieldname) begin
+    case "Employee": res = LeaveTransferDClassEmployeeEFAfter(wn,changed!=0);
+  end;
+LLeaveTransferDClassAfterEditField:;    
+  LeaveTransferDClassAfterEditField = res;
+  return;
+end;
+
+global
+function Boolean LeaveTransferDClassOKFlagButtonAction(Integer wn,Integer value)
+begin
+  Boolean res;
+  record LeaveTransferVc LTr;
+  Integer err;
+ 
+  res = true;
+  GetWindowRecord(wn,LTr);
+  err = LTTestApprovalStatus(LTr);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    res = false;
+    goto LLeaveTransferDClassOKFlagButtonAction;
+  end;
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,LTr);
+    if (LTr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,LTr);
+    if (LTr.OKFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+LLeaveTransferDClassOKFlagButtonAction:;
+  LeaveTransferDClassOKFlagButtonAction = res;
+  return;
+end;
+
+global
+function Boolean LeaveTransferDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record LeaveTransferVc LTr;
+  record LeaveTransferVc LT2r;
+  Integer nwn;
+  
+  res = true;
+  nwn = FindWindow("SelectApproverWClass");
+  if (nwn>0) then begin
+    if (MotherWindow(nwn)==wn) then begin
+      res = false;
+      goto LLeaveTransferDClassActiveEditField;
+    end;
+  end;
+  if (wnst==Rs_update) then begin
+    GetWindowRecord(wn,LTr);    
+    GetPrevWindowRecord(wn,LT2r);    
+    if ((LT2r.OKFlag!=0) and (LTr.OKFlag!=0)) then begin 
+      res = false; 
+    end;
+    switch (fieldname) begin
+      case "SerNr": res = false;
+    end;
+  end;
+LLeaveTransferDClassActiveEditField:;
+  LeaveTransferDClassActiveEditField = res;
+  return;
+end;
+
+global
+updating procedure LTSendforAcceptanceLTDsmExecute(Integer wn,string acceptanceby,string acceptancefyi)
+begin
+  Integer err,nwn;
+  record LeaveTransferVc LTr;
+  Integer ApproverSelection,ApprovalStatusFlag;
+  record RcVc RepSpec;
+  
+  GetWindowRecord(wn,LTr);
+  if (WindowState(wn)!=Rs_normal) then begin
+    if (WindowDoOK(wn,0)==false) then begin
+      goto LLTSendforAcceptanceLTDsm;
+    end;
+    GetWindowRecord(wn,LTr);
+  end;
+  LTr.AcceptanceBy = acceptanceby;
+  LTr.AcceptanceFYI = acceptancefyi;
+  err = RequestApproval_LTVc(LTr,RepSpec,ApprovalStatusFlag);
+  ApproverSelection = RepSpec.ArtMode;
+  if ((ApproverSelection==kAcceptanceApproverSelectionManual) and (blank(LTr.AcceptanceBy))) then begin
+    switch (err) begin  
+      case 0:
+        if (CountObjects(RepSpec.f12)==1) then begin
+          RepSpec.f1 = RepSpec.f12;
+        end;
+        if (CountObjects(RepSpec.f11)==1) then begin
+          RepSpec.f2 = RepSpec.f11;
+        end;
+        nwn = OpenWindow("SelectApproverWClass",0,wn,"","",RepSpec);
+      otherwise
+        MessageBox(err,"");
+    end;
+  end else begin
+    switch (err) begin  
+      case 0:
+        PutWindowRecord(wn,LTr);
+        if (WindowDoOK(wn,0)) then begin
+        end;
+        PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+        CheckmarkBox(37501,"");
+      otherwise
+        MessageBox(err,"");
+    end;
+  end;
+LLTSendforAcceptanceLTDsm:;  
+  return;
+end;
+
+global
+updating procedure LTSendforAcceptanceLTDsm()
+begin
+  LTSendforAcceptanceLTDsmExecute(CurWindow,"","");
+  return;
+end;
+
+global
+updating procedure LeaveTransferSendforAcceptanceLeaveTransferDsm()
+begin
+  LTSendforAcceptanceLTDsmExecute(CurWindow,"","");
+  return;
+end;
+
+global
+updating procedure LTCancelApprovalRequest(Integer wn)
+begin
+  record LeaveTransferVc LTr;
+  Integer ApprovalStatusFlag;
+  LongInt err;
+
+  GetWindowRecord(wn,LTr);
+  err = CancelApprovalRequest("LeaveTransferVc",LTr.SerNr,ApprovalStatusFlag);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    if (err!=37503) then begin
+      goto LLTCancelApprovalRequest;
+    end;
+  end;
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,ApprovalStatusFlag));  
+LLTCancelApprovalRequest:;
+  return;
+end;
+
+global
+procedure LTStatusDsm()
+begin
+  record RcVc RepSpec;
+  record LeaveTransferVc LTr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,LTr);
+  RepSpec.f1 = LTr.SerNr;
+  RepSpec.repname = "LTStatusRn";
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+function Boolean LeaveTransferDClassOnOpenWindow(Integer wn)
+begin
+  record LeaveTransferVc LTr;
+  Integer AcceptanceStatusFlag;
+  
+  GetWindowRecord(wn,LTr);
+  LTDClassOnOpenWindowRemote(LTr,AcceptanceStatusFlag);
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,AcceptanceStatusFlag));  
+  LeaveTransferDClassOnOpenWindow = false;
+  return;
+end;
+
+global
+procedure LeaveTransferDClassOnWindowRecordChange(Integer wn)
+begin
+  record LeaveTransferVc LTr;
+  Integer AcceptanceStatusFlag;
+
+  GetWindowRecord(wn,LTr);
+  LTDClassOnOpenWindowRemote(LTr,AcceptanceStatusFlag);
+  PutWindowString(wn,"AcceptanceStatusFlag",StringFromSet(443,AcceptanceStatusFlag));  
+  return;
+end;

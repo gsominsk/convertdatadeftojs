@@ -1,0 +1,469 @@
+external procedure SRSumUp(var record SRVc);
+external function val CalculateSerialNrQuantity(string,string,string,Boolean,val,val,val,val);
+external procedure SerialNrDimensions(string,string,var val,var val,var val);
+external function Integer CheckSerialStatus(string,string,var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean BulkSerialNos_CalculateQuantityAndSerialNr(record SerNrTrackBlock,Boolean,string,var string,var val);
+external function string 60 AddObjectToObjectList(string,string);
+external procedure NormalizeObjstr(var string);
+external procedure GetACShortAccount(string,var string,var string);
+external procedure SRSumUp(var record SRVc);
+external function string 255 FindINObjects(string,string);
+external function Boolean GetFirstItem(var string,var record INVc);
+external procedure FindStockValueAtPosition(string,string,string,var record PISVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean FindItemVAR(string,var string,var string,var string,var string);
+
+global  
+function string 255 FindPurchaseInvoiceNrForSerialNr(string artcode,string serialnr,var LongInt orgvir,var LongInt orgvirow)
+begin
+  string 255 res;
+  record ItemHistVc IHr;
+  record PUVc PUr;
+  row PUVc PUrw;
+  record VIVc VIr;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  Boolean found;
+  
+  if (nonblank(serialnr)) then begin
+    IHr.ArtCode = artcode;
+    IHr.SerialNr = serialnr;
+    IHr.FileName = "PUVc";
+    found = ReadFIrstKey("ArtCodeSerialNr",IHr,3,true);
+    if (found) then begin
+      PUr.SerNr = IHr.TransNr;
+      if (ReadFirstMain(PUr,1,true)) then begin
+        if (PUr.PONr>0) then begin
+          found = true;
+          VIr.POSerNr = PUr.PONr;
+          while (LoopBackKey("POSerNr",VIr,1,found)) begin
+            if (VIr.POSerNr!=PUr.PONr) then begin found = false; end;
+            if (found) then begin
+              rwcnt = MatRowCnt(VIr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(VIr,i,VIrw);
+                if (VIrw.PUNr==PUr.SerNr) and (VIrw.PURow==IHr.Row) then begin
+                  res = VIr.InvoiceNr;
+                  if (blank(res)) then begin
+                    res = USetStr(1152) & ":" & VIr.SerNr;
+                  end;
+                  orgvir = VIr.SerNr;
+                  orgvirow = i;
+                  goto LFindPurchaseInvoiceNrForSerialNr;
+                end;
+              end;
+            end;
+          end;
+        end else begin
+//          MatRowGet(PUr,IHr.Row,PUrw);
+//what if PUrch Invoice without PO ? 
+        end;
+      end;
+    end;
+  end else begin
+  end;
+LFindPurchaseInvoiceNrForSerialNr:;  
+  FindPurchaseInvoiceNrForSerialNr = res;
+  return;
+end;
+  
+global  
+procedure PasteArtCodeToSR2(var record SRVc SRp,Integer rownr,record ItemStatusVc ISr,string position,string serial,val q)
+begin
+  row SRVc SRrw;
+  record INVc INr;
+  LongInt vinr,virownr;
+  record LocationVc Locr;
+
+  ReadFirstItem(ISr.Code & ISr.Variety,INr,true,true);
+  SRrw.Coefficient = INr.UnitCoefficient;
+  SRrw.ArtCode = ISr.Code & ISr.Variety;
+  SRrw.Location = ISr.Location;
+  SRrw.Qty = ISr.Instock;
+  SRrw.Spec = INr.Name;
+  SRrw.Objects = FindINObjects(INr.Objects,INr.Group);
+  SRrw.UnitXval = INr.Width;
+  SRrw.UnitYval = INr.Height;
+  SRrw.UnitZval = INr.Depth;
+  SRrw.PosCode = position;
+  SRrw.SerialNr = serial;
+  SRrw.Qty = q;
+  SRrw.VEInvoiceNr = FindPurchaseInvoiceNrForSerialNr(SRrw.ArtCode,SRrw.SerialNr,vinr,virownr);
+/*
+done when creating  NL Transaction
+  Locr.Code = SRrw.Location;
+  if (ReadFirstMain(Locr,1,true)) then begin
+    SRrw.Objects = AddObjectToObjectList(SRrw.Objects,Locr.Objects);        
+  end;
+*/
+  MatRowPut(SRp,rownr,SRrw);
+  return;
+end;
+  
+global  
+procedure PasteArtCodeToSR(var record SRVc SRp,Integer rownr,record ItemStatusVc ISr,string serial,val q)
+begin
+  PasteArtCodeToSR2(SRp,rownr,ISr,"",serial,q);
+  return;
+end;
+  
+procedure PasteArtCodePerPostionToSR(var record SRVc SRr,string location,var Integer rownr,record ItemStatusVc ISr)
+begin
+  record LocationVc Locr;
+  record PISVc PISr;
+  Boolean found,testf;
+
+  PISr.Location = location;
+  PISr.ArtCode = ISr.Code;
+  PISr.Variety = ISr.Variety;
+  found = true;
+  while (LoopKey("CodeVariety",PISr,3,found)) begin
+    if (PISr.Location!=location) then begin found = false; end;
+    if (PISr.ArtCode!=ISr.Code) then begin found = false; end;
+    if (PISr.Variety!=ISr.Variety) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (PISr.LeftQty<=0) then begin testf = false; end;
+      if (testf) then begin
+        PasteArtCodeToSR2(SRr,rownr,ISr,PISr.Position,"",PISr.LeftQty);
+        rownr = rownr + 1;
+        if (rownr>=500) then begin
+          goto LPasteArtCodePerPostionToSR;
+        end;
+      end;
+    end;
+  end;
+LPasteArtCodePerPostionToSR:;  
+  return;
+end;
+  
+global
+function Boolean SRVc_PasteArtCode(var record SRVc SRp,Integer arownr,Boolean changedf,var string inwarn)
+begin
+  Boolean res;
+  record INVc INr;
+  record ItemStatusVc ISr;
+  Boolean found;
+  Integer keys;
+  string 60 sz,msk,mskrep,serialnr,prevserialnr,firstserialnr;
+  string 200 varsubset;
+  row SRVc SRrw;
+  Integer rownr;
+  Boolean itemfound,testf,foundsb,varf;
+  record SerBalVc SBr;
+  val q,serqty;
+  record SerNrTrackBlock SNrb;
+  record LocationVc Locr;
+
+  if (changedf) then begin
+    BlockLoad(SNrb);
+    rownr = arownr;
+    
+    res = true;
+    MatRowGet(SRp,rownr,SRrw);    
+    itemfound = GetFirstItem(SRrw.ArtCode,INr);
+    if (itemfound==false) then begin
+      itemfound = ReadFirstItem(SRrw.ArtCode,INr,true,true);
+      if (FindItemVAR(INr.Code,sz,msk,mskrep,varsubset)) then begin
+        INr.Code = SRrw.ArtCode;
+        varf = true;
+      end;
+    end else begin
+      if (FindItemVAR(INr.Code,sz,msk,mskrep,varsubset)) then begin
+        varf = true;
+      end;
+    end;
+    if (nonblank(INr.WarnText1)) then begin
+      inwarn = INr.WarnText1;
+    end;
+    if (UserCanAction("DisallowSerNrItemsOnSR",false)) then begin
+      if (INr.SerNrf!=0) then begin
+        inwarn = USetStr(20105);
+        goto LSRVc_PasteArtCode;
+      end;
+    end;
+    if (UserCanAction("DisallownonSerNrItemsOnSR",false)) then begin
+      if (INr.SerNrf==0) then begin
+        inwarn = USetStr(20106);
+        goto LSRVc_PasteArtCode;
+      end;
+    end;
+
+    found = true;
+    ISr.Code = INr.Code;
+    if (nonblank(SRrw.Location)) then begin     
+      ISr.Location = SRrw.Location;
+      keys = 2;
+    end else begin
+      keys = 1;
+    end;
+    while (LoopMain(ISr,keys,found)) begin
+      if (ISr.Code!=INr.Code) then begin found = false; end;
+      if (nonblank(SRrw.Location)) then begin     
+        if (ISr.Location!=SRrw.Location) then begin
+          found = false;
+        end;
+      end;      
+      if (found) then begin
+        testf = true;
+        if (ISr.Location==";;;") then begin testf = false; end;
+        if (ISr.Instock<=0) then begin testf = false; end;
+        if (testf) then begin
+          switch (INr.SerNrf) begin
+            case 0:
+              Locr.Code = ISr.Location;
+              ReadFirstMain(Locr,1,true);
+              if (Locr.RequirePos!=0) then begin
+                PasteArtCodePerPostionToSR(SRp,Locr.Code,rownr,ISr);
+              end else begin
+                PasteArtCodeToSR(SRp,rownr,ISr,"",ISr.Instock);
+                rownr = rownr + 1;
+              end;
+              if (rownr>=500) then begin
+//what then ?   
+                inwarn = USetStr(20407);
+                goto LSRVc_PasteArtCode;
+              end;
+            otherwise
+              q = 0.00001;
+              ResetLoop(SBr);
+              foundsb = true;
+              SBr.Item = ISr.Code;
+              SBr.Location = ISr.Location;
+              SBr.Quant = q;
+              while (LoopKey("ItemQuant",SBr,3,foundsb)) begin
+                if (varf) then begin
+                  if (Left(SBr.Item,len(INr.Code))!=INr.Code) then begin foundsb = false; end;
+                end else begin
+                  if (SBr.Item!=ISr.Code) then begin foundsb = false; end;
+                end;
+                if (SBr.Location!=ISr.Location) then begin foundsb = false; end;
+                if (SBr.Quant<q) then begin foundsb = false; end;
+                if (foundsb) then begin
+                  testf = true;
+                  if (varf) then begin
+                    if (Right(SBr.Item,len(SBr.Item)-len(INr.Code))!=ISr.Variety) then begin testf = false; end;
+                  end;
+                  if (testf) then begin
+                    if (SNrb.BulkSerialNos!=0) then begin
+                      if (nonblank(prevserialnr)) then begin
+                        if (StringToLongInt(SBr.Serial)!=StringToLongInt(prevserialnr)+1) then begin
+                          PasteArtCodeToSR(SRp,rownr,ISr,firstserialnr & ":" & SBr.Serial,serqty);
+                          serqty = 0;
+                          firstserialnr = "";
+                          rownr = rownr + 1;
+                        end;
+                      end;
+                      prevserialnr = SBr.Serial;
+                      if (blank(firstserialnr)) then begin
+                        firstserialnr = SBr.Serial;
+                      end;
+                      serqty = serqty + 1;
+                    end else begin
+                      PasteArtCodeToSR(SRp,rownr,ISr,SBr.Serial,SBr.Quant);
+                      rownr = rownr + 1;
+                    end;
+                    if (rownr>=500) then begin
+  //what then ?               
+                      inwarn = USetStr(20407);
+                      goto LSRVc_PasteArtCode;
+                    end;
+                  end;
+                end;
+              end;
+          end;
+        end;
+      end;
+    end;
+  end;
+LSRVc_PasteArtCode:;  
+  if (SNrb.BulkSerialNos!=0) then begin
+    if (serqty>0) then begin
+      PasteArtCodeToSR(SRp,rownr,ISr,firstserialnr & ":" & prevserialnr,serqty);
+    end;
+  end;
+  SRSumUp(SRp);
+  SRVc_PasteArtCode = res;
+  return;
+end;
+        
+global
+procedure SRVc_PastePosCode(var record SRVc SRp,Integer rownr)
+begin
+  row SRVc SRrw;
+  row SRVc toSRrw;
+  record PISVc PISr;
+  record MainStockBlock MSb;
+  string 255 location;
+  val rem;
+
+  MatRowGet(SRp,rownr,SRrw);
+  location = SRrw.Location;
+  if (blank(location)) then begin
+    location = SRp.Location;
+  end;
+  if (blank(location)) then begin
+    BlockLoad(MSb);
+    location = MSb.MainStock;
+  end;  
+  FindStockValueAtPosition(SRrw.ArtCode,location,SRrw.PosCode,PISr);
+  if (SRrw.Qty>PISr.LeftQty) then begin
+    rem = SRrw.Qty - PISr.LeftQty;
+    SRrw.Qty = PISr.LeftQty;
+    MatRowPut(SRp,rownr,SRrw);
+    CopyRow(SRp,SRrw,toSRrw);    
+    toSRrw.PosCode = "";
+    toSRrw.Qty = rem;
+    MatRowInsert(SRp,rownr+1,toSRrw);
+  end;
+  return;
+end;    
+
+global
+procedure SRVc_PasteNewFIFO(var record SRVc SRr,Integer rownr)
+begin
+  row SRVc SRrw;
+  row SRVc cSRrw;
+  record MainStockBlock MSb;
+  Integer i,rwcnt;
+
+  BlockLoad(MSb);
+  if (MSb.SamePriceforItemonSR!=0) then begin
+    MatRowGet(SRr,rownr,cSRrw);
+    cSRrw.NewFIFORowVal = cSRrw.Qty*cSRrw.NewFIFO;
+    cSRrw.DiffFIFO = cSRrw.NewFIFO - cSRrw.FIFO;
+    cSRrw.DiffFIFORowVal = cSRrw.NewFIFORowVal - cSRrw.FIFORowVal;
+    MatRowPut(SRr,rownr,cSRrw);
+    rwcnt = MatRowCnt(SRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SRr,i,SRrw);
+      if (i!=rownr) then begin
+        if (SRrw.ArtCode==cSRrw.ArtCode) then begin
+          if (blank(SRrw.NewFIFO)) then begin
+            SRrw.NewFIFO = cSRrw.NewFIFO;
+            SRrw.NewFIFORowVal = SRrw.Qty*SRrw.NewFIFO;
+            SRrw.DiffFIFO = SRrw.NewFIFO - SRrw.FIFO;
+            SRrw.DiffFIFORowVal = SRrw.NewFIFORowVal - SRrw.FIFORowVal;
+            MatRowPut(SRr,i,SRrw);
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    MatRowGet(SRr,rownr,SRrw);
+    SRrw.NewFIFORowVal = SRrw.Qty*SRrw.NewFIFO;
+    SRrw.DiffFIFO = SRrw.NewFIFO - SRrw.FIFO;
+    SRrw.DiffFIFORowVal = SRrw.NewFIFORowVal - SRrw.FIFORowVal;
+    MatRowPut(SRr,rownr,SRrw);
+  end;
+  SRSumup(SRr);
+  return;
+end;    
+
+global
+function Boolean SRVc_PasteACShort(var record SRVc SRr,Integer rownr)
+begin
+  row SRVc SRrw;
+  string 255 tstr,obj;
+  Boolean res;
+  
+  if (rownr>=0) then begin
+    MatRowGet(SRr,rownr,SRrw);
+    GetACShortAccount(SRrw.ACShort,tstr,obj);
+    SRrw.SRVarAcc = tstr;
+    SRrw.Objects = obj;
+    if nonblank(obj) then begin
+      if nonblank(SRrw.Objects) then begin
+        if (obj<>SRrw.Objects) then begin
+          obj = obj & "," & SRrw.Objects;
+          NormalizeObjstr(obj);
+        end;  
+      end;        
+      SRrw.Objects = obj;
+    end;
+    MatRowPut(SRr,rownr,SRrw);
+    res = true;
+  end else begin
+    GetACShortAccount(SRr.ACShort,tstr,obj);
+    SRr.SRVarAcc = tstr;
+    SRr.Objects = obj;
+    if nonblank(obj) then begin
+      if nonblank(SRr.Objects) then begin
+        if (obj<>SRr.Objects) then begin
+          obj = obj & "," & SRr.Objects;
+          NormalizeObjstr(obj);
+        end;  
+      end;        
+      SRr.Objects = obj;
+    end;
+    res = true;    
+  end;  
+  SRVc_PasteACShort = res;
+  return;
+end;
+
+global
+function Boolean SRVc_PasteLocation(var record SRVc SRr,Integer rownr)
+begin
+  row SRVc SRrw;
+  Boolean res;
+  record LocationVc Locr;
+  
+  if (rownr>=0) then begin
+    MatRowGet(SRr,rownr,SRrw);
+    Locr.Code = SRrw.Location;
+    ReadFirstMain(Locr,1,true);
+//    SRrw.Objects = Locr.Objects;//are added when creating trans
+  end else begin
+    Locr.Code = SRr.Location;
+    ReadFirstMain(Locr,1,true);
+//    SRr.Objects = Locr.Objects;//are added when creating trans
+  end;  
+  SRVc_PasteLocation = res;
+  return;
+end;
+
+global
+procedure SRVc_PasteSerialNr(var record SRVc SRr,Integer rownr)
+begin
+  row SRVc SRrw;
+  val UnitXval,UnitYval,UnitZval,oldquant;
+  string 255 tstr;
+  Boolean chsum;
+  string 20 location;
+  record INVc INr;
+  record SerNrTrackBlock SNrb;
+
+  MatRowGet(SRr,rownr,SRrw);
+  oldquant = SRrw.Qty;
+  location = SRrw.Location;
+  if (blank(location)) then begin
+    location = SRr.Location;
+  end;
+  ReadFirstItem(SRrw.ArtCode,INr,true,true);
+  if (nonblank(SRrw.ArtCode)) and (INr.SerNrf==1) then begin
+    if (BulkSerialNos_CalculateQuantityAndSerialNr(SNrb,true,SRrw.ArtCode,SRrw.SerialNr,SRrw.Qty)) then begin
+      MatRowPut(SRr,rownr,SRrw);
+      MatRowGet(SRr,rownr,SRrw);
+    end;
+  end;
+  if ((SNrb.BulkSerialNos==0) or (InString(SRrw.SerialNr,":")==0)) then begin
+    SerialNrDimensions(SRrw.ArtCode,SRrw.SerialNr,UnitXval,UnitYval,UnitZval);
+    SRrw.UnitXval = UnitXval;
+    SRrw.UnitYval = UnitYval;
+    SRrw.UnitZval = UnitZval;
+    if (CheckSerialStatus(SRrw.ArtCode,SRrw.SerialNr,tstr)==1) then begin
+      MessageBox(0,tstr);
+    end;
+    SRrw.Qty = CalculateSerialNrQuantity(SRrw.ArtCode,SRrw.SerialNr,location,true,SRrw.UnitXval,SRrw.UnitYval,SRrw.UnitZval,SRrw.Qty);    
+    if (SRrw.Qty!=oldquant) then begin
+      chsum = true;
+    end;
+  end;
+  MatRowPut(SRr,rownr,SRrw);
+  if (chsum) then begin
+    SRSumUp(SRr);
+  end;    
+  return;
+end;

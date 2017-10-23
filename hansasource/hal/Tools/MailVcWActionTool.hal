@@ -1,0 +1,776 @@
+external function Boolean CurUserHasMailbox(var string);
+external function string 255 AddStr(string,string,string);
+external function Integer ShouldCreateHTMLMail(Integer);
+external procedure StripLeadingSpaces(var string);
+external procedure StripSpace(var string,string);
+external function Boolean InterNetAddrTest(string);
+external procedure ResolveMailboxNumber(var row MailVc);
+external procedure FindCurMailboxName(var string);
+forward function Boolean FindUserInMailbox(string,var string,var LongInt);
+external procedure StripEndingSpaces(var string);
+
+global
+function Boolean MailHasHtmlAttachment(record MailVc Mailr)
+begin
+  record RLinkVc RLr;
+  record Attach2Vc AT2r;
+  Boolean res;
+  integer i;
+  
+  i = 1;
+  while (res==false and ReadRecordLink(Mailr,i,AT2r,RLr)) begin
+    if (AT2r.FileName=="body.html" or AT2r.FileName=="body.htm" or AT2r.FileName=="0.htm") then begin
+      res = true;
+    end;
+    i = i+1;
+  end;
+
+  MailHasHtmlAttachment = res;
+  return;
+end;
+
+function Boolean NextNamePart(var string fullname,LongInt startpos,var string part,var LongInt endp)
+BEGIN
+  Boolean res;
+  LongInt i;
+  LongInt l;
+  LongInt sp;
+  LongInt pp;
+  
+  sp = startpos;
+  pp = 0;
+  part = "";
+  l = len(fullname);
+  for (i=sp;i<=l;i=i+1) begin
+    if (Mid(fullname,i,1)!=" ") then begin
+      sp = i;
+      goto L22NextNamePart;
+    end;
+  end;
+  goto LNextNamePart;
+L22NextNamePart:;
+  res = true;
+  for (i=sp;i<=l;i=i+1) begin
+    if (Mid(fullname,i,1)==" ") then  begin
+      if (endp>=0) then begin
+        endp = i - 1;
+      end;
+      part = Left(part,pp);
+      goto LNextNamePart;
+    end;
+    part = part & Mid(fullname,i,1);
+    pp = pp + 1;
+  end;
+  if (endp>=0) then begin
+    endp = l;
+  end;
+  part = Left(part,pp);
+LNextNamePart:;
+  NextNamePart = res;
+  RETURN;
+END;
+
+function Boolean FirstPartComp(string tstr,string firstpart)
+BEGIN
+  Boolean res;
+  LongInt l;
+  string 255 first2;
+  
+  l = len(firstpart);
+  first2 = tstr;
+  if (len(first2)>l) then begin first2 = Left(first2,l); end;
+  if (first2==firstpart) then begin res = true; end;
+  FirstPartComp = res;
+  RETURN;
+END;
+
+function Boolean PartInStr(string tstr,string part)
+BEGIN
+  Boolean res;
+  Integer pos;
+  
+  pos = InString(tstr,part);
+  if (pos==0) then begin
+    if (left(tstr,1)==left(part,1)) then begin
+      res = true;
+    end;
+  end else begin
+    res = true;
+  end;
+  PartInStr = res;
+  RETURN;
+END;
+
+function Boolean AllPartsComp(string tstr,string addrcode,var Boolean lastpartmatchf)
+BEGIN
+  Boolean res;
+  Boolean b;
+  string 255 part;
+  LongInt ep;
+  LongInt sp;
+  LongInt l;
+  string 255 tstr2;
+  string 255 tstr3;
+  
+  tstr2 = tstr;
+  sp = 0;
+  ep = 0;
+  l = len(addrcode);
+L11AllPartsComp:;
+  if (sp>l) then begin goto LAllPartsComp; end;
+  b = NextNamePart(addrcode,sp,part,ep);
+  if (b==false) then begin goto LAllPartsComp; end;
+  if (PartInStr(tstr2,part)==false) then begin
+    res = false;
+    goto LAllPartsComp;
+  end;
+  res = true;
+  sp = ep + 1;
+  if (nonblank(tstr2)) then begin
+    if (blank(Right(tstr2,len(tstr2)-sp))) then begin
+      tstr3 = tstr2;
+      StripLeadingSpaces(tstr3);
+      if (part==Left(tstr3,len(part))) then begin
+        lastpartmatchf = true;
+      end;
+    end;
+  end;
+  tstr2 = Right(tstr2,len(tstr2)-sp);
+  goto L11AllPartsComp;
+LAllPartsComp:;
+  AllPartsComp = res;
+  RETURN;
+END;
+
+global
+function Boolean Do_FindMailBoxName(var string addrcode)
+BEGIN
+  Boolean res;
+  string 255 firstpart;
+  Boolean Accs,testf,lastpartmatchf;
+  record ConfVc Confr;
+  LongInt endp;
+  string 255 firstaddrcode;
+  string 255 laddrcode;
+
+  if (blank(addrcode)) then begin
+    goto LDo_FindMailBoxName;
+  end;
+  Confr.AddrName = addrcode;
+  if (ReadFirstKey("AddrName",Confr,1,true)) then begin
+    laddrcode = Confr.AddrName;
+    res = true;
+    goto LDo_FindMailBoxName;
+  end;
+  endp = -1;
+  testf = NextNamePart(addrcode,0,firstpart,endp);
+  Confr.AddrName = firstpart;
+  Accs = true;
+  while (LoopKey("AddrName",Confr,1,Accs)) begin
+    if (FirstPartComp(Confr.AddrName,firstpart)==false) then begin 
+      Accs = false;
+    end;
+    if ((Accs) and (Confr.Closed==0)) then begin
+      if (AllPartsComp(Confr.AddrName,addrcode,lastpartmatchf)) then begin
+        if (blank(firstaddrcode)) then begin
+          firstaddrcode = Confr.AddrName;
+        end;
+        res = true;        
+        if (lastpartmatchf) then begin
+          laddrcode = Confr.AddrName;
+        end;
+        lastpartmatchf = false;
+//        goto LDo_FindMailBoxName;
+      end;
+    end;
+  end;
+LDo_FindMailBoxName:;
+  addrcode = laddrcode;
+  if (blank(addrcode)) then begin
+    addrcode = firstaddrcode;
+  end;
+  Do_FindMailBoxName = res;
+  RETURN;
+END;
+
+global
+procedure GetUserEmailAddresses(var array string aemails,longint mailboxnr)
+begin
+  integer i,rwcnt,oldcomp;
+  record CompaniesBlock Compbl;
+  longint pos;
+  string 255 tstr,tmp;
+  string 20 code;
+  record ConfVc Confr;
+  record UserVc Userr;
+  record GlobalUserVc GUserr;
+  vector Boolean mailexistsv;
+
+  ClearArray(aemails);
+  Confr.SerNr = mailboxnr;
+  if (ReadFirstMain(Confr,1,true)) then begin
+
+    pos = 0;
+    tstr = Confr.ExtEmailAddrs;
+    while (GetNextSubstring(tstr,pos,",",tmp)) begin
+      if (nonblank(tmp)) then begin
+        if (mailexistsv[tmp]==false) then begin
+          mailexistsv[tmp] = true;
+          aemails[aemails.length] = tmp;
+        end;
+      end;
+    end;
+
+    oldcomp = CurrentCompany;
+    BlockLoad(Compbl);
+    rwcnt = MatRowCnt(Compbl);
+    for (i=0;i<rwcnt;i=i+1) begin
+      SetCompany(i + 1,false);
+      Userr.Code = Confr.AddrCode;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        pos = 0;
+        tstr = Userr.emailAddr;
+        while (GetNextSubstring(tstr,pos,",",tmp)) begin
+          if (nonblank(tmp)) then begin
+            if (mailexistsv[tmp]==false) then begin
+              mailexistsv[tmp] = true;
+              aemails[aemails.length] = tmp;
+            end;
+          end;
+        end;
+      end;
+    end;
+    GUserr.Code = Confr.AddrCode;
+    if (ReadFirstMain(GUserr,1,true)) then begin
+      pos = 0;
+      tstr = GUserr.emailAddr;
+      while (GetNextSubstring(tstr,pos,",",tmp)) begin
+        if (nonblank(tmp)) then begin
+          if (mailexistsv[tmp]==false) then begin
+            mailexistsv[tmp] = true;
+            aemails[aemails.length] = tmp;
+          end;
+        end;
+      end;
+    end;
+    
+    ResetCompany(oldcomp);
+  end;
+  
+  return;
+end;
+
+function boolean UserEmailAddressExists(string addr,longint mailboxnr)
+begin
+  boolean res;
+  array string 255 aemails;
+  integer i;
+  
+  GetUserEmailAddresses(aemails,mailboxnr);
+  for (i=0;i<aemails.length;i=i+1) begin
+    if (aemails[i]==addr) then begin
+      res = true;
+      i = aemails.length;
+    end;
+  end;
+  UserEmailAddressExists = res;
+  return;
+end;
+
+global
+procedure MailVc_PasteAddrCode(var record MailVc Mailp,Integer rownr)
+BEGIN
+  row MailVc Mailrw;
+  string 255 tstr;
+  string 255 curmailbox,mailboxcode;
+  longint mailboxnr;
+  
+  MatRowGet(Mailp,rownr,Mailrw);
+  if (nonblank(Mailrw.AddrCode)) then begin
+    tstr = Mailrw.AddrCode;
+    if (Mailrw.RowTyp==kMailRowTypeFrom) then begin
+      if (FindUserInMailbox(Mailrw.AddrCode,mailboxcode,mailboxnr)==false) then begin
+        if (Do_FindMailBoxName(tstr)) then begin
+          Mailrw.AddrCode = tstr;
+        end else begin
+          FindCurMailboxName(curmailbox);
+          Mailrw.AddrCode = curmailbox;
+        end;
+        MatRowPut(Mailp,rownr,Mailrw);
+      end;
+    end else begin
+      if (Do_FindMailBoxName(tstr)) then begin
+        Mailrw.AddrCode = tstr;
+        MatRowPut(Mailp,rownr,Mailrw);
+      end else begin
+  // Not if it is a E-mail address... 
+        //StripSpace(tstr,Mailrw.AddrCode);
+        //Mailrw.AddrCode = tstr;
+        MatRowPut(Mailp,rownr,Mailrw);
+        if (InterNetAddrTest(Mailrw.AddrCode)==false) then begin
+          Beep;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Boolean FindUserInMailbox(string name,var string mailboxcode,var LongInt mailboxnr)
+begin
+  record ConfVc Confr;
+  Boolean res;
+  integer i,rwcnt;
+  string 255 actname,emailAddr;
+  integer pos,pos2;
+  
+  mailboxnr = -1;
+  mailboxcode = "";
+  Confr.AddrName = name;
+  if (ReadFirstKey("AddrName",Confr,1,true)) then begin
+    if (Confr.Closed!=0) then begin goto LFindUserInMailbox; end;
+    mailboxcode = Confr.SerNr;
+    mailboxnr = Confr.SerNr;
+    res = true;
+  end else begin
+    pos = InString(name,"<");
+    pos2 = InString(name,">");
+    if (pos>0) then begin
+      actname = left(name,pos-1);
+      StripEndingSpaces(actname);
+      emailAddr = mid(name,pos,pos2-pos-1);
+      if (FindUserInMailbox(actname,mailboxcode,mailboxnr)) then begin
+        if (UserEmailAddressExists(emailAddr,mailboxnr)) then begin
+          res = true;
+        end;
+      end;
+    end;
+  end;
+LFindUserInMailbox:;  
+  FindUserInMailbox = res;
+  return;
+end;
+
+global
+updating function Boolean ForwardMailDsmStoreMail(record MailVc oldMailr,var record MailVc newMailr)
+begin
+  Boolean res;
+  Integer sendf;
+  Integer notenr;
+  record RLinkVc RLinkr;
+  record Attach2Vc Attachr;
+  record MailVc mail2r;
+
+  sendf = newMailr.SendFlag;
+  if (RecordStore(newMailr,false)) then begin
+    if (newMailr.HtmlFlag!=0) then begin 
+      newmailr.SendFlag = 0;
+      notenr = 1;
+      while (ReadRecordLink(oldMailr,notenr,Attachr,RLinkr)) begin
+        if (Attachr.FileName!="body.html") then begin
+          CreateRecordLink(newMailr,CurrentCompany,Attachr,CurrentCompany);
+        end;
+        notenr = notenr + 1;
+      end;
+      if (sendf!=0) then begin
+        mail2r = newMailr;
+        newMailr.SendFlag = sendf;
+        RecordUpdate(mail2r,newMailr,true);
+      end;
+    end else begin
+      CopyRecordLinks(oldMailr,newMailr);
+    end;
+    res = true;
+  end;
+  
+  ForwardMailDsmStoreMail = res;
+  return;
+end;
+
+global
+function Boolean IsHTMLFormattingEnabled(Integer wn)
+begin
+  Boolean res;
+  record MailVc Mailr;
+  
+  res = false;
+  if (GetWindowClass(wn)=="MailDClass") then begin
+    GetWindowRecord(wn,Mailr);
+    if (SystemSupportsHTMLMail()) then begin
+      res = Mailr.HtmlFlag;
+    end;
+  end;
+  IsHTMLFormattingEnabled = res;
+  return;
+end;
+
+global
+procedure GetMailFormattingSettings(record MailVc Mailr,var record ConfVc Confr)
+begin
+  record ConfVc Conf2r;
+  row MailVc Mailrw;
+  integer i,cnt;
+  boolean fromextf,res;
+  string 255 tstr;
+  
+  Conf2r.SerNr = -1;
+  cnt = MatRowCnt(Mailr);
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if (Mailrw.RowTyp==kMailRowTypeFrom) then begin
+      if (InterNetAddrTest(Mailrw.AddrCode)) then begin
+        fromextf = true;
+      end else begin
+        if (Conf2r.SerNr==-1) then begin
+          Conf2r.SerNr = Mailrw.Mailbox; //TODO: Use code instead?
+          if (ReadFirstMain(Conf2r,1,true)==false) then begin
+            Conf2r.SerNr = -1;
+          end;
+        end;
+      end;
+    end;
+  end;
+  
+  Confr.SerNr = -1;
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(Mailr,i,Mailrw);
+    if (Mailrw.RowTyp==kMailRowTypeTo) then begin
+      if (InterNetAddrTest(Mailrw.AddrCode)==false) then begin
+        res = false;
+        if (res==false) then begin
+          Confr.AddrCode = Mailrw.AddrCode;
+          res = ReadFirstKey("AddrCode",Confr,1,true);
+        end;
+        if (res==false) then begin
+          Confr.AddrName = Mailrw.AddrCode;
+          res = ReadFirstKey("AddrName",Confr,1,true);
+        end;
+        if (res) then begin
+          if (Confr.Class!=kConfClassMailbox or fromextf) then begin //if a conference
+            goto LGetMailFormattingSettings;
+          end;
+        end;
+      end;
+      if (Confr.SerNr==-1 and fromextf==false) then begin
+        Confr.SerNr = Conf2r.SerNr;
+        goto LGetMailFormattingSettings;
+      end;
+    end;
+  end;
+LGetMailFormattingSettings:;
+  if (Confr.SerNr==-1) then begin
+    ClearRow(Mailr,Mailrw,1);
+    Mailrw.RowTyp = kMailRowTypeFrom;
+    FindCurMailboxName(tstr);
+    Mailrw.AddrCode = tstr;
+    ResolveMailboxNumber(Mailrw);
+    Confr.SerNr = Mailrw.Mailbox;
+    if (ReadFirstMain(Confr,1,true)==false) then begin
+      Confr.SerNr = -1;
+    end;
+  end;
+  return;
+end;
+
+procedure RemoveDupAddressLinesOnQueRec(var record EMailQueVc EMailQuer)
+begin
+  row EMailQueVc EMailQuerw;
+  Integer i,j,rwcnt;
+  vector Boolean addrs;
+  
+  j = 0;
+  rwcnt = MatRowCnt(EMailQuer);
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(EMailQuer,i,EMailQuerw);
+    if (addrs[EMailQuerw.AddrCode]==false) then begin
+      addrs[EMailQuerw.AddrCode] = true;
+      MatRowPut(EMailQuer,j,EMailQuerw);
+      j = j + 1;
+    end;
+  end;
+  for (i = rwcnt - 1; i>=j; i = i - 1) begin
+    MatRowDelete(EMailQuer,i);
+  end;
+  return;
+end;
+
+global
+function Boolean AddEMailRecipientsToMailQueue(var record EMailQueVc EMailQuer,string customer,string email,integer doctype)
+begin 
+  record CUVc CUr;
+  row EMailQueVc EMailQuerw;
+  record EmailRecipVc EmailRecipr;
+  row EmailRecipVc EmailReciprw;
+  Integer i,rwcnt,mailrow;
+  Boolean res;
+  
+  mailrow = MatRowCnt(EMailQuer);
+  res = false;
+  EmailRecipr.MainContactCode = customer;
+  if ReadFirstMain(EmailRecipr,1,true) then begin 
+    rwcnt = MatRowCnt(EmailRecipr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(EmailRecipr,i,EmailReciprw);
+      if (nonblank(EmailReciprw.ContactCode) and (EmailReciprw.DocType==doctype)) then begin 
+        CUr.Code = EmailReciprw.ContactCode;
+        if (ReadFirstMain(CUr,1,true)) then begin 
+          if (nonblank(CUr.eMail)) then begin 
+            EMailQuerw.RowTyp = EmailReciprw.RowTyp;
+            EMailQuerw.AddrCode = CUr.eMail;
+            MatRowPut(EMailQuer,mailrow,EMailQuerw);
+            mailrow = mailrow + 1;
+            res = true;
+          end;   
+        end;
+      end;
+    end;  
+  end;
+  if (res==false) then begin 
+    if (nonblank(email)) then begin 
+      ClearRow(EMailQuer,EMailQuerw,1);
+      EMailQuerw.RowTyp = 0;
+      EMailQuerw.AddrCode = email;
+      MatRowPut(EMailQuer,mailrow,EMailQuerw);
+      res = true;
+    end; 
+  end;
+  if (res) then begin 
+    RemoveDupAddressLinesOnQueRec(EMailQuer);
+  end; 
+  AddEMailRecipientsToMailQueue = res;
+  return;
+end;
+
+global
+function Boolean AddEMailRecipients(var record MailVc Mailr, string customer, string email, integer doctype)
+begin 
+  record CUVc CUr;
+  row MailVc Mailrw;
+  record EmailRecipVc EmailRecipr;
+  row EmailRecipVc EmailReciprw;
+  Integer i,rwcnt,mailrow;
+  Boolean res;
+  
+  mailrow = MatRowCnt(Mailr);
+  res = false;
+  EmailRecipr.MainContactCode = customer;
+  if ReadFirstMain(EmailRecipr,1,true) then begin 
+    rwcnt = MatRowCnt(EmailRecipr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(EmailRecipr,i,EmailReciprw);
+      if (nonblank(EmailReciprw.ContactCode) and (EmailReciprw.DocType==doctype)) then begin 
+        CUr.Code = EmailReciprw.ContactCode;
+        if (ReadFirstMain(CUr,1,true)) then begin 
+          if (nonblank(CUr.eMail)) then begin 
+            Mailrw.RowTyp = EmailReciprw.RowTyp;
+            Mailrw.AddrCode = CUr.eMail;
+            MatRowPut(Mailr,mailrow,Mailrw);
+            mailrow = mailrow + 1;
+            res = true;
+          end;   
+        end;
+      end;
+    end;  
+  end;
+  if (res==false) then begin 
+    if (nonblank(email)) then begin 
+      ClearRow(Mailr,Mailrw,1);
+      Mailrw.RowTyp = 0;
+      Mailrw.AddrCode = email;
+      MatRowPut(Mailr,mailrow,Mailrw);
+      res = true;
+    end; 
+  end;
+  
+  AddEMailRecipients = res;
+  return;
+end;
+
+function string 255 IntToStr(Integer i,Integer digits)
+begin
+  string 255 res;
+  
+  res = i;
+  
+  while (len(res)<digits) begin
+    res = "0" & res;
+  end;
+  
+  IntToStr = res;
+  return;
+end;
+
+global
+function string 255 MailDateText(var record MailVc Mailr)
+begin
+  time t;
+  
+  t = Mailr.TransTime;
+  
+  MailDateText = Mailr.TransDate & " " & IntToStr(t.hour,2) & ":" & IntToStr(t.minute,2);
+  return;
+end;
+
+global
+procedure FindMailboxName(LongInt mailboxnr,var string mailboxcode,var string addrname)
+BEGIN
+  record ConfVc Confr;
+
+  addrname = "";
+  mailboxcode = "";
+  Confr.SerNr = mailboxnr;
+  if (ReadFirstMain(Confr,1,true)) then begin
+    addrname = Confr.AddrName;
+    mailboxcode = Confr.SerNr;
+  end;
+  RETURN;
+END;
+
+global
+procedure FindCurMailboxName(var string tstr)
+begin
+  string 10 usercode;
+  record ConfVc Confr;
+
+  tstr = "";
+  usercode = CurrentUser;
+  if (blank(usercode)) then begin goto LFindCurMailboxName; end;
+  Confr.AddrCode = usercode;
+  if (ReadFirstKey("AddrCode",Confr,1,true)) then begin
+    tstr = Confr.AddrName;
+  end;
+LFindCurMailboxName:;
+  return;
+end;
+
+global
+procedure SetMailForward(record MailVc mailp)
+begin
+  row MailVc marw;
+  Integer i,rwcnt;
+  string 255 curmailbox;
+  Boolean fromf;
+  longint mailboxnr;
+  string 255 mailboxcode;
+
+  FindCurMailboxName(curmailbox);
+  FindUserInMailbox(curmailbox,mailboxcode,mailboxnr);
+  rwcnt = MatRowCnt(mailp);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(mailp,i,marw);
+    if (marw.Mailbox==mailboxnr) then begin
+      switch (marw.RowTyp) begin
+        case 0: //kMailRowTypeTo:
+          MatRowDelete(mailp,i);
+        case 1: //kMailRowTypeFrom:
+          fromf = true;
+        case 3: //kMailRowTypeCC:
+          MatRowDelete(mailp,i);
+        case 4: //kMailRowTypeBCC:
+          MatRowDelete(mailp,i);
+      end;
+    end;
+  end;
+  if (fromf==false) then begin
+    marw.RowTyp = kMailRowTypeFrom;
+    marw.AddrCode = curmailbox;
+    marw.Mailbox = mailboxnr;
+    MatRowInsert(mailp,0,marw);
+  end;
+  return;
+end;
+
+global
+procedure MailVcRecordDefaultsClientRemote(var record MailVc Mailr,LongInt curno)
+begin
+  row MailVc marw;
+  Integer i,rwcnt;
+  string 255 curmailbox;
+  string 255 mboxno,curconf;
+  Boolean foundf;
+  record ConfVc Confr;
+
+  SetMailForward(Mailr);
+  FindCurMailboxName(curmailbox);
+  FindMailboxName(curno,mboxno,curconf)
+  if (curmailbox!=curconf) then begin
+    rwcnt = MatRowCnt(Mailr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Mailr,i,marw);
+      if (marw.AddrCode==curconf) then begin
+        foundf = true;
+      end;
+    end;
+    if (foundf==false) then begin
+      marw.RowTyp = kMailRowTypeTo;
+      marw.AddrCode = curconf;
+      MatRowPut(Mailr,rwcnt,marw);
+    end;
+  end;
+  GetMailFormattingSettings(Mailr,Confr);
+  if (Confr.SerNr>0) begin
+    Mailr.HtmlFlag = ShouldCreateHTMLMail(Confr.DefaultHtmlFlag);
+    if (Confr.DefaultHtmlFlag!=0 and Confr.ForceDefaultTemplate!=0) then begin
+      Mailr.HtmlTemplate = Confr.DefaultTemplate;
+    end;
+  end;
+  return;
+end;
+
+procedure CheckAutoReply(longint cursermailboxnr,var boolean AutoReplyf,var boolean Forwardf)
+begin
+  record ConfAutoReplyVc ConfAutoReplyr;
+  boolean res;
+  
+  ConfAutoReplyr.SerNr = cursermailboxnr;
+  if (ReadFirstMain(ConfAutoReplyr,1,true)) then begin
+    if (ConfAutoReplyr.Activated!=0) then begin 
+      AutoReplyf = true;
+    end;
+    if (ConfAutoReplyr.ForwardEnabled!=0) then begin 
+      Forwardf = true;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure MailLClassOnOpenWindowRemote(LongInt mailboxnr,var Boolean AutoReplyf,var Boolean Forwardf,var Boolean ConfSubf,var string messagestr)
+begin
+  string 60 confcode;
+  LongInt cursermailboxnr;
+  record ConfSubVc ConfSubr;
+  row ConfSubVc ConfSubrw;
+  LongInt i,rwcnt;
+
+  if (CurUserHasMailbox(confcode)) then begin
+    cursermailboxnr = StringToLongInt(confcode);
+    if (mailboxnr==cursermailboxnr) then begin
+      CheckAutoReply(cursermailboxnr,AutoReplyf,Forwardf);
+    end;
+  end;
+  if (AutoReplyf) then begin 
+    messagestr = AddStr(messagestr,USetStr(33873),chr(13) & chr(10));
+  end;
+  if (Forwardf) then begin 
+    messagestr = AddStr(messagestr,USetStr(33874),chr(13) & chr(10));
+  end;  
+  if (AutoReplyf or Forwardf) then begin 
+    MessageBox(33870,chr(13) & chr(10) & messagestr);
+  end;
+
+  ConfSubr.Sign = CurrentUser;
+  if (ReadFirstMain(ConfSubr,1,true)) then begin
+    rwcnt = MatRowCnt(ConfSubr);
+    for (i = 0; i<rwcnt; i = i + 1) begin
+      MatRowGet(ConfSubr,i,ConfSubrw);
+      if (ConfSubrw.Conference==mailboxnr) then begin
+        ConfSubf = true;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  return;
+end;
+  

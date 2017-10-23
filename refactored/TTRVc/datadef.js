@@ -1,0 +1,28 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fTransDate: { public: true, type: 'DATE' },
+     fRegDate: { public: true, type: 'DATE' },
+     fAccNumber: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fTAccGroup: { public: true, type: 'TEXT' },
+     fTRNumber: { public: true, type: 'INTEGER' },
+     fTRIntYc: { public: true, type: 'INTEGER' },
+     fTRRow: { public: true, type: 'INTEGER' },
+     fB1Val: { public: true, type: 'FLOAT' },
+     fB2Val: { public: true, type: 'FLOAT' },
+     fCurVal: { public: true, type: 'FLOAT' },
+     fCurncyCode: { public: true, type: 'TEXT' },
+     fDocQuant: { public: true, type: 'FLOAT' },
+     fText: { public: true, type: 'TEXT' },
+     fCustCode: { public: true, type: 'TEXT' },
+     fInvalid: { public: true, type: 'INTEGER' },
+     TTRVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fStp: { public: true, type: 'INTEGER' },
+           fValue: { public: true, type: 'TEXT' } } } },
+  indexes: { SerNrIndex497: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

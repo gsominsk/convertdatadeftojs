@@ -1,0 +1,165 @@
+external function Boolean IsCancelState(String);
+
+global
+procedure GetSugProgramOnDay(Record JobVc Jobr,Date vDate,var String EType,var Boolean FromMother,Record RcVc RepSpec)
+begin
+  record ResEventTypeVc ResEventTyper;
+  row ResEventTypeVc ResEventTyperw;
+  Integer rows,i;
+  
+  ResEventTyper.SerNr = Jobr.SerNr;
+  if readfirstmain(ResEventTyper,1,true) then begin
+    goto L88;
+  end;
+  ResEventTyper.SerNr = Jobr.Mother;
+  if readfirstmain(ResEventTyper,1,true) then begin
+    FromMother = true;
+    goto L88;
+  end;
+  goto L99;
+L88:;  
+  rows = MatRowCnt(ResEventTyper);
+  EType = "";
+  for (i=0;i<rows;i=i+1) begin
+    MatRowGet(ResEventTyper,i,ResEventTyperw);
+    if (vDate==ResEventTyperw.TransDate) then begin
+      if ((ResEventTyperw.EventGroup==RepSpec.f1) or blank(RepSpec.f1)) then begin
+        if blank(ResEventTyperw.EventType) then begin
+          EType = EType & "+" & ResEventTyperw.EventGroup;
+        end else begin
+          EType = EType & "-" & ResEventTyperw.EventType;
+        end;
+      end;  
+    end;
+  end;
+L99:;  
+  return;
+end;
+
+procedure DisplayJobEvents(Record JobVc Jobr,Date StartDate,Boolean EventZoom,Record RcVc RepSpec)
+begin
+  Integer i,pos;
+  Date vDate;
+  String 255 tstr;
+  Boolean FromMother;
+       
+       
+  StartFormat(15);
+  tstr = "DblJobVc";
+  if (EventZoom) then begin
+     tstr = "DblResEventTypeVc";
+  end;
+  OutLongInt(0,tstr,Jobr.SerNr,false);
+  OutString(2,0,Jobr.ResCode,false);
+  if (RepSpec.flags[0]==1) then begin
+    OutString(4,0,left(Jobr.CUName,25),false);
+  end;
+  vDate = StartDate;
+  for (i=RepSpec.flags[0];i<5;i=i+1) begin
+     tstr = "";
+     GetSugProgramOnDay(Jobr,vDate,tstr,FromMother,RepSpec);
+     pos  = i + 4;
+     OutString(pos,0,tstr,false);
+     vDate = Addday(vDate,1);
+  end;
+  EndFormat;
+       
+  return;      
+end;
+
+
+global
+procedure PlannedStayRn(Record RcVc RepSpec)
+begin
+  Record JobVc Jobr,Kids;
+  Row JobVc Jobrw;
+  Integer i,rows,pos;
+  Boolean foundf,skip,TsHr;
+  String 255 tstr,ckey;
+  Date vDate,pDate,sDate,eDate,LastDayofOverview;
+
+  StartReportJob(USetStr(11260));
+  EndHeader;
+
+  SetRepCol(2,60);
+  SetRepCol(4,100);
+  SetRepCol(5,180);
+  SetRepCol(6,260);
+  SetRepCol(7,340);
+  SetRepCol(8,420);
+  SetRepCol(9,480);
+
+  if blankDate(RepSpec.d1) then begin  //pDate is principio del periodo
+    pDate = CurrentDate;
+  end else begin
+    pDate = RepSpec.d1;
+  end;
+  sDate = addDay(pDate,-10);  // Maximum stay around 10 days ?
+  eDate = addDay(pDate,8);
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(11261),false);
+  OutString(2,0,USetStr(11262),false);
+  if (RepSpec.flags[0]==1) then begin
+    OutString(4,0,USetStr(11263),false);
+  end;
+  vDate = pDate;
+  for (i=RepSpec.flags[0];i<5;i=i+1) begin
+    tstr = DateToString(vDate,"DD/MM");
+    pos  = i + 4;
+    OutString(pos,0,tstr,false);
+    vDate = Addday(vDate,1);
+  end;
+  EndFormat;
+  Black_Divider(0,1);
+  StartFormat(10);
+  EndFormat;
+
+  Jobr.TransDate = sDate;
+  foundf = true;
+  while LoopKey("TransDate",Jobr,1,foundf) begin
+    
+    skip = false;
+    if (Jobr.TransDate > eDate) then begin
+      foundf = false;
+      skip   = true;
+    end;
+    if (pDate > Jobr.EndDate) then begin
+      skip = true;
+    end;
+    LastDayofOverview = Addday(pDate,5);
+    if (LastDayofOverview < Jobr.TransDate) then begin
+      skip = true;
+    end;
+    if (Jobr.Mother<>-1) then begin
+      skip=true;
+    end;
+    if IsCancelState(Jobr.ResStatus) then begin
+      skip = true;
+    end;
+
+
+    if (not skip) then begin
+      DisplayJobEvents(Jobr,pDate,true,RepSpec);
+
+      TsHr = true;
+      ckey = "Mother:" & Jobr.SerNr;
+      SetLoopPosition(Kids,0);
+      Kids.Mother = Jobr.SerNr;  
+      while(LoopKey(ckey,Kids,1,TsHr)) begin
+        if (Kids.Mother == Jobr.SerNr) then begin
+          if (not IsCancelState(Kids.ResStatus)) then begin
+            DisplayJobEvents(Kids,pDate,false,RepSpec);
+          end;  
+        end else begin
+          TsHr = false;
+        end;
+      end;
+      StartFormat(10);
+      Gray_Divider(0,1);
+    end;
+  end;
+
+  EndJob;
+  return;
+end;

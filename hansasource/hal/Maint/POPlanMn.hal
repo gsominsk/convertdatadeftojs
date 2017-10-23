@@ -1,0 +1,85 @@
+external procedure StockPolicyMinusProjectedStockLevels(array record SMVc,Integer,array record SMVc,Integer,Date,string,record RcVc);
+external procedure CombineAndAddPlan(array record SMVc,array record SMVc,var array record SMVc,Integer,var Integer,string,Boolean,record RcVc);
+external procedure AppendPOPlanToForecastArray(var array record SMVc,Integer,string,Boolean,record RcVc);
+external procedure AppendProdPlanToForecastArray(var array record SMVc,Integer,string,Boolean,record RcVc);
+external procedure AppendStockSMToForecastArray(var array record SMVc,Integer,record RcVc);
+external procedure BuildTheItemArray(array record SMVc,Integer,var array string,var array Integer,var Integer);
+external procedure BuildTheForecastArray(var array record SMVc,var Integer,Date,Date,string,Boolean,record RcVc);
+external procedure AppendMaxCalculations(var array record SMVc,var Integer,Integer,Boolean,record RcVc);
+external function LongInt GetStockPolicyMonths();
+external procedure BuildCurStockPlusForecastSM(var array record SMVc,var Integer,Date,Date,string,array string,Integer,record RcVc);
+external procedure CopySMArray(array record SMVc,var array record SMVc,Integer);
+external updating procedure WriteForecastNumbers(array record SMVc,var Integer,record RcVc,Integer,Array string,Array LongInt,Longint);
+external procedure AddExistingPOs(array record SMVc,Integer,record RcVc);
+external procedure AppendTheProdNeeds(var array record SMVc,var Integer,Date,Date,string,Boolean,record RcVc);
+external procedure AssumeCorrectPlans(var array record SMVc,Integer,Integer,record RcVc);
+external procedure NegateArray(var array record SMVc,Integer,record RcVc);
+external updating procedure CloseExistingPOPlans(record RcVc,Boolean,Array string,Array LongInt,var Longint);
+
+global
+updating procedure POPlanMn(record RcVc RepSpec)
+BEGIN
+  array record SMVc aSMr; // Projected Month Close
+  array record SMVc amaxSMr; // Maximal Stock Level
+  array record SMVc aresSMr; // The plan that will get written
+  Integer asmcnt,arescnt,asmcnt2;
+  array string 20 aitems;
+  array Integer atype;
+  Integer acnt;
+  Date actualstartdate,actualenddate;
+  Array string 20 apoplansclosedartcode;
+  Array LongInt apoplansclosedsernr;
+  LongInt apoplansclosedcnt;
+  record SFPeriodsBlock SFPb; 
+  
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;  
+  BlockLoad(SFPb);
+  asmcnt = 0;
+  apoplansclosedcnt = 0;
+  if (nonblankdate(RepSpec.d1)) then begin
+    actualstartdate = RepSpec.d1;
+    if (actualstartdate>RepSpec.sStartDate) then begin
+      MessageBox(1142," " & actualstartdate);
+      goto LPOPlanMn;
+    end;
+  end else begin
+    actualstartdate = RepSpec.sStartDate;
+  end;
+  CloseExistingPOPlans(RepSpec,nonblank(RepSpec.f1) or nonblank(RepSpec.f3),apoplansclosedartcode,apoplansclosedsernr,apoplansclosedcnt);
+  
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      actualenddate = AddMonth(RepSpec.sEndDate,GetStockPolicyMonths+1);
+    case kForecastPeriodTypeWeeks:
+      actualenddate = AddDay(RepSpec.sEndDate,(GetStockPolicyMonths+1)*7);
+  end;
+  BuildTheForecastArray(aSMr,asmcnt,RepSpec.sStartDate,actualenddate,RepSpec.LastAcc,false,RepSpec);
+
+  CopySMArray(aSMr,amaxSMr,asmcnt);
+  asmcnt2 = asmcnt;
+  AppendMaxCalculations(amaxSMr,asmcnt2,RepSpec.flags[3],true,RepSpec);
+
+  AppendMaxCalculations(aSMr,asmcnt,RepSpec.flags[3],false,RepSpec);
+  
+  BuildTheItemArray(aSMr,asmcnt,aitems,atype,acnt);
+  BuildCurStockPlusForecastSM(aSMr,asmcnt,actualstartdate,RepSpec.sStartDate,RepSpec.LastAcc,aitems,acnt,RepSpec);
+  AppendTheProdNeeds(aSMr,asmcnt,actualstartdate,actualenddate,RepSpec.LastAcc,false,RepSpec);
+  AppendStockSMToForecastArray(aSMr,asmcnt,RepSpec);
+
+  StockPolicyMinusProjectedStockLevels(aSMr,asmcnt,amaxSMr,asmcnt2,actualenddate,RepSpec.LastAcc,RepSpec);
+
+  NegateArray(aSMr,asmcnt,RepSpec);
+  
+  AppendPOPlanToForecastArray(aSMr,asmcnt,RepSpec.LastAcc,true,RepSpec);
+  AppendProdPlanToForecastArray(aSMr,asmcnt,RepSpec.LastAcc,true,RepSpec);
+  AssumeCorrectPlans(aSMr,asmcnt,1,RepSpec);
+  AddExistingPOs(aSMr,asmcnt,RepSpec);
+  BuildTheItemArray(aSMr,asmcnt,aitems,atype,acnt);
+  
+  WriteForecastNumbers(aSMr,asmcnt,RepSpec,1,apoplansclosedartcode,apoplansclosedsernr,apoplansclosedcnt);
+LPOPlanMn:;
+  RETURN;
+END;
+

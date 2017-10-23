@@ -1,0 +1,183 @@
+external procedure DoSetMailAddrStatus(record MailVc,LongInt,Integer);
+external function LongInt DateDiff(Date,Date);
+external updating procedure RemoveUpdateHistory(record MailVc);
+
+updating
+procedure CleanThisMailbox(record ConfVc Confr,LongInt maxmail,LongInt max_read_days,LongInt max_unread_days)
+begin
+  record MailVc Mailr;
+  record MailVc OldMailr;
+  string 255 timekey;
+  longint mail_age,nrofmail;
+  boolean deletef;
+  boolean readf;
+    
+  switch (Confr.Class) begin
+    case kConfClassConference:   if (maxmail==-1 and max_read_days==-1) then begin goto out; end;
+    case kConfClassNews:         if (maxmail==-1 and max_read_days==-1) then begin goto out; end;
+    case kConfClassBillboard:    if (maxmail==-1 and max_read_days==-1) then begin goto out; end;
+    case kConfClassLibrary:      if (maxmail==-1 and max_read_days==-1) then begin goto out; end;
+    case kConfClassFolder:       goto out;
+    case kConfClassMailbox:      if (maxmail==-1 and max_read_days==-1 and max_unread_days==-1) then begin goto out; end;
+    case kConfClassArchive:      goto out;
+  end;
+  
+  timekey = "UserTime:" & Confr.SerNr;
+  nrofmail = RecordsInIndex("MailVc",timekey);
+  
+  while (LoopKey(timekey,Mailr,1,true)) begin
+    deletef = false;
+    
+    if (Mailr.Lifespan==1) then begin
+      goto l_next;
+    end;
+    
+    if (Mailr.Lifespan==2) then begin
+      deletef = true;
+      goto l_delete;
+    end;
+    
+    if ((maxmail>=0) and (nrofmail>maxmail)) then begin
+      deletef = true;
+      goto l_delete;
+    end;
+    
+    mail_age = DateDiff(CurrentDate,Mailr.TransDate);
+    
+    if (Confr.Class==kConfClassMailbox) then begin
+      readf = TestReadFlag(Mailr.SerNr,Confr.SerNr)==0;
+    end else begin
+      readf = true;
+    end;
+    
+    if (readf) then begin
+      if ((max_read_days>=0) and (mail_age>max_read_days)) then begin
+        deletef = true;
+        goto l_delete;
+      end;
+    end else begin
+      if ((max_unread_days>=0) and (mail_age>max_unread_days)) then begin
+        deletef = true;
+        goto l_delete;
+      end;
+    end;
+    
+l_delete:;
+    if (deletef) then begin
+      RecordCopy(OldMailr,Mailr);
+      DoSetMailAddrStatus(Mailr,Confr.SerNr,kMailStatusDeleted);
+      if (RecordUpdate(OldMailr,Mailr,true)==0) then begin end;
+      RemoveUpdateHistory(Mailr);
+      StepBack(Mailr);
+      nrofmail = nrofmail - 1;
+      // LogText(0,"removed mail " & Mailr.SerNr & " from mailbox " & Confr.SerNr);
+    end;
+    
+l_next:;
+  end;
+  
+out:;
+  return;
+end;
+
+procedure GetMailboxSettings(record ConfVc Confr,record MailSettingsBlock MSB,var LongInt mmail,var LongInt readd,var LongInt unreadd)
+begin
+  LongInt maxmail;
+  LongInt maxreaddays;
+  LongInt maxunreaddays;
+  LongInt blanklong;
+  
+  blanklong = -1;
+  mmail = blanklong;
+  readd = blanklong;
+  unreadd = blanklong;
+  
+  switch (Confr.Class) begin
+    case kConfClassConference:
+      mmail = MSB.ConMaxMail;
+      readd = MSB.ConMaxDays;
+    case kConfClassNews:
+      mmail = MSB.NewMaxMail;
+      readd = MSB.NewMaxDays;
+    case kConfClassBillboard:
+      mmail = MSB.BilMaxMail;
+      // readd = MSB.BilMaxDays;
+      readd = -1;
+    case kConfClassLibrary:
+      mmail = MSB.ArcMaxMail;
+      readd = MSB.ArcMaxDays;
+    case kConfClassMailbox:
+      mmail = MSB.MBoxMaxMail;
+      readd = MSB.MBoxMaxReadDays;
+      unreadd = MSB.MBoxMaxUnreadDays;
+    //case kConfClassFolder:
+    //case kConfClassArchive:
+  end;
+  
+  maxmail = Confr.MaxMail;
+  maxreaddays = Confr.MaxReadDays;
+  maxunreaddays = Confr.MaxUnreadDays;
+  
+  if (maxmail>0) then        begin mmail = maxmail;          end;
+  if (maxreaddays>0) then    begin readd = maxreaddays;      end;
+  if (maxunreaddays>0) then  begin unreadd = maxunreaddays;  end;
+  
+  return;
+end;
+
+global
+updating procedure CleanMailMn(record RcVc RepSpec)
+begin
+  record MailSettingsBlock MSB;
+  boolean loopf;
+  boolean testf;
+  record ConfVc Confr;
+  longint maxmail,maxreadd,maxunreadd;
+  
+  BlockLoad(MSB);
+  
+  if (RepSpec.long1!=-1) then begin
+    MSB.MBoxMaxMail = RepSpec.long1;
+    MSB.ArcMaxMail = RepSpec.long1;
+    MSB.ConMaxMail = RepSpec.long1;
+    MSB.NewMaxMail = RepSpec.long1;
+    MSB.BilMaxMail = RepSpec.long1;
+  end;
+  
+  if (RepSpec.long2!=-1) then begin
+    MSB.MBoxMaxReadDays = RepSpec.long2;
+    MSB.ArcMaxDays = RepSpec.long2;
+    MSB.ConMaxDays = RepSpec.long2;
+    MSB.NewMaxDays = RepSpec.long2;
+    MSB.BilMaxDays = RepSpec.long2;
+  end;
+  
+  if (RepSpec.FirstVer!=-1) then begin
+    MSB.MBoxMaxUnreadDays = RepSpec.FirstVer;
+  end;
+  
+  Confr.AddrName = RepSpec.f1;
+  loopf = true;
+  
+  SetDatabaseToUnsafeMode;
+  
+  while (LoopKey("AddrName",Confr,1,loopf)) begin
+    if (RepSpec.f1<>"" and Confr.AddrName<>RepSpec.f1) then begin
+      loopf = false;
+    end;
+    testf = loopf;
+    if (testf) then begin
+      GetMailboxSettings(Confr,MSB,maxmail,maxreadd,maxunreadd);
+      
+      if (RepSpec.long1!=-1) then begin maxmail = RepSpec.long1; end;
+      if (RepSpec.long2!=-1) then begin maxreadd = RepSpec.long2; end;
+      if (RepSpec.FirstVer!=-1) then begin maxunreadd = RepSpec.FirstVer; end;
+      
+      CleanThisMailbox(Confr,maxmail,maxreadd,maxunreadd);
+    end;
+  end;
+  
+  SetDatabaseToSafeMode;
+  
+  return;
+end;

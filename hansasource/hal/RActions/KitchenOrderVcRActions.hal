@@ -1,0 +1,215 @@
+external updating procedure MakeActFromSubSys_KitchenOrderVc(var record KitchenOrderVc,Boolean);
+external function Boolean DateTimeInRange(Date,Time,Date,Time,Date,Time);
+external procedure GetRestBookTime(record RestOpenHoursVc,Date,var Time,var Time);
+external function Boolean ReadRestOpenHours(string,var record RestOpenHoursVc);
+
+global
+function LongInt NextKitchenOrderNr(LongInt restaccnr,Date td,Time tt,string machinename,string branchid)
+begin
+  LongInt res;
+  record KitchenOrderVc KOr;
+  record RestOpenHoursVc ROHr;
+  Time frtime,totim;
+  Boolean found;
+  Date ed;
+
+  ROHr.MachineName = machinename;
+  ReadRestOpenHours(machinename,ROHr);
+  GetRestBookTime(ROHr,td,frtime,totim);
+  ed = CurrentDate;
+  if (frtime>totim) then begin
+    ed = AddDay(ed,1);
+  end;
+  
+  if (restaccnr>0) then begin
+    KOr.RestAccSerNr = restaccnr;
+    found = ReadLastKey("RestAccSerNr",KOr,1,true);
+  end;
+  if (found==false) then begin
+    KOr.BranchID = branchid;
+    KOr.SerNrPerBranch = -1;
+    if (ReadLastKey("BranchID",KOr,1,false)) then begin
+      if (KOr.BranchID!=branchid) then begin
+        KOr.SerNrPerBranch = -1;
+      end;
+      if (DateTimeInRange(KOr.TransDate,tt,CurrentDate,frtime,ed,totim)==false) then begin
+        KOr.SerNrPerBranch = -1;
+      end;
+    end;
+  end;
+LNextKitchenOrderNr:;  
+  res = KOr.SerNrPerBranch + 1;
+  if (res<=0) then begin
+    res = 1;
+  end;
+  NextKitchenOrderNr = res;
+  return;
+end;
+
+global
+function LongInt KitchenOrderVcRecordDefaults(var record KitchenOrderVc KOr,record KitchenOrderVc KO2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record KitchenOrderVc lKOr;
+  
+//  KOr.TerminalID = CurTerminalID;
+  KOr.BranchID = CurBranchID;
+  KOr.TransDate = CurrentDate;
+  KOr.TransTime = CurrentTime;
+  KOr.MachineName = CurMachineName;
+  if (SingleUserMode) then begin
+    KOr.SerNr = NextSerNr("RestAccVc",KOr.TransDate,-1,false,"");
+  end;
+  KOr.SerNrPerBranch = NextKitchenOrderNr(-1,KOr.TransDate,KOr.TransTime,KOr.MachineName,KOr.BranchID);
+  KitchenOrderVcRecordDefaults = res; 
+  return;
+END;
+
+global
+function LongInt KitchenOrderVcRecordDuplicate(var record KitchenOrderVc KOr,record KitchenOrderVc KO2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record KitchenOrderVc lKOr;
+  Date bd;
+  Time bt;
+
+  KOr.SerNr = -1;
+  KOr.OKFlag = 0;
+  KOr.TransDate = CurrentDate;
+  KOr.TransTime = CurrentTime;
+  KOr.EndDate = bd;
+  KOr.EndTime = bt;
+  if (SingleUserMode) then begin
+    KOr.SerNr = NextSerNr("RestAccVc",KOr.TransDate,-1,false,"");
+  end;
+  KOr.RestAccSerNr = -1;
+  KOr.SerNrPerBranch = -1;
+//  KOr.TerminalID = CurTerminalID;
+  KOr.BranchID = CurBranchID;
+  KOr.MachineName = CurMachineName;
+
+  KOr.SerNrPerBranch = NextKitchenOrderNr(-1,KOr.TransDate,KOr.TransTime,KOr.MachineName,KOr.BranchID);
+  KitchenOrderVcRecordDuplicate = res; 
+  return;
+end;
+
+global
+function LongInt KitchenOrderVcRecordCheck(var record KitchenOrderVc KOr,record KitchenOrderVc KO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  res = 0;
+  if (KOr.SerNr<=0) then begin
+    KOr.SerNr = NextSerNr("RestAccVc",KOr.TransDate,-1,false,"");
+  end;
+LKitchenOrderVcRecordCheck:;
+  KitchenOrderVcRecordCheck = res;
+  return;
+end;
+
+updating procedure UpdateRestAccFromKitchenOrder(record KitchenOrderVc KOr)
+begin
+  record RestAccVc RAr;
+  record RestAccVc oldRAr;
+  row RestAccVc RArw;
+  Integer i,rwcnt;
+  row KitchenOrderVc KOrw;
+  Boolean updf;
+  
+  if (KOr.RestAccSerNr>0) then begin
+    RAr.SerNr = KOr.RestAccSerNr;
+    if (ReadFirstMain(RAr,1,true)) then begin
+      RecordCopy(oldRAr,RAr);
+      rwcnt = MatRowCnt(KOr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(KOr,i,KOrw);
+        if (KOrw.RestAccRow>=0) then begin
+          MatRowGet(RAr,KOrw.RestAccRow,RArw);
+          if (RArw.KitchenStatus!=kRestAccRowStatusOrdered) then begin
+            RArw.KitchenStatus = kRestAccRowStatusOrdered;
+            MatRowPut(RAr,KOrw.RestAccRow,RArw);
+            updf = true;
+          end;
+        end;
+      end;
+      if (updf) then begin
+        RecordUpdate(oldRAr,RAr,false);
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+global
+updating function LongInt KitchenOrderVcRecordSaveAfter(var record KitchenOrderVc KOr,record KitchenOrderVc KO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateRestAccFromKitchenOrder(KOr);
+  MakeActFromSubSys_KitchenOrderVc(KOr,false);
+  KitchenOrderVcRecordSaveAfter = res;
+  return;
+end;
+
+updating procedure InvalidateActivities(string filename,LongInt sernr)
+begin
+  record ActVc Actr;
+  record ActVc oldActr;
+  Boolean found;
+
+//from which company ? 
+  Actr.FromFileName = filename;  
+  Actr.FromSerNr = sernr;  
+  found = true;
+  while (LoopKey("FromFileName",Actr,2,found)) begin
+    if (Actr.FromFileName!=filename) then begin found = false; end;
+    if (StringToLongInt(Actr.FromSerNr)!=sernr) then begin found = false; end;
+    if (found) then begin
+      RecordCopy(oldActr,Actr);
+      Actr.Invalid = 1;
+      RecordUpdate(oldActr,Actr,true);
+    end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt KitchenOrderVcRecordUpdateAfter(var record KitchenOrderVc KOr,record KitchenOrderVc KO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+//  UpdateRestAccFromKitchenOrder(KOr);
+  if (KOr.Invalid!=0) and (KO2r.Invalid==0) then begin
+    InvalidateActivities("KitchenOrderVc",KOr.SerNr);
+  end;
+  KitchenOrderVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+function LongInt KitchenOrderVcRecordInvalidateTest(var record KitchenOrderVc KitchenOrderr,record KitchenOrderVc KitchenOrder2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record DBLockBlock DBLockRec;
+
+  res = 0;
+  if (UserCanAction("KitchenOrderInvalid",true)==false) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LKitchenOrderVcRecordInvalidateTest;
+  end;
+  if (KitchenOrderr.Invalid!=0) then begin
+    res = 0;
+    goto LKitchenOrderVcRecordInvalidateTest;
+  end;
+  if (KitchenOrderr.OKFlag!=0) then begin
+    if (KitchenOrderr.Invalid==0) then begin
+      KitchenOrderr.Invalid = 1;
+      res = 1;
+    end;
+  end;  
+LKitchenOrderVcRecordInvalidateTest:;
+  KitchenOrderVcRecordInvalidateTest = res;  
+  return;
+end;

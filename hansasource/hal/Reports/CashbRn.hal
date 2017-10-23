@@ -1,0 +1,526 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external procedure BeginCurncyTotals(var Integer);
+external procedure AddCurncyTotals(var array string,var array val,var Integer,string,val);
+external procedure PrintCurncyTotals(array string,array val,array val,array val,Integer,Integer,Integer,Integer,Integer,Boolean,Integer);
+external function Integer TypeOfCurncy(var string,var Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure HTCusts(string,string,var string);
+external procedure HT2Per(Date,Date,var string);
+external procedure HTDetailLevel(Integer, var string);
+external procedure HTOKF(integer,integer,var string);
+
+global
+procedure PrintCashInandCashOut(record RcVc RepSpec,var val BalStart,Date startdate,Date enddate,
+                                var val TotSumIn,var val TotSumOut,var val TotSumCurIn,var val TotSumCurOut,
+                                var Integer countin,var Integer countout,Boolean printf,
+                                array val av1,array val av2,array val av3,array string acur,var Integer curcnt)
+BEGIN
+  record CLInVc CLIr;
+  record CLOutVc CLOr;
+  record UserVc Userr;
+  Boolean TrHs,TrHs2,testf, tefal,foundCLI,foundCLO,grayf;
+  String 20 frCust ,toCust;
+  String 5 frPr, toPr;
+  val sumval;
+  val DaySumIn,DaySumOut,DayBalSum,DaySumCurIn,DaySumCurOut;
+  String 30 Cashier, Cashier1;
+  String 60 ss,ss1;
+  Boolean runbalf;  
+  Integer oldstyle,typofcur;  
+
+  foundCLI = true;
+  foundCLO = true;
+  DaySumIn = 0;
+  DaySumOut = 0;
+  DayBalSum = 0;
+  frCust = FirstInRange(RepSpec.f2,20); 
+  toCust = LastInRange(RepSpec.f2,20);  
+  frPr = FirstInRange(RepSpec.f3,5); 
+  toPr = LastInRange(RepSpec.f3,5);
+  runbalf = true;
+  if ((RepSpec.flags[0]==1) or (RepSpec.flags[1]==1)) then begin
+    grayf = false;
+    ResetLoop(CLIr);
+    CLIr.TransDate = startdate;
+    TrHs = true;     
+    while LoopKey("TransDate",CLIr,1,TrHs) begin
+      testf = true;
+      tefal = false;
+      if nonblank(RepSpec.LastAcc) then begin
+        if (SetInSet(RepSpec.LastAcc,CLIr.Objects)==false) then begin
+          testf = false;
+        end;
+      end;  
+      if (CLIr.TransDate > enddate) then begin  testf = false; end;
+      if nonblank(RepSpec.f1) then begin
+        if (CLIr.PayMode<> RepSpec.f1) then begin  testf = false; end; 
+      end;
+      if nonblank(frCust) then begin
+        if (CLIr.CUCode < frCust) then begin  testf = false; end; 
+      end;
+      if nonblank(toCust) then begin
+        if (CLIr.CUCode > toCust) then begin testf = false; end; 
+      end;
+      if (testf) then begin 
+        testf = ContactInGroupClass(CLIr.CUCode,RepSpec.f4,RepSpec.f5,"CUST","","");    
+      end;
+      if nonblank(frPr) then begin
+        if (CLIr.Person < frPr) then begin  testf = false; end; 
+      end;
+      if nonblank(toPr) then begin
+        if (CLIr.Person> toPr) then begin testf = false; end; 
+      end;
+      if  ((RepSpec.flags[0] == 1) and (RepSpec.flags[1] == 1)) then begin //all
+        tefal = true; 
+      end;
+      if  ((RepSpec.flags[0] == 1) and (RepSpec.flags[1] == 0)) then begin //notOK
+        if  (CLIr.OKFlag != 1) then begin 
+          tefal = true; 
+        end else begin 
+          tefal = false; 
+        end; 
+      end;
+      if  ((RepSpec.flags[0] == 0) and (RepSpec.flags[1] == 1)) then begin//OK
+        if  (CLIr.OKFlag != 0) then begin    tefal = true; end; 
+      end;
+      if (CLIr.Invalid!=0)then begin testf = false; end;
+     	if testf and tefal then begin
+        sumval = MulRateToBase1(CLIr.CurncyCode,CLIr.Total,CLIr.FrRate,CLIr.ToRateB1,CLIr.ToRateB2,CLIr.BaseRate1,CLIr.BaseRate1,DefaultCurRoundOff);
+        if (printf) then begin
+          countin=countin +1;             
+     	  if (runbalf) then begin
+          StartFormat(15);
+          OutVal(340,0,BalStart  + (TotSumIn - TotSumOut),M4Val,true);
+          EndFormat;
+     	    runbalf = false;
+     	  end;
+        if (RepSpec.ArtMode == 0) then begin              //Overview,In
+          StartFormat(15);
+          OutLongInt(0,"DblCLInVc",CLIr.SerNr,false);
+          OutDate(50,0,CLIr.TransDate,false);
+          OutString(120,0,CLIr.CUName,false);
+          if (nonblank(CLIr.Comment)) then begin
+            OutString(200,0,CLIr.Comment,false);
+          end;
+          OutVal(400,0,sumval,M4Val,true);
+          OutString(440,0," - ",false);
+          EndFormat;
+          if (RepSpec.flags[3]!=0) then begin
+            typofcur = TypeOfCurncy(CLIr.CurncyCode,oldstyle);
+            if (typofcur==0) then begin
+              StartFormat(15);
+               OutVal(400,0,CLIr.Total,M4Val,true);
+               OutString(410,0,CLIr.CurncyCode,false);
+              EndFormat;
+            end;
+          end;
+          AddCurncyTotals(acur,av1,curcnt,CLIr.CurncyCode,CLIr.Total);
+        end else begin
+          StartFormat(15);
+          OutString(0,0,USetStr(10512),false);                   //Detailed,In
+          OutString(55,0,USetStr(10513),false);
+          OutString(110,0,USetStr(10518),false);
+          OutString(190,0,USetStr(10519),false);
+          OutString(260,0,USetStr(10520),false);
+          EndFormat;
+          StartFormat(15);
+          OutLongInt(0,"DblCLInVc",CLIr.SerNr,false);
+          OutDate(50,0,CLIr.TransDate,false);
+          OutString(110,0,CLIr.Person,false);
+          OutString(190,0,CLIr.CUCode,false);
+          OutString(260,0,CLIr.CUName,false);
+          EndFormat;
+          StartFormat(15);
+          OutString(0,0,USetStr(10521),false);
+          OutString(125,0,USetStr(10515),false);
+          OutString(300,0,USetStr(10522),false);
+          EndFormat;
+          StartFormat(15);
+          OutString(0,0,USetStr(10543),false);
+          OutString(100,0,CLIr.Comment,false);          
+          OutVal(330,0,sumval,M4Val,true);
+          if nonblank(CLIr.CurncyCode) then begin
+            OutVal(400,0,CLIr.Total,M4Val,true);
+            OutString(430,0,CLIr.CurncyCode,true);
+          end;	
+              	
+          EndFormat;
+          Gray_divider(0,1);
+          grayf = true;
+        end;
+        end;
+        DaySumIn = DaySumIn + sumval;
+        DaySumCurIn = DaySumCurIn + CLIr.Total;
+      end;        
+    end;//while 
+    if (printf) then begin
+    if (grayf) then begin
+      Gray_Divider(0,1);
+      if (RepSpec.ArtMode == 1) then begin                 //Detailed end
+        StartFormat(15);
+        OutString(180,0,USetStr(10537), true);
+        OutVal(330,0,DaySumIn,M4Val,true);
+        EndFormat; 
+        Black_Divider(0,1);
+        Black_divider(0,1);
+      end;
+    end;
+    end;
+       //Cashout
+    ResetLoop(CLOr);
+    TrHs2 = true;   
+    CLOr.TransDate = startdate;
+    TrHs2 = true;     
+    while LoopKey("TransDate",CLOr,1,TrHs2) begin
+    	testf = true;
+     	tefal = false;
+      if nonblank(RepSpec.LastAcc) then begin
+        if (SetInSet(RepSpec.LastAcc,CLOr.Objects)==false) then begin
+       	  testf = false;
+       	end;
+     	end;
+     	if (CLOr.TransDate > enddate) then begin testf = false; end;
+     	if nonblank(RepSpec.f1) then begin
+     	   if (CLOr.PayMode<> RepSpec.f1) then begin  testf = false; end;  
+     	end;
+     	if nonblank(frCust) then begin
+     	   if (CLOr.CUCode < frCust) then begin   testf = false; end;  
+     	end;
+     	if nonblank(toCust) then begin
+     	   if (CLOr.CUCode > toCust) then begin  testf = false; end;  
+     	end;
+     	if nonblank(frPr) then begin
+     	   if (CLOr.Person < frPr) then begin   testf = false; end;  
+     	end; 
+     	if nonblank(toPr) then begin
+     	   if (CLOr.Person> toPr) then begin  testf = false; end;  
+     	end;
+      if  ((RepSpec.flags[0] == 1) and (RepSpec.flags[1] == 1)) then begin//all
+        tefal = true; 
+     	end;
+      if  ((RepSpec.flags[0] == 1) and (RepSpec.flags[1] == 0)) then begin//notOK
+        if  (CLOr.OKFlag != 1) then begin 
+          tefal = true; 
+        end else begin 
+          tefal = false; 
+        end; 
+      end;
+      if  ((RepSpec.flags[0] == 0) and (RepSpec.flags[1] == 1)) then begin//OK
+        if  (CLOr.OKFlag != 0) then begin  tefal = true; end; 
+     	end; 
+        if (CLOr.Invalid!=0) then begin testf = false; end;     	
+     	if ((testf == true) and (tefal == true)) then begin 
+        sumval = MulRateToBase1(CLOr.CurncyCode,CLOr.Total,CLOr.FrRate,CLOr.ToRateB1,CLOr.ToRateB2,CLOr.BaseRate1,CLOr.BaseRate1,DefaultCurRoundOff);
+        if (printf) then begin
+          countout = countout +1; 
+     	  if (runbalf) then begin
+          StartFormat(15);
+          OutVal(340,0,BalStart  + (TotSumIn - TotSumOut),M4Val,true);
+          EndFormat;
+     	    runbalf = false;
+     	  end;
+     		if (RepSpec.ArtMode == 0) then begin     	            //Overview
+          StartFormat(15);
+          OutLongInt(0,"DblCLOutVc",CLOr.SerNr,false);
+          OutDate(50,0,CLOr.TransDate,false);
+          if blank(CLOr.CUName) then begin
+          	ResetLoop(Userr);
+            Userr.Code = CLOr.Person;
+            if ReadFirstMain(Userr,1,true) then begin
+              OutString(110,0,Userr.Name,false); 
+            end;
+          end else begin
+        	  OutString(110,0,CLOr.CUName,false);   
+          end;
+          OutString(200,0,CLOr.Comment,false);
+          OutString(380,0," - ",false);           			
+          OutVal(465,0,sumval,M4Val,true);
+          EndFormat; 
+          if (RepSpec.flags[3]!=0) then begin
+            typofcur = TypeOfCurncy(CLOr.CurncyCode,oldstyle);
+            if (typofcur==0) then begin
+              StartFormat(15);
+               OutVal(465,0,CLOr.Total,M4Val,true);
+               OutString(470,0,CLOr.CurncyCode,false);
+              EndFormat;
+            end;
+          end;
+          AddCurncyTotals(acur,av1,curcnt,CLOr.CurncyCode,-CLOr.Total);
+        end else begin
+          StartFormat(15);                                          //DETAILNE, VMO
+          OutString(0,0,USetStr(10512),false);
+          OutString(55,0,USetStr(10513),false);
+          OutString(100,0,USetStr(10518),false);
+          OutString(190,0,USetStr(10523),false);
+          OutString(260,0,USetStr(10524),false);
+          EndFormat;
+          StartFormat(15);
+          OutLongInt(0,"DblCLOutVc",CLOr.SerNr,false);
+          OutDate(50,0,CLOr.TransDate,false);
+          OutString(110,0,CLOr.Person,false);
+          OutString(190,0,CLOr.CUCode,false);
+          if blank(CLOr.CUCode) then begin
+            Userr.Code = CLOr.Person;
+            if ReadFirstMain(Userr, 1, true)  then begin
+              OutString(260, 0, Userr.Name, false); 
+            end;
+          end else begin
+            OutString(260,0,CLOr.CUName,false); 
+          end;
+          EndFormat;
+          StartFormat(15);
+          OutString(0,0,USetStr(10521),false);
+          OutString(125,0,USetStr(10515),false);
+          OutString(300,0,USetStr(10522),false);
+          EndFormat;
+          StartFormat(15);
+          OutString(0,0,USetStr(10544),false);
+          OutString(100,0,CLOr.Comment,false);
+          OutVal(330,0,sumval,M4Val,true);
+          if nonblank( CLOr.CurncyCode) then begin
+            OutVal(400,0,CLOr.Total,M4Val,true);
+            OutString(430,0,CLOr.CurncyCode,true);
+          end;	              
+          EndFormat;
+          Gray_divider(0,1); 
+        end; 
+        end; 
+        DaySumOut = DaySumOut + sumval;
+        DaySumCurOut = DaySumCurOut + CLOr.Total;
+      end; 
+    end; //while
+  end;  
+  TotSumIn = TotSumIn + DaySumIn;    
+  TotSumOut = TotSumOut + DaySumOut; 
+  TotSumCurIn = TotSumCurIn + DaySumCurIn;    
+  TotSumCurOut = TotSumCurOut + DaySumCurOut; 
+  RETURN;
+END;
+
+global
+procedure CashBRn (record RcVc RepSpec)
+begin
+  record ObjBalVc ObjBalr; 
+  record PMBlock PMRec;
+  row PMBlock pmrw;
+  String 255 tstr; 
+  String 5 frPr, toPr;
+  Integer rw,rwc,k;
+  String 20 frCust ,toCust;
+  val BalStart,BalStartCur;
+  Date td,bdat;
+  val TotSumIn,TotSumOut,TotBalSum,TotSumCurIn,TotSumCurOut,TotBalSumCur;
+  Integer countin,countout;
+  String 60 ss,ss1;  
+  String 30 Cashier, Cashier1;
+  array val av1;
+  array val av2;
+  array val av3;
+  array string 20 acur;
+  Integer curcnt;
+  record AccVc Accr;
+  
+  BeginCurncyTotals(curcnt);
+  Cashier = RepSpec.Stext;
+  Cashier1 =  RepSpec.ObjStr;
+  frCust = FirstInRange(RepSpec.f2,20); 
+  toCust = LastInRange(RepSpec.f2,20);  
+  frPr = FirstInRange(RepSpec.f3,5); 
+  toPr = LastInRange(RepSpec.f3,5);
+  StartReportJob(USetStr(10510)); 
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTCusts(frCust,toCust,tstr);
+  Header(rw,tstr,0); 
+  BlockLoad(PMRec);
+  rwc = MatRowCnt(PMRec);
+  ObjBalr.AccNumber = "";
+  for (k=0;k<rwc;k=k+1) begin
+    MatRowGet(PMRec,k,pmrw);
+    if (pmrw.Code==RepSpec.f1) then begin
+      ObjBalr.AccNumber = pmrw.AccNr;
+      k = rwc;
+    end;   
+  end;
+  tstr= USetStr(10511);
+  tstr = tstr &  ObjBalr.AccNumber;
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  
+  HTOKF(RepSpec.flags[0],RepSpec.flags[1],tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+  end;
+  HTDetailLevel(RepSpec.ArtMode,tstr);
+  Header(rw,tstr,0);   
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f5,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;   
+  EndHeader;
+
+  if (RepSpec.ArtMode == 0) then begin
+		StartFormat(15);
+		OutString(0,0,USetStr(10512),false);   
+		OutString(50,0,USetStr(10513),false); 
+		OutString(120,0,USetStr(10514),false);
+		OutString(200,0,USetStr(10515),false);
+		OutString(370,0,USetStr(10516),false);
+		OutString(422,0,USetStr(10517),false);
+		EndFormat;
+  end;
+
+
+  Accr.AccNumber = pmrw.AccNr;
+  if (ReadFirstMain(Accr,1,true)) then begin end;
+//FWBalance
+  BalStart = 0;
+  td = AddDay(RepSpec.sStartDate,-1);
+  PrintCashInandCashOut(RepSpec,BalStart,bdat,td,TotSumIn,TotSumOut,TotSumCurIn,TotSumCurOut,countin,countout,false,av1,av2,av3,acur,curcnt);
+  BalStart = TotSumIn - TotSumOut;
+  BalStartCur = TotSumCurIn - TotSumCurOut;
+  AddCurncyTotals(acur,av1,curcnt,Accr.Curncy,BalStartCur);
+  TotSumIn = BlankVal;
+  TotSumOut = BlankVal;
+  StartFormat(15);
+  OutString(340,0,USetStr(10542),true);
+  OutVal(400,0,BalStart,M4Val,true);
+  EndFormat;
+  if (RepSpec.flags[3]!=0) then begin
+    StartFormat(15);
+    OutVal(400,0,BalStartCur,M4Val,true);
+    OutString(405,0,Accr.Curncy,false); 
+    EndFormat;
+  end;
+  Gray_divider(280,480);
+  if (RepSpec.flags[2]==0) then begin
+    PrintCashInandCashOut(RepSpec,BalStart,RepSpec.sStartDate,RepSpec.sEndDate,TotSumIn,TotSumOut,TotSumCurIn,TotSumCurOut,countin,countout,true,av1,av2,av3,acur,curcnt);
+  end else begin
+    td = RepSpec.sStartDate;
+    while (td<=RepSpec.sEndDate) begin
+      PrintCashInandCashOut(RepSpec,BalStart,td,td,TotSumIn,TotSumOut,TotSumCurIn,TotSumCurOut,countin,countout,true,av1,av2,av3,acur,curcnt);
+      td = AddDay(td,1);
+    end;
+  end;  
+  Gray_Divider(0,1);
+  if (RepSpec.ArtMode == 1) then begin
+      StartFormat(15);
+      OutString(180,0,USetStr(10538), true);
+      OutVal(330,0,TotSumOut,M4Val,true);
+      EndFormat;
+      Black_Divider(280,350);
+      Gray_divider(0,1); 
+  end;
+  if (RepSpec.ArtMode == 0) then begin  
+      Gray_Divider(0,1);
+      TotBalSum = BalStart  + (TotSumIn - TotSumOut);
+      TotBalSumCur = BalStartCur  + (TotSumCurIn - TotSumCurOut);
+      StartFormat(15);
+      OutString(240,0,USetStr(10526), true);
+      OutVal(400,0,TotSumIn,M4Val,true);
+      OutVal(465,0,TotSumOut,M4Val,true);
+      EndFormat;
+      Gray_Divider(50,480);
+      StartFormat(15);
+      OutString(240,0,USetStr(10527), true);
+      OutVal(400,0,TotBalSum,M4Val,true);
+      OutString(430,0,"", false);
+      EndFormat;
+      Gray_Divider(50,480);
+      PrintCurncyTotals(acur,av1,av2,av3,curcnt,360,-1,-1,270,true,RepSpec.PocketPC);      
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      OutString(430,0,"", false);
+      EndFormat;
+      Gray_divider(50,480);
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+      StartFormat(15);
+      StartFormat(15);
+      OutString(60,0,USetStr(10528),false);
+      OutString(120,0,"_____________",false);
+      OutString(260,0,Cashier,false);
+      EndFormat;
+      StartFormat(15);
+      OutString(130,0,USetStr(10529),false);
+      OutString(250,0,USetStr(10530),false);
+      EndFormat;
+      StartFormat(15);
+      OutString(20,0,USetStr(10531),false);
+      EndFormat;
+      //Nadja
+      StartFormat(15);
+      ss1 = USetStr(10532);
+      OutString(20,0,ss1,false);
+      OutLongInt(150,0,countin,true);
+      EndFormat;
+      StartFormat(15);
+      ss1 = USetStr(10533);
+      OutString(20,0,ss1,false);
+		OutLongInt(150,0,countout,true);
+		EndFormat;
+		StartFormat(15);
+		EndFormat;
+		StartFormat(15);
+		OutString(60,0,USetStr(10534),false);
+		OutString(120,0,"_____________",false);
+		OutString(260,0,Cashier1,false);
+		EndFormat;
+		StartFormat(15);
+		OutString(130,0,USetStr(10529),false);
+		OutString(250,0,USetStr(10535),false);
+    EndFormat; 
+	end else begin
+    TotBalSum = BalStart  + (TotSumIn - TotSumOut);
+    StartFormat(15);
+    OutString(180,0,USetStr(10536), true);
+    OutVal(260,0,BalStart,M4Val,true);
+    EndFormat;
+    StartFormat(15);
+    OutString(180,0,USetStr(10537), true);
+    OutVal(260,0,TotSumIn,M4Val,true);
+    EndFormat;
+    StartFormat(15);
+    OutString(180,0,USetStr(10538), true);
+    OutVal(260,0,TotSumOut,M4Val,true);
+    EndFormat;
+    StartFormat(15);
+    OutString(180,0,USetStr(10539), true);
+    OutVal(260,0,TotBalSum,M4Val,true);
+    EndFormat;
+    Gray_Divider (210,260);
+    StartFormat(15);
+    OutString(180,0,USetStr(10540), true);
+    //IntToTextRus(countin,ss);
+    //OutString(260,0,ss,true);
+    OutLongInt(260,0,countin,true);
+    EndFormat;
+    StartFormat(15);
+    OutString(180,0,USetStr(10541), true);
+    //IntToTextRus(countout,ss);
+    // OutString(260,0,ss,true);
+    OutLongInt(260,0,countout,true);
+    EndFormat;
+  end; 
+  EndJob;
+  return;
+end; 

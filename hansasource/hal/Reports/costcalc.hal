@@ -1,0 +1,199 @@
+// CostCalcRn.hal
+        
+function val RecursiveGetItemCost(record RecVc recr,var val reccost,Integer detaillev,Integer costfrom,val qty,Integer level,Integer values)
+begin
+  Record INVc INr;
+  Record RecVc localrecr;
+  Row RecVc Recrw;
+  Integer i,rwcnt;
+  Boolean rectestf;
+  val cost,slask,sales,incost;
+
+  sales = 0;
+  rwcnt = MatRowCnt(recr);
+  for (i = 0 ; i<=rwcnt-1 ;i=i+1) begin
+    MatRowGet(recr,i,Recrw);
+    INr.Code = Recrw.Item;
+    rectestf = true;
+    if (ReadFirstMain(INr,1,true)==true) then begin
+      if ((Recrw.InQty<>0) and (Recrw.OutQty==0)) then begin
+        if ((INr.Recepy<>"") and (level<=10)) then begin// 10 is enough I think and it will not crash when one makes mistakes in settings
+          localrecr.Code = INr.Recepy;
+          if (ReadFirstMain(localrecr,1,true)==true) then begin
+            slask = RecursiveGetItemCost(localrecr,reccost,detaillev,costfrom,Recrw.InQty,level+1,values);
+            rectestf = false;
+          end;
+        end;
+        if (rectestf) then begin
+          incost = Recrw.ItemCost;
+          if ((incost==0) or (costfrom==1)) then begin
+            incost = INr.InPrice;
+          end;
+          if (detaillev<>0) then begin
+            StartFormat(15);
+            if (detaillev==2) then begin
+              OutString(20,0,level,true);
+            end;
+            OutString(2,0,Recrw.Item,false);
+            OutString(3,0,Recrw.Comment,false);
+            OutVal(4,0,Recrw.InQty * qty,M4UVal,true);
+            OutString(6,0,incost,true);
+            OutString(7,0,Recrw.ExtraCost,true);
+            EndFormat;
+          end;
+          switch (values) begin
+            case 0:
+              cost = (Recrw.InQty * incost) * qty;
+              cost = cost + (Recrw.ExtraCost * qty);
+            case 1:
+              cost = Recrw.InQty*qty;
+          end;
+          reccost = reccost + cost;
+        end;
+      end else begin
+        if (level==1) then begin
+          if (detaillev<>0) then begin
+            StartFormat(15);
+            if (detaillev==2) then begin
+              OutString(20,0,level,true);
+            end;
+            OutString(2,0,Recrw.Item,false);
+            OutString(3,0,Recrw.Comment,false);
+            OutVal(5,0,Recrw.OutQty * qty,M4UVal,true);
+            OutString(1,0,INr.UPrice1,true);
+            EndFormat;
+          end;
+        end;
+        switch (values) begin
+          case 0:
+            sales = (INr.UPrice1 * Recrw.OutQty) * qty;
+          case 1:
+            sales = Recrw.OutQty * qty;
+        end;
+      end;
+    end;
+  end;
+  RecursiveGetItemCost = sales;
+  return;
+end;
+
+global
+procedure CostCalcRn(record RcVc RepSpec)
+begin
+  record RecVc recr;
+  Boolean TrHs;
+  String 20 fromart,toart;
+  String 255 tstr;
+  val totcost,reccost,totsales,recsales;
+  Boolean testf;
+  Integer rw;
+
+  testf = true;
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart   = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(8700));
+  rw = 1;
+  if (blank(fromart) and blank(toart)) then begin
+    tstr = USetStr(5385);
+  end else begin
+    tstr = USetStr(5106);
+    tstr = tstr & " ";
+    tstr = tstr & fromart;
+    if (fromart<>toart) then begin
+      tstr = tstr & " : ";
+      tstr = tstr & toart;
+    end;
+  end;
+  Header(rw,tstr,1);
+  rw = rw+1;
+  if (RepSpec.flags[1]==0) then begin
+    tstr = USetStr(8704);
+  end else begin
+    tstr = USetStr(8705);
+  end;
+  Header(rw,tstr,1);
+  rw = rw+1;
+  EndHeader;
+  SetRepCol(2,30);
+  SetRepCol(3,120);
+  SetRepCol(4,300);
+  SetRepCol(5,360);
+  SetRepCol(6,420);
+  SetRepCol(7,1);
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(5381),false);
+    OutString(80,0,USetStr(5104),false);
+    OutString(350,0,USetStr(8701),true);
+    OutString(1,0,USetStr(8702),true);
+    EndFormat;
+    Black_Divider(0,1);
+  end else begin
+    StartFormat(15);
+    OutString(0,0,USetStr(5381),false);
+    OutString(80,0,USetStr(5104),false);
+    OutString(320,0,USetStr(5382),true);
+    OutString(410,0,USetStr(5383),true);
+    EndFormat;
+  end;
+  recr.Code = fromart;
+  TrHs = true;
+  totcost = 0;
+  while (LoopMain(recr,1,TrHs)) begin
+    TrHs = true;
+    reccost = 0;
+    if (nonblank(fromart)) then begin
+      if (recr.Code > toart) then begin
+        TrHs = false;
+      end;
+    end;
+    if ((TrHs) and (testf)) then begin
+      if (RepSpec.ArtMode<>0) then begin
+        Black_Divider(0,1);
+        StartFormat(15);
+        OutString(0,0,recr.Code,false);
+        OutString(80,0,recr.Comment,false);
+        OutString(320,0,recr.MinProdQty,true);
+        OutString(410,0,recr.NormProdQty,true);
+        EndFormat;
+        StartFormat(15);
+        EndFormat;
+        StartFormat(15);
+        if (RepSpec.ArtMode==2) then begin
+          OutString(0,0,USetStr(8703),false);
+        end;
+        OutString(2,0,USetStr(5107),false);
+        OutString(4,0,USetStr(5108),true);
+        OutString(5,0,USetStr(5109),true);
+        OutString(6,0,USetStr(5111),true);
+        OutString(7,0,USetStr(5112),true);
+        EndFormat;
+        Gray_Divider(0,1);
+      end;
+      recsales = RecursiveGetItemCost(recr,reccost,RepSpec.ArtMode,RepSpec.flags[1],1,1,RepSpec.flags[2]);
+      totcost = totcost + reccost;
+      totsales = totsales + recsales;
+      if (RepSpec.ArtMode==0) then begin
+        StartFormat(15);
+        OutString(0,0,recr.Code,false);
+        OutString(80,0,recr.Comment,false);
+        OutVal(350,0,reccost,M4Val,true);
+        OutVal(1,0,recsales,M4Val,true);
+        EndFormat;
+      end else begin
+        Gray_Divider(250,480);
+        StartFormat(15);
+        OutString(250,0,USetStr(8701),false);
+        OutVal(1,0,reccost,M4Val,true);
+        EndFormat;
+        StartFormat(15);
+        OutString(250,0,USetStr(8702),false);
+        OutVal(1,0,recsales,M4Val,true);
+        EndFormat;
+      end;
+    end;
+  end;
+  Black_Divider(0,1);
+  EndJob;
+  return;
+end;

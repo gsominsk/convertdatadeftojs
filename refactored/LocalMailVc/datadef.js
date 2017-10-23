@@ -1,0 +1,26 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fHeader: { public: true, type: 'TEXT' },
+     fTransDate: { public: true, type: 'DATE' },
+     fTransTime: { public: true, type: 'TIME' },
+     fLockedFlag: { public: true, type: 'INTEGER' },
+     fSendFlag: { public: true, type: 'INTEGER' },
+     fHasFileAtt: { public: true, type: 'INTEGER' },
+     fHasRecAtt: { public: true, type: 'INTEGER' },
+     LocalMailVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math2',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fRowTyp: { public: true, type: 'INTEGER' },
+           fAddrCode: { public: true, type: 'TEXT' } } },
+     fMath: { public: true, type: 'TEXT' },
+     fPriority: { public: true, type: 'INTEGER' },
+     fLifespan: { public: true, type: 'INTEGER' },
+     fSeqnr: { public: true, type: 'INTEGER' },
+     fReadflag: { public: true, type: 'INTEGER' },
+     fCopyf: { public: true, type: 'INTEGER' },
+     fMessageID: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex200: { fields: [ 'fSerNr', 'fCopyf' ], indicesType: 'UNIQUE' } } }

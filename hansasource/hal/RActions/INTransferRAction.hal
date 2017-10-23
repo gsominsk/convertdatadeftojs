@@ -1,0 +1,856 @@
+external function Boolean StockRecordForLocationAllowed(string,string,string,date,integer,var Integer,var string);
+external procedure GetCurUser(var record UserVc);
+external procedure WarnFutureDate(Boolean,Date);
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external function Integer IsUnOKAllowed_INTransferVc(record INTranferVc);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external function Boolean ItemHistExists(string,LongInt);
+external updating procedure StoreUnOKHistory(string,LongInt,Date,Time,string);
+external updating procedure UpdateRecalcStockNeeded(Integer);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure SwapM4Val(var val,var val);
+external function Boolean CanOKStockRecord(var Integer);
+external updating procedure INTransferUpdateSerialNr(record INTransferVc,Boolean,Boolean,Boolean);
+external updating procedure UpdateSVOSerStock(string,string,string,string,string,string,string,val,val,Date,Date,val,string);
+external updating procedure UpdateSVOSerHist(string,string,string,LongInt,Date,string,string);
+external updating procedure UpdatePosition(string,string,string,val,val,val);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external updating function val NextLocOKNr(string);
+external procedure GetFullCurncyRate(var string,Date,var val,var val,var val,var val,var val);
+external function Integer MakeTransFromINTransfer(record TRVc,record INTransferVc,Boolean);
+external procedure UpdateINTransferFIFO(record INTransferVc);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external function Boolean ExistStockTrans(string,Date,var Integer,var string,string,LongInt,record MainStockBlock);
+external function Boolean SerialNrAvail(string,string,string,val);
+external function Boolean IntSerialNrAvail(string,string,string,val);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean Date2Test(string,Date,string,Integer);
+external function Boolean SerNrTestINTransferVc(LongInt,Date,var Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external updating procedure INTransferUpdateItemHist(record INTransferVc,Boolean);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external function Boolean ShouldItemUpdateStock(string);
+external updating procedure UpdateInstock(string,string,string,string,date,val,val,val,val,val,val,val,val,val);
+external updating procedure UpdateInternalInstock(string,string,val);
+
+global
+function LongInt INTransferVcRecordDefaults(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  string 10 curcode;
+  val fr,to1,to2,br1,br2;
+  record AccBlock AccRecr;
+  record UserVc Userr;
+  
+  BlockLoad(AccRecr);
+  INTransferr.SerNr = -1;
+  INTransferr.RegDate = CurrentDate;
+  INTransferr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    INTransferr.SerNr = NextSerNr("INTransferVc",INTransferr.TransDate,-1,false,"");
+  end;
+  curcode = "";
+  GetFullCurncyRate(curcode,INTransferr.TransDate,fr,to1,to2,br1,br2);
+  INTransferr.CurncyCode = curcode;
+  INTransferr.FrRate = fr;
+  INTransferr.ToRateB1 = to1; 
+  INTransferr.ToRateB2 = to2;
+  INTransferr.BaseRate1 = br1;
+  INTransferr.BaseRate2 = br2;
+  INTransferr.Comment = "";
+  INTransferr.OKFlag = 0;
+  INTransferr.SumQuant = BlankVal;
+  INTransferr.CostAcc = AccRecr.INTransferAcc; // Might get from new setting
+  GetCurUser(Userr);
+  INTransferr.FrLocation = Userr.Location;  
+  INTransferVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt INTransferVcRecordDuplicate(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  record AccBlock AccRecr;
+  
+  BlockLoad(AccRecr);
+  INTransferr.SerNr = -1;
+  INTransferr.RegDate = CurrentDate;
+  INTransferr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    INTransferr.SerNr = NextSerNr("INTransferVc",INTransferr.TransDate,-1,false,"");
+  end;
+  GetFullCurncyRate(INTransferr.CurncyCode,INTransferr.TransDate,fr,to1,to2,br1,br2);
+  INTransferr.FrRate = fr;
+  INTransferr.ToRateB1 = to1; 
+  INTransferr.ToRateB2 = to2;
+  INTransferr.BaseRate1 = br1;
+  INTransferr.BaseRate2 = br2;
+  INTransferr.OKFlag = 0;
+  if (blank(INTransferr.CostAcc)) then begin
+    INTransferr.CostAcc = AccRecr.INTransferAcc; // Might get from new setting
+  end;
+  WarnFutureDate(true,INTransferr.TransDate);
+  INTransferVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt INTransferVcRecordCheck(var record INTransferVc INTransferp,record INTransferVc INTransfer2p,LongInt stat,LongInt check)
+BEGIN
+  LongInt res,sernr;
+  row INTransferVc INTransferrw;
+  record AT2UnitVc AT2r;
+  record RentINVc Rentr;
+  record INVc INr;
+  record AccVc Accr;
+  record LocationVc LocRec;
+  record MainStockBlock MainStockRec;
+  record SRBlock SRRec;
+  record TRVc gTRp;
+  record INTransferVc locINTransferr;
+  record ItemStatusVc ISr;
+  row INTransferVc INTransfer2rw;            
+  Integer i,rwcnt,j,cnt,errcode;
+  LongInt oldnr,newnr;
+  Boolean transf,gentrans,thesamelocf;
+  val t,prev;
+  string 10 location,loc2;
+  string 255 objstr,errstr;
+  Boolean unokf;
+  record PUVc PUr;
+  row PUVc PUrw;
+  
+  res = 0;
+  BlockLoad(SRRec);
+  BlockLoad(MainStockRec);
+  oldnr = INTransferp.SerNr; 
+  transf = false;
+  if (INTransferp.OKFlag==1) then begin
+    if (stat==Rs_insert) then begin transf = true; end;
+    if (stat==Rs_update) then begin
+      if (INTransfer2p.OKFlag==0) then begin transf = true; end;
+    end;
+  end;
+  if (INTransferp.SerNr<=0) then begin
+    INTransferp.SerNr = NextSerNr("INTransferVc",INTransferp.TransDate,-1,false,"");
+  end;
+  if (INTransferp.OKFlag==0) then begin
+    if (stat==Rs_update) then begin
+      if (INTransfer2p.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    errcode = IsUnOKAllowed_INTransferVc(INTransferp);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",-1,"TransDate");      
+      res = -1; 
+    end;
+    goto LINTransferVcRecordCheck;
+  end;  
+  if ((stat==Rs_insert) or (INTransferp.SerNr!=INTransfer2p.SerNr)) then begin
+    locINTransferr.SerNr = INTransferp.SerNr;
+    if (ReadFirstMain(locINTransferr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1;
+      goto LINTransferVcRecordCheck;
+    end;
+  end;
+  if (SerNrTestINTransferVc(INTransferp.SerNr,INTransferp.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1; 
+    goto LINTransferVcRecordCheck;
+  end;
+  if (Date2Test("INTransferVc",INTransferp.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto LINTransferVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,INTransferp.TransDate,"TransDate",-1)) then begin
+    res = -1;
+    goto LINTransferVcRecordCheck;
+  end;
+  if (transf) then begin
+    if (UserCanAction("INTransferOK",true)==false) then begin // INTransferOK new UserCanAction, need the new name...
+      RecordCheckError(1274,StringFromStringSet(3,"INTransferOK"),-1,"SerNr");      
+      res = -1; 
+      goto LINTransferVcRecordCheck;
+    end;
+    if (blank(INTransferp.CostAcc)) then begin
+      RecordCheckError(1947,INTransferp.CostAcc,-1,"CostAcc");
+      res = -1;
+      goto LINTransferVcRecordCheck;
+    end;
+  end;
+  
+  if (check!=0) then begin
+    if (MainStockRec.requireLocation!=0) then begin
+      if (blank(INTransferp.FrLocation)) then begin
+        RecordCheckError(1058,INTransferp.FrLocation,-1,"FrLocation");      
+        res = -1; 
+        goto LINTransferVcRecordCheck;
+      end;
+      if (blank(INTransferp.Location)) then begin
+        RecordCheckError(1058,INTransferp.Location,-1,"Location");      
+        res = -1; 
+        goto LINTransferVcRecordCheck;
+      end;      
+    end;
+  end;
+  location = INTransferp.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  LocRec.Code = location;
+  if (nonblank(location)) then begin
+    if (ReadFirstMain(LocRec,1,true)==false) then begin
+      RecordCheckError(1120,location,-1,"Location");      
+      res = -1;
+      goto LINTransferVcRecordCheck;
+    end;
+  end;
+  location = INTransferp.FrLocation;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  if (nonblank(location)) then begin
+    LocRec.Code = location;
+    if (ReadFirstMain(LocRec,1,true)==false) then begin
+      RecordCheckError(1120,location,-1,"FrLocation");      
+      res = -1;
+      goto LINTransferVcRecordCheck;
+    end;
+  end;
+  if (nonblank(INTransferp.Objects)) then begin
+    errcode = CheckObjs("",INTransferp.Objects,errstr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,errstr,-1,"Objects");      
+      res = -1;
+      goto LINTransferVcRecordCheck;
+    end;
+  end;   
+  if (INTransferp.PUNr>0) then begin
+    PUr.SerNr = INTransferp.PUNr;
+    ReadFirstMain(PUr,1,true);
+  end;
+  rwcnt = MatRowCnt(INTransferp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INTransferp,i,INTransferrw);
+    if (nonblank(INTransferrw.Location)) then begin
+      loc2 = INTransferrw.Location;
+    end else begin
+      loc2 = INTransferp.Location;
+      if (blank(loc2)) then begin
+        loc2 = MainStockRec.MainStock;
+      end;
+    end;
+    if (loc2==INTransferrw.Location) then begin
+      thesamelocf = true;
+    end;
+    if (nonblank(INTransferrw.ArtCode)) then begin
+      if (ReadFirstItem(INTransferrw.ArtCode,INr,true,true)==false) then begin
+        RecordCheckError(1233,"",i,"ArtCode");      
+        res = -1;
+        goto LINTransferVcRecordCheck;
+      end;
+      if (INr.ItemType==2) then begin
+         RecordCheckError(1247,"",i,"Quant");      
+         res = -1; 
+         goto LINTransferVcRecordCheck;
+      end;
+      if (nonblank(INTransferrw.CostAcc)) then begin
+        Accr.AccNumber = INTransferrw.CostAcc;
+        if (ReadFirstMain(Accr,1,true)==false) then begin
+          RecordCheckError(1007,INTransferrw.CostAcc,i,"CostAcc");      
+          res = -1;
+          goto LINTransferVcRecordCheck;
+        end;
+      end;
+      if (nonblank(INTransferrw.Objects)) then begin 
+        objstr = INTransferp.Objects;
+        if (nonblank(objstr)) then begin
+          objstr = objstr & ",";
+        end;
+        objstr = objstr & INTransferrw.Objects;
+        errcode = CheckObjs("",objstr,errstr);
+        if (errcode!=0) then begin
+          RecordCheckError(errcode,errstr,i,"Objects");      
+          res = -1;
+          goto LINTransferVcRecordCheck;
+        end;
+      end;
+      if (INTransferp.PUNr>0) and (INTransferrw.PURow>=0) then begin
+        MatRowGet(PUr,INTransferrw.PURow,PUrw);
+        if (INTransferrw.Quant>PUrw.Quant) then begin
+          RecordCheckError(23301," " & INTransferrw.Quant,i,"Quant");      
+          res = -1;
+          goto LINTransferVcRecordCheck;
+        end;
+      end;
+      if (blank(INTransferrw.Quant)) then begin
+        RecordCheckError(1058,"",i,"Quant");      
+        res = -1;
+        goto LINTransferVcRecordCheck;
+      end;      
+      
+      if (StockRecordForLocationAllowed("INTransferVc",loc2,INTransferrw.ArtCode,INTransferp.TransDate,INTransferp.OKFlag,errcode,errstr)==false) then begin
+        RecordCheckError(errcode,errstr,i,"ArtCode");      
+        res = -1;
+        goto LINTransferVcRecordCheck;
+      end;
+      
+      if (check!=0) then begin
+        if (transf) then begin
+          if ((INTransferrw.Status<>0) and (INTransferrw.Status<>1)) then begin
+            RecordCheckError(1956,"",i,"Status");
+            res = -1;
+            goto LINTransferVcRecordCheck;
+          end;
+          if (MainStockRec.dontAllowOvership==1) then begin
+            prev = 0;
+            for (j=0;j<i;j=j+1) begin
+              MatRowGet(INTransferp,j,INTransfer2rw);
+              if (INTransfer2rw.ArtCode==INTransferrw.ArtCode) then begin
+                prev = prev + INTransfer2rw.Quant;
+              end;
+            end;  
+            prev = prev + INTransferrw.Quant;
+            switch (INr.ItemType) begin
+              case 1: begin          
+                FindStockValue(INTransferrw.ArtCode,location,ISr);
+                if (ISr.Instock<prev) then begin
+                  RecordCheckError(1247,"",i,"Quant");      
+                  res = -1;
+                  goto LINTransferVcRecordCheck;
+                end;
+              end;  
+            end;
+          end;
+        end;
+      end;
+      if ((check!=0) and (transf)) then begin      
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(INTransferp,j,INTransfer2rw);
+          if (nonblank(INTransferrw.InventoryNr)) then begin
+            if (INTransferrw.InventoryNr==INTransfer2rw.InventoryNr) then begin
+              RecordCheckError(1547,"",i,"InventoryNr");      
+              res = -1; 
+              goto LINTransferVcRecordCheck;
+            end;
+          end;
+          AT2r.InventoryNr = INTransferrw.InventoryNr;
+          if (ReadFirstMain(AT2r,1,true)) then begin
+            RecordCheckError(1547,"",i,"InventoryNr");      
+            res = -1; 
+            goto LINTransferVcRecordCheck;
+          end;
+          Rentr.Code = INTransferrw.ArtCode;
+          Rentr.SerialNr = INTransferrw.SerialNr;
+          if (ReadFirstMain(Rentr,2,true)) then begin
+            RecordCheckError(1547,"",i,"SerialNr");      
+            res = -1; 
+            goto LINTransferVcRecordCheck;
+          end;
+        end;
+        if ((INr.SerNrf>0) and (INr.SerNrf<3)) then begin
+          if (blank(INTransferrw.SerialNr)) then begin
+            if (INTransferrw.Quant!=0) then begin
+              RecordCheckError(1239,"",i,"SerialNr");      
+              res = -1; 
+              goto LINTransferVcRecordCheck;
+            end;
+          end;
+          if (INTransferrw.Quant>0) then begin
+            if (INr.SerNrf==1) then begin
+              if (SerialNrAvail(INTransferrw.ArtCode,INTransferrw.SerialNr,location,INTransferrw.Quant)==false) then begin
+                RecordCheckError(1240,"",i,"SerialNr");      
+                res = -1; 
+                goto LINTransferVcRecordCheck;
+              end;
+            end else begin
+              prev = 0;
+              for (cnt=0;cnt<i;cnt=cnt+1) begin
+                MatRowGet(INTransferp,cnt,INTransfer2rw);
+                if (((INTransfer2rw.ArtCode==INTransferrw.ArtCode) and (INTransfer2rw.SerialNr==INTransferrw.SerialNr))) then begin
+                  prev = prev + INTransfer2rw.Quant;
+                end;
+              end;
+              prev = prev + INTransferrw.Quant;
+              if (SerialNrAvail(INTransferrw.ArtCode,INTransferrw.SerialNr,location,prev)==false) then begin
+                RecordCheckError(1240,"",i,"SerialNr");      
+                res = -1; 
+                goto LINTransferVcRecordCheck;
+              end;
+            end;
+          end;
+          if (INr.SerNrf==1) then begin
+            if (INTransferrw.Quant>1) then begin
+              RecordCheckError(1242,"",i,"SerialNr");      
+              res = -1; 
+              goto LINTransferVcRecordCheck;
+            end;
+            if (INTransferrw.Quant>0) then begin
+              for (j=0;j<i;j=j+1) begin
+                MatRowGet(INTransferp,j,INTransfer2rw);
+                if ((INTransferrw.ArtCode==INTransfer2rw.ArtCode) and (INTransferrw.SerialNr==INTransfer2rw.SerialNr)) then begin
+                  RecordCheckError(1242,"",i,"SerialNr");      
+                  res = -1; 
+                  goto LINTransferVcRecordCheck;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (check!=0) then begin 
+    if (transf) then begin
+      UpdateINTransferFIFO(INTransferp);
+    end;
+  end;
+  if (transf) then begin 
+    sernr = -1;
+    if (stat==Rs_update) then begin
+      sernr = INTransfer2p.SerNr;
+    end;
+
+    if (check>0) then begin
+    if (MainStockRec.Chronology!=0) then begin    
+      if (ExistStockTrans(location,INTransferp.TransDate,errcode,errstr,"INTransferVc",sernr,MainStockRec)) then begin
+        RecordCheckError(errcode,errstr,-1,"TransDate");      
+        res = -1;
+        goto LINTransferVcRecordCheck;
+      end;
+    end;
+    end;
+    if (CanOKStockRecord(errcode)==false) then begin
+      RecordCheckError(errcode,"",-1,"SerNr");      
+      res = -1; 
+      goto LINTransferVcRecordCheck;
+    end;
+  end;
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+    errcode = MakeTransFromINTransfer(gTRp,INTransferp,false);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",-1,"SerNr");      
+      res = -1;
+      goto LINTransferVcRecordCheck;
+    end;
+    if ((gTRp.Number>0) and (gTRp.IntYc==INTransferYc)) then begin
+      errstr = CheckTrans(gTRp,2,true);
+      if (nonblank(errstr)) then begin
+        RecordCheckError(1085,errstr,-1,"SerNr");      
+        res = -1;
+        goto LINTransferVcRecordCheck;
+      end;
+      SaveTrans(gTRp);
+    end;
+  end;
+LINTransferVcRecordCheck:;
+  if (res!=0) then begin
+    INTransferp.SerNr = oldnr;
+  end;
+  INTransferVcRecordCheck = res;
+  RETURN;
+END;
+
+global 
+function Boolean INTransferDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record INTransferVc INTransferr;
+  row INTransferVc INTransferrw;
+  Boolean res;
+
+  res = true;
+  if (rownr>-1) then begin
+    GetWindowRecord(wn,INTransferr);
+    if (INTransferr.OKFlag==0) then begin
+      MatRowGet(INTransferr,rownr,INTransferrw);
+/*
+      if (INTransferrw.Invoiced>0) then begin
+        res = false;
+        MessageBox(1092,"");
+      end;
+*/
+    end else begin
+      res = false;
+    end;
+  end;
+  INTransferDClassDeleteRowTest = res;
+  return;
+end;
+
+global
+updating procedure INTransferUpdateStock(var record INTransferVc INTransferp,Boolean realstock,Boolean negf)
+BEGIN
+  record MainStockBlock MainStockRec;
+  row INTransferVc INTransferrw;
+  Integer i,rwcnt;
+  val t,t2,q2;
+  string 10 location,loc2;
+  
+  BlockLoad(MainStockRec);
+  location = INTransferp.Location;
+  if (realstock) then begin
+    location = INTransferp.FrLocation;
+  end;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(INTransferp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INTransferp,i,INTransferrw);
+    if (realstock==false) then begin
+      if (nonblank(INTransferrw.Location)) then begin
+        loc2 = INTransferrw.Location;
+      end else begin
+        loc2 = location;
+      end;
+    end else begin
+      loc2 = location;
+    end;
+    if (nonblank(INTransferrw.ArtCode)) then begin
+      t2 = -INTransferrw.Quant;
+      if (ShouldItemUpdateStock(INTransferrw.ArtCode)==false) then begin
+        t2 = blankval;
+      end;
+      if (MainStockRec.UnitConvCalc==0) then begin
+        q2 = t2*INTransferrw.Coefficient;
+      end else begin
+        q2 = t2/INTransferrw.Coefficient;
+      end;
+      if (negf) then begin 
+        t2 = -t2; 
+        q2 = -q2; 
+      end;
+      if (t2!=0) then begin
+        if (realstock) then begin
+          UpdateInstock("INTransferVc",INTransferp.SerNr,INTransferrw.ArtCode,loc2,INTransferp.TransDate,t2,t,t,t,t,q2,t,t,t);
+          UpdatePosition(INTransferrw.ArtCode,loc2,INTransferrw.PosCode,t2,q2,t);
+        end else begin
+          t2 = INTransferrw.Quant;
+          UpdateInternalInstock(INTransferrw.ArtCode,loc2,t2);
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+updating procedure INTransferUpdateSVO(record INTransferVc INTransferr)
+begin
+  record MainStockBlock MainStockRec;
+  row INTransferVc INTransferrw;
+  Integer i,rwcnt;
+  val t,t2,q2;
+  Date bld;
+  string 10 location;
+  
+  location = INTransferr.Location;
+  BlockLoad(MainStockRec);
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(INTransferr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INTransferr,i,INTransferrw);
+    if (nonblank(INTransferrw.ArtCode)) then begin
+      if (MainStockRec.updateSVGM!=0) then begin
+        t = -INTransferrw.Quant;
+        UpdateSVOSerStock(INTransferrw.ArtCode,INTransferrw.Spec,INTransferrw.SerialNr,"","","",USetStr(11760),
+                          BlankVal,BlankVal,bld,bld,t,"");
+//        UpdateSVOSerHist(INTransferrw.ArtCode,INTransferrw.SerialNr,"INTransferVc",INTransferr.SerNr,INTransferr.TransDate,INTransferr.CustCode,"");
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure INTransferOK(record INTransferVc INTransferr,Boolean importf)
+begin
+  Boolean updstockf,ihef;
+  Integer err;
+  
+  ihef = ItemHistExists("INTransferVc",INTransferr.SerNr);
+  if (importf==false) then begin
+    updstockf = true;
+  end else begin
+    updstockf = ImportingTextBackup==false and CanOKStockRecord(err)==true;
+  end;
+  if (updstockf) then begin
+    INTransferUpdateStock(INTransferr,true,false);
+    if (ihef==false) then begin
+      INTransferUpdateItemHist(INTransferr,true);
+    end;
+  end;
+  INTransferUpdateSerialNr(INTransferr,true,importf,false);
+  INTransferUpdateStock(INTransferr,false,false);
+  if (ihef==false) or (importf) then begin//we need this at all ? this is internal stock Item History
+    INTransferUpdateItemHist(INTransferr,false);
+  end;
+  INTransferUpdateSerialNr(INTransferr,false,importf,false);
+  if (ihef==false) then begin
+    INTransferUpdateSVO(INTransferr);
+  end;
+  return;
+end;
+
+updating procedure CreateFixedAsset(record RentINVc RentINr,val qty,string comment,string objects)
+begin
+  record AT2UnitVc AT2r;
+  record CUVc VEr;
+  Boolean testf;
+  
+  RecordNew(AT2r);
+  AT2r.InventoryNr = RentINr.InventoryNr;
+  AT2r.PurchaseDate = RentINr.PurchaseDate;
+  AT2r.Comment = comment;
+  AT2r.Description = RentINr.Name;
+  AT2r.VECode = RentINr.VECode;
+  VEr.Code = RentINr.VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    AT2r.VEName = VEr.Name;
+  end;
+  AT2r.DepCode = RentINr.OrgLocation;
+  AT2r.SerialNr = RentINr.SerialNr;
+  AT2r.PurchVal = RentINr.Value;
+  AT2r.Quantity = qty;
+  AT2r.Objects = objects;
+  testf = RecordStore(AT2r,true);
+  return;
+end;
+
+updating procedure CreateINTransferSubRecords(record INTransferVc INTransferr)
+begin
+  record RentINVc RentINr;
+  record INVc INr;  
+  record MainStockBlock MainStockRec;
+  record IntSettingBlock IntSettr;
+  row INTransferVc INTransferrw;
+  Integer i,rwcnt;
+  Boolean testf;
+  string 10 location,loc2;
+  
+  BlockLoad(MainStockRec);
+  BlockLoad(IntSettr);
+  location = INTransferr.Location;
+  if (blank(location)) then begin
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(INTransferr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(INTransferr,i,INTransferrw);
+    if ((INTransferrw.Status==0) and (nonblank(INTransferrw.ArtCode)) and ((nonblank(INTransferrw.SerialNr)) or (IntSettr.RentINFromNonSerial==1))) then begin
+      INr.Code = INTransferrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+        RecordNew(RentINr);
+        if (nonblank(INTransferrw.Location)) then begin
+          loc2 = INTransferrw.Location;
+        end else begin
+          loc2 = location;
+        end;
+        RentINr.Code = INr.Code;
+        RentINr.SerialNr = INTransferrw.SerialNr;
+        RentINr.Name = Left(INTransferrw.Spec,60);
+        RentINr.Group = INr.Group;
+        RentINr.BarCode = INr.BarCode;
+        RentINr.ApxBasePrice = INr.UPrice1;
+        RentINr.Value = INTransferrw.FIFO;
+        RentINr.InventoryNr = INTransferrw.InventoryNr;
+        RentINr.VECode = INTransferrw.VECode;
+        if (nonblankdate(INTransferrw.PurchaseDate)) then begin
+          RentINr.PurchaseDate = INTransferrw.PurchaseDate;
+        end else begin
+          RentINr.PurchaseDate = INTransferr.TransDate;
+        end;
+        RentINr.WarrantyUntil = INTransferrw.WarrantyUntil;
+        RentINr.Objects = INTransferrw.Objects;
+        RentINr.OrgLocation = loc2;
+        INr.Code = INr.RentalItem;
+        if (ReadFirstMain(INr,1,true)) then begin
+          RentINr.InvItem = INr.Code;
+          RentINr.InvItemName = INr.Name;
+          if (INr.UPrice1!=0) then begin
+            RentINr.ApxBasePrice = INr.UPrice1;
+          end;
+        end;
+        testf = RecordStore(RentINr,true);
+// A setting for this is neccesary
+        if (nonblank(RentINr.InventoryNr)) then begin
+          CreateFixedAsset(RentINr,INTransferrw.Quant,INTransferr.Comment,INTransferrw.Objects);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt INTransferVcRecordSave(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (INTransferr.OKFlag!=0) then begin
+    INTransferr.LocOKNr = NextLocOKNr(INTransferr.Location);
+  end;
+  INTransferVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating function LongInt INTransferVcRecordSaveAfter(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record PUVc PUr;
+
+  if (INTransferr.OKFlag!=0) then begin
+    INTransferOK(INTransferr,false);
+    CreateINTransferSubRecords(INTransferr);
+  end;
+  if (INTransferr.PUNr>0) then begin
+    PUr.SerNr = INTransferr.PUNr;
+    CreateRecordLink(INTransferr,CurrentCompany,PUr,CurrentCompany);  
+    CreateRecordLink(PUr,CurrentCompany,INTransferr,CurrentCompany);  
+  end;
+  INTransferVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt INTransferVcRecordUpdate(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((INTransferr.OKFlag!=0) and (INTransfer2r.OKFlag==0)) then begin
+    if (ItemHistExists("INTransferVc",INTransferr.SerNr)==false) then begin
+      INTransferr.LocOKNr = NextLocOKNr(INTransferr.Location);
+    end;
+  end;
+  INTransferVcRecordUpdate = res;
+  RETURN;
+END;
+
+global
+updating procedure UnOKItemTransfer(record INTransferVc INTransferr,record INTransferVc INTransfer2r,Boolean deltrf)
+begin
+//    INTransferOK(INTransferr,false);//JJRECALCSTOCK
+  INTransferUpdateSerialNr(INTransferr,true,false,true);
+  INTransferUpdateStock(INTransferr,true,true);
+//    CreateINTransferSubRecords(INTransferr);//JJRECALCSTOCK
+  UpdateRecalcStockNeeded(1);
+  StoreUnOKHistory("INTransferVc",INTransferr.SerNr,CurrentDate,CurrentTime,CurrentUser);    
+  if (deltrf) then begin
+    DeleteTransaction(INTransferr.SerNr,INTransferYc);
+  end;
+  return;
+end;
+
+global
+updating function LongInt INTransferVcRecordUpdateAfter(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  boolean f;
+  
+  if ((INTransferr.OKFlag!=0) and (INTransfer2r.OKFlag==0)) then begin
+    f = ItemHistExists("INTransferVc",INTransferr.SerNr);
+    INTransferOK(INTransferr,false);
+    if (f==false) then begin
+      CreateINTransferSubRecords(INTransferr);
+    end;
+    
+  end;
+//  if ((IVr.Invalid==0) and (IV2r.Invalid==0)) then begin
+  if ((INTransferr.OKFlag==0) and (INTransfer2r.OKFlag!=0)) then begin//unok
+    UnOKItemTransfer(INTransferr,INTransfer2r,true);
+  end;
+  INTransferVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt INTransferVcRecordRemove(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  INTransferVcRecordRemove = res;
+  RETURN;
+END;
+
+global
+function LongInt INTransferVcRecordRemoveTest(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  res = 1;
+  if (INTransferr.OKFlag<>0) then begin
+    res = 0;
+  end;
+  INTransferVcRecordRemoveTest = res;  
+  return;
+end;
+
+global
+updating function LongInt INTransferVcRecordImportAfter(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+    
+  if (INTransferr.OKFlag!=0) then begin
+    INTransferOK(INTransferr,true);
+  end;
+  INTransferVcRecordImportAfter = res; 
+  RETURN;
+END;
+
+procedure INTransferVcConvertB1ToB2(record INTransferVc INTransferr,var val to1,var val to2,var val br1,var val br2)
+BEGIN
+  val t;
+  SwapM4Val(br1,br2);
+  SwapM4Val(to1,to2);
+  RETURN;
+END;
+
+global
+function LongInt INTransferVcRecordImport(var record INTransferVc INTransferr,record INTransferVc INTransfer2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val t,fr,to1,to2,br1,br2;
+  string 5 curncy;
+  Boolean gToDualBase,gBase1ToBase2;
+  record ConvMasterBlock cvm;
+      
+  BlockLoad(cvm);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (gToDualBase) then begin
+    curncy = INTransferr.CurncyCode;
+    fr = INTransferr.FrRate;
+    to1 = INTransferr.ToRateB1;
+    to2 = INTransferr.ToRateB2;
+    br1 = INTransferr.BaseRate1;
+    br2 = INTransferr.BaseRate2;
+    ConvertToDualBase(curncy,INTransferr.TransDate,fr,to1,to2,br1,br2,t,true);
+    INTransferr.CurncyCode = curncy;
+    INTransferr.FrRate = fr;
+    INTransferr.ToRateB1 = to1;
+    INTransferr.ToRateB2 = to2;
+    INTransferr.BaseRate1 = br1;
+    INTransferr.BaseRate2 = br2;
+  end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    curncy = INTransferr.CurncyCode;
+    to1 = INTransferr.ToRateB1;
+    to2 = INTransferr.ToRateB2;
+    br1 = INTransferr.BaseRate1;
+    br2 = INTransferr.BaseRate2;
+    INTransferVcConvertB1ToB2(INTransferr,to1,to2,br1,br2);
+    INTransferr.ToRateB1 = to1;
+    INTransferr.ToRateB2 = to2;
+    INTransferr.BaseRate1 = br1;
+    INTransferr.BaseRate2 = br2;
+  end;
+  INTransferVcRecordImport = res;
+  RETURN;
+END;

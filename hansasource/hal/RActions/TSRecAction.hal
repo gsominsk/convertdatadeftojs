@@ -1,0 +1,680 @@
+external procedure TBIVAddPrice_Activity(record PRVc,record TBIVVc,string);
+external function Integer TypeOfCurncy(var string,var Integer);
+external procedure CalcInCurtoTBIV(var record TBIVVc);
+external function Boolean TBIVItemsUsage(record PRVc,record INVc,val);
+external function Boolean CheckProjectMember(record PRVc);
+external function Boolean IsPRPhaseLocked(string,Date,var string);
+external procedure GetPRName(string, var string);
+external procedure GetItemGroup(string,var string);
+external procedure CalcExtra(val,string,var val);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure GetPRInvSep(string,var Integer,var Integer);
+external function Integer GetItemTypeGroup(string,var string);
+external function Boolean SerNrTestTSVc(LongInt,Date,var Boolean);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Boolean TransInFiscal(Date);
+external procedure GetPRItemCost(string,string,string,string,Integer,var val);
+external function Boolean AllowThisItem(string,string,string,Integer);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean GetTSAcc(string,string,var string,var string,var string);
+external function Integer GetINType(string);
+
+updating function
+Integer MakeTransFromTS(record TSVc TSr,Boolean rpt)
+BEGIN
+  record TRVc TRr;
+  Integer errstr;
+  row TSVc TSrw;
+  Integer i,rwcnt;
+//  record UserVc EMr;
+  record TRGenBlock TRGenRec;
+  string 10 wipacc,balacc,costacc;
+  string 255 accname;
+  val base1,cost;
+  val TotSum;
+    
+  base1 = 100;
+  BlockLoad(TRGenRec);
+  errstr = 0;
+  if (rpt==false) then begin
+    if (TRGenRec.TSGenTrans==0) then begin
+      errstr = 0;
+      goto LMakeTransFromTS;
+    end;
+  end;
+  if (rpt==false) then begin
+    if ((nonblankdate(TRGenRec.TSStartDate)) and
+        (TSr.RegDate<TRGenRec.TSStartDate)) then begin
+      errstr = 0;
+      goto LMakeTransFromTS;
+    end;  
+  end;  
+  RecordNew(TRr);
+  TRr.IntYc = TSYc;
+  TRr.Number = TSr.SerNr;
+  TRr.RefStr = "";
+  TRr.RegDate = CurrentDate;
+  TRr.RegTime = CurrentTime;
+  TRr.TransDate = TSr.RegDate;
+  if (TransInFiscal(TRr.TransDate)==false) then begin
+    errstr = 1075;
+    goto LMakeTransFromTS;
+  end;
+  TRr.Comment = TSr.Comment;
+  
+  rwcnt = MatRowCnt(TSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TSr,i,TSrw);
+    if ((TSrw.stp==1) and (TSrw.ovst==0)) then begin
+      if (GetTSAcc(TSrw.ArtCode,TSrw.EMCode,wipacc,balacc,costacc)==false) then begin        
+        errstr = 1233;
+        goto LMakeTransFromTS;
+      end;
+      cost = blankval;
+      GetPRItemCost(TSrw.PRCode,TSrw.EMCode,TSrw.ArtCode,TSrw.TimeClass,GetINType(TSrw.ArtCode),cost);
+      cost = TSrw.Qty*cost;
+      
+      if (GetAccName(wipacc,accname,60)) then begin
+        AddEuroTrRow(TRr,wipacc,"","",accname,cost,base1,base1,true,true,TotSum,false,"","","");
+      end else begin
+        errstr = 1909;
+        goto LMakeTransFromTS;
+      end;
+      if (GetAccName(balacc,accname,60)) then begin
+        AddEuroTrRow(TRr,balacc,"","",accname,cost,base1,base1,true,false,TotSum,false,"","","");
+      end else begin
+        errstr = 1910;
+        goto LMakeTransFromTS;
+      end;
+    end;
+  end;
+  if (TRr.Number>0) then begin
+    if (RecordStore(TRr,false)) then begin
+    end;
+  end;  
+LMakeTransFromTS:;
+  MakeTransFromTS = errstr;
+  RETURN;
+END;
+
+global
+function LongInt TSVcRecordCheck(var record TSVc TSr,record TSVc TS2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;  
+  row TSVc TSrw;
+  row TSVc TS2rw;
+  Integer rwcnt;
+  LongInt oldnr,newnr;
+  record PRVc PRr;
+  record UserVc EMr;
+  record INVc INr;
+  record EGVc EGr;
+  Integer i,errcode;
+  record SRBlock SRRec;
+  Boolean gentrans;
+  Integer insertmode,updatemode;
+  record TSVc oldTSr;
+  Integer j,jrwcnt;
+  row UserVc Userrw;
+  row EGVc EGrw;
+  Boolean transf;
+  string 255 errstr;
+  val qty;
+
+  insertmode = 1;  
+  updatemode = 2;  
+  res = 0;
+  BlockLoad(SRRec);
+  oldnr = TSr.SerNr;
+  if (TSr.SerNr<=0) then begin
+    newnr = SRRec.LastTSNr;
+    TSr.SerNr = NextSerNr("TSVc",TSr.RegDate,newnr,false,"");
+  end;
+  if ((stat==insertmode) or (TSr.SerNr!=TS2r.SerNr)) then begin
+    oldTSr.SerNr = TSr.SerNr;
+    if (ReadFirstMain(oldTSr,1,true)) then begin
+      RecordCheckError(1547,TSr.SerNr,-1,"SerNr");      
+      res = -1;
+      goto LTSVcRecordCheck;
+    end;    
+    if (SerNrTestTSVc(TSr.SerNr,TSr.RegDate,gentrans)==false) then begin
+      RecordCheckError(1034,"",-1,"SerNr");      
+      res = -1;
+      goto LTSVcRecordCheck;
+    end;
+  end;
+  if (((stat==insertmode) and (TSr.OKFlag==1)) or 
+      ((TSr.OKFlag==1) and (TS2r.OKFlag==0))) then begin
+    if (UserCanAction("TimeSheetOK",true)==false) then begin
+      RecordCheckError(1274,StringFromStringSet(3,"TimeSheetOK"),-1,"SerNr");      
+      res = -1;
+      goto LTSVcRecordCheck;
+    end;
+  end;
+  rwcnt = MatRowCnt(TSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TSr,i,TSrw);
+    if ((TSrw.stp==1) and (TSrw.ovst==0)) then begin
+      PRr.Code = TSrw.PRCode;
+      if (ReadFirstMain(PRr,1,true)==false) then begin
+        RecordCheckError(1232,"",i,"PRCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      if (stat!=updatemode) or (TSr.OKFlag==0) then begin
+        if (PRr.Terminated>0) then begin
+          RecordCheckError(1236,"",i,"PRCode");      
+          res = -1;
+          goto LTSVcRecordCheck;
+        end;
+      end;
+      if (IsPRPhaseLocked(TSrw.PRCode,TSr.RegDate,errstr)) then begin
+        RecordCheckError(20408," " & errstr,i,"PRCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      if (UserCanAction("DisallowPostPRActualsfornonPRMan",false)) then begin
+        if (CheckProjectMember(PRr)==false) then begin 
+          RecordCheckError(1274,StringFromStringSet(3,"DisallowPostPRActualsfornonPRMan"),i,"PRCode");        
+          res = -1;
+          goto LTSVcRecordCheck;
+        end;  
+      end;     
+      EMr.Code = TSrw.EMCode;
+      if (ReadFirstMain(EMr,1,true)==false) then begin
+        RecordCheckError(1231,"",i,"EMCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      if (EMr.DisAllowOther!=0) then begin       
+        jrwcnt = MatRowCnt(EMr);
+        for (j=0;j<jrwcnt;j=j+1) begin
+          MatRowGet(EMr,j,Userrw);
+          if (Userrw.PRCode==TSrw.PRCode) then begin
+            goto L33;
+          end;  
+        end;
+        RecordCheckError(1237,"",i,"PRCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+L33:;
+      end;
+      EGr.Code = EMr.JobGroup;
+      if (ReadFirstMain(EGr,1,true)) then begin
+        if (EGr.DisAllowItems!=0) then begin      
+          jrwcnt = MatRowCnt(EGr);
+          for (j=0;j<jrwcnt;j=j+1) begin
+            MatRowGet(EGr,j,EGrw);
+            if (EGrw.ArtCode==TSrw.ArtCode) then begin
+              goto L44;
+            end;  
+          end;
+          RecordCheckError(1238,"",i,"ArtCode");      
+          res = -1;
+          goto LTSVcRecordCheck;
+L44:;
+        end;
+      end;
+      INr.Code = TSrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)==false) then begin
+        RecordCheckError(1233,"",i,"ArtCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      qty = TSrw.Qty;
+      for (j=0;j<i;j=j+1) begin
+        MatRowGet(TSr,j,TS2rw);
+        if (TS2rw.ArtCode==TSrw.ArtCode and TS2rw.PRCode==TSrw.PRCode) then begin
+          qty = qty + TS2rw.Qty;
+        end;
+      end;
+      switch (PRr.TBIVItemsUsage) begin
+        case 0:
+        case 1:
+          if (TBIVItemsUsage(PRr,INr,qty)) then begin
+            MessageBox(20409,"");
+          end;
+        case 2:
+          if (TBIVItemsUsage(PRr,INr,qty)) then begin
+            RecordCheckError(20409,"",i,"Qty");      
+            res = -1;
+            goto LTSVcRecordCheck;
+          end;
+      end;
+      if (AllowThisItem("TSVc",TSrw.PRCode,TSrw.ArtCode,INr.ItemType)==false) then begin
+        RecordCheckError(1285,TSrw.ArtCode,i,"ArtCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      if (INr.Terminated>0) then begin
+        RecordCheckError(1266,"",i,"ArtCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      if (INr.ItemType==2) then begin  // structured items not allowed 
+        RecordCheckError(1826,"",i,"ArtCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      if (INr.ItemType==1) then begin  // stocked items not allowed 
+        RecordCheckError(1836,"",i,"ArtCode");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      /*why is it here
+      if (SerNrTestTSVc(TSr.SerNr,TSrw.date,gentrans)==false) then begin
+        RecordCheckError(1557,TSr.SerNr,i,"date");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+      */
+      errcode = CheckObjs("",TSrw.Objects,errstr);
+      if (errcode!=0) then begin
+        RecordCheckError(errcode,errstr,i,"Objects");      
+        res = -1;
+        goto LTSVcRecordCheck;
+      end;
+    end;
+  end;
+  transf = false;
+  if (TSr.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (TS2r.OKFlag==0) then begin transf = true; end;
+    end;  
+  end;
+  
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+//    errcode = MakeTransFromTS(TSr,false);
+  end;  
+  if (errcode>0) then begin
+    RecordCheckError(errcode,"",-1,"SerNr");      
+    res = -1;
+    goto LTSVcRecordCheck;
+  end;
+  
+LTSVcRecordCheck:;  
+  TSVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt TSVcRecordDefaults(var record TSVc TSr,record TSVc TS2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  TSr.SerNr = -1;
+  TSr.RegDate = CurrentDate;
+  TSr.OKFlag = 0;
+  TSr.Sign = "";
+  TSr.OKMark = 0;
+  TSVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt TSVcRecordDuplicate(var record TSVc TSr,record TSVc TS2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Integer i,rwcnt;
+  row TSVc TSrw;
+
+  TSr.SerNr = -1;
+  TSr.RegDate = CurrentDate;
+  TSr.OKFlag = 0;
+  TSr.OKMark = 0;
+  rwcnt = MatRowCnt(TSr);
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(TSr,i,TSrw);
+    if ((TSrw.ovst!=0) or (TSrw.stp!=1)) then begin
+      MatRowDelete(TSr,i);
+    end;
+  end;
+  TSVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+updating procedure TSCreateTBIV(record TSVc TSp,Integer rownr,row TSVc tsrp,Boolean setinvd,Integer UseDiscount)
+BEGIN
+  record TBIVVc TBIVp;
+  record TBIVVc TBIVr;
+  Boolean found;
+  record INVc INr;
+  string 255 tstr;
+  Integer i,j;
+  Date blankd;
+  val price,reb,t;
+  string 10 markup;
+  record PRVc PRr;
+  Integer oldstyle,typofcur;  
+
+  INr.Code = tsrp.ArtCode;
+  found = ReadFirstMain(INr,1,true);
+  if (tsrp.stp==1) then begin
+    if (tsrp.ovst==0) then begin
+      TBIVp.oVc = 1;
+      TBIVp.SerNr = TSp.SerNr;
+      TBIVp.Row = rownr;
+      TBIVp.TransDate = tsrp.date;
+      TBIVp.EMCode = tsrp.EMCode;
+      TBIVp.PRCode = tsrp.PRCode;
+      GetPRName(TBIVp.PRCode,tstr);
+      TBIVp.PRName = tstr;
+      TBIVp.ArtCode = tsrp.ArtCode;
+      TBIVp.ItemType = GetItemTypeGroup(TBIVp.ArtCode,tstr);
+      TBIVp.INGroup = tstr;
+      if ((tsrp.ItemType==3) or (found==false)) then begin
+        TBIVp.ItemType = tsrp.ItemType;
+      end else begin
+        if (INr.ItemMaterial!=0) then begin
+          TBIVp.ItemType = 5;
+        end else begin
+          TBIVp.ItemType = 0;
+        end;
+      end;
+      TBIVp.Objects = tsrp.Objects;
+      TBIVp.Qty = tsrp.Qty;
+      TBIVp.Comment = tsrp.Spec;
+      TBIVp.Comment1 = tsrp.Comment1;
+      TBIVp.Comment2 = tsrp.Comment2;
+      GetPRInvSep(tsrp.PRCode,i,j);
+      TBIVp.InvSeparately = i;
+      TBIVp.InvQty = tsrp.Qty;
+      TBIVp.Invoice = -1;
+      TBIVr.InvDate = blankd;
+      if (setinvd) then begin TBIVp.Invoice = -2; end;
+      TBIVp.InvAfter = blankd;      
+      PRr.Code = TBIVp.PRCode;
+      ReadFirstMain(PRr,1,true);      
+      typofcur = TypeOfCurncy(PRr.CurncyCode,oldstyle);
+      TBIVp.CurncyCode = PRr.CurncyCode;
+      TBIVAddPrice_Activity(PRr,TBIVp,tsrp.TimeClass);
+
+      RecordCopy(TBIVr,TBIVp);
+      TBIVr.ChildNr = -1;      
+      if (ReadFirstMain(TBIVr,0,true)==false) then begin
+        RecordCopy(TBIVr,TBIVp);
+        TBIVr.ChildNr = 0;
+        if (ReadFirstMain(TBIVr,0,true)==false) then begin
+          TBIVr.ChildNr = -1;
+          if (RecordStore(TBIVp,false)) then begin end;
+        end;
+      end;
+    end;
+    if (tsrp.ovst==1) then begin
+      TBIVp.oVc = 1;
+      TBIVp.SerNr = TSp.SerNr;
+      TBIVp.Row = rownr;
+      TBIVp.PRCode = tsrp.PRCode;
+      TBIVp.ArtCode = tsrp.ArtCode;
+      TBIVp.EMCode = tsrp.EMCode;
+      found = ReadFirstMain(TBIVp,6,true);
+      if (found) then begin
+        RecordDelete(TBIVp);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure SetTSFlags(record TSVc TSp)
+BEGIN
+  switch (TSp.OKFlag) begin
+    case 0: TSp.OKMark = 0;
+    otherwise TSp.OKMark = 18;
+  end;
+  RETURN;
+END;
+
+updating procedure UpdatePErs(record TSVc TSp)
+BEGIN
+  record PErsVc PE2rsr;
+  record PErsVc PErsr;
+  row TSVc tsrp;
+  Integer i,rwcnt;
+  string 255 tstr;
+  
+  rwcnt = MatRowCnt(TSp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TSp,i,tsrp);
+    if ((tsrp.stp==1) and (tsrp.ovst==0)) then begin
+      PErsr.FileName = "TSVc";
+      PErsr.Person = tsrp.EMCode;
+      PErsr.Date = tsrp.date;
+      PErsr.TSSerNr = TSp.SerNr;
+      PErsr.Item = tsrp.ArtCode;
+      PErsr.PRCode = tsrp.PRCode;
+      GetItemGroup(tsrp.ArtCode,tstr);
+      PErsr.INGroup = tstr;
+      RecordCopy(PE2rsr,PErsr);
+      if (ReadFirstMain(PE2rsr,0,true)==false) then begin
+        if (RecordStore(PErsr,true)) then begin end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+updating procedure TSOK(record TSVc TSp)
+BEGIN
+  row TSVc TSrw;
+  Integer rwcnt;
+  Integer i;
+  record GeneralOptionBlock GenOptr;
+  
+  if (TSp.OKFlag==0) then begin goto LTSOK; end;
+  BlockLoad(GenOptr);
+  if (RecordValid(TSp)) then begin
+    rwcnt = MatRowCnt(TSp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TSp,i,TSrw);
+      TSCreateTBIV(TSp,i,TSrw,false,GenOptr.UseDiscount);
+    end;
+    SetTSFlags(TSp);
+    UpdatePErs(TSp);
+  end;
+LTSOK:;  
+  RETURN;
+END;
+
+global
+updating function LongInt TSVcRecordSave(var record TSVc TSr,record TSVc TS2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc Userr;
+
+  TSOK(TSr);
+
+  Userr.Code = TSr.SalesMan;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    TSr.SalesGroup = Userr.SalesGroup;
+  end;
+  TSVcRecordSave = res; 
+  RETURN;
+END;
+
+updating procedure TSVcUpdatePRrs(record TSVc TSp)
+BEGIN
+  record PRrsVc PRrsr;
+  row TSVc TSrw;
+  Integer i,rwcnt;  
+  
+  rwcnt = MatRowCnt(TSp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TSp,i,TSrw);
+    if (nonblank(TSrw.PRCode)) then begin
+      PRrsr.PRCode = TSrw.PRCode;
+      PRrsr.Date = TSrw.date;
+      PRrsr.RecType = 1;
+      PRrsr.SerNr = TSp.SerNr;
+      if (RecordStore(PRrsr,false)) then begin end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt TSVcRecordImportAfter(var record TSVc TSr,record TSVc TS2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (TSr.OKFlag!=0) then begin
+    UpdatePErs(TSr);
+    TSVcUpdatePRrs(TSr);
+  end;
+  TSVcRecordImportAfter = res; 
+  RETURN;
+END;
+
+updating procedure PErsDelete(record TSVc TSp,row TSVc tsrp)
+BEGIN
+  record PErsVc PErsr;
+  Boolean found;
+  
+  PErsr.FileName = "TSVc";
+  PErsr.Person = tsrp.EMCode;
+  PErsr.Date = tsrp.date;
+  PErsr.TSSerNr = TSp.SerNr;
+  PErsr.Item = tsrp.ArtCode;
+  PErsr.PRCode = tsrp.PRCode;
+  found = ReadFirstMain(PErsr,6,true);
+  if (found) then begin
+    RecordDelete(PErsr);
+  end;
+  RETURN;
+END;
+
+updating procedure TSUpdate(record TSVc TSp)
+BEGIN
+  record TBVc TBr;
+  row TSVc TSrw;
+  Integer i,rwcnt;
+
+  if (TSp.OKFlag==0) then begin goto LTSUpdate; end;
+  if (RecordValid(TSp)) then begin
+    rwcnt = MatRowCnt(TSp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TSp,i,TSrw);
+      TSCreateTBIV(TSp,i,TSrw,false,0);
+      if ((TSrw.stp==1) and (TSrw.ovst==1)) then begin
+        PErsDelete(TSp,TSrw);
+      end;
+    end;
+  end;
+  UpdatePErs(TSp);
+LTSUpdate:;
+  RETURN;
+END;
+
+global
+updating function LongInt TSVcRecordUpdate(var record TSVc TSr,record TSVc TS2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc Userr;
+
+  if ((TS2r.OKFlag==0) and (TSr.OKFlag!=0)) or ((TS2r.OKFlag==0) and (TSr.OKFlag==0)) then begin
+    if (TSr.SalesMan!=TS2r.SalesMan) then begin
+      Userr.Code = TSr.SalesMan;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        TSr.SalesGroup = Userr.SalesGroup;
+      end;
+    end;
+  end;
+  if ((TS2r.OKFlag==0) and (TSr.OKFlag!=0)) then begin
+    TSOK(TSr);
+  end;
+  if ((TS2r.OKFlag!=0) and (TSr.OKFlag!=0)) then begin
+    TSUpdate(TSr);
+  end;
+  TSVcRecordUpdate = res; 
+  RETURN;
+END;
+
+global
+function LongInt TSVcRecordRemoveTest(var record TSVc TSr,record TSVc TS2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (TSr.RegDate<=DBLockRec.DeleteBeforeDate) then begin
+    res = 1;
+    goto LTSVcRecordRemoveTest;
+  end;
+  if (TSr.OKFlag!=0) then begin
+    if (long3>0) then begin MessageBox(1560,""); end;
+    res = 0;
+  end;
+LTSVcRecordRemoveTest:;  
+  TSVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+updating function Boolean acTSLOK(record TSVc TSp)
+BEGIN
+  Boolean res;
+  
+  if (TSp.OKFlag==0) then begin
+    TSp.OKFlag = 1;
+    TSOK(TSp);
+    res = true;
+  end;
+  acTSLOK = res;
+  RETURN;
+END;
+
+global
+updating function Boolean RecordAction_rlTSLOK(var record TSVc TSp)
+BEGIN
+  Boolean res,tmpf;
+  record TSVc oldTSp;
+  
+  if (IsRecordLocked(TSp)==false) then begin
+    if (ReadFirstMain(TSp,0,true)) then begin end;  
+    RecordCopy(oldTSp,TSp);
+    res = acTSLOK(TSp);
+    if (res) then begin
+      if (RecordUpdate(oldTSp,TSp,false)==0) then begin
+      end;
+    end;
+  end;  
+  RecordAction_rlTSLOK = res;
+  RETURN;
+END;
+
+global
+function LongInt EGVcRecordCheck(var record EGVc EGr,record EGVc EG2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 0;
+  if (blank(EGr.Code)) then begin
+    RecordCheckError(1058,"",-1,"Code");  
+    res = -1;
+    goto LEGVcRecordCheck;
+  end;
+LEGVcRecordCheck:;
+  EGVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt CDVcRecordCheck(var record CDVc CDr,record CDVc CD2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 0;
+  if (blank(CDr.CustCode)) then begin
+    RecordCheckError(1058,"",-1,"CustCode");  
+    res = -1;
+    goto LCDVcRecordCheck;
+  end;
+LCDVcRecordCheck:;
+  CDVcRecordCheck = res;
+  RETURN;
+END;
+

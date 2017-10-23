@@ -1,0 +1,352 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean SetInSet2(string,string);
+external function string 255 FindINObjects(string,string);
+external procedure CheckFlush(var Integer,Integer);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external function Boolean PasteCust2InInv(var record IVVc,record LocalMachineBlock,string,Boolean,var string,var string,var string,var string,var string);
+external procedure IVDchsum(var record IVVc,Integer);
+external procedure IVSumup(var record IVVc,Boolean);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+
+/*
+consolidation
+date in mother company is diffrent then in daughter
+then reports are not correct
+comparison with budget
+*/
+
+function Boolean FindItemComisionValueType(string custcode,record INVc INr,Date startdate,Date enddate,Integer type,
+                                           var val com,var Integer comtype)
+begin
+  Boolean found;
+  record ComisionCOVc CCOr;
+  row ComisionCOVc CCOrw;
+  Integer i,rwcnt;
+  Boolean res;
+
+  comtype = 0;
+  found = true;
+  CCOr.CustCode = custcode;  
+  CCOr.Type = type;  
+  CCOr.StartDate = startdate;  
+  while (LoopKey("CustCode",CCOr,3,found)) begin
+    if (CCOr.CustCode!=custcode) then begin found = false; end; 
+    if (CCOr.Type!=type) then begin found = false; end; 
+    if (CCOr.StartDate<startdate) then begin found = false; end; 
+    if (nonblankdate(enddate)) then begin
+      if (CCOr.StartDate>enddate) then begin found = false; end; 
+    end;
+    if (found) then begin
+      comtype = CCOr.ComType;
+      rwcnt = MatRowCnt(CCOr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(CCOr,i,CCOrw);
+        switch (CCOrw.CodeType) begin
+          case 0:          
+            if (INr.Group==CCOrw.ArtCode) then begin
+              com = CCOrw.Comision;
+              goto LFindItemComisionValueType;
+            end;
+          case 1:
+            if (INr.Code==CCOrw.ArtCode) then begin
+              com = CCOrw.Comision;
+              goto LFindItemComisionValueType;
+            end;
+        end;
+      end;
+      goto LFindItemComisionValueType;
+    end;
+  end;  
+LFindItemComisionValueType:;  
+  FindItemComisionValueType = res;
+  return;
+end;
+
+function val FindItemComisionValue(string custcode,record INVc INr,Date startdate,Date enddate,var Integer comtype)
+begin
+  val res;
+  
+  if (FindItemComisionValueType(custcode,INr,startdate,enddate,1,res,comtype)==false) then begin
+    if (FindItemComisionValueType(custcode,INr,startdate,enddate,0,res,comtype)) then begin end;
+  end;
+  FindItemComisionValue = res;
+  return;
+end;
+
+procedure PasteItemToInvoice(var record IVVc newIVr,val q,val p,record INVc INr,val disc,var Integer rownr)
+begin
+  row IVVc newIVrw;
+  Boolean dummyf,calcprice;
+  Integer exportflag;
+  val price,vreb,baseprice,temp,tax2prc;
+  string 255 vatcode,curitemname,salesacc,tstr,tax2code,taxtemplatecode;
+  
+  ClearRow(newIVr,newIVrw,1);
+  newIVrw.ArtCode = INr.Code;
+  newIVrw.Quant = -q;
+  
+  if (GetItemPriceDiscount3(newIVrw.ArtCode,newIVrw.Quant,INr,newIVr.CurncyCode,
+                            newIVr.FrRate,newIVr.ToRateB1,newIVr.ToRateB2,newIVr.BaseRate1,newIVr.BaseRate2,
+                            newIVr.LangCode,newIVr.CustCat,newIVr.PriceList,newIVr.RebCode,
+                            price,curitemname,vreb,vatcode,baseprice,tstr,
+                            exportflag,calcprice,newIVr.TransDate,newIVr.TransTime,newIVr.CustCode,true,dummyf,newIVr.PayDeal,tax2code,tax2prc,newIVr.Region,newIVr.Location,taxtemplatecode)) then begin
+    newIVrw.Spec = USetStr(16309) & " "  & p;
+    newIVrw.Spec = newIVrw.Spec & "   " & USetStr(16308) & " "  & disc;
+    newIVrw.VATCode = vatcode;
+    newIVrw.BasePrice = baseprice;
+    newIVrw.BasePriceB2 = INr.InPriceB2;
+    newIVrw.SalesAcc = salesacc;
+    newIVrw.ArtCode = INr.Code;
+    if (nonblank(newIVr.CustVATCode)) then begin
+      newIVrw.VATCode = newIVr.CustVATCode;
+    end;
+    newIVrw.Objects = FindINObjects(INr.Objects,INr.Group);
+    CalcSum(newIVrw.Quant,p,newIVrw.PriceFactor,disc,temp,1);  
+    newIVrw.Sum = temp;
+    MatRowPut(newIVr,rownr,newIVrw);
+    IVDchsum(newIVr,rownr);
+    rownr = rownr + 1;
+  end;
+  
+  return;
+end;
+
+procedure PrintInvoice(record IVVc newIVr)
+begin
+  row IVVc IVrw;
+  Integer i,rwcnt;
+
+  StartFormat(15);
+  OutLongInt(50,0,newIVr.SerNr,false);
+  OutDate(130,0,newIVr.InvDate,false);
+  OutDate(220,0,newIVr.PayDate,false);
+  EndFormat;
+  StartFormat(15);
+  OutString(50,"DblCUVc",newIVr.CustCode,false);
+  OutString(220,0,newIVr.Addr0,false);
+  EndFormat;
+  StartFormat(15);
+  OutString(50,0,newIVr.CustCat,false);
+  OutString(220,0,newIVr.Addr1,false);
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(50,0,newIVr.OurContact,false);
+  OutString(220,0,newIVr.Addr2,false);
+  EndFormat;
+  StartFormat(15);
+  OutString(220,0,newIVr.InvComment,false);
+  EndFormat;
+  rwcnt = MatRowCnt(newIVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(newIVr,i,IVrw);
+    StartFormat(15);
+     OutString(0,0,IVrw.ArtCode,false);
+     OutVal(100,0,IVrw.Quant,M4Qty,true);
+     OutString(120,0,IVrw.Spec,false);
+     OutVal(400,0,IVrw.Sum,M4Val,true);
+    EndFormat;
+  end;
+  Gray_Divider(300,400);
+  StartFormat(15);
+  OutVal(230,0,newIVr.Sum3,M4Val,false);
+  OutVal(400,0,newIVr.Sum1,M4Val,true);//280
+  EndFormat;  
+  return;
+end;
+
+updating procedure StoreInvoice(record IVVc newIVr,record IVVc orgIVr)
+begin
+  if (newIVr.SerNr>0) then begin
+    newIVr.SerNr = NextSerNr("IVVc",newIVr.TransDate,-1,false,"");            
+    if (RecordStore(newIVr,false)) then begin 
+      CreateRecordLink(newIVr,CurrentCompany,orgIVr,CurrentCompany);  
+      CreateRecordLink(orgIVr,CurrentCompany,newIVr,CurrentCompany);  
+    end;
+  end;
+  return;
+end;
+
+updating procedure ComisionIVForDealer(record RcVc RepSpec,record CUToCUVc CUToCUr,var LongInt ivsernr,Integer mode)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  record IVVc newIVr;
+  record INVc INr;
+  Boolean found,testf; 
+  Integer i,rwcnt,rownr;
+  val com,p;
+  string 255 warning,errstr,prepstr,invdatewarn,transdatewarn;
+  Integer comtype,flushcnt;
+  record LocalMachineBlock LMb;
+    
+  found = true;
+  IVr.CustCode = CUToCUr.ToCU;
+  IVr.InvDate = RepSpec.sStartDate;  
+  while (LoopKey("CustDate",IVr,2,found)) begin
+    if (IVr.CustCode!=CUToCUr.ToCU) then begin found = false; end;
+    if (IVr.TransDate>RepSpec.sEndDate) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (IVr.OKFlag==0) then begin testf = false; end;
+      if (IVr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        RecordNew(newIVr);
+        rownr = 0;
+        if (ivsernr>0) then begin
+          ivsernr = ivsernr + 1;
+        end else begin
+          ivsernr = newIVr.SerNr;
+        end;
+        newIVr.SerNr = ivsernr;
+        newIVr.CustCode = CUToCUr.FromCU;
+        if (PasteCust2InInv(newIVr,LMb,"",false,warning,errstr,prepstr,invdatewarn,transdatewarn)) then begin
+        end;
+        newIVr.InvComment = USetStr(16310) & " " & IVr.SerNr;
+        rwcnt = MatRowCnt(IVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if (ReadFirstItem(IVrw.ArtCode,INr,true,false)) then begin
+            com = FindItemComisionValue(CUToCUr.FromCU,INr,RepSpec.sStartDate,RepSpec.sEndDate,comtype);
+            if (nonblank(com)) then begin
+              switch (comtype) begin
+                case 0: p = IVrw.Sum;
+                case 1: p = INr.UPrice1;
+                case 2: p = IVrw.rowGP;
+              end;
+              PasteItemToInvoice(newIVr,1,IVrw.Sum,INr,com,rownr);
+            end;
+          end;
+        end;
+        if (MatRowCnt(newIVr)>0) then begin
+          switch (mode) begin        
+            case 0:
+              StoreInvoice(newIVr,IVr);
+              StepForward(IVr,1);
+              CheckFlush(flushcnt,5);
+            case 1:
+              IVSumup(newIVr,true); 
+              StartFormat(15);
+               OutString(0,0,CUToCUr.FromCU,false);
+               OutString(100,0,CUToCUr.ToCU,false);
+              EndFormat;
+              PrintInvoice(newIVr);
+              Gray_Divider(0,1);
+          end;
+        end; 
+      end;     
+    end;
+  end;  
+  return;
+end;
+
+
+updating procedure ComisionInvoice(record RcVc RepSpec,Integer mode)
+begin
+  record CUToCUVc CUToCUr;
+  Boolean found,testf; 
+  string 20 frpart,topart;
+  string 20 frcu,tocu,lastcu;
+  LongInt ivsernr;
+  record CUVc CUr;
+    
+  frpart = FirstInRange(RepSpec.f1,20);
+  topart = LastInRange(RepSpec.f1,20);
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+  if (mode==1) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(16306),false);
+     OutString(100,0,USetStr(16307),false);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  found = true;
+  CUToCUr.FromCU = frpart;  
+  while (LoopMain(CUToCUr,1,found)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (CUToCUr.FromCU>topart) then begin found = false; end;
+    end;
+    if (found) then begin
+      testf = true;
+      if (CUToCUr.ToCU==lastcu) then begin testf = false; end;
+      if (testf) then begin
+        if (nonblankdate(CUToCUr.EndDate)) then begin
+          if (CUToCUr.EndDate>RepSpec.sEndDate) then begin testf = false; end;
+        end;
+      end;
+      if (testf) then begin
+        if (nonblank(frcu)) then begin
+          if (CUToCUr.ToCU<frcu) then begin testf = false; end;
+        end;
+        if (nonblank(tocu)) then begin
+          if (CUToCUr.ToCU>tocu) then begin testf = false; end;
+        end;
+      end;
+      if (testf) then begin
+        CUr.Code = CUToCUr.ToCU;
+        if (ReadFirstMain(CUr,1,true)==false) then begin testf = false; end;
+        if (testf) then begin
+          if (nonblank(RepSpec.Stext)) then begin
+            if (SetInSet2(RepSpec.Stext,CUr.Classification)==false) then begin
+              testf = false;
+            end;
+          end;
+        end;
+        if (testf) then begin
+          if (nonblank(RepSpec.f3)) then begin
+            if (RepSpec.f3!=CUr.CustCat) then begin
+              testf = false;
+            end;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        ComisionIVForDealer(RepSpec,CUToCUr,ivsernr,mode);
+      end;
+      lastcu = CUToCUr.ToCU;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ComisionIVRn(record RcVc RepSpec)
+begin
+  integer rw;
+  string 255 tstr;
+
+  StartReportJob(USetStr(16305));
+  rw = 1;
+  if (HasCategories) then begin 
+    HTCustCat(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end; 
+  end;
+  if (HasContactClassification) then begin 
+    HTCustClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;  
+  end;  
+  EndHeader;
+  ComisionInvoice(RepSpec,1);
+  EndJob;
+  return;
+end;
+
+global
+updating procedure ComisionIVMn(record RcVc RepSpec)
+begin
+  ComisionInvoice(RepSpec,0);
+  return;
+end;

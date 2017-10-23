@@ -1,0 +1,194 @@
+external function roundmode GetRowSumRoundModeRB();
+external function roundmode DefaultRoundMode();
+
+function string 255 StrBefSlash(string tstr,boolean testf)
+begin
+  string 255 res;
+  integer i,l;
+  l = len(tstr);
+  res = "";
+  for (i = 0; i < l; i = i +1) begin
+    if (mid(tstr,i,1)== "/") then begin
+      if (testf) then begin
+        res = left(tstr,i);
+      end
+      else begin
+        res = right(tstr,l-i-1);
+      end;
+      i = l;
+    end;
+  end;
+  StrBefSlash = res;
+return;
+end;
+
+
+
+Procedure SelectNumber(string str,var string ret)
+Begin
+  integer fp,i,l;
+  l = len(str);
+  fp=0;
+  for (i=0;i<l;i=i+1) begin
+    if (mid(str,i,1)==",") then begin
+      fp = i;
+      i = l;
+    end;
+  end;
+  if (fp == 0) then begin
+    ret = str;
+  end else begin	 
+    ret = mid(str,0,fp);
+  end;	
+  return;
+End;
+
+
+
+global
+procedure BankExpLatvia4(record OPVc Opr,record RcVc RepSpec)
+begin
+  record CYBlock CYbl;
+  record CUVc CUr;
+  record BankVc Bankr;
+  
+  row OPVc OPrw;
+  string 255 tstr,tstr2,bankcomment;
+  val totsum,totvat;
+  integer i,rwc;
+  boolean testf;
+
+  BlockLoad(CYBl);
+  
+
+  rwc = matrowcnt(OPr);
+  for (i=0; i < rwc; i = i + 1) begin
+    MatRowGet(OPr,i,OPrw);
+    if ((OPrw.stp == 1) and (OPrw.ovst == 0)) then begin
+      totsum = totsum + Round(OPrw.RecVal,DefaultRoundMode);
+      totvat = totvat + Round(OPrw.VATVal,GetRowSumRoundModeRB);
+      SelectNumber(OPrw.Comment,tstr);
+      if ((len(BankComment)+len(tstr))<=140) then begin
+        BankComment = BankComment & tstr & ",";
+      end;
+    end;
+  end;
+
+
+  matrowget(OPr,0,OPrw);
+  
+  tstr = "{1:xxxXXXXXXXXXXXXxxxxXXXXXX}{2:E10BXXXXXXXXXXXX";
+  switch (RepSpec.flags[3]) begin
+    case 0: tstr = tstr & "N"; 
+    case 1: tstr = tstr & "U"; 
+    case 2: tstr = tstr & "E"; 
+  end;
+  
+  tstr = tstr & "Xxxx}{4:";  
+  exportPadString(tstr,len(tstr)," ",false);//1st line
+  newline;
+  
+  tstr = ":20:" & OPr.PayNumber;
+  exportpadstring(tstr,len(tstr)," ",false);//2nd line
+  newline;
+  
+  tstr = ":3d:" & DateToString(OPr.TransDate,"YYMMDD");
+  exportpadstring(tstr,len(tstr)," ",false);//3nd line
+  newline;
+
+  tstr = ":3c:" & OPr.PayCurCode;
+  exportpadstring(tstr,len(tstr)," ",false);//4th line
+  newline;
+
+  tstr = ":3a:" & valtostring(Opr.CurPayVal,M4Val,"",".",0);
+  exportpadstring(tstr,len(tstr)," ",false);//5th line
+  newline;
+  
+  tstr= ":50:" & CYbl.CompName;
+  exportpadstring(tstr,len(tstr)," ",false);//6th line
+  newline;
+  
+  tstr2 = OPr.BankAcc;
+  if (tstr2=="") then begin tstr2 = CYBl.Bank2; end;
+  tstr = StrBefSlash(tstr2,true);
+  if (tstr == "") then begin
+    tstr = CYBl.Bank2;
+  end;
+  tstr = ":5a:" & tstr; 
+  exportpadstring(tstr,len(tstr)," ",false);//7th line  
+  newline;
+  
+  tstr = StrBefSlash(tstr2,false);
+  if (tstr != "") then begin
+    tstr = ":5d:" & tstr; 
+    exportpadstring(tstr,len(tstr)," ",false);//8th line  
+    newline;
+  end;
+  
+  tstr = ":5e:" & CYBl.OrgNr;
+  exportpadstring(tstr,len(tstr)," ",false);//9th line  
+  newline;
+  
+  tstr = ":5f:" & CYbl.Bank1;
+  exportpadstring(tstr,len(tstr)," ",false);//9th line  
+  newline;
+  
+  CUr.Code=OPrw.VECode;
+  if (ReadFirstMain(CUr,1,true)==True) then begin
+    Bankr.Code = CUr.AccOperator;  
+    testf = ReadFirstMain(Bankr,1,true);
+  end;
+  
+  tstr = ":7a:" & Bankr.Name;
+  exportpadstring(tstr,len(tstr)," ",false);//10th line  
+  newline;
+  
+  tstr = ":5c:" & Bankr.SWIFT;
+  exportpadstring(tstr,len(tstr)," ",false);//11th line  
+  newline;
+   
+  tstr = ":9a:" & CUr.InvAddr0;
+  exportpadstring(tstr,len(tstr)," ",false);//12th line  
+  newline;
+  
+  tstr2 = StrBefSlash(OPrw.BankAcc,true);
+  if (tstr2=="") then begin tstr2 = OPrw.BankAcc; end;
+  tstr = ":9b:" & tstr2;  
+  exportpadstring(tstr,len(tstr)," ",false);//13th line  
+  newline;
+  
+  tstr = ":9e:" & CUr.RegNr1;  
+  exportpadstring(tstr,len(tstr)," ",false);//14th line  
+  newline;
+
+
+
+  tstr = BankComment;
+  if (totvat>0) then begin
+    tstr = tstr & " t.sk. PVN 18% ";
+    tstr = tstr & valtostring(totvat,M4Val,"",".",0);
+    tstr = tstr & OPr.PayCurCode;
+  end;
+
+  tstr = ":70:" & tstr;  
+  exportpadstring(tstr,len(tstr)," ",false);//15th line  
+  newline;
+
+  if (repSpec.flags[4]== 0) then begin
+    tstr = "OUR";
+  end else begin
+    tstr = "BEN";
+  end;
+  tstr = ":71a:" & tstr;  
+  exportpadstring(tstr,len(tstr)," ",false);//16th line  
+  newline;
+  
+  tstr = ":73:PAY";  
+  exportpadstring(tstr,len(tstr)," ",false);//16th line  
+  newline;
+
+  tstr = "-}";
+  exportPadString(tstr,len(tstr),"",false);
+  Newline;
+return;
+end;

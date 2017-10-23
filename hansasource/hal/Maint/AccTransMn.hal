@@ -1,0 +1,200 @@
+external procedure FindFiscalYear(Date,var Date,var Date);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure GetAccBalance(string,string,Date,record ObjBalVc,Integer,Integer,Integer,string,Integer,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure AddSMRow(record SMVc,Date,string,string,string,string,val,Boolean,Boolean ,var val);
+external updating procedure SaveTrans(record TRVc);
+external updating function Boolean SaveSim(record SMVc);
+external function Boolean GetObjBal(string,string,var record ObjBalVc);
+
+function val FindSimulationAmount(string AccNumber,Date d1)
+BEGIN
+  val res;
+  record MainVc mainr;
+  record SMVc SMr;
+  row SMVc SMrw;
+  Boolean TrHs;
+  Date sdate,edate;
+  Integer i,rwcnt;
+
+  FindFiscalYear(d1,sdate,edate);
+  mainr.AccNumber = AccNumber;
+  mainr.TransDate = sdate;
+  TrHs = true;
+  while (LoopMain(mainr,2,TrHs)) begin
+    if (mainr.TransDate>edate) then begin
+      TrHs = false;
+    end;  
+    if (TrHs) then begin
+      if (mainr.AccNumber!=AccNumber) then begin
+        TrHs = false;
+      end;  
+    end;
+    if (TrHs) then begin
+      if (mainr.FileName=="SMVc") then begin
+        SMr.SerNr = mainr.TransNr;
+        if (ReadFirstMain(SMr,0,true)) then begin
+          if (mainr.TransDate==SMr.TransDate) then begin
+            rwcnt = MatRowCnt(SMr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(SMr,i,SMrw);
+              if (SMrw.AccNumber==AccNumber) then begin
+                if ((SMrw.RowSimStat==3) or (SMrw.RowSimStat==4))  then begin
+                  res = res + (SMrw.DebVal - SMrw.CredVal);
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  FindSimulationAmount = res;
+  RETURN;
+END;
+
+global
+updating procedure AccTransMn(record RcVc RepSpec)
+begin
+  record TRVc TRr;
+  record SMVc SMr;
+  record AccVc Accr;
+  row SMVc SMrw;
+  record ObjBalVc ObjBalr;
+  record AccTransVc ATr;
+  row AccTransVc ATrw;
+  Integer rwcnt,i;
+  val v,TotSum;
+  val baserate1,baserate2;
+  Boolean Objbals;
+  Boolean dc1,dc2;
+  string 200 tstr,acc,fromacc,toacc;
+  Integer smrow;
+  Boolean foundf;
+  Date bldat,sd;
+  val simv,t,factor;
+
+  smrow = 0;
+  if (blankdate(RepSpec.d1)) then begin goto LAccTransMn; end;
+  if (blank(RepSpec.f1)) then begin goto LAccTransMn; end;
+  RecordNew(TRr);
+  RecordNew(SMr);
+  if (blankdate(RepSpec.d2)) then begin
+    TRr.TransDate = RepSpec.d1;
+  end else begin
+    TRr.TransDate = RepSpec.d2;
+  end;
+  SMr.TransDate = TRr.TransDate;
+  ATr.Code = RepSpec.f1;
+  if (ReadFirstMain(ATr,1,true)==false) then begin
+    goto LAccTransMn;
+  end;
+  factor = ATr.Factor;
+  if (factor==0) then begin
+    factor = 1.00;
+  end;
+  TRr.Comment = ATr.Comment;
+  SMr.Comment = ATr.Comment;
+  TotSum = BlankVal;
+  dc1 = false;
+  dc2 = true;
+  tstr = "";
+  GetFullCurncyRate(tstr,TRr.TransDate,v,v,v,baserate1,baserate2);
+  rwcnt = MatRowCnt(ATr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ATr,i,ATrw);
+    fromacc = FirstInRange(ATrw.From,10);
+    toacc = LastInRange(ATrw.From,10);
+    Accr.AccNumber = fromacc;
+    foundf = true;
+    ResetLoop(Accr);
+    while (LoopMain(Accr,1,foundf)) begin
+      if (Accr.AccNumber<fromacc) then begin foundf = false; end;
+      if (Accr.AccNumber>toacc) then begin foundf = false; end;
+      if (foundf) then begin
+        Objbals = GetObjBal(Accr.AccNumber,"",ObjBalr);
+        if (Objbals==false) then begin
+          RecordNew(ObjBalr);
+        end;
+        simv = 0;
+        switch (ATrw.RowSimStat) begin
+          case 3:
+            sd = AddMonth(RepSpec.d1,-12);
+            GetAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,0,0,0,"",0,v);
+            GetAccBalance(Accr.AccNumber,"",sd,ObjBalr,0,0,0,"",0,t);
+            v = v - t;
+          case 4: 
+            simv = FindSimulationAmount(Accr.AccNumber,RepSpec.d1);
+            sd = AddMonth(RepSpec.d1,-12);
+            GetAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,0,0,0,"",0,v);
+            GetAccBalance(Accr.AccNumber,"",sd,ObjBalr,0,0,0,"",0,t);
+          otherwise
+            GetAccBalance(Accr.AccNumber,"",RepSpec.d1,ObjBalr,1,0,0,"",0,v);          
+        end;        
+        v = v + simv;
+        if (v!=0) then begin
+          v = v*factor;
+          if (GetAccName(Accr.AccNumber,tstr,60)==false) then begin
+            goto LAccTransMn;
+          end;
+          if (ATr.Register==0) then begin
+            AddEuroTrRow(TRr,Accr.AccNumber,"","",tstr,v,baserate1,baserate2,false,dc1,TotSum,false,"","","");
+          end else begin
+            AddSMRow(SMr,bldat,Accr.AccNumber,"-1","-1",tstr,v,false,dc1,TotSum);
+            MatRowGet(SMr,smrow,SMrw);
+            SMrw.RowSimStat = ATrw.RowSimStat;
+            MatRowPut(SMr,smrow,SMrw);
+            smrow = smrow + 1;
+          end;
+          acc = ATrw.To;
+          if (nonblank(ATrw.NegTo)) then begin
+            if (v<0) then begin
+              acc = ATrw.NegTo;
+            end;
+          end;
+          if (GetAccName(acc,tstr,60)==false) then begin
+            goto LAccTransMn;
+          end;
+          if (ATr.Register==0) then begin
+            AddEuroTrRow(TRr,acc,"","",tstr,v,baserate1,baserate2,false,dc2,TotSum,false,"","","");
+          end else begin
+            AddSMRow(SMr,bldat,acc,"-1","-1",tstr,v,false,dc2,TotSum);
+            MatRowGet(SMr,smrow,SMrw);
+            SMrw.RowSimStat = ATrw.RowSimStat;
+            MatRowPut(SMr,smrow,SMrw);
+            smrow = smrow + 1;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (TotSum!=0) then begin
+    if (nonblank(ATr.BalAcc)) then begin
+      if (GetAccName(ATr.BalAcc,tstr,60)==false) then begin
+        goto LAccTransMn;
+      end;
+      if (ATr.Register==0) then begin
+        AddEuroTrRow(TRr,ATr.BalAcc,"","",tstr,TotSum,baserate1,baserate2,false,TotSum>0,TotSum,false,"","","");
+      end else begin
+        AddSMRow(SMr,bldat,ATr.BalAcc,"-1","-1",tstr,TotSum,false,TotSum>0,TotSum);
+        MatRowGet(SMr,smrow,SMrw);
+        SMrw.RowSimStat = ATrw.RowSimStat;
+        MatRowPut(SMr,smrow,SMrw);
+        smrow = smrow + 1;
+      end;
+    end;
+  end;
+  if (MatRowCnt(TRr)>0) then begin
+    TRr.Number = NextSerNr("TRVc",TRr.TransDate,ATr.NrSeries,ATr.NrSeries>0,"");
+    SaveTrans(TRr);
+  end;
+  if (MatRowCnt(SMr)>0) then begin
+    SMr.SerNr = NextSerNr("SMVc",SMr.TransDate,ATr.NrSeries,ATr.NrSeries>0,"");
+    if (SaveSim(SMr)) then begin end;
+  end;
+LAccTransMn:;
+  return;
+end;
+
+

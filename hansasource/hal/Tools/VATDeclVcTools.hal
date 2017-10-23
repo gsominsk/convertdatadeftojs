@@ -1,0 +1,335 @@
+external function val FCALCWITHVAR(string,var record SMVc,string);
+external procedure addvarval(string,var record SMVc,string); 
+external function Integer DateGetIntMonth(Date);
+external procedure CalcKeyRn(string,string,Integer,Integer,string,Integer,Integer,Integer,Integer,string,string,string,var val);
+external procedure PreRunReportRows(record RcVc,string);
+
+procedure CalculateVATDecl(var record VATDeclVc VATDr,record XBRLSettingsVc XBRLSr)
+begin
+  Integer i,rwcnt,j,rwcnt2;
+  row XBRLSettingsVc XBRLSrw;
+  record XBRLElementVc XBRLEr;
+  record UserDefRepVc UserDefRepr;
+  row UserDefRepVc UDRrw;
+  Array record UserDefRepLinesVc aUserDefRepLinesr;
+  record UserDefRepLinesVc UserDefRepLinesr;
+  val t;
+  transaction record RcVc KeyRepSpec;
+  Boolean negf;
+  row VATDeclVc VATDrw;
+  record CYBlock CYb;
+  Integer md;
+  
+  BlockLoad(CYb);
+  rwcnt = MatRowCnt(XBRLSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(XBRLSr,i,XBRLSrw);
+    ClearRow(VATDr,VATDrw,1);
+    VATDrw.ElementCode = XBRLSrw.XBRLElement;
+    VATDrw.Comment = XBRLSrw.Comment;
+    switch (XBRLSrw.FieldType) begin
+      case kXBRLElementFieldTypeMonetary:
+        if (nonblank(XBRLSrw.UserDefRep)) then begin
+          UserDefRepr.shortname = XBRLSrw.UserDefRep;
+          if (ReadFirstMain(UserDefRepr,1,true)) then begin
+            if (UserDefRepr.Type==kUserDefRepVAT) begin
+              KeyRepSpec.sStartDate = VATDr.StartDate;
+              KeyRepSpec.sEndDate = VATDr.EndDate;
+              KeyRepSpec.basecurncy = 0;
+              PreRunReportRows(KeyRepSpec,XBRLSrw.UserDefRep);
+              rwcnt2 = MatRowCnt(UserDefRepr);
+              for (j=0;j<rwcnt2;j=j+1) begin
+                MatRowGet(UserDefRepr,j,UDRrw);
+                if (XBRLSrw.UserDefRepRow==UDRrw.Code) then begin
+                  CalcKeyRn(UDRrw.Code,UDRrw.defstr,0,0,"",0,0,0,0,"","","",t);
+                  if (XBRLSrw.ReverseSign!=0) then begin
+                    t = -t;
+                  end;
+                  VATDrw.Value = ValToString(t*100,M40Val,"","",0);
+                  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+                  j = rwcnt2;
+                end;
+              end;
+            end;
+          end;
+        end;   
+      case kXBRLElementFieldTypeText:
+        VATDrw.Value = XBRLSrw.Comment;
+        MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+      case kXBRLElementFieldTypeTextFormula:
+        switch (XBRLSrw.FieldFormula) begin
+          case "CYVATNo":
+            if (HasLocalization("FIN")) then begin
+              VATDrw.Value = CYb.OrgNr;
+            end else begin
+              VATDrw.Value = CYb.VATNr;
+            end;
+          case "ReportingPeriod":
+            VATDrw.Value = DateToString(VATDr.StartDate,"MM/DD/YYYY") & ":" & DateToString(VATDr.EndDate,"MM/DD/YYYY");
+          case "ReportingPeriodYear":
+            VATDrw.Value = DateToString(VATDr.StartDate,"YYYY");
+          case "ReportingPeriodType":
+            md = DateGetIntMonth(VATDr.EndDate) - DateGetIntMonth(VATDr.StartDate) + 1;
+            switch (md) begin
+               case 1: VATDrw.Value = USetStr(33880);
+               case 3: VATDrw.Value = USetStr(33881);
+               case 12:  VATDrw.Value = USetStr(33882);
+            end;
+          case "ReportingPeriodTypeCode":
+            md = DateGetIntMonth(VATDr.EndDate) - DateGetIntMonth(VATDr.StartDate) + 1;
+            switch (md) begin
+               case 1: VATDrw.Value = GetMonth(VATDr.StartDate);
+               case 3: 
+                 switch (GetMonth(VATDr.StartDate)) begin
+                   case 1: VATDrw.Value = "1";
+                   case 2: VATDrw.Value = "1";
+                   case 3: VATDrw.Value = "1";
+                   case 4: VATDrw.Value = "2";
+                   case 5: VATDrw.Value = "2";
+                   case 6: VATDrw.Value = "2";
+                   case 7: VATDrw.Value = "3";
+                   case 8: VATDrw.Value = "3";
+                   case 9: VATDrw.Value = "3";
+                   case 10: VATDrw.Value = "4";
+                   case 11: VATDrw.Value = "4";
+                   case 12: VATDrw.Value = "4";
+                 end;
+               case 12: VATDrw.Value = "";
+            end;
+        end;
+        MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+    end;
+  end;
+  return;
+end;
+
+procedure CalculateVATDeclHRV(var record VATDeclVc VATDr,record TaxRepVc TRr)
+begin
+  Integer i,rwcnt;
+  row TaxRepVc TRrw;
+  row VATDeclVc VATDrw;
+  transaction string 1 gDelimCharacter;
+  record SMVc SMr;
+  row SMVc SMrw;
+  string 50 tempa;
+  Date d1,d2,d3,d4;
+  
+  d1 = VATDr.StartDate;
+  d2 = VATDr.EndDate;
+  d3 = "";
+  d4 = "";
+  if (blank(TRr.Delimiter)) then begin
+    gDelimCharacter = ",";
+  end else begin
+    gDelimCharacter = TRr.Delimiter;
+  end;
+  RecordNew(SMr); 
+  addvarval("D1",SMr,d1); 
+  addvarval("D2",SMr,d2); 
+  addvarval("D3",SMr,d3);
+  addvarval("D4",SMr,d4);
+  addvarval("YEARD1",SMr,datetostring(d1,"YYYY")); 
+  addvarval("YEARD2",SMr,datetostring(d2,"YYYY")); 
+  addvarval("YEARD3",SMr,datetostring(d3,"YYYY")); 
+  addvarval("YEARD4",SMr,datetostring(d4,"YYYY")); 
+
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    tempa = FCALCWITHVAR(TRrw.Formula,SMr,TRrw.FCode);  
+  end;
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    if (SMrw.AccNumber!="D1" and SMrw.AccNumber!="D2" and SMrw.AccNumber!="D3" and SMrw.AccNumber!="D4" and
+        SMrw.AccNumber!="YEARD1" and SMrw.AccNumber!="YEARD2" and SMrw.AccNumber!="YEARD3" and SMrw.AccNumber!="YEARD4") then begin
+      ClearRow(VATDr,VATDrw,1);
+      VATDrw.ElementCode = SMrw.AccNumber;
+      VATDrw.Value = SMrw.Comment;
+      MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+    end;
+  end;
+  return;
+end;
+
+global 
+procedure CalculateVATDecl_Remote(var record VATDeclVc VATDr)
+begin
+  record XBRLSettingsVc XBRLSr;
+  record RcVc RepSpec;
+  record TaxRepVc TRr;
+  
+  while (MatRowCnt(VATDr)) begin
+    MatRowDelete(VATDr,0);
+  end;
+  if (HasLocalization("HRV")) then begin
+    switch (VATDr.ReportType) begin
+      case kXBRLElementReportTypeE_TaxReport:
+        TRr.Code = VATDr.TaxRepCode;
+        if (ReadFirstMain(TRr,1,true)) then begin
+          CalculateVATDeclHRV(VATDr,TRr);
+        end;
+    end;
+  end else begin
+    if (HasLocalization("DEU")) then begin
+      if (GetDay(VATDr.StartDate)!=1 or GetDay(AddDay(VATDr.EndDate,1))!=1 or GetMonth(VATDr.StartDate)!=GetMonth(VATDr.EndDate) or GetYear(VATDr.StartDate)!=GetYear(VATDr.EndDate)) then begin
+        MessageBox(1163,"");
+      end else begin
+        while (LoopMain(XBRLSr,1,true)) begin
+          CalculateVATDecl(VATDr,XBRLSr);
+        end;
+      end;
+    end else begin
+      while (LoopMain(XBRLSr,1,true)) begin
+        CalculateVATDecl(VATDr,XBRLSr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+function string 255 GetKeyCodeNr(record RcVc RepSpec,string a,var string comment)
+begin
+  string 255 res;
+  record UserDefRepVc UserDefRepr;
+  row UserDefRepVc UserDefReprw;
+  Integer gKsprwcnt,i;
+
+  res = -1;
+  UserDefRepr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(UserDefRepr,1,true)) then begin
+    gKsprwcnt = MatRowCnt(UserDefRepr);
+    for (i=0; i<gKsprwcnt; i=i+1) begin
+      MatRowGet(UserDefRepr,i,UserDefReprw);
+      if (UserDefReprw.Code==a) then begin
+        comment = UserDefReprw.Comment;
+        res = UserDefReprw.defstr;
+        goto LGetKeyCodeNr;
+      end;
+    end;
+LGetKeyCodeNr:;
+  end;
+  GetKeyCodeNr = res;
+  return;
+end;
+
+global
+procedure CalculateNORVATDecl_Remote(var record VATDeclVc VATDr,record RcVc RepSpec)
+begin
+  Integer i;
+  string 255 tstr,comment;
+  row VATDeclVc VATDrw;
+  val v;
+  transaction record RcVc KeyRepSpec;
+
+  RecordCopy(KeyRepSpec,RepSpec);
+  
+  i = 0;
+  MatRowGet(VATDr,i,VATDrw);
+  tstr = GetKeyCodeNr(RepSpec,"1",comment);
+  CalcKeyRn("1",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+
+  VATDrw.ElementCode = "1";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"2",comment);
+  CalcKeyRn("2",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "2";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"3",comment);
+  CalcKeyRn("3",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "3";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"4",comment);
+  CalcKeyRn("4",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "4";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"5",comment);
+  CalcKeyRn("5",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "5";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"6",comment);
+  CalcKeyRn("6",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "6";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"7",comment);
+  CalcKeyRn("7",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "7";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"4_1",comment);
+  CalcKeyRn("4_1",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "4_1";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"5_1",comment);
+  CalcKeyRn("5_1",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "5_1";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"6_1",comment);
+  CalcKeyRn("6_1",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "6_1";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"7_1",comment);
+  CalcKeyRn("7_1",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "7_1";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  tstr = GetKeyCodeNr(RepSpec,"8",comment);
+  CalcKeyRn("8",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "8";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"9",comment);
+  CalcKeyRn("9",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "9";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"10",comment);
+  CalcKeyRn("10",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "10";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  i = i + 1;
+  tstr = GetKeyCodeNr(RepSpec,"11",comment);
+  CalcKeyRn("11",tstr,RepSpec.IncDaughter,RepSpec.basecurncy,"",0,0,0,0,"","","",v);
+  VATDrw.ElementCode = "11";
+  VATDrw.Comment = comment;
+  VATDrw.Value = ValToString(v,M40Val,"","",1);
+  MatRowPut(VATDr,MatRowCnt(VATDr),VATDrw);
+  
+  return;
+end;

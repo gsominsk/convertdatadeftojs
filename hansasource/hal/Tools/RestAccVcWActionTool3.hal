@@ -1,0 +1,699 @@
+external function val AbsoluteVal(val);
+external procedure RowCalculateTaxMatrix_RestAccVc(var record RestAccVc,Integer,row RestAccVc);
+external procedure CalcProc(val,val,var val);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external function string 60 FindJobCustomerName(record JobVc);
+external function string 20 FindJobCustomerCode(record JobVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean GetFirstItem(var string,var record INVc);
+external function Boolean TestBarTabAllowedForHotelGuest(string,record JobVc);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure RoundRowSum(string,string,string,var val);
+
+global
+function Integer CalculateLoyaltyPointsPayment_RestAccVc(record RestAccVc RestAccr,val maxpointstouse,var val PointsBalance,var val totusedpoints,var val totsumb1)
+begin
+  Integer err;
+  row RestAccVc RestAccrw;
+  record LoyPointsRedeemVc LPRr;
+  row LoyPointsRedeemVc LPRrw;
+  Integer i,rwcnt;
+  Integer li,lrwcnt;
+  record LocLoyPointsRedeemVc LLPRr;
+  row LocLoyPointsRedeemVc LLPRrw;
+  row LocLoyPointsRedeemVc foundLLPRrw;
+  Boolean found,testf,calculatedf;
+  val usedpoints,maxpayment,sum,t;
+  record BaseCurBlock BCb;
+  record INVc INr;
+  record LoyaltyCardVc LCr;
+  roundmode rnd;
+  vector val vitintotv;
+
+  err = 0;
+  LCr.SerNr = RestAccr.LoyaltyCardNr;
+  if (ReadFirstMain(LCr,1,true)==false) then begin
+    err = 26434;
+    goto LCalculateLoyaltyPointsPayment_RestAccVc;
+  end;
+  if (LCr.Closed!=0) then begin
+    err = 26434;
+    goto LCalculateLoyaltyPointsPayment_RestAccVc;
+  end;
+
+  PointsBalance = LCr.PointsBalance;
+  if (blank(maxpointstouse)==false) then begin
+    if (maxpointstouse<PointsBalance) then begin
+      PointsBalance = maxpointstouse;
+    end;
+  end;
+  rnd = DefaultValRoundoff;
+  rnd.decimals = 0;
+  rnd.step = kRoundingStepNone;
+  rnd.mode = kRoundingModeHalfUp;
+
+  LLPRr.Location = RestAccr.Location;
+  LLPRr.LCMLevel = RestAccr.LCMLevel;
+  found = ReadFirstMain(LLPRr,2,true);
+  if (found==false) then begin
+    LLPRr.Location = RestAccr.Location;
+    found = ReadFirstMain(LLPRr,1,true);
+  end;
+  rwcnt = MatRowCnt(RestAccr);
+
+  if (found) then begin
+    lrwcnt = MatRowCnt(LLPRr);
+    if (lrwcnt==0) then begin
+//      totsumb1 = MulRateToBase1(RestAccr.CurncyCode,RestAccr.Sum4,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+      totsumb1 = RestAccr.Sum4;
+      maxpayment = PointsBalance/LLPRr.Points;
+      maxpayment = maxpayment*LLPRr.Amount;
+      if (totsumb1>maxpayment) then begin
+        totsumb1 = maxpayment;
+        totusedpoints = PointsBalance;
+      end else begin
+        totusedpoints = Round(((PointsBalance*totsumb1)/maxpayment)+0.49999,rnd);
+      end;
+    end else begin
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(RestAccr,i,RestAccrw);
+        calculatedf = false;
+        if (RestAccrw.stp==kInvoiceRowTypeNormal) or (RestAccrw.stp==kInvoiceRowTypeStructuredItemComponent) or (RestAccrw.stp==kInvoiceRowTypeVoid) then begin
+          sum = RestAccrw.Sum;
+          if (RestAccrw.stp==kInvoiceRowTypeVoid) then begin
+            sum = -sum;
+          end;
+          for (li=0;li<lrwcnt;li=li+1) begin
+            MatRowGet(LLPRr,li,LLPRrw);
+            testf = false;
+            switch (LLPRrw.CodeType) begin
+              case 0:
+                if (ReadFirstItem(RestAccrw.ArtCode,INr,true,true)) then begin 
+                  if (INr.Group==LLPRrw.ITCode) then begin
+                    testf = true;
+                  end;  
+                end;
+              case 1:
+                if (RestAccrw.ArtCode==LLPRrw.ITCode) then begin
+                  testf = true;
+                end;  
+            end;
+            if (testf) then begin
+//              t = MulRateToBase1(RestAccr.CurncyCode,sum,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+              t = sum;
+              usedpoints = PointsBalance - totusedpoints;
+              maxpayment = usedpoints/LLPRrw.Points;
+              maxpayment = maxpayment*LLPRrw.Amount;
+              if (t>maxpayment) then begin
+                t = maxpayment;
+              end;
+              totsumb1 = totsumb1 + t;
+              if (t<=maxpayment) then begin
+                usedpoints = Round(((usedpoints*totsumb1)/maxpayment)+0.49999,rnd);
+              end;
+              totsumb1 = totsumb1 + t;
+              totusedpoints = totusedpoints + usedpoints;
+              calculatedf = true;
+              li = lrwcnt;
+            end;
+          end;
+          if (calculatedf==false) then begin
+//            t = MulRateToBase1(RestAccr.CurncyCode,sum,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+            t = sum;
+            usedpoints = PointsBalance - totusedpoints;
+            maxpayment = usedpoints/LLPRr.Points;
+            maxpayment = maxpayment*LLPRr.Amount;
+
+            if (t>maxpayment) then begin
+              t = maxpayment;
+            end;
+            totsumb1 = totsumb1 + t;
+            if (t<=maxpayment) then begin
+              usedpoints = Round(((usedpoints*totsumb1)/maxpayment)+0.49999,rnd);
+            end;
+            totsumb1 = totsumb1 + t;
+            totusedpoints = totusedpoints + usedpoints;
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    LPRr.LCMLevel = RestAccr.LCMLevel;
+    found = ReadFirstMain(LPRr,2,true);
+    if (found==false) then begin
+      LPRr.LCMLevel = "";
+      found = ReadFirstMain(LPRr,1,true);
+    end;
+    if (found) then begin
+      lrwcnt = MatRowCnt(LPRr);
+      if (lrwcnt==0) then begin
+//        totsumb1 = MulRateToBase1(RestAccr.CurncyCode,RestAccr.Sum4,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+        totsumb1 = RestAccr.Sum4;
+        maxpayment = PointsBalance/LPRr.Points;
+        maxpayment = maxpayment*LPRr.Amount;
+
+        if (totsumb1>maxpayment) then begin
+          totsumb1 = maxpayment;
+          totusedpoints = PointsBalance;
+        end else begin
+          totusedpoints = Round(((PointsBalance*totsumb1)/maxpayment)+0.49999,rnd);
+        end;
+      end else begin
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          if (RestAccrw.stp==kInvoiceRowTypeNormal) or (RestAccrw.stp==kInvoiceRowTypeStructuredItemComponent) or (RestAccrw.stp==kInvoiceRowTypeVoid) then begin
+            sum = RestAccrw.Sum;
+            if (RestAccrw.stp==kInvoiceRowTypeVoid) then begin
+              sum = -sum;
+            end;
+            calculatedf = false;
+            for (li=0;li<lrwcnt;li=li+1) begin
+              MatRowGet(LPRr,li,LPRrw);
+              testf = false;
+              switch (LPRrw.CodeType) begin
+                case 0:
+                  if (ReadFirstItem(RestAccrw.ArtCode,INr,true,true)) then begin 
+                    if (INr.Group==LPRrw.ITCode) then begin
+                      testf = true;
+                    end;  
+                  end;
+                case 1:
+                  if (RestAccrw.ArtCode==LPRrw.ITCode) then begin
+                    testf = true;
+                  end;  
+              end;
+              if (testf) then begin
+//                t = MulRateToBase1(RestAccr.CurncyCode,sum,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+                t = sum;
+                switch (LPRrw.CodeType) begin
+                  case 0:
+                    vitintotv[LPRrw.ITCode & "-ITEMCODE"] = vitintotv[LPRrw.ITCode & "-ITEMCODE"] + t;
+                  case 1:
+                    vitintotv[LPRrw.ITCode & "-ITEMGROUP"] = vitintotv[LPRrw.ITCode & "-ITEMGROUP"] + t;
+                end;
+              end;
+            end;            
+/*            
+replaced by code above and below
+sumup per item/group and then calculte points otherwise roundoff issues
+
+            for (li=0;li<lrwcnt;li=li+1) begin
+              MatRowGet(LPRr,li,LPRrw);
+              testf = false;
+              switch (LPRrw.CodeType) begin
+                case 0:
+                  if (ReadFirstItem(RestAccrw.ArtCode,INr,true,true)) then begin 
+                    if (INr.Group==LPRrw.ITCode) then begin
+                      testf = true;
+                    end;  
+                  end;
+                case 1:
+                  if (RestAccrw.ArtCode==LPRrw.ITCode) then begin
+                    testf = true;
+                  end;  
+              end;
+              if (testf) then begin
+//                t = MulRateToBase1(RestAccr.CurncyCode,sum,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+                t = sum;
+                usedpoints = PointsBalance - totusedpoints;
+                maxpayment = usedpoints/LPRrw.Points;
+                maxpayment = maxpayment*LPRrw.Amount;
+                if (t>maxpayment) then begin
+                  t = maxpayment;
+                end;
+                totsumb1 = totsumb1 + t;
+                if (t<=maxpayment) then begin
+                  usedpoints = Round(((usedpoints*totsumb1)/maxpayment)+0.49999,rnd);
+                end;
+                totusedpoints = totusedpoints + usedpoints;
+                calculatedf = true;
+                li = lrwcnt;
+              end;
+            end;
+            if (calculatedf==false) then begin
+//              t = MulRateToBase1(RestAccr.CurncyCode,sum,RestAccr.FrRate,RestAccr.ToRateB1,RestAccr.ToRateB2,RestAccr.BaseRate1,RestAccr.BaseRate2,DefaultCurRoundOff);
+              t = sum;
+              usedpoints = PointsBalance - totusedpoints;
+              maxpayment = usedpoints/LPRr.Points;
+              maxpayment = maxpayment*LPRr.Amount;
+              if (t>maxpayment) then begin
+                t = maxpayment;
+              end;
+              totsumb1 = totsumb1 + t;
+              if (t<=maxpayment) then begin
+                usedpoints = Round(((usedpoints*totsumb1)/maxpayment)+0.49999,rnd);
+              end;
+              totsumb1 = totsumb1 + t;
+              totusedpoints = totusedpoints + usedpoints;
+            end;
+*/            
+          end;
+        end;
+        for (li=0;li<lrwcnt;li=li+1) begin
+          MatRowGet(LPRr,li,LPRrw);
+          switch (LPRrw.CodeType) begin
+            case 0:
+              t = vitintotv[LPRrw.ITCode & "-ITEMCODE"];
+            case 1:
+              t = vitintotv[LPRrw.ITCode & "-ITEMGROUP"];
+          end;
+          usedpoints = PointsBalance - totusedpoints;
+          maxpayment = usedpoints/LPRrw.Points;
+          maxpayment = maxpayment*LPRrw.Amount;
+          if (t>maxpayment) then begin
+            t = maxpayment;
+          end;
+          totsumb1 = t;
+          if (t<=maxpayment) then begin
+            usedpoints = Round(((usedpoints*totsumb1)/maxpayment)+0.49999,rnd);
+          end;
+          totusedpoints = totusedpoints + usedpoints;
+          calculatedf = true;
+        end;                    
+      end;
+    end;
+  end;
+LCalculateLoyaltyPointsPayment_RestAccVc:;  
+  CalculateLoyaltyPointsPayment_RestAccVc = err;
+  return;
+end;
+
+global
+procedure LoyaltyPointsPayment_RestAccVc(var record RestAccVc RestAccr,val maxpointstouse,string paymode)
+begin
+  Boolean found;
+  val totsumb1,totusedpoints;
+  record BaseCurBlock BCb;
+  row RestAccVc RestAccrw;
+  val PointsBalance;
+
+  if (RestAccr.Closed==0) and nonblank(RestAccr.LoyaltyCardNr) then begin
+      found = CalculateLoyaltyPointsPayment_RestAccVc(RestAccr,maxpointstouse,PointsBalance,totusedpoints,totsumb1)==0;
+
+      if (found) then begin
+        BlockLoad(BCb);
+        ClearRow(RestAccr,RestAccrw,kInvoiceRowTypeLoyaltyPointsPayment);        
+        RestAccrw.Points = totusedpoints;
+        RestAccrw.Sum = totsumb1;
+        RestAccrw.PayMode = paymode;        
+        RestAccrw.Spec = UsetStr(24182);
+        MatRowPut(RestAccr,MatRowCnt(RestAccr),RestAccrw);
+      end;
+  end;
+  return;
+end;  
+
+global
+function Boolean RestAccDchrsum(var record RestAccVc RestAccp,Integer rownr,Integer UseDiscount)
+begin
+  Boolean res;
+  row RestAccVc RestAccrw;
+  val s,p;
+  record DefCashBlock DCr;
+  record BaseCurBlock BCb;
+  
+  BlockLoad(DCr); // Annoying...
+  BlockLoad(BCb);
+  MatRowGet(RestAccp,rownr,RestAccrw);
+  switch (RestAccrw.stp) begin
+    case 1:
+      CalcSum(RestAccrw.Quant,RestAccrw.Price,blankval,RestAccrw.vRebate,s,UseDiscount);  
+      if (RestAccrw.vRebate > 100) then begin
+        s = -s * (RestAccrw.vRebate-100)/100;
+      end;
+      if (HasLocalization("FIN")) then begin
+        RoundRowSum(RestAccrw.CurncyCode,DCr.DefCashPayMode,"RestAccVc",s);//s = Round(s,10); not row rounding
+      end else begin
+        RoundRowSum(BCb.BaseCur1,"","RestAccVc",s);
+//        RoundRowSum(BCb.BaseCur1,"","RestAccVc",s);
+      end;
+      if (s!=RestAccrw.Sum) or (s==0.00) then begin
+        RestAccrw.Sum = s;
+        res = true;
+        RowCalculateTaxMatrix_RestAccVc(RestAccp,rownr,RestAccrw);
+        MatRowPut(RestAccp,rownr,RestAccrw);
+      end;
+    otherwise
+      ;
+  end;
+  RestAccDchrsum = res; 
+  return;
+end;
+
+//external procedure RestAccDchsum(record RestAccVc,Integer);
+
+global
+procedure RestAccDchsum(record RestAccVc RAp,Integer rownr)
+begin
+  row RestAccVc RArw;
+  val t,s,rowsum,tproc;
+  val qty,sum,unitprdisc;
+  record TaxMatrixVc TMr;
+
+  MatRowGet(RAp,rownr,RArw);
+  if (RArw.Quant==0) then begin
+    qty = 1;
+  end else begin
+    qty = RArw.Quant;
+  end;  
+  rowsum = blankval;
+  if (RArw.stp==1) then begin
+    if (nonblank(RArw.ArtCode)) then begin
+      t = qty*RArw.BasePrice;
+      if (RArw.PriceFactor!=0) then begin
+        t = t/RArw.PriceFactor;
+      end;
+      if (RArw.Sum==0) then begin
+        sum = qty*RArw.Price;
+      end else begin
+        sum = RArw.Sum;
+      end;  
+      s = sum;
+      UnpackRowFieldMatrix(RArw,"TaxMatrix",TMr);
+      FindSalesExVat(TMr,RArw.VATCode,s,RAp.InclVAT,0,rowsum);
+      RArw.rowGP = rowsum - t;
+    end else begin
+      RArw.rowGP = 0;
+      RArw.BasePrice = 0;
+    end;
+    MatRowPut(RAp,rownr,RArw);
+  end;
+  MatRowGet(RAp,rownr,RArw);
+  CalcProc(rowsum,RArw.rowGP,tproc);
+  MatRowPut(RAp,rownr,RArw);
+//  SendArtStat(IVCashrw.ArtCode,IVCashp.Location,IVCashrw.Recepy,IVCashrw.rowGP,tproc,unitprdisc,IVCashp.TransDate,0);
+  return;
+end;
+
+global
+function Integer TestOpenOnHotelGuestTouchScreenOClass(record RcVc RepSpec,var string errstr,var string fieldgoto)
+begin
+  record ResVc Resr;
+  record CUVc CUr;
+  record HotelBlock Hotelb;
+  record JobVc Jobr;
+  Integer err;
+  
+  BlockLoad(Hotelb);
+  Resr.Code = RepSpec.f1;
+  if (ReadFirstMain(Resr,1,true)==false) then begin
+    err = 1724;
+    errstr = RepSpec.f1;
+    fieldgoto = "f1";
+    goto LTestOpenOnHotelGuestTouchScreenDClass;
+  end;
+  CUr.Code = RepSpec.f2;
+  if (ReadFirstMain(CUr,1,true)==false) then begin
+    err = 1120;
+    errstr = RepSpec.f2;
+    fieldgoto = "f2";
+    goto LTestOpenOnHotelGuestTouchScreenDClass;
+  end;
+  Jobr.ResStatus = Hotelb.ChInSt;
+  Jobr.ResCode = RepSpec.f1;
+  if (ReadLastKey("ResCodeStatus",Jobr,2,true)==false) then  begin
+    err = 2022;
+    errstr = RepSpec.f1;
+    fieldgoto = "f1";
+    goto LTestOpenOnHotelGuestTouchScreenDClass;
+  end;
+  if (TestBarTabAllowedForHotelGuest(RepSpec.f2,Jobr)==false) then begin
+    err = 2026;
+    errstr = RepSpec.f1;
+    fieldgoto = "f1";
+    goto LTestOpenOnHotelGuestTouchScreenDClass;
+  end; 
+  if (nonblank(RepSpec.f3)) then begin
+    CUr.Code = RepSpec.f3;
+    if (ReadFirstMain(CUr,1,true)==false) then begin
+      err = 1120;
+      errstr = RepSpec.f3;
+      fieldgoto = "f3";
+      goto LTestOpenOnHotelGuestTouchScreenDClass;
+    end;
+  end;
+LTestOpenOnHotelGuestTouchScreenDClass:;  
+  TestOpenOnHotelGuestTouchScreenOClass = err;
+  return;
+end;
+
+global
+function Integer TestMergeBarTabAllowed(record RestAccVc RestAccr,var string errstr)
+begin
+  Integer err;
+  
+  if (RestAccr.Closed!=0) then begin
+    err = 11059;
+  end;
+  TestMergeBarTabAllowed = err;
+  return;
+end;
+
+global
+function Integer TestMoveItemToBarTabAllowed(record RestAccVc RestAccr,var string errstr)
+begin
+  Integer err;
+  
+  if (RestAccr.Closed!=0) then begin
+    err = 11059;
+  end;
+  if (AbsoluteVal(RestAccr.RetValue)!=RestAccr.Sum4) then begin
+    err = 11059;
+  end;
+  TestMoveItemToBarTabAllowed = err;
+  return;
+end;
+
+global
+updating procedure CloseMergedBarTab(LongInt bartabsernr,LongInt mergedtosernr)
+begin
+  record RestAccVc RestAccr;
+  record RestAccVc prevRestAccr;
+  
+  RestAccr.SerNr = bartabsernr;
+  if (ReadFirstMain(RestAccr,1,true)) then begin
+    RecordCopy(prevRestAccr,RestAccr);
+    RestAccr.Closed = 1;
+    RestAccr.MergedToSerNr = mergedtosernr;
+    RecordUpdate(prevRestAccr,RestAccr,true);
+  end;
+  return;
+end;
+
+global
+function Boolean ModifiersVc_PasteArtCode(var record ModifiersVc Modifiersr,var string warning)
+begin
+  Boolean found;
+  record INVc INr;
+  
+  found = GetFirstItem(Modifiersr.ArtCode,INr);
+  if (found==false) then begin
+    found = ReadFirstItem(Modifiersr.ArtCode,INr,true,false);
+  end;
+  if (found) then begin
+    Modifiersr.Comment = INr.Name;
+    warning = INr.WarnText1;
+  end;
+  ModifiersVc_PasteArtCode = found;
+  return;
+end;
+
+global
+function Boolean ModifiersVc_PasteItem(var record ModifiersVc Modifiersr,Integer rownr,var string warning)
+begin
+  Boolean found;
+  record INVc INr;
+  row ModifiersVc Modifiersrw;
+  
+  MatRowGet(Modifiersr,rownr,Modifiersrw);
+  found = GetFirstItem(Modifiersrw.Item,INr);
+  if (found==false) then begin
+    found = ReadFirstItem(Modifiersrw.Item,INr,true,false);
+  end;
+  if (found) then begin
+    Modifiersrw.Name = INr.Name;
+    MatRowPut(Modifiersr,rownr,Modifiersrw);
+    warning = INr.WarnText1;
+  end;
+  ModifiersVc_PasteItem = found;
+  return;
+end;
+
+global
+function Integer ProceedOnHotelGuestTouchScreenRemote(record RcVc RepSpec,var record RestAccVc RestAccr,var string errstr,var string fieldgoto)
+begin
+  Integer res;
+  record HotelBlock Hotelb;
+  record CUVc CUr;
+  record JobVc Jobr;
+  row JobVc Jobrw;
+  Integer i,rwcnt;
+  record ReservationStatusVc RSr;
+
+  RestAccr.Resource = RepSpec.f1;
+  RestAccr.GuestCode = RepSpec.f2;
+  CUr.Code = RestAccr.GuestCode;
+  ReadFirstMain(CUr,1,true);
+  RestAccr.GuestName = CUr.Name;
+
+  if (RepSpec.long2>0) then begin
+    Jobr.SerNr = RepSpec.long2;
+    if (ReadFirstMain(Jobr,1,true)) then begin
+      RSr.Code = Jobr.ResStatus;
+      if (ReadFirstMain(RSr,1,true)) then begin
+        if (RSr.StatType!=3) then begin
+          res = 1721;
+          goto LProceedOnHotelGuestTouchScreenRemote;
+        end;
+      end;
+    end else begin
+      res = 1721;
+      goto LProceedOnHotelGuestTouchScreenRemote;
+    end;
+  end else begin
+    BlockLoad(Hotelb);
+    Jobr.ResStatus = Hotelb.ChInSt;
+    Jobr.ResCode = RestAccr.Resource;
+    if (ReadLastKey("ResCodeStatus",Jobr,2,true)) then  begin
+      RSr.Code = Jobr.ResStatus;
+      if (ReadFirstMain(RSr,1,true)) then begin
+        if (RSr.StatType!=3) then begin
+          res = 1721;
+          goto LProceedOnHotelGuestTouchScreenRemote;
+        end;
+      end;
+    end else begin
+      res = 1721;
+      goto LProceedOnHotelGuestTouchScreenRemote;
+    end;
+  end;
+  RestAccr.Resource = Jobr.ResCode;
+  RestAccr.CUCode = FindJobCustomerCode(Jobr);
+  RestAccr.CUName = FindJobCustomerName(Jobr);
+  if nonblank(RestAccr.GuestCode) then begin
+    rwcnt = MatRowCnt(Jobr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Jobr,i,Jobrw);
+      if (Jobrw.GuestCode==RestAccr.GuestCode) then begin
+        RestAccr.PriceList = Jobrw.PriceList;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  res = TestOpenOnHotelGuestTouchScreenOClass(RepSpec,errstr,fieldgoto);
+  if (res!=0) then begin
+    goto LProceedOnHotelGuestTouchScreenRemote;
+  end;  
+LProceedOnHotelGuestTouchScreenRemote:;  
+  ProceedOnHotelGuestTouchScreenRemote = res;
+  return;
+end;
+
+global
+function Integer ProceedOnHotelGuestTouchScreenRemote_IVCashVc(record RcVc RepSpec,var record IVCashVc IVCashr,var string errstr,var string fieldgoto)
+begin
+  Integer res;
+  record HotelBlock Hotelb;
+  record CUVc CUr;
+  record JobVc Jobr;
+  row JobVc Jobrw;
+  Integer i,rwcnt;
+  record ReservationStatusVc RSr;
+
+  IVCashr.Resource = RepSpec.f1;
+  IVCashr.GuestCode = RepSpec.f2;
+  CUr.Code = IVCashr.GuestCode;
+  ReadFirstMain(CUr,1,true);
+  IVCashr.GuestName = CUr.Name;
+
+  if (RepSpec.long2>0) then begin
+    Jobr.SerNr = RepSpec.long2;
+    if (ReadFirstMain(Jobr,1,true)) then begin
+      RSr.Code = Jobr.ResStatus;
+      if (ReadFirstMain(RSr,1,true)) then begin
+        if (RSr.StatType!=3) then begin
+          res = 1721;
+          goto LProceedOnHotelGuestTouchScreenRemote_IVCashVc;
+        end;
+      end;
+    end else begin
+      res = 1721;
+      goto LProceedOnHotelGuestTouchScreenRemote_IVCashVc;
+    end;
+  end else begin
+    BlockLoad(Hotelb);
+    Jobr.ResStatus = Hotelb.ChInSt;
+    Jobr.ResCode = IVCashr.Resource;
+    if (ReadLastKey("ResCodeStatus",Jobr,2,true)) then  begin
+      RSr.Code = Jobr.ResStatus;
+      if (ReadFirstMain(RSr,1,true)) then begin
+        if (RSr.StatType!=3) then begin
+          res = 1721;
+          goto LProceedOnHotelGuestTouchScreenRemote_IVCashVc;
+        end;
+      end;
+    end else begin
+      res = 1721;
+      goto LProceedOnHotelGuestTouchScreenRemote_IVCashVc;
+    end;
+  end;
+  IVCashr.Resource = Jobr.ResCode;
+  IVCashr.CustCode = FindJobCustomerCode(Jobr);
+  IVCashr.Addr0 = FindJobCustomerName(Jobr);
+  if (nonblank(IVCashr.GuestCode)) then begin
+    rwcnt = MatRowCnt(Jobr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Jobr,i,Jobrw);
+      if (Jobrw.GuestCode==IVCashr.GuestCode) then begin
+        IVCashr.PriceList = Jobrw.PriceList;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  res = TestOpenOnHotelGuestTouchScreenOClass(RepSpec,errstr,fieldgoto);
+  if (res!=0) then begin
+    goto LProceedOnHotelGuestTouchScreenRemote_IVCashVc;
+  end;  
+LProceedOnHotelGuestTouchScreenRemote_IVCashVc:;  
+  ProceedOnHotelGuestTouchScreenRemote_IVCashVc = res;
+  return;
+end;
+
+global
+updating procedure UpdateAffectedRowsToKitchenOrderFromRestAcc(longint RestSerNr, integer rownr,string FreeText)
+begin
+  record KitchenOrderVc KOr,KOrOld;
+  row KitchenOrderVc KOrw,KOr2w;
+  boolean found;
+  integer rwcnt,i;
+  
+  found = true;
+  KOr.RestAccSerNr = RestSerNr;
+  while (LoopKey("RestAccSerNr",KOr,1,found)) begin
+    if (KOr.RestAccSerNr!=RestSerNr) then begin 
+      found = false;
+    end;
+    if (found) then begin
+      RecordCopy(KOrOld,KOr);
+      rwcnt = MatRowCnt(KOr);
+      for (i=0; i<rwcnt; i=i+1) begin
+        MatRowGet(KOr,i,KOrw);
+        if (KOrw.RestAccRow==rownr) then begin 
+          ClearRow(KOr,KOr2w,1);
+          KOr2w.Spec = FreeText;
+          KOr2w.RestAccRow = rownr + 1;
+          MatRowInsert(KOr,i+1,KOr2w);
+          i = i +1;
+          rwcnt = MatRowCnt(KOr);
+        end else begin
+          if (KOrw.RestAccRow>rownr) then begin
+            KOrw.RestAccRow = KOrw.RestAccRow + 1;
+            MatRowPut(KOr,i,KOrw);
+          end;        
+        end;            
+      end;
+      RecordUpdate(KOrOld,KOr,false);
+    end;
+  end;
+  return;
+end;

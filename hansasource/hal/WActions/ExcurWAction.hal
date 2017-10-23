@@ -1,0 +1,422 @@
+external function LongInt YearsOld(Date);
+external updating procedure RecordActionExcursion_Print(var record ExcursionVc,string,Boolean);
+external function Boolean SetupMail(var record MailVc,String,Integer);
+external procedure LTxttoMail(record LTxtVc,var record MailVc);
+
+procedure ExcursionSumUp(var Record ExcursionVc Excur)
+begin
+  Integer i,rwcnt,res;
+  Row ExcursionVc Excurw;
+  
+  res = 0;
+  rwcnt = MatRowCnt(Excur);  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Excur,i,Excurw);
+    res = res + Excurw.Status;
+  end;  
+  Excur.NotConf = (rwcnt - res);
+  return;
+end;
+
+global
+function Boolean ApprovedAgeOnExcur(Integer age,String ExcurType) 
+begin
+  Boolean res;
+  record ExcurTypeVc ExcurTyper;
+  
+  res = true;
+  ExcurTyper.Code = ExcurType;
+  if readfirstmain(ExcurTyper,1,true) then begin
+    if ((ExcurTyper.MinAge > age)  or (ExcurTyper.MaxAge < age)) then begin
+      res = false;
+    end;
+  end;
+  ApprovedAgeOnExcur = res;
+  return;
+end;
+
+global
+procedure PasteJobInExcur(record JobVc Jobr,var record ExcursionVc Excur,Var Integer rownr)
+begin
+  record JobVc Kids;
+  record CUVc Profile;
+  row JobVc Jobrw;
+  Integer rows,i;
+  row ExcursionVc Excurrw;
+  Boolean TsHr;
+  String 50 ckey;
+
+  rows = matrowcnt(Jobr);        
+  for (i=0;i<rows;i=i+1) begin
+    matrowget(Jobr,i,Jobrw);
+    Profile.Code= Jobrw.GuestCode;
+    if ReadFirstMain(Profile,1,true) then begin
+      if ApprovedAgeOnExcur(YearsOld(Profile.BirthDate),Excur.ExcurType) then begin
+        Excurrw.Age = YearsOld(Profile.BirthDate);
+        Excurrw.JobNr     = Jobr.SerNr;
+        Excurrw.GuestCode = Jobrw.GuestCode;
+        Excurrw.SrcRes    = Jobr.ResCode;
+        Excurrw.Status    = 0;
+        Excurrw.GuestName = Jobrw.CUName;
+        MatrowPut(Excur,rownr,Excurrw);
+        rownr = rownr + 1;
+      end;
+    end;
+  end;
+  // Paste in Children
+  TsHr = true;
+  ckey = "Mother:" & Jobr.SerNr;
+  SetLoopPosition(Kids,0);
+  Kids.Mother = Jobr.SerNr;  
+  while(LoopKey(ckey,Kids,1,TsHr)) begin
+    if (Kids.Mother == Jobr.SerNr) then begin
+       PasteJobInExcur(Kids,Excur,rownr);
+    end else begin
+      TsHr = false;
+    end;
+  end;
+   
+  return;
+end;
+
+global
+function Boolean ExcursionDClassGuestCodeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record ExcursionVc Excur;
+  row ExcursionVc Excurrw;
+  record CUVc Guestr;
+  Boolean res;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Excur);
+    MatrowGet(Excur,rownr,Excurrw);
+    Guestr.Code = Excurrw.GuestCode;
+    if readfirstmain(Guestr,1,true) then begin
+      Excurrw.JobNr     = -1;   
+      Excurrw.SrcRes    = -1;
+      Excurrw.Status    = 0;
+      Excurrw.Age       = YearsOld(Guestr.BirthDate);
+      Excurrw.GuestName = Guestr.Name;
+    end;  
+    MatrowPut(Excur,rownr,Excurrw);
+    ExcursionSumUp(Excur);
+    PutWindowRecord(wn,Excur);
+  end;
+  ExcursionDClassGuestCodeEFAfter = res;
+  return;
+end;
+
+global
+function Boolean ExcursionDClassJobNrEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record ExcursionVc Excur;
+  row ExcursionVc Excurrw;
+  record JobVc Jobr;
+  Boolean res;  
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Excur);
+    MatrowGet(Excur,rownr,Excurrw);
+    Jobr.SerNr = Excurrw.JobNr;
+    Excurrw.JobNr = -1;               // blank row because we insert it again
+    MatrowPut(Excur,rownr,Excurrw);
+    if readfirstmain(Jobr,1,true) then begin
+      PasteJobInExcur(Jobr,Excur,rownr);
+    end;  
+    ExcursionSumUp(Excur);
+    PutWindowRecord(wn,Excur);
+  end;
+  ExcursionDClassJobNrEFAfter = res;
+  return;
+end;
+
+global
+procedure ShowPartExc()
+begin
+  record ExcursionVc Excur;
+  record RcVc RepSpec;
+  Integer wn;
+  
+
+  wn = CurWindow;
+  GetWindowRecord(wn,Excur);
+  RepSpec.repname = "ShowPartExcRn";
+  RepSpec.long1   = Excur.SerNr;
+  RepSpec.Media   = mtScreen;   
+  RunReport(RepSpec,0);
+  return;
+end;
+
+
+global
+updating procedure EventmailAProv()
+begin
+  Integer wn,wn1,rows,i;
+  record MailVc Mailr;
+  record CUVc Profiler;
+  record ExcursionVc Excur;
+  row ExcursionVc Excurw;
+  Record LTxtVc Memo;
+  String 255 tstr;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Excur);
+  DeselectWindow(wn,false);
+  if not SetupMail(Mailr,Excur.VECode,1) then begin
+    goto LEventmailAProv;
+  end;   
+  AddToText("Pasajeros confirmados: ",Mailr);
+  AddToText(Chr(13) & Chr(10),Mailr);
+
+  rows = MatRowCnt(Excur);
+  for(i=0;i<rows;i=i+1) begin
+    MatRowGet(Excur,i,Excurw);
+    tstr = "";
+    tstr = tstr & Excurw.GuestCode & Chr(9);
+    tstr = tstr & Excurw.GuestName & Chr(9);
+    Profiler.Code = Excurw.GuestCode;
+    if readfirstmain(Profiler,1,true) then begin
+      tstr = tstr & YearsOld(Profiler.BirthDate) & Chr(9);
+      tstr = tstr & Profiler.PassportNr & Chr(9);
+      tstr = tstr & Profiler.Nationality & Chr(9);
+    end;
+    AddToText(tstr,Mailr);
+    AddToText(Chr(13) & Chr(10),Mailr);
+  end;
+  if (RecordStore(Mailr,false)) then begin
+    wn1 = OpenWindow("MailDClass",0,0,"","",Mailr);
+  end;
+LEventmailAProv:;
+  return;
+end;  
+
+global
+procedure CreateEvent()
+begin
+  record ExcursionVc Excur,Excur2;
+  row ExcursionVc Excurrw;
+  Integer wn,wn2,i,rows,split;
+  Record ResVc Resr;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Excur);
+  if blank(Excur.Comment1) then begin
+    MessageBox(0,USetStr(20151));
+  end else begin
+  
+    Resr.Code = Excur.Comment1;
+    if readfirstmain(Resr,1,true) then begin
+      split = Resr.MaxPersons;
+    end;
+  
+    recordcopy(Excur2,Excur);
+    Excur2.SerNr   = -1;
+    Excur2.ResCode = Excur.Comment1;
+    Excur.Comment1 = "";
+    Excur2.Comment1 = "";
+  
+    rows = MatRowCnt(Excur);
+    for (i=0;i<rows;i=i+1) begin
+      if (i < split) then begin
+        MatRowDelete(Excur,0);    
+      end else begin
+        MatRowDelete(Excur2,split);    
+      end;
+    end;
+    wn2 = OpenWindow("ExcursionDClass",1,0,"","",Excur2);
+    PutWindowRecord(wn,Excur);
+  end;  
+  
+  return;
+end;
+
+global
+procedure PasteExcurTypeInExcursion(var record ExcursionVc Excur)
+begin
+  record ExcurTypeVc ExcurTyper;
+
+  ExcurTyper.Code = Excur.ExcurType;
+  if readfirstmain(ExcurTyper,1,true) then begin
+    Excur.Comment   = ExcurTyper.Comment;
+    Excur.StartTime = ExcurTyper.StartTime;
+    Excur.EndTime   = ExcurTyper.EndTime;
+    Excur.VECode    = ExcurTyper.VECode;
+    Excur.VEName    = ExcurTyper.VEName;
+    Excur.MaxQty    = ExcurTyper.MaxQty;
+    Excur.ResCode   = ExcurTyper.ResCode;
+  end;
+  return;
+end;
+
+global
+function Boolean ExcursionDClassExcurTypeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+BEGIN
+  Boolean res;
+  record ExcursionVc Excur;
+
+  res = true;
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Excur);
+    PasteExcurTypeInExcursion(Excur);
+    PutWindowRecord(wn,Excur);
+  end;
+  ExcursionDClassExcurTypeEFAfter = res;
+  RETURN;
+end; 
+
+global
+function Boolean ExcursionDClassVECodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  record CUVc VEr;
+  record ExcursionVc Excur;
+  
+  if (changed!=0) then begin
+    GetWindowRecord(wn,Excur);
+    VEr.Code= Excur.VECode;
+    if ReadFirstMain(VEr,1,true) then begin
+      Excur.VEName= VEr.Name;
+    end;
+    PutWindowRecord(wn,Excur);
+  end;  
+  ExcursionDClassVECodeEFAfter = res;
+  RETURN;
+END;
+
+global
+function Boolean ExcursionDClassStatusEFAfter(Integer wn,Integer fn, Integer rownr,Integer changedf)
+Begin
+  Boolean res;
+  record ExcursionVc Excur;
+  
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,Excur);
+    ExcursionSumUp(Excur);
+    PutWindowRecord(wn,Excur);
+  end;
+  ExcursionDClassStatusEFAfter = res;
+  return;
+end;
+
+global
+function Boolean ExcursionDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "Status": res = ExcursionDClassStatusEFAfter(wn,fn,rownr,changed);
+    case "VECode": res = ExcursionDClassVECodeEFAfter(wn,fn,rownr,changed);
+    case "ExcurType": res = ExcursionDClassExcurTypeEFAfter(wn,fn,rownr,changed);
+    case "JobNr": res = ExcursionDClassJobNrEFAfter(wn,fn,rownr,changed);
+    case "GuestCode": res = ExcursionDClassGuestCodeEFAfter(wn,fn,rownr,changed);
+  end;
+  ExcursionDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean ExcursionDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record ExcursionVc Excur;
+  Boolean res;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,Excur);    
+    ExcursionSumUp(Excur);
+    PutWindowRecord(wn,Excur);    
+  end;
+  res = true;
+  ExcursionDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global
+procedure GuestPosExcDsm()
+begin
+  record RcVc RepSpec;
+  Integer wn;
+  record ExcursionVc Excur;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Excur);
+  
+  RepSpec.repname = "GuestPosRn";
+  RepSpec.d1 = Excur.TransDate;
+  RepSpec.f1 = Excur.ExcurType;
+  RepSpec.sStartTime = Excur.StartTime;
+  RepSpec.sEndTime   = Excur.EndTime;
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  
+  return;
+end;
+
+
+global
+procedure GuestSugExcDsm()
+begin
+  record RcVc RepSpec;
+  Integer wn;
+  record ExcursionVc Excur;  
+  wn = CurWindow;
+  GetWindowRecord(wn,Excur);
+  RepSpec.repname = "GuestSugRn";
+  RepSpec.sStartTime = Excur.StartTime;
+  RepSpec.sEndTime   = Excur.EndTime;
+  RepSpec.d1 = Excur.TransDate;
+  RepSpec.f1 = Excur.ExcurType;
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+procedure EventHistsm()
+begin
+  record RcVc RepSpec;
+  Integer wn;
+  record JobVc Jobr;
+  
+  wn = CurWindow;
+  if (GetRecordFromBrowse(Jobr,wn,1)) then begin
+    RepSpec.repname = "EventHistJobRn";
+    RepSpec.f1      = Jobr.SerNr;
+    RepSpec.Media   = mtScreen;    
+    RunReport(RepSpec,0);
+  end;
+  return;
+end;
+
+global
+procedure GuestListExcDsm()
+begin
+  record RcVc RepSpec;
+  Integer wn;
+  record ExcursionVc Excur;  
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Excur);
+  RepSpec.repname = "GuestListRn";
+  RepSpec.f1 = Excur.SerNr;
+  RepSpec.Media   = mtScreen;    
+  RunReport(RepSpec,0);
+  return;
+end;
+
+global
+updating function Boolean ExcursionDClassPrint(Integer wn,Boolean previewf)
+BEGIN
+  record ExcursionVc Excursionr;
+  Integer normalmode,tf;
+  string 20 docname;
+
+  normalmode = 0;//Rs_normal
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,Excursionr);  
+  if ((WindowState(wn)==normalmode) and (previewf==false)) then begin
+    RecordActionExcursion_Print(Excursionr,"",true);
+  end else begin
+    if (PrintDocument(Excursionr,"ExcurDocForm",true)) then begin end;
+  end;
+  RETURN;
+END;

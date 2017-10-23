@@ -1,0 +1,298 @@
+external function string 255 GetNextSKU(string);
+
+global
+function LongInt ASSubmissionVcRecordDefaults(var record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  ASSr.TransDate = CurrentDate;  
+  ASSr.Person = CurrentUser;  
+  ASSubmissionVcRecordDefaults = res;
+  return;
+end;
+
+global
+function LongInt ASSubmissionVcRecordDuplicate(var record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  LongInt rwcnt,i;
+  row ASSubmissionVc ASSrw;
+  
+  ASSr.TransDate = CurrentDate;  
+  ASSr.Person = CurrentUser;  
+  ASSr.SerNr = -1;  
+  ASSr.ApplicationSKU = "";
+  rwcnt = MatRowCnt(ASSr);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(ASSr,i,ASSrw);
+    ASSrw.ASInAppSKU = "";
+    MatRowPut(ASSr,i,ASSrw);
+  end;
+  ASSubmissionVcRecordDuplicate = res;
+  return;
+end;
+
+global
+function LongInt ASSubmissionVcRecordCheck(var record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  res = 0;
+  if (ASSr.SerNr<=0) then begin
+    ASSr.SerNr = NextSerNr("ASSubmissionVc",ASSr.TransDate,-1,false,"");
+  end;
+  if (ASSr.SubmissionStatus==kAppStoreSubmissionStatusRejected) then begin
+    if (blank(ASSr.RejectReason)) then begin
+      RecordCheckError(1058,"",-1,"RejectReason");    
+      res = -1;
+      goto LASSubmissionVcRecordCheck;    
+    end;
+  end;
+  switch (stat) begin
+    case Rs_insert:
+      if (blank(ASSr.DateVersion)) then begin
+        RecordCheckError(1058,"",-1,"DateVersion");    
+        res = -1;
+        goto LASSubmissionVcRecordCheck;    
+      end;  
+    case Rs_update:
+      if (blank(ASSr.DateVersion)) and (nonblank(ASS2r.DateVersion)) then begin
+        RecordCheckError(1058,"",-1,"DateVersion");    
+        res = -1;
+        goto LASSubmissionVcRecordCheck;    
+      end;  
+  end;
+  ASSr.TransTime = CurrentTime;  
+LASSubmissionVcRecordCheck:;
+  ASSubmissionVcRecordCheck = res;
+  return;
+end;
+
+function string 255 FindResponsibleProductManager(record ASProductStatusVc ASPSr)
+begin
+  string 255 res;
+  record ASProductVc ASPr;
+  
+  ASPr.Code = ASPSr.ASProduct;
+  ReadFirstMain(ASPr,1,true);
+  res = ASPr.RespPM;
+  FindResponsibleProductManager = res;
+  return;
+end;
+
+updating procedure UpdateASProductStatus(record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r)
+begin
+  record ASProductStatusVc oldASPSr;
+  record ASProductStatusVc ASPSr;
+  row ASSubmissionVc ASSrw;
+  row ASProductStatusVc ASPSrw;
+  Boolean testf;
+  Integer StoreStatus;
+  Integer assi,assrwcnt;
+  
+  if (RecordValid(ASS2r)) then begin
+    if (ASSr.SubmissionStatus==kAppStoreSubmissionStatusSent) and (ASS2r.SubmissionStatus!=kAppStoreSubmissionStatusSent) then begin
+      testf = true;
+      StoreStatus = kAppStoreProductStoreNotAccepted;
+    end;
+    if (ASSr.SubmissionStatus==kAppStoreSubmissionStatusAccepted) and (ASS2r.SubmissionStatus!=kAppStoreSubmissionStatusAccepted) then begin
+      testf = true;
+      StoreStatus = kAppStoreProductStoreAccepted;
+    end;
+  end else begin
+    if (ASSr.SubmissionStatus==kAppStoreSubmissionStatusSent) then begin
+      StoreStatus = kAppStoreProductStoreNotAccepted;
+      testf = true;
+    end;
+    if (ASSr.SubmissionStatus==kAppStoreSubmissionStatusAccepted) then begin
+      StoreStatus = kAppStoreProductStoreAccepted;
+      testf = true;
+    end;
+  end;
+  if (testf) then begin
+    ASPSr.ApplicationSKU = ASSr.ApplicationSKU;
+    if (ReadFirstKey("ApplicationSKU",ASPSr,1,true)) then begin
+      RecordCopy(oldASPSr,ASPSr);
+      ASPSr.TransDate = CurrentDate;
+      ASPSr.ASInApp = ASSr.ASInApp;
+      ASPSr.Country = ASSr.ASCountry;
+      ASPSr.StoreStatus = StoreStatus;
+      ASPSr.ApplicationSKU = ASSr.ApplicationSKU;
+      ASPSr.RespPM = FindResponsibleProductManager(ASPSr);
+      ASPSr.SubmissionStatus = kAppStoreProductSubmissionStatusReview;
+      ASPSr.DateVersion = ASSr.DateVersion;
+      while (MatRowCnt(ASPSr)>0) begin
+        MatRowDelete(ASPSr,0);      
+      end;
+      assrwcnt = MatRowCnt(ASSr);
+      for (assi=0;assi<assrwcnt;assi=assi+1) begin
+        MatRowGet(ASSr,assi,ASSrw);
+        ClearRow(ASPSr,ASPSrw,1);
+        ASPSrw.ASInApp = ASSrw.ASInApp;
+        ASPSrw.ASInAppSKU = ASSrw.ASInAppSKU;
+        ASPSrw.ASInAppMonths = ASSrw.ASInAppMonths;
+        ASPSrw.Country = ASSrw.Country;
+        MatRowPut(ASPSr,MatRowCnt(ASPSr),ASPSrw);
+      end;
+      RecordUpdate(oldASPSr,ASPSr,true);
+    end else begin
+      RecordNew(ASPSr);
+      ASPSr.ASProduct = ASSr.ASProduct;
+      ASPSr.ASStore = ASSr.ASStore;
+      ASPSr.ASCountry = ASSr.ASCountry;
+      ASPSr.ASInApp = ASSr.ASInApp;
+      ASPSr.Country = ASSr.ASCountry;
+      ASPSr.StoreStatus = StoreStatus;
+      ASPSr.SubmissionStatus = kAppStoreProductSubmissionStatusReview;
+      ASPSr.RespPM = FindResponsibleProductManager(ASPSr);
+      ASPSr.ApplicationSKU = ASSr.ApplicationSKU;
+      ASPSr.DateVersion = ASSr.DateVersion;
+      assrwcnt = MatRowCnt(ASSr);
+      for (assi=0;assi<assrwcnt;assi=assi+1) begin
+        MatRowGet(ASSr,assi,ASSrw);
+        ClearRow(ASPSr,ASPSrw,1);
+        ASPSrw.ASInApp = ASSrw.ASInApp;
+        ASPSrw.ASInAppSKU = ASSrw.ASInAppSKU;
+        ASPSrw.ASInAppMonths = ASSrw.ASInAppMonths;
+        ASPSrw.Country = ASSrw.Country;
+        MatRowPut(ASPSr,MatRowCnt(ASPSr),ASPSrw);
+      end;
+      ASPSr.SerNr = NextSerNr("ASProductStatusVc",ASPSr.TransDate,-1,false,"");
+      RecordStore(ASPSr,false);
+    end;
+  end else begin
+    if (RecordValid(ASS2r)) then begin
+      if (ASSr.DateVersion!=ASS2r.DateVersion) then begin
+        ASPSr.ApplicationSKU = ASSr.ApplicationSKU;
+        if (ReadFirstKey("ApplicationSKU",ASPSr,1,true)) then begin 
+          RecordCopy(oldASPSr,ASPSr);  
+          ASPSr.DateVersion = ASSr.DateVersion;
+          RecordUpdate(oldASPSr,ASPSr,true);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure StoreASSubmissionHistory(record ASSubmissionVc ASSr)
+begin
+  record ASSubmHistVc ASSHr;
+  row ASSubmHistVc ASSHrw;
+  row ASSubmissionVc ASSrw;
+  Integer assi,assrwcnt;
+  
+  RecordNew(ASSHr);
+  ASSHr.TransDate = CurrentDate;
+  ASSHr.TransTime = CurrentTime;
+  ASSHr.Person = ASSr.Person;
+  ASSHr.Comment = ASSr.Comment;
+  ASSHr.Country = ASSr.Country;
+  ASSHr.RejectReason = ASSr.RejectReason;
+  ASSHr.ASProduct = ASSr.ASProduct;
+  ASSHr.ASStore = ASSr.ASStore;
+  ASSHr.ASCountry = ASSr.ASCountry;
+  ASSHr.ASInApp = ASSr.ASInApp;
+  ASSHr.SubmissionStatus = ASSr.SubmissionStatus;
+  ASSHr.ASProdStatSerNr = ASSr.ASProdStatSerNr;
+  ASSHr.ASSubmissionSerNr = ASSr.SerNr;
+  ASSHr.SerNr = NextSerNr("ASSubmHistVc",ASSHr.TransDate,-1,false,"");
+  ASSHr.DateVersion = ASSr.DateVersion;  
+  assrwcnt = MatRowCnt(ASSr);
+  for (assi=0;assi<assrwcnt;assi=assi+1) begin
+    MatRowGet(ASSr,assi,ASSrw);
+    ClearRow(ASSHr,ASSHrw,1);
+    ASSHrw.ASInApp = ASSrw.ASInApp;
+    ASSHrw.ASInAppSKU = ASSrw.ASInAppSKU;
+    ASSHrw.ASInAppMonths = ASSrw.ASInAppMonths;
+    ASSHrw.Country = ASSrw.Country;
+    MatRowPut(ASSHr,MatRowCnt(ASSHr),ASSHrw);
+  end;
+  RecordStore(ASSHr,false);
+  return;
+end;
+
+updating procedure UpdateLastSKU(record ASSubmissionVc ASSr)
+begin
+  row ASSubmissionVc ASSrw;
+  Integer assi,assrwcnt;
+  record SRBlock SRb;
+  Integer OldComp;
+  
+  OldComp = CurrentCompany;
+  SetServerCompany(1);  // HansaMail
+  BlockLoad(SRb);
+  if (nonblank(ASSr.ApplicationSKU)) then begin 
+    if (StringToVal(ASSr.ApplicationSKU,M40Val)>=StringToVal("10000001",M40Val)) and (StringToVal(ASSr.ApplicationSKU,M40Val)<=StringToVal("99999999",M40Val)) then begin
+      if (StringToLongInt(ASSr.ApplicationSKU) > StringToLongInt(SRb.LastSKU)) then begin 
+        SRb.LastSKU = ASSr.ApplicationSKU;
+      end;
+    end;
+  end;
+  assrwcnt = MatRowCnt(ASSr);
+  for (assi=0;assi<assrwcnt;assi=assi+1) begin
+    MatRowGet(ASSr,assi,ASSrw);
+    if (nonblank(ASSrw.ASInAppSKU)) then begin 
+      if (StringToVal(ASSrw.ASInAppSKU,M40Val)>StringToVal(SRb.LastSKU,M40Val)) and (StringToVal(ASSrw.ASInAppSKU,M40Val)>=StringToVal("10000001",M40Val)) and (StringToVal(ASSrw.ASInAppSKU,M40Val)<=StringToVal("99999999",M40Val)) then begin
+        if (StringToLongInt(ASSrw.ASInAppSKU) > StringToLongInt(SRb.LastSKU)) then begin 
+          SRb.LastSKU = ASSrw.ASInAppSKU;
+        end;
+      end;
+    end;
+  end;
+  BlockStore(SRb);
+  SetServerCompany(OldComp);
+  return;
+end;
+
+
+global
+function LongInt ASSubmissionVcRecordSave(var record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+//  if (blank(ASSr.ApplicationSKU)) and (ASSr.ASStore!="G") then begin
+//we need sku for proper prodcut statuses
+  if (blank(ASSr.ApplicationSKU)) then begin
+    ASSr.ApplicationSKU = GetNextSKU("");
+  end;
+  ASSubmissionVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt ASSubmissionVcRecordSaveAfter(var record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateLastSKU(ASSr);
+  StoreASSubmissionHistory(ASSr);
+  UpdateASProductStatus(ASSr,ASS2r);
+  ASSubmissionVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+updating function LongInt ASSubmissionVcRecordUpdateAfter(var record ASSubmissionVc ASSr,record ASSubmissionVc ASS2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateLastSKU(ASSr);
+  StoreASSubmissionHistory(ASSr);
+  UpdateASProductStatus(ASSr,ASS2r);
+  ASSubmissionVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+function LongInt ASSubmissionVcRecordInIndex(record ASSubmissionVc ASSr,string indexname)
+begin
+  LongInt res;
+  
+  res = 1;
+  if (ASSr.Terminated!=0) then begin 
+    if (indexname=="ActSerNr") then begin res = 0; end;
+  end;
+  ASSubmissionVcRecordInIndex = res;
+  return;
+end;

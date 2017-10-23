@@ -1,0 +1,452 @@
+external function Boolean SerNrTestProdPlanVc(LongInt,Date,var Boolean);
+external function roundmode SetRoundModeD(Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+
+procedure AddToArray(string itemcode,val sugqty,val qty,Date needed,var Array string aitemcode,var Array val asugqty,var Array val aqty,var Array Date aneeded,var Integer acnt)
+begin
+  Integer i;
+  
+  for (i=0;i<acnt;i=i+1) begin
+    if ((aitemcode[i]==itemcode) and (aneeded[i]==needed)) then begin
+      aqty[i] = aqty[i] + qty;
+      asugqty[i] = asugqty[i] + sugqty;
+      goto LAddToArray;
+    end;
+  end;
+  aitemcode[acnt] = itemcode;
+  aneeded[acnt] = needed;
+  aqty[acnt] = qty;
+  asugqty[acnt] = sugqty;
+  acnt = acnt + 1;
+LAddToArray:;  
+  return;
+end;
+
+global
+procedure ExpandRecepy_ProdPlan(string itemcode,string recepy,val plansugqty,val planqty,Date needed,var Array string aitemcode,var Array val asugqty,var Array val aqty,var Array Date aneeded,var Integer acnt)
+begin
+  record INVc INr;
+  record RecVc Recr;
+  row RecVc Recrw;
+  Integer i,rwcnt;
+  val prcval,newqty,newsugqty;
+  
+  Recr.Code = recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    rwcnt = MatRowCnt(Recr);
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.Item==itemcode) then begin
+        if (Recrw.OutQty>0) then begin
+          prcval = Recrw.OutQty;
+          i = rwcnt;
+        end;
+      end;
+    end;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Recr,i,Recrw);
+      if (Recrw.InQty!=0) then begin
+        INr.Code = Recrw.Item;
+        if (ReadFirstMain(INr,1,true)) then begin
+          newqty = round(((planqty * Recrw.InQty) / prcval)+49999.00/100000.00,SetRoundModeD(0));
+          newsugqty = round(((plansugqty * Recrw.InQty) / prcval)+0.49999,SetRoundModeD(0));
+          if (nonblank(INr.Recepy)) then begin
+//            ExpandRecepy_ProdPlan(INr.Code,INr.Recepy,newsugqty,newqty,aitemcode,asugqty,aqty,aneeded,acnt);// wil be pasted while editing
+          end else begin
+            AddToArray(INr.Code,newsugqty,newqty,needed,aitemcode,asugqty,aqty,aneeded,acnt);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure StoreProdPlanComponents(string itemcode,val sugqty,val qty,Date needed,record ProdPlanVc ProdPlanr)
+begin
+  record ProdPlanCompVc PPCr;
+  record INVc INr;
+  
+  RecordNew(PPCr);
+  PPCr.ItemCode = itemcode;
+  if (ReadFirstItem(itemcode,INr,false,false)) then begin
+    PPCr.Comment = INr.Name;
+  end;
+  PPCr.StartDate = ProdPlanr.StartDate;
+  PPCr.EndDate = ProdPlanr.EndDate;
+  PPCr.NeededDate = needed;
+  if (blankdate(PPCr.NeededDate)) then begin
+    PPCr.NeededDate = ProdPlanr.EndDate;
+  end;
+  PPCr.ProdPlanSer = ProdPlanr.SerNr;
+  PPCr.SugQty = sugqty;
+  PPCr.Qty = qty;
+  PPCr.SerNr = NextSerNr("ProdPlanCompVc",PPCr.StartDate,-1,false,"");
+  if (RecordStore(PPCr,false)) then begin end;
+  return;
+end;
+
+updating procedure SaveProdPlanComponents(record ProdPlanVc ProdPlanr)
+begin
+  row ProdPlanVc PPrw;
+  Integer i,rwcnt;
+  record INVc INr;
+  Array string 255 aitemcode;
+  Array val aqty;
+  Array val asugqty;
+  Array Date aneeded;
+  Integer acnt;
+  
+  rwcnt = MatRowCnt(ProdPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdPlanr,i,PPrw);
+    if (ReadFirstItem(PPrw.ItemCode,INr,false,false)) then begin
+      if (nonblank(INr.Recepy)) then begin
+        ExpandRecepy_ProdPlan(INr.Code,INr.Recepy,PPrw.SugQty,PPrw.Qty,PPrw.ProdStartDate,aitemcode,asugqty,aqty,aneeded,acnt);
+      end;
+    end;
+  end;
+  for (i=0;i<acnt;i=i+1) begin
+    StoreProdPlanComponents(aitemcode[i],asugqty[i],aqty[i],aneeded[i],ProdPlanr);
+  end;
+  return;
+end;
+
+global
+updating procedure DeleteProdPlanComponents(record ProdPlanVc ProdPlanr)
+begin
+  record ProdPlanCompVc PPCr;
+  Boolean foundf;
+  
+  PPCr.ProdPlanSer = ProdPlanr.SerNr;
+  foundf = true;
+  while (LoopKey("ProdPlanSer",PPCr,1,foundf)) begin
+    if (PPCr.ProdPlanSer!=ProdPlanr.SerNr) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      RecordDelete(PPCr);
+      StepBack(PPCr);
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt ProdPlanVcRecordDefaults(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Time blankt;
+  row ProdPlanVc ProdPlanrw;
+  Integer i,rwcnt;
+  Date td;
+  
+  ProdPlanr.StartDate = CurrentDate;
+  ProdPlanr.EndDate = AddDay(AddMonth(CurrentDate,1),-1);
+  td = CurrentDate; 
+  td.day = 1;
+  ProdPlanr.StartDate = td;
+  ProdPlanr.EndDate = AddDay(AddMonth(td,1),-1);
+    
+  ProdPlanr.OKFlag = 0;
+  ProdPlanr.Closed = 0;
+  ProdPlanr.SerNr = -1;
+  rwcnt = MatRowCnt(ProdPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdPlanr,i,ProdPlanrw);
+    ProdPlanrw.ProdOrder = -1;
+    MatRowPut(ProdPlanr,i,ProdPlanrw);
+  end;
+  if (SingleUserMode) then begin
+    ProdPlanr.SerNr = NextSerNr("ProdPlanVc",ProdPlanr.CreateDate,-1,false,"");
+  end;
+  ProdPlanVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt ProdPlanVcRecordDuplicate(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Date blankd;
+
+  ProdPlanr.OKFlag = 0;
+  ProdPlanr.Closed = 0;
+  ProdPlanr.SerNr = -1;
+  if (SingleUserMode) then begin
+    ProdPlanr.SerNr = NextSerNr("ProdPlanVc",ProdPlanr.CreateDate,-1,false,"");
+  end;
+  ProdPlanVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+function Boolean CheckIfProdPlanExists(string itemcode,LongInt sernr,Date startdate,Date enddate)
+begin
+  Boolean res;
+  record ProdPlanVc PPr;
+  row ProdPlanVc PPrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  string 255 ckey;
+  
+  found = true;
+  ckey = "ItemCodeSD:";
+  ckey = ckey & itemcode;
+  PPr.Closed = 0;
+  PPr.StartDate = startdate;
+  while (LoopKey(ckey,PPr,2,found)) begin
+    if (PPr.Closed!=0) then begin found = false; end;
+    if (PPr.StartDate>enddate) then begin 
+      found = false;
+    end;
+    testf = found;
+    if (PPr.EndDate<startdate) then begin  testf = false; end;
+    if (PPr.SerNr==sernr) then begin testf = false; end;
+    if (testf) then begin
+/*
+       res = true;
+       goto LCheckIfProdPlanExists;
+*/
+      rwcnt = MatRowCnt(PPr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(PPr,i,PPrw);
+        if (PPrw.stp!=kProdPlanRowTypeSubrecipe and PPrw.ItemCode==itemcode) then begin
+          res = true;
+          goto LCheckIfProdPlanExists;
+        end;
+      end;
+    end;
+  end;
+  ResetLoop(PPr);
+  found = true;
+  ckey = "ItemCodeED:";
+  ckey = ckey & itemcode;
+  PPr.Closed = 0;
+  PPr.EndDate = startdate;
+  while (LoopKey(ckey,PPr,2,found)) begin
+    if (PPr.Closed!=0) then begin found = false; end;
+    testf = found;
+    if (DateInRange(startdate,PPr.StartDate,PPr.EndDate)==false) then begin
+      if (DateInRange(enddate,PPr.StartDate,PPr.EndDate)==false) then begin
+        testf = false;
+      end;
+    end;
+    if (PPr.SerNr==sernr) then begin testf = false; end;
+    if (testf) then begin
+/*
+       res = true;
+       goto LCheckIfProdPlanExists;
+*/    
+      rwcnt = MatRowCnt(PPr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(PPr,i,PPrw);
+        if (PPrw.stp!=kProdPlanRowTypeSubrecipe and PPrw.ItemCode==itemcode) then begin
+          res = true;
+          goto LCheckIfProdPlanExists;
+        end;
+      end;
+    end;
+  end;
+LCheckIfProdPlanExists:;
+  CheckIfProdPlanExists = res;
+  return;
+end;
+
+global
+function LongInt ProdPlanVcRecordCheck(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row ProdPlanVc PPrw;
+  Integer insertmode,updatemode;
+  Integer i,rwcnt;
+  Boolean transf,gentrans;
+  record SFPeriodsBlock SFPb; 
+  
+  BlockLoad(SFPb);  
+  insertmode = 1;
+  updatemode = 2;
+  if (ProdPlanr.SerNr==-1) then begin
+    ProdPlanr.SerNr = NextSerNr("ProdPlanVc",ProdPlanr.CreateDate,-1,false,"");
+  end;
+  if (ProdPlanr.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (ProdPlan2r.OKFlag==0) then begin transf = true; end;
+    end;
+  end;
+  if (SerNrTestProdPlanVc(ProdPlanr.SerNr,ProdPlanr.StartDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto LProdPlanVcRecordCheck;
+  end;
+  if (transf) then begin
+    if (UserCanAction("ProdPlanOK",true)==false) then begin
+      RecordCheckError(1274,StringFromStringSet(3,"ProdPlanOK"),-1,"SerNr");      
+      res = -1; 
+      goto LProdPlanVcRecordCheck;
+    end;
+  end;  
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      if (GetDay(ProdPlanr.StartDate)!=1) then begin
+        RecordCheckError(20851,"",-1,"StartDate");      
+        res = -1; 
+        goto LProdPlanVcRecordCheck;
+      end;
+      if (GetDay(ProdPlanr.EndDate)!=DaysInMonth(GetYear(ProdPlanr.StartDate),GetMonth(ProdPlanr.StartDate))) then begin
+        RecordCheckError(20851,"",-1,"EndDate");      
+        res = -1; 
+        goto LProdPlanVcRecordCheck;
+      end;
+    case kForecastPeriodTypeWeeks:
+      if (GetDateId(ProdPlanr.StartDate)!=1) then begin
+        RecordCheckError(20851,"",-1,"StartDate");      
+        res = -1; 
+        goto LProdPlanVcRecordCheck;
+      end;
+      if (ProdPlanr.EndDate!=AddDay(ProdPlanr.StartDate,-GetDateId(ProdPlanr.StartDate)+7)) then begin
+        RecordCheckError(20851,"",-1,"EndDate");      
+        res = -1; 
+        goto LProdPlanVcRecordCheck;
+      end;
+  end;
+  rwcnt = MatRowCnt(ProdPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdPlanr,i,PPrw);
+    if (CheckIfProdPlanExists(PPrw.ItemCode,ProdPlanr.SerNr,ProdPlanr.StartDate,ProdPlanr.EndDate)) then begin
+      RecordCheckError(1547,"",i,"ItemCode");      
+      res = -1; 
+      goto LProdPlanVcRecordCheck;
+    end;
+  end;
+  
+  res = 0;
+LProdPlanVcRecordCheck:;  
+  ProdPlanVcRecordCheck = res;
+  RETURN;
+END;
+
+procedure SetEarliestProdDate(var record ProdPlanVc ProdPlanp)
+BEGIN
+  Integer i,rwcnt;
+  row ProdPlanVc ProdPlanrw;
+  Date bldat;
+
+  ProdPlanp.EarliestProdDate = bldat;
+  rwcnt = MatRowCnt(ProdPlanp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdPlanp,i,ProdPlanrw);
+    if (blankdate(ProdPlanp.EarliestProdDate)) then begin
+      ProdPlanp.EarliestProdDate = ProdPlanrw.ProdStartDate;
+    end else begin
+      if (nonblankdate(ProdPlanrw.ProdStartDate)) then begin
+        if (ProdPlanp.EarliestProdDate>ProdPlanrw.ProdStartDate) then begin
+          ProdPlanp.EarliestProdDate = ProdPlanrw.ProdStartDate;
+        end;
+      end;
+    end;
+  end;
+  if (blankdate(ProdPlanp.EarliestProdDate)) then begin
+    ProdPlanp.EarliestProdDate = ProdPlanp.EndDate;
+  end;
+  RETURN;
+END;
+
+global
+function LongInt ProdPlanVcRecordSave(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  ProdPlanr.CreateDate = CurrentDate;
+  SetEarliestProdDate(ProdPlanr);
+  if (ProdPlanr.OKFlag!=0) then begin
+    ProdPlanr.OKDate = CurrentDate;
+  end;
+  ProdPlanVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating function LongInt ProdPlanVcRecordSaveAfter(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (ProdPlanr.OKFlag!=0) then begin
+    SaveProdPlanComponents(ProdPlanr);
+  end;
+  ProdPlanVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdPlanVcRecordUpdate(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  SetEarliestProdDate(ProdPlanr);
+  if ((ProdPlanr.OKFlag!=0) and (ProdPlan2r.OKFlag==0)) then begin
+    ProdPlanr.OKDate = CurrentDate;
+  end;
+  ProdPlanVcRecordUpdate = res;
+  RETURN;
+END;
+
+global
+updating function LongInt ProdPlanVcRecordUpdateAfter(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((ProdPlanr.OKFlag!=0) and (ProdPlan2r.OKFlag==0)) then begin
+    SaveProdPlanComponents(ProdPlanr);
+  end;
+  if ((ProdPlanr.Closed!=0) and (ProdPlan2r.Closed==0)) then begin
+    DeleteProdPlanComponents(ProdPlanr);
+  end;
+  if ((ProdPlanr.OKFlag==0) and (ProdPlan2r.OKFlag!=0)) then begin
+    DeleteProdPlanComponents(ProdPlanr);
+  end;
+  ProdPlanVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt ProdPlanVcRecordRemoveAfter(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  DeleteProdPlanComponents(ProdPlanr);
+  ProdPlanVcRecordRemoveAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdPlanVcRecordRemoveTest(var record ProdPlanVc ProdPlanr,record ProdPlanVc ProdPlan2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record DBLockBlock DBLb;
+  
+  res = 1;
+  BlockLoad(DBLb);
+  if (ProdPlanr.OKFlag==0) then begin
+  end;
+  if (ProdPlanr.OKFlag!=0) then begin
+    if (ProdPlanr.StartDate>DBLb.DeleteBeforeDate) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+      res = 0;
+      goto LProdPlanVcRecordRemoveTest;
+    end;
+    if (ProdPlanr.EndDate<DBLb.DeleteBeforeDate) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+      res = 0;
+      goto LProdPlanVcRecordRemoveTest;
+    end;
+  end;
+LProdPlanVcRecordRemoveTest:;
+  ProdPlanVcRecordRemoveTest = res;  
+  return;
+end;
+

@@ -1,0 +1,221 @@
+//SwitchFlag:
+// 0 : Normal
+// 1 : Checkin Not real
+// 2 : Checkout Not real
+// 3 : Both Not real 
+
+remote updating function Integer CreateMailFromJobD(record JobVc,var record MailVc,var string,string);
+external function string 20 FindJobCustomerCode(record JobVc);
+
+global
+procedure BlockTool()
+begin  
+  Integer wn,nwn;
+  Record RcVc RepSpec;
+  record JobVc Jobr;
+  record HotelBlock HBr;
+  
+  BlockLoad(HBr);
+  nwn  = OpenWindow("BlockRoomVClass",1,wn,"","",RepSpec);  
+  DeselectWindow(nwn,false); 
+  ReportDefaults(RepSpec,"BlockRoomVClass");
+  RepSpec.repname    = "BlockRoomMn";
+  RepSpec.f3         = HBr.BlockStatus;
+  RepSpec.sStartDate = CurrentDate;
+  PutWindowRecord(nwn,RepSpec);
+  SelectWindow(nwn);   
+  return;
+end;
+
+global
+procedure MoveReservationWindow(LongInt resnr,string newroom,Date newdate)
+begin
+  record LocalMachineBlock LMb;
+  Integer wn,nwn;
+  Record RcVc RepSpec;
+  record JobVc Jobr;
+  Date StartDate,CDate;
+  Time StartTime,CTime;
+  
+  wn = CurWindow;
+  BlockLoad(LMb);
+  Jobr.SerNr = resnr;
+  if (ReadFirstMain(Jobr,1,true)) then begin
+    if (newdate!=Jobr.TransDate) then begin
+      StartDate = newdate;
+      StartTime = Jobr.StartTime;
+    end else begin
+      CDate = CurrentDate;
+      if (CDate<Jobr.TransDate) then begin
+        StartDate = Jobr.TransDate;
+      end else begin
+        if (CDate>Jobr.EndDate) then begin
+          StartDate = Jobr.EndDate;
+        end;
+      end;
+      CTime = CurrentTime;
+      if (CTime<Jobr.StartTime) then begin
+        StartTime = Jobr.StartTime;
+      end else begin
+        if (CTime>Jobr.EndTime) then begin
+          StartTime = Jobr.EndTime;
+        end;
+      end;
+    end;
+
+    nwn  = OpenWindow("SwitchRoomVClass",1,wn,"","",RepSpec);
+    DeselectWindow(nwn,false);
+    RepSpec.repname    = "SwitchRoomMn";
+    RepSpec.flags[1]   = wn;
+    RepSpec.ArtMode    = 2;
+    RepSpec.long1      = Jobr.SerNr;
+    RepSpec.f2         = Jobr.CUName;
+    RepSpec.f3         = Jobr.ResCode;
+    RepSpec.f4         = newroom;
+    RepSpec.FirstAcc   = LMb.ResLoc;
+    RepSpec.sStartDate = StartDate;
+    RepSpec.sStartTime = StartTime;
+    PutWindowRecord(nwn,RepSpec);
+    SelectWindow(nwn);
+  end;
+  return;
+end;
+
+global
+procedure SwitchRoomsm()
+begin  
+  Integer wn,nwn;
+  Record RcVc RepSpec;
+  record JobVc Jobr;
+  Date CDate;
+  record LocalMachineBlock LMb;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin   //normalmode not in edit mode
+    BlockLoad(LMb);
+    GetWindowRecord(wn,Jobr);
+    CDate = CurrentDate;
+    if (CDate < Jobr.TransDate) then begin
+      CDate = Jobr.TransDate;
+    end else begin
+      if (CDate > Jobr.EndDate) then begin
+       CDate = Jobr.EndDate;
+      end;
+    end;
+    nwn  = OpenWindow("SwitchRoomVClass",1,wn,"","",RepSpec);
+    DeselectWindow(nwn,false);
+    RepSpec.repname    = "SwitchRoomMn";
+    RepSpec.flags[1]   = wn;
+    RepSpec.ArtMode    = 1;
+    RepSpec.long1      = Jobr.SerNr;
+    RepSpec.f2         = Jobr.CUName;
+    RepSpec.f3         = Jobr.ResCode;
+    RepSpec.FirstAcc   = LMb.ResLoc;
+    RepSpec.sStartDate = CDate;
+    RepSpec.sStartTime = CurrentTime;
+    PutWindowRecord(nwn,RepSpec);
+    SelectWindow(nwn);
+  end else begin
+    Beep;
+  end;  
+  return;
+end;
+
+global 
+updating procedure CreateMailFromJobDsm()
+BEGIN
+  Integer wn,nwn;
+  record MailVc Mailr;
+  record JobVc Jobr;
+  Integer err;
+  string 255 warning,tstr,docname;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin//Rs_normal
+    GetWindowRecord(wn,Jobr);  
+    err = CreateMailFromJobD(Jobr,Mailr,warning,WindowFormName(wn));
+    if (err!=0) then begin
+      MessageBox(err,": " & warning);
+    end else begin
+      nwn = OpenWindow("MailDClass",1,0,"","",Mailr);
+    end;
+  end;
+  RETURN;
+END;
+
+global 
+procedure CCDetailsJobDsm()
+begin
+  Integer wn,nwn,rownr;
+  record JobVc Jobr;
+  row JobVc Jobrw;
+  record CreditCardVc CCr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,Jobr);
+  switch (WindowActiveField(wn)) begin
+    case "GuestCode":
+      rownr = WindowActiveRow(wn);
+      if (rownr<MatrowCnt(Jobr)) then begin
+        MatRowGet(Jobr,rownr,Jobrw);
+        CCr.CUCode = Jobrw.CUCode;
+        CCr.CUName = Jobrw.CUName;
+      end;
+    otherwise
+      CCr.CUCode = Jobr.CUCode;
+      CCr.CUName = Jobr.CUName;
+  end;
+  WindowFieldGoto(wn,Jobr,-1,"CreditCard",true);
+  nwn = OpenWindow("CreditCardDClass",1,wn,"","",CCr);
+  return;
+end;
+
+global
+function Boolean CreditCardDClassOnOKWindow(Integer wn)
+begin
+  Integer mwn;
+  record JobVc Jobr;
+  record CreditCardVc CCr;
+  
+  if (WindowState(wn)==0) then begin
+    GetWindowRecord(wn,CCr);
+    mwn = MotherWindow(wn);
+    switch (GetWindowFileName(mwn)) begin
+      case "JobVc":
+        GetWindowRecord(mwn,Jobr);
+        Jobr.CreditCard = CCr.CreditCardNr;
+        PutWindowRecord(mwn,Jobr);
+    end;
+  end;
+  CreditCardDClassOnOKWindow = true;
+  RETURN;
+END;
+
+global 
+procedure RsrtEventsJobDsm()
+begin
+  Integer wn;
+  record JobVc Jobr;
+  record RcVc RepSpec;
+
+  wn = CurWindow;
+  if (WindowState(wn)==Rs_normal) then begin
+    GetWindowRecord(wn,Jobr);
+    RepSpec.repname = "JobRsrtEventAvailRn";
+    if (Jobr.TransDate<CurrentDate) then begin
+      RepSpec.sStartDate = CurrentDate;
+      RepSpec.sStartTime = CurrentTime;
+    end else begin
+      RepSpec.sStartDate = Jobr.TransDate;
+      RepSpec.sStartTime = Jobr.StartTime;
+    end;
+    RepSpec.sEndDate = Jobr.EndDate;
+    RepSpec.sEndTime = Jobr.EndTime;
+    RepSpec.LastAcc = Jobr.Type;
+    RepSpec.long1 = Jobr.SerNr;
+    RepSpec.FirstAcc = "JobVc";
+    RepSpec.Media = mtScreen;    
+    RunReport(RepSpec,0);
+  end;
+  return;
+end;

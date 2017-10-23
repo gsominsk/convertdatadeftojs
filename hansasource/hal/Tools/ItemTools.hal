@@ -1,0 +1,312 @@
+external function Boolean TestArtCodeMatch(string,string);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+
+global
+procedure ItemDateTurnover(string item,string variety,string cust,string branchid,string class,string colsname,Date sdp,Date edp,string location,var val vp)
+begin
+  record ItemHistVc IHr;
+  Boolean TrHs,locationf,foundf,testf;
+  Integer i,rwcnt,keycnt;
+  record IVVc IVr;
+  row IVVc IVrw;  
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+  LongInt oldserno;
+  val v,v2;
+  string 255 key;
+  record TaxMatrixVc TMr;
+  
+  oldserno = -1;
+  vp = 0;
+  locationf = nonblank(location);
+  if (locationf) then begin
+    IHr.ArtCode = item;
+    IHr.Location = location;
+    IHr.TransDate = sdp;
+    keycnt = 3;
+    key = "ArtCodeLoc";
+  end else begin    
+    IHr.ArtCode = item;
+    IHr.TransDate = sdp;
+    keycnt = 2;
+    key = "ArtCode";
+  end;
+  TrHs = true;
+  while (LoopKey(key,IHr,keycnt,TrHs)) begin
+    if (IHr.TransDate>edp) then begin
+      TrHs = false;
+    end;
+    if (TrHs) then begin
+      if (IHr.ArtCode<>item) then begin
+        TrHs = false;
+      end;  
+    end;
+    if (locationf==true) then begin
+      if (TrHs) then begin
+        if (IHr.Location<>location) then begin
+          TrHs = false;
+        end;  
+      end;
+    end;
+    if (TrHs) then begin
+      if ((IHr.FileName=="IVVc") and (IHr.TransNr!=oldserno)) then begin
+        IVr.SerNr = IHr.TransNr;
+        if (ReadFirstMain(IVr,1,false)) then begin          
+          oldserno = IVr.SerNr;
+          testf = true;
+          if (IVr.Invalid!=0) then begin testf = false; end;
+          if ((nonblank(cust)) and (IVr.CustCode!=cust)) then begin testf = false; end;
+          if ((nonblank(branchid)) and (IVr.BranchID!=branchid)) then begin testf = false; end;
+          if (testf) then begin
+              rwcnt = MatRowCnt(IVr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(IVr,i,IVrw);
+                if (IVrw.ovst==0) then begin
+                  if (locationf==true) then begin
+                    foundf = (IVrw.Location==location);
+                    if (foundf==false) then begin
+                      foundf = (IVr.Location==location);
+                    end;
+                  end else begin
+                    foundf = true;
+                  end;
+                  if (foundf) then begin
+                    switch (IVrw.stp) begin
+                      case kInvoiceRowTypeStructuredItemComponent:
+                        goto LkInvoiceRowTypeNormal;
+                      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;
+                        if (TestArtCodeMatch(IVrw.ArtCode,item)) then begin
+                          v = 0;
+                          if (colsname=="quant") then begin
+                            v = IVrw.Quant;
+                          end;  
+                          if ((colsname=="salesexvatbase") or (colsname=="salesexclvat")) then begin
+                            UnpackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+                            FindSalesExVat(TMr,IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT,v);
+                            v = MulRateToBase1(IVr.CurncyCode,v,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                          end;  
+                          if ((colsname=="gpbase") or (colsname=="grossprofit")) then begin
+                            v = IVrw.rowGP;
+                          end;  
+                          if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                            vp = vp - v;
+                          end else begin
+                            vp = vp + v; 
+                          end;
+                        end;
+                      case kInvoiceRowTypeCorrection:
+                        if (TestArtCodeMatch(IVrw.ArtCode,item)) then begin
+                          v = 0;
+                          if (colsname=="quant") then begin
+                            v = IVrw.Quant;
+                          end;  
+                          if ((colsname=="salesexvatbase") or (colsname=="salesexclvat")) then begin
+                            UnpackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+                            FindSalesExVat(TMr,IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT,v);
+                            v = MulRateToBase1(IVr.CurncyCode,v,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                          end;  
+                          if ((colsname=="gpbase") or (colsname=="grossprofit")) then begin
+                            v = IVrw.rowGP;
+                          end;  
+                          if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                            vp = vp + v;
+                          end else begin
+                            vp = vp - v; 
+                          end;
+                        end;
+                    end;
+                  end;
+                end;
+              end; //for 
+          end;
+        end;
+      end;
+    end;//TrHs
+  end;
+  
+  if (locationf) then begin
+    keycnt = 2;
+    key = "Location";
+  end else begin
+    keycnt = 1;
+    key = "ArtCode:" & item;
+  end;
+  TrHs = true;
+  IVCashr.Location = location;
+  IVCashr.TransDate = sdp;
+  while (LoopKey(key,IVCashr,keycnt,TrHs)) begin
+    if (locationf) then begin
+      if (IVCashr.Location!=location) then begin TrHs = false; end;
+    end;
+    if (DateInRange(IVCashr.TransDate,sdp,edp)==false) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(cust)) then begin
+        if (IVCashr.CustCode!=cust) then begin testf = false; end;
+      end;
+      if (nonblank(branchid)) then begin
+        if (IVCashr.BranchID!=branchid) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          testf = true;
+          if (nonblank(item)) then begin
+            if (TestArtCodeMatch(IVCashrw.ArtCode,item)==false) then begin testf = false; end;
+          end;
+          if (IVCashrw.stp!=kInvoiceRowTypeStructuredItemComponent and IVCashrw.stp!=kInvoiceRowTypeNormal) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            switch (colsname) begin
+              case "quant": v = IVCashrw.Quant;
+              case "grossprofit": v = IVCashrw.rowGP;
+              case "salesexclvat": v = MulRateToBase1(IVCashr.CurncyCode,IVCashrw.Sum,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+            end;
+            vp = vp + v;                                        
+          end;
+        end;
+      end;
+    end;
+  end;
+  
+  if (locationf) then begin
+    keycnt = 2;
+    key = "Location";
+  end else begin
+    keycnt = 1;
+    key = "ArtCode:" & item;
+  end;
+  TrHs = true;
+  RestAccr.Location = location;
+  RestAccr.TransDate = sdp;
+  while (LoopKey(key,RestAccr,keycnt,TrHs)) begin
+    if (locationf) then begin
+      if (RestAccr.Location!=location) then begin TrHs = false; end;
+    end;
+    if (DateInRange(RestAccr.TransDate,sdp,edp)==false) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(cust)) then begin
+        if (RestAccr.CustCode!=cust) then begin testf = false; end;
+      end;
+      if (nonblank(branchid)) then begin
+        if (RestAccr.BranchID!=branchid) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          testf = true;
+          if (nonblank(item)) then begin
+            if (TestArtCodeMatch(RestAccrw.ArtCode,item)==false) then begin testf = false; end;
+          end;
+          if (RestAccrw.stp!=kInvoiceRowTypeStructuredItemComponent and RestAccrw.stp!=kInvoiceRowTypeNormal) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            switch (colsname) begin
+              case "quant": v = RestAccrw.Quant;
+              case "grossprofit": v = RestAccrw.rowGP;
+              case "salesexclvat": v = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+            end;
+            vp = vp + v;                                        
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+function Boolean INVc_AllowSales(record INVc INr,var LongInt ErrorCode)
+begin
+  Boolean res;
+  
+  res = true;
+  ErrorCode = 0;
+  switch (INr.ItemType) begin
+    case kItemTypePlain:
+      if (UserCanAction("DisallowSalesPlain",false)) then begin
+        res = false;
+        ErrorCode = 22095;
+      end;
+    case kItemTypeStocked:
+      if (UserCanAction("DisallowSalesStocked",false)) then begin
+        res = false;
+        ErrorCode = 22096;
+      end;
+    case kItemTypeStructured:
+      if (UserCanAction("DisallowSalesStructured",false)) then begin
+        res = false;
+        ErrorCode = 22097;
+      end;
+    case kItemTypeService:
+      if (UserCanAction("DisallowSalesService",false)) then begin
+        res = false;
+        ErrorCode = 22098;
+      end;
+  end;
+  INVc_AllowSales = res;
+  return;
+end;
+
+function Boolean FindNewestItemHist(string artcode,record ItemHistVc resIHr)
+begin
+  Boolean res;
+  record ItemHistVc IHr;
+  Boolean found;
+  
+  RecordClear(resIHr);
+  IHr.ArtCode = artcode;
+  found = true;
+  while (LoopBackKey("ArtCode",IHr,1,found)) begin
+    if (IHr.ArtCode!=artcode) then begin
+      found = false;
+    end;
+    if (found) then begin
+      if (IHr.Invalid==0) and (IHr.Qty<0) then begin
+        RecordCopy(resIHr,IHr);
+        found = false;
+        res = true;
+      end;
+    end;
+  end;
+  FindNewestItemHist = res;
+  return;
+end;
+
+global
+function Boolean AnyHistoryAfterInvoice(record IVVc IVr)
+begin
+  Boolean res;
+  Integer i,rwcnt;
+  row IVVc IVrw;
+  record ItemHistVc IHr;
+  
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+      if (FindNewestItemHist(IVrw.ArtCode,IHr)) then begin
+        if (IHr.FileName!="IVVc") then begin
+          res = true;
+          goto LAnyHistoryAfterInvoice;
+        end;
+        if (IHr.TransNr!=IVr.SerNr) then begin
+          res = true;
+          goto LAnyHistoryAfterInvoice;
+        end;
+      end;
+    end;
+  end;
+LAnyHistoryAfterInvoice:;  
+  AnyHistoryAfterInvoice = res;
+  return;
+end;

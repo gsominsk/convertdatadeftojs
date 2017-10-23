@@ -1,0 +1,240 @@
+external function roundmode SetRoundModeD(Integer);
+remote function Boolean RentChrgVc_PasteItem(var record RentChrgVc,var string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+
+function Boolean RentChrgDClassItemEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record RentChrgVc RentChrgr;
+  string 255 warning;
+
+  GetWindowRecord(wn,RentChrgr);    
+  if ((changed!=0) or ((blank(RentChrgr.Spec)) and (nonblank(RentChrgr.Item)))) then begin
+    if (RentChrgVc_PasteItem(RentChrgr,warning)) then begin
+      PutWindowRecord(wn,RentChrgr);
+/*
+      if (nonblank(warning)) then begin
+        MessageBox(0,warning);
+      end;
+*/
+    end else begin
+      Beep;
+    end;
+  end;
+  RentChrgDClassItemEFAfter = true;
+  return;
+end;
+
+procedure RentChrgChSum(Integer wn)
+begin
+  record RentChrgVc RentChrgr;
+  val factor,s;
+  val tomultiply;
+ 
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,RentChrgr);
+  factor = BlankVal;
+  if (RentChrgr.ItemQuant==0) then begin
+    tomultiply = 1;
+  end else begin
+    tomultiply = RentChrgr.ItemQuant;
+  end;
+  CalcSum(RentChrgr.Quant*tomultiply,RentChrgr.Price,factor,RentChrgr.vRebate,s,0);
+  RentChrgr.Sum = s;
+  PutWindowRecord(wn,RentChrgr);
+  return;
+end;
+
+function Boolean RentChrgDClassPriceEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentChrgChSum(wn);
+  end;
+  RentChrgDClassPriceEFAfter = true;
+  return;
+end;
+
+function Boolean RentChrgDClassvRebateEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentChrgChSum(wn);
+  end;
+  RentChrgDClassvRebateEFAfter = true;
+  return;
+end;
+
+function Boolean RentChrgDClassQuantEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  if (changedf!=0) then begin
+    RentChrgChSum(wn);
+  end;
+  RentChrgDClassQuantEFAfter = true;
+  return;
+end;
+
+function Boolean RentChrgDClassSumEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin
+  record RentChrgVc RentChrgr;
+  val q,s,hund;
+ 
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,RentChrgr);
+    DeselectWindow(wn,false);
+    q = 1;
+    hund = 100;
+    s = RentChrgr.Sum;
+    s = s/q;
+    s = RentChrgr.Price - s;
+    s = s*100;
+    s = s/RentChrgr.Price;
+    RentChrgr.vRebate = Round(s,SetRoundModeD(1));
+    PutWindowRecord(wn,RentChrgr);
+  end;
+  RentChrgDClassSumEFAfter = true;
+  return;
+end;
+
+global
+function Boolean RentChrgDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "Item": res = RentChrgDClassItemEFAfter(wn,fn,rownr,changed);
+    case "Price": res = RentChrgDClassPriceEFAfter(wn,fn,rownr,changed);
+    case "vRebate": res = RentChrgDClassvRebateEFAfter(wn,fn,rownr,changed);
+    case "Sum": res = RentChrgDClassSumEFAfter(wn,fn,rownr,changed);
+    case "Quant": res = RentChrgDClassQuantEFAfter(wn,fn,rownr,changed);
+  end;
+  RentChrgDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+function Boolean RentChrgVcEFActiveCheck(string fieldname,Integer wn,Integer wnst)
+BEGIN
+  Boolean res;
+  record RentChrgVc RentChrgr;
+  Integer updatemode;
+
+  updatemode = 2;//Rs_update
+  res = true;
+  switch (fieldname) begin
+    otherwise
+      if (wnst==updatemode) then begin
+        GetWindowRecord(wn,RentChrgr);
+        if (RentChrgr.InvNr>0) then begin
+          res = false;
+        end;  
+      end;  
+  end;
+  RentChrgVcEFActiveCheck = res;
+  RETURN;
+END;
+
+global
+function Boolean RentChrgDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+  
+  res = RentChrgVcEFActiveCheck(fieldname,wn,wnst);
+  RentChrgDClassActiveEditField = res;
+  return;
+end;
+
+function Boolean RentChrgButtonAction(string fieldname,Integer wn,Integer wnst)
+begin
+  Boolean res;
+  record RentChrgVc RentChrgr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,RentChrgr);
+    if (RentChrgr.InvNr>0) then begin
+      switch (fieldname) begin
+        otherwise
+          res = false;
+      end;
+    end;
+  end;
+  RentChrgButtonAction = res;
+  return;
+end;
+
+global
+function Boolean RentChrgDClassInvTimeButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+
+  res = RentChrgButtonAction("InvTime",wn,WindowState(wn));
+  RentChrgDClassInvTimeButtonAction = res;
+  RETURN;
+END;
+
+global
+updating procedure RentChrgToInvDsm()
+begin
+  record RentChrgVc RentChrgr;
+  record RentChrgVc oldRentChrgr;
+  Integer wn;
+
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,RentChrgr);
+  if (RentChrgr.InvNr>0) then begin
+    RecordCopy(oldRentChrgr,RentChrgr);
+    RentChrgr.InvNr = -1;
+    if (RecordUpdate(oldRentChrgr,RentChrgr,false)<>0) then begin
+    end;
+    CloseWindow(wn);
+  end;
+  return;
+end;
+
+function Boolean AgreeTypeDClassTemplateEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record AgreeTypeVc AgreeTyper;
+  row AgreeTypeVc AgreeTyperw;
+  record AdvPriceTemplVc AdvPricer;
+  row AdvPriceTemplVc AdvPricerw;
+  Integer i,rwcnt;
+
+  GetWindowRecord(wn,AgreeTyper);    
+  if (changed!=0) then begin
+    AdvPricer.Code = AgreeTyper.Template;
+    if (ReadFirstMain(AdvPricer,1,true)) then begin
+      rwcnt = MatRowCnt(AgreeTyper);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowDelete(AgreeTyper,0);
+      end;
+      rwcnt = MatRowCnt(AdvPricer);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(AdvPricer,i,AdvPricerw);
+        AgreeTyperw.PeriodType = AdvPricerw.PeriodType;
+        AgreeTyperw.Length = AdvPricerw.Length;
+        AgreeTyperw.PeriodUnit = AdvPricerw.PeriodUnit;
+        AgreeTyperw.InvBeforeDays = AdvPricerw.InvBeforeDays;
+        AgreeTyperw.Comment = AdvPricerw.Comment;
+        MatRowPut(AgreeTyper,MatRowCnt(AgreeTyper),AgreeTyperw);
+      end;
+      PutWindowRecord(wn,AgreeTyper);
+    end;
+  end;
+  AgreeTypeDClassTemplateEFAfter = true;
+  return;
+end;
+
+global
+function Boolean AgreeTypeDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "Template": res = AgreeTypeDClassTemplateEFAfter(wn,fn,rownr,changed);
+  end;
+  AgreeTypeDClassAfterEditField = res;
+  RETURN;
+END;
+

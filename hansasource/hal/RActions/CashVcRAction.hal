@@ -1,0 +1,271 @@
+external updating procedure CashUpdateCashupHist(record CashVc);
+external function Boolean POSBalanceExistsAfterThis(Date,Time,string,string);
+external function Boolean PayModeRegistered(string);
+external function Boolean IsSessionOpen(string,string,Date,Time);
+external function Boolean IsUnOKAllowed(string,Date);
+external function Boolean RequireOpenSession(string);
+external function string 255 CurDrawerCode(string);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function Boolean GetAccName(string,var string,Integer);
+
+global
+function LongInt CashVcRecordDefaults(var record CashVc Cashr,record CashVc Cash2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  Cashr.TransDate = CurrentDate;
+  Cashr.TransTime = CurrentTime;
+  Cashr.Total = blankval;
+  Cashr.SerNr = -1;
+  Cashr.SkipUpdatTime = 0;
+  Cashr.Event = -1;
+  if (SingleUserMode) then begin
+    Cashr.SerNr = NextSerNr("CashVc",Cashr.TransDate,-1,true,"");
+  end;
+  Cashr.MachineName = CurMachineName;
+  Cashr.Drawer = CurDrawerCode(Cashr.MachineName);
+  CashVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt CashVcRecordDuplicate(var record CashVc Cashr,record CashVc Cash2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+      
+  Cashr.TransDate = CurrentDate;
+  Cashr.TransTime = CurrentTime;
+  Cashr.Total = blankval;
+  Cashr.Drawer = "";
+  Cashr.SkipUpdatTime = 0;
+  Cashr.SerNr = -1;
+  if (SingleUserMode) then begin
+    Cashr.SerNr = NextSerNr("CashVc",Cashr.TransDate,-1,true,"");
+  end;
+  Cashr.OKFlag = 0;
+  Cashr.MachineName = CurMachineName;
+  Cashr.Drawer = CurDrawerCode(Cashr.MachineName);
+  CashVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt CashVcRecordSaveAfter(var record CashVc Cashr,record CashVc Cash2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record UserVc Userr;
+  
+  Userr.Code = Cashr.Sign;
+  if (ReadFirstMain(Userr,1,true)) then begin end;
+  Cashr.SalesGroup = Userr.SalesGroup;//On save after cause on save Sign is blank
+  if (Cashr.OKFlag!=0) then begin
+    CashUpdateCashupHist(Cashr);
+  end;
+  CashVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+updating function LongInt CashVcRecordUpdateAfter(var record CashVc Cashr,record CashVc Cash2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  if (Cashr.OKFlag!=0 and Cash2r.OKFlag==0) then begin
+    CashUpdateCashupHist(Cashr);
+  end;
+  CashVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+function LongInt CashVcRecordImport(var record CashVc Cashr,record CashVc Cash2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record UserVc Userr;
+  
+  if (blank(Cashr.SalesGroup)) then begin
+    Userr.Code = Cashr.Sign;
+    if (ReadFirstMain(Userr,1,true)) then begin end;
+    Cashr.SalesGroup = Userr.SalesGroup;
+  end;
+  CashVcRecordImport = res;
+  return;
+end;
+
+global
+function Integer GetBackOfficeAccount(string paymode,var string boacc)
+begin
+  Integer res;
+  record CashierDefBlock CDb;
+  row PMBlock PMrw;
+  
+  boacc = "";
+  BlockLoad(CDb);
+  if (GetPMRow(paymode,PMrw)) then begin end;
+  boacc = PMrw.BackOfficeAcc;
+  if (blank(boacc)) then begin
+    boacc = CDb.CredAcc;
+  end;
+  if (blank(boacc)) then begin
+    res = 2174;
+  end;  
+  GetBackOfficeAccount = res;
+  return;
+end;
+
+global
+function LongInt CashVcRecordCheck(var record CashVc Cashr,record CashVc Cash2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  record CashVc locCashr;
+  row CashVc Cashrw;  
+  row CashVc Cash2rw;  
+  row PMBlock PMrw;
+  Integer insertmode,updatemode;
+  Boolean unokf;
+  Integer i,j,rwcnt;
+  string 255 tstr;
+  string 40 credacc;
+  record CashierDefBlock CDr;
+  
+  BlockLoad(CDr);
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update  
+  if (Cashr.OKFlag==0) then begin
+    if (stat==updatemode) then begin
+      if (Cash2r.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    if (IsUnOKAllowed("CashVc",Cashr.TransDate)==false) then begin
+      RecordCheckError(1046,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LCashVcRecordCheck;
+  end;
+  rwcnt = MatRowCnt(Cashr);
+  if (rwcnt==0) then begin
+    RecordCheckError(1058,"",0,"PMCode");      
+    res = -1;
+    goto LCashVcRecordCheck;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Cashr,i,Cashrw);
+    if (nonblank(Cashrw.PMCode)) then begin
+      if (PayModeRegistered(Cashrw.PMCode)==false) then begin
+        RecordCheckError(1120,"",i,"PMCode");      
+        res = -1;
+        goto LCashVcRecordCheck;
+      end;
+    end;
+    for (j=0;j<i;j=j+1) begin
+      MatRowGet(Cashr,j,Cash2rw);
+      if (Cash2rw.PMCode==Cashrw.PMCode) and (Cash2rw.Denomination==Cashrw.Denomination) then begin
+        RecordCheckError(1547,"",i,"PMCode");   
+        res = -1; 
+        goto LCashVcRecordCheck;  
+      end;
+    end;
+    if ((Cashr.OKFlag!=0) and ((Cash2r.OKFlag==0) or (stat==insertmode))) then begin
+      if (blank(Cashr.CredAcc)) then begin
+        res = GetBackOfficeAccount(Cashrw.PMCode,tstr);
+        if (blank(tstr)) then begin
+          RecordCheckError(res,"",-1,"CredAcc");   
+          res = -1; 
+          goto LCashVcRecordCheck;  
+        end;
+      end;
+    end;
+  end;
+  if ((Cashr.OKFlag!=0) and ((Cash2r.OKFlag==0) or (stat==insertmode))) then begin
+    if (blank(Cashr.CredAcc)) then begin
+      switch (Cashr.Event) begin
+        case 0: Cashr.CredAcc = CDr.CredAcc;
+        case 1: Cashr.CredAcc = CDr.CredAcc;
+        case 2: Cashr.CredAcc = CDr.WriteOffAcc;
+      end;
+    end;
+    if (nonblank(Cashr.CredAcc)) then begin
+      if (GetAccName(Cashr.CredAcc,tstr,60)==false) then begin
+        RecordCheckError(1290,"",-1,"CredAcc");   
+        res = -1; 
+        goto LCashVcRecordCheck;  
+      end;
+    end;
+  end;
+  if (Cashr.Event<0) then begin
+    RecordCheckError(20561,"",-1,"SerNr");   
+    res = -1; 
+    goto LCashVcRecordCheck;  
+  end;
+  if (stat==updatemode) then begin
+    if (Cashr.SerNr<=0) and (Cash2r.OKFlag==0) then begin
+      Cashr.SerNr = Cash2r.SerNr;
+    end;
+  end;  
+
+  if (blank(Cashr.MachineName)) then begin
+    RecordCheckError(1058,"",-1,"MachineName");   
+    res = -1; 
+    goto LCashVcRecordCheck;  
+  end;  
+  if (Cashr.SerNr<=0) then begin
+    Cashr.SerNr = NextSerNr("CashVc",Cashr.TransDate,-1,true,"");
+  end;
+  if (Cashr.SerNr<=0) then begin
+    RecordCheckError(1132,"",-1,"SerNr");
+    res = -1;
+    goto LCashVcRecordCheck;
+  end;
+  locCashr.SerNr = Cashr.SerNr;
+  if (ReadFirstMain(locCashr,1,true)) then begin    
+    if (locCashr.SerNr!=Cashr.SerNr) then begin
+      RecordCheckError(1547,"",-1,"SerNr");   
+      res = -1; 
+      goto LCashVcRecordCheck;  
+    end;
+  end;
+//it must be possible to run sustem without drawers
+  if (blank(Cashr.Drawer)) then begin
+    RecordCheckError(1058,"",-1,"Drawer");   
+    res = -1; 
+    goto LCashVcRecordCheck;  
+  end;  
+  if (RequireOpenSession(Cashr.MachineName)) then begin
+    if (Cashr.SkipUpdatTime==0) then begin
+      Cashr.TransDate = CurrentDate;
+      Cashr.TransTime = CurrentTime;
+    end;
+/* A casher count should be allowed inside or outside of session
+    if (IsSessionOpen(Cashr.MachineName,Cashr.Drawer,Cashr.TransDate,Cashr.TransTime)==false) then begin
+      RecordCheckError(2195,"",-1,"SerNr");      
+      res = -1;
+      goto LCashVcRecordCheck;
+    end;
+*/
+  end;
+  if (POSBalanceExistsAfterThis(Cashr.TransDate,Cashr.TransTime,Cashr.MachineName,Cashr.Drawer)) then begin
+    RecordCheckError(2194,"",-1,"TransDate");      
+    res = -1;
+    goto LCashVcRecordCheck;
+  end;
+LCashVcRecordCheck:;
+  CashVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt CashVcRecordRemoveTest(var record CashVc Cashr,record CashVc Cash2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (Cashr.OKFlag==0) then begin
+    res = 1;
+  end else begin
+    res = 0;
+  end;
+  CashVcRecordRemoveTest = res; 
+  RETURN;
+END;
+

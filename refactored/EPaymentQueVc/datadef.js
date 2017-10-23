@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fOPSerNr: { public: true, type: 'INTEGER' },
+     fStatus: { public: true, type: 'INTEGER' },
+     fCreationDate: { public: true, type: 'DATE' },
+     fCreationTime: { public: true, type: 'TIME' },
+     fCorspOPRows: { public: true, type: 'TEXT' },
+     fCompID: { public: true, type: 'TEXT' },
+     fPaymentFormat: { public: true, type: 'TEXT' },
+     fMsgFormat: { public: true, type: 'TEXT' },
+     fMath: { public: true, type: 'INTEGER' },
+     fPartner: { public: true, type: 'TEXT' },
+     fDBID: { public: true, type: 'TEXT' },
+     fType: { public: true, type: 'INTEGER' },
+     fNrOfPayments: { public: true, type: 'INTEGER' } },
+  indexes: { SerNrIndex452: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

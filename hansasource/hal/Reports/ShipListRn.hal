@@ -1,0 +1,399 @@
+external function roundmode GetVATRoundModeRB();
+external function roundmode DefaultRoundMode();
+external function val FindVAT(string,val,Integer,Integer);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure HTOKF(Integer,Integer, var string);
+external procedure HTDetailLevel(integer, var string);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure HT2Per(Date, Date , var string);
+
+procedure CalcVATBaseVAT(record SMVc SMr,Integer InclVAT,Integer NoTAXonVAT,var val s3)
+BEGIN
+  Integer i,rwcnt;
+  row SMVc SMrw;
+  val t;
+  
+  s3 = 0;
+  rwcnt = MatRowCnt(SMr);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    t = FindVAT(SMrw.VATCode,SMrw.DebVal,InclVAT,NoTAXonVAT);
+    t = Round(t,GetVATRoundModeRB);
+    s3 = t + s3;
+  end;
+  s3 = Round(s3,DefaultRoundMode);
+  RETURN;
+END;
+
+procedure GetShipValue(record SHVc SHp,record ORVc ORp,var val netp,var val totp)
+BEGIN
+  Integer i,rwcnt,orrowcnt;
+  row SHVc SHrw;
+  row ORVc ORrw;
+  val t;
+  val s,ms,ms2;
+  roundmode rndline,rndtotal,rndvat;
+  record VATCodeBlock VATr;
+  row VATCodeBlock VATrw;
+  Integer vatcnt,vati;
+  Boolean L12f;
+//dummy  
+  record SMVc SMr;
+  row SMVc SMrw; 
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  BlockLoad(VATr);
+  vatcnt = MatRowCnt(VATr);
+  for (vati=0; vati<vatcnt; vati=vati+1) begin
+    MatRowGet(VATr,vati,VATrw);
+    SMrw.VATCode = VATrw.VATCode;
+    SMrw.DebVal = 0;
+    SMrw.CredVal = 0;
+    MatRowPut(SMr,vati,SMrw);
+  end;
+  GetCurncyRoundoff(ORp.CurncyCode,ORp.PayDeal,"ORVc",rndtotal,rndline,rndvat);
+  rwcnt = MatRowCnt(SHp);
+  orrowcnt = MatRowCnt(ORp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SHp,i,SHrw);
+    if ((SHrw.OrdRow<orrowcnt) and (SHrw.OrdRow>=0)) then begin
+      MatRowGet(ORp,SHrw.OrdRow,ORrw);
+      CalcSum(SHrw.Ship,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,t,GenOptRec.UseDiscount);
+      s = s + Round(t,rndline);
+      L12f = false;
+      for (vati=0; vati<vatcnt; vati=vati+1) begin
+        if (L12f==false) then begin
+          MatRowGet(SMr,vati,SMrw);          
+          if (SMrw.VATCode==ORrw.VATCode) then begin
+            SMrw.DebVal = SMrw.DebVal + t;
+            MatRowPut(SMr,vati,SMrw);
+            L12f = true;
+          end;
+        end;  
+      end;      
+      if (L12f==false) then begin
+        if (vati>0) then begin
+          MatRowGet(SMr,0,SMrw);          
+          SMrw.DebVal = SMrw.DebVal + t;
+          MatRowPut(SMr,0,SMrw);
+        end;       
+      end;   
+    end;
+  end;
+  CalcVATBaseVAT(SMr,ORp.InclVAT,ORp.NoTAXonVAT,ms);
+  ms = Round(ms,rndvat);
+  if ((ORp.ExportFlag==1) or (ORp.ExportFlag==2)) then begin
+    if (ORp.InclVAT<>0) then begin
+      ms2 = s - ms;
+    end else begin
+      ms2 = s;
+    end;  
+    ms = 0;
+  end else begin
+    if (ORp.InclVAT<>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + ms;
+    end;  
+  end;
+  ms2 = Round(ms2,rndtotal);
+  netp = s;
+  totp = ms2;
+  RETURN;
+END;
+
+procedure RepShipPerItem(record SHVc SHp,record SHVc Accrp, var val ordp,var val totalq,var val totfifo)
+BEGIN
+  row SHVc SHrw;
+  row SHVc ACCrw2;
+  val amount,qty;
+  LongInt acumcnt,rwcnt;
+  Integer i,j;
+
+  rwcnt = MatRowCnt(SHp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    acumcnt = MatRowCnt(Accrp);
+    MatRowGet(SHp,i,SHrw);
+    if (SHrw.Ship<>0) then begin
+//JJ      amount = SHrw.Ship * SHrw.FIFO;
+      amount = SHrw.FIFORowVal;
+      qty = SHrw.Ship;
+      totfifo = totfifo + amount;
+      totalq = totalq + qty;
+    end else begin
+      amount = 0;
+      qty = 0;
+    end;
+    ordp = ordp + SHrw.Ordered;
+    for (j=0;j<acumcnt;j=j+1) begin
+      MatRowGet(Accrp,j,ACCrw2);
+      if (SHrw.ArtCode==ACCrw2.ArtCode) then begin
+        ACCrw2.Ordered = ACCrw2.Ordered + SHrw.Ordered;
+        ACCrw2.Ship = ACCrw2.Ship + qty;
+        ACCrw2.FIFO = ACCrw2.FIFO + amount;
+        MatRowPut(Accrp,j,ACCrw2);
+        goto L88;//??
+      end;
+    end;
+    SHrw.Ship = qty;
+    SHrw.FIFO = amount;
+    MatRowPut(Accrp,acumcnt,SHrw);
+L88:;
+  end;
+  RETURN;
+END;
+
+procedure RepShip(record SHVc SHp,var val ordtot,var val shptot)
+begin
+  Integer i,rwcnt;
+  row SHVc SHrw;
+  StartFormat(15);
+  OutLongInt(0,"DblSHVc",SHp.SerNr,false);
+  OutDate(60,0,SHp.ShipDate,false);
+  OutLongInt(130,0,SHp.OrderNr,false);
+  OutString(200,0,SHp.CustCode,false);
+  OutString(300,0,SHp.Addr0,false);
+  EndFormat;
+  StartFormat(15);
+  OutString(60,0,SHp.ShipMode,false);
+  OutString(300,0,SHp.Addr1,false);
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(300,0,SHp.Addr2,false);
+  EndFormat;
+  StartFormat(15);
+  OutString(300,0,SHp.Addr3,false);
+  EndFormat;
+  rwcnt = MatRowCnt(SHp);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(SHp,i,SHrw);
+    StartFormat(15);
+    OutString(20,0,SHrw.ArtCode,false);
+    OutString(120,0,SHrw.Spec,false);
+    OutString(300,0,SHrw.SerialNr,false);
+    OutVal(420,0,SHrw.Ordered,M4UVal,true);
+    OutVal(480,0,SHrw.Ship,M4UVal,true);
+    EndFormat;
+    ordtot = ordtot + SHrw.Ordered;
+    shptot = shptot + SHrw.Ship;
+  end;
+ return;
+end;
+
+function
+Boolean DateInTheRange(Date check,Date start,Date enddate)
+BEGIN
+  Boolean res;
+
+  res = true;
+  if (nonblankdate(start)) then begin
+    if (check<start) then begin res = false; end;
+  end;
+  if (nonblankdate(enddate)) then begin
+    if (check>enddate) then begin res = false; end;
+  end;
+  DateInTheRange = res;
+  RETURN;
+END;
+
+procedure HTObj(String a, var string tstr)
+begin
+ record ObjVc RUr;
+ Integer cnt;
+ cnt = 0;
+ if (cnt==1) then begin
+  RUr.Code = a;
+  if (ReadFirstMain(RUr,1,true)) then begin
+   tstr = USetStr(3015);
+   tstr = tstr & RUr.Code;
+   tstr = tstr & "  ";
+   tstr = tstr & RUr.Comment;
+  end else begin
+   tstr = USetStr(3015);
+   tstr = tstr & a;
+  end;
+ end else begin
+  tstr = USetStr(3015);
+  tstr = tstr & a;
+ end;
+return;
+end;
+
+global
+procedure ShipListRn(record RcVc RepSpec)
+BEGIN
+  record SHVc SHp;
+  record SHVc Accr;
+  row SHVc ACCrw;
+  record ORVc ORr;
+  Boolean TrHs;
+  Boolean testf;
+  Boolean orfound;
+  LongInt frorder,toorder;
+  LongInt afr,ato;
+  Integer rw ;
+  Integer i;
+  val t,ortot,shtot,t2,totfifo;
+  string 255 tstr;
+
+  afr = FirstInRange(RepSpec.f1,20);
+  ato = LastInRange(RepSpec.f1,20);  
+  frorder = FirstInRange(RepSpec.TransStr,20);
+  toorder = LastInRange(RepSpec.TransStr,20);  
+  
+  StartReportJob(USetStr(2596));
+   rw = 1;
+   HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   HTDetailLevel(RepSpec.ArtMode,tstr);
+   if (blank(tstr)) then begin
+     tstr = USetStr(2592);
+   end;  
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   
+   HTOKF(RepSpec.flags[1],RepSpec.flags[2],tstr);
+   if (nonblank(tstr)) then begin
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;  
+   if (nonblank(RepSpec.LastAcc)) then begin
+     tstr = USetStr(1824);
+     tstr = RepSpec.LastAcc;
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   if (nonblank(RepSpec.ObjStr)) then begin
+     HTObj(RepSpec.ObjStr,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+  EndHeader;
+  if (RepSpec.ArtMode==0) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(2582),false);
+      OutString(60,0,USetStr(2583),false);
+      OutString(130,0,USetStr(2584),false);
+      OutString(200,0,USetStr(2585),false);
+      OutString(260,0,USetStr(2586),false);
+      OutString(480,0,USetStr(2928),true);
+      EndFormat;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(2584),false);
+      OutString(60,0,USetStr(2583),false);
+      OutString(130,0,USetStr(2582),false);
+      OutString(200,0,USetStr(2585),false);
+      OutString(260,0,USetStr(2586),false);
+      OutString(420,0,USetStr(2590),true);
+      OutString(480,0,USetStr(2591),true);
+      EndFormat;
+  end;
+  if (RepSpec.ArtMode==2) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(2593),false);
+      OutString(70,0,USetStr(2594),false);
+      OutString(320,0,USetStr(2590),true);
+      OutString(400,0,USetStr(2591),true);
+      OutString(480,0,USetStr(2595),true);
+      EndFormat;
+  end;
+  SHp.ShipDate = RepSpec.sStartDate;
+  if ((RepSpec.ArtMode==0) or (RepSpec.ArtMode==2)) then begin
+    Gray_Divider(0,1);
+  end;  
+  TrHs = true;
+  while (LoopKey("ShipDate",SHp,1,TrHs)) begin
+    if (DateInTheRange(SHp.ShipDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (nonblank(RepSpec.f1) and ((SHp.SerNr>ato) or (SHp.SerNr<afr))) then begin testf = false; end;
+      if (nonblank(RepSpec.f2) and (RepSpec.f2<>SHp.CustCode)) then begin testf = false; end;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if ((SHp.OrderNr<frorder) or (SHp.OrderNr>toorder)) then begin testf = false; end;
+      end;  
+      if (nonblank(RepSpec.f3)) then begin
+        if (RepSpec.f3<>SHp.ShipMode) then begin testf = false; end;
+      end;  
+      if ((RepSpec.flags[1]==0) and (SHp.OKFlag==0)) then begin testf = false; end;
+      if ((RepSpec.flags[2]==0) and (SHp.OKFlag!=0)) then begin testf = false; end;
+      if (RepSpec.flags[3]==1) then begin
+        if (nonblank(SHp.ShipMode)) then begin testf = false; end;
+      end;  
+      if (testf) then begin
+        ORr.SerNr = SHp.OrderNr;
+        orfound = ReadFirstMain(ORr,1,true);
+        if (nonblank(RepSpec.ObjStr)) then begin
+          if (orfound==false) then begin 
+            testf = false; 
+          end else begin
+            if (SetInSet(RepSpec.ObjStr,ORr.Objects)==false) then begin testf = false; end;
+          end;  
+        end;
+        if (nonblank(RepSpec.LastAcc)) then begin
+          if (orfound==false) then begin 
+            testf = false; 
+          end else begin
+            if (RepSpec.LastAcc<>ORr.SalesMan) then begin testf = false; end; 
+          end;  
+        end;
+        if (ORr.Closed!=0) then begin testf = false; end; 
+      end;
+      if (testf) then begin
+        if (RepSpec.ArtMode==0) then begin
+          GetShipValue(SHp,ORr,t,t2);
+          StartFormat(15);
+          OutLongInt(0,"DblSHVc",SHp.SerNr,false);
+          OutDate(60,0,SHp.ShipDate,false);
+          OutLongInt(130,"DblORVc",SHp.OrderNr,false);
+          OutString(200,0,SHp.CustCode,false);
+          OutString(260,0,SHp.Addr0,false);
+          OutVal(480,0,t,M4Val,true);
+          EndFormat;
+          shtot = shtot + t;
+        end;
+        if (RepSpec.ArtMode==1) then begin
+          Gray_Divider(0,1);
+          RepShip(SHp,ortot,shtot);
+        end;
+        if (RepSpec.ArtMode==2) then begin
+          RepShipPerItem(SHp,Accr,ortot,shtot,totfifo);
+        end;
+      end;
+    end;
+  end;
+  if (RepSpec.ArtMode==2) then begin
+    rw = MatRowCnt(Accr);
+    for (i=0;i<rw;i=i+1) begin
+      MatRowGet(Accr,i,ACCrw);
+      StartFormat(15);
+      OutString(0,0,ACCrw.ArtCode,false);
+      OutString(70,0,ACCrw.Spec,false);
+      OutVal(320,0,ACCrw.Ordered,M4Val,true);
+      OutVal(400,0,ACCrw.Ship,M4Val,true);
+      OutVal(480,0,ACCrw.FIFO,M4Val,true);
+      EndFormat;
+    end;
+  end;
+  Black_Divider(200,480);
+  StartFormat(15);
+   if (RepSpec.ArtMode==0) then begin
+      OutVal(480,0,shtot,M4Val,true);
+   end;
+   if (RepSpec.ArtMode==1) then begin
+      OutVal(420,0,ortot,M4Val,true);
+      OutVal(480,0,shtot,M4Val,true);
+   end;
+   if (RepSpec.ArtMode==2) then begin
+      OutVal(320,0,ortot,M4Val,true);
+      OutVal(400,0,shtot,M4Val,true);
+      OutVal(480,0,totfifo,M4Val,true);
+   end;
+  EndFormat;
+  EndJob;
+  RETURN;
+END;

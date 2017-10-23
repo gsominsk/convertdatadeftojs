@@ -1,0 +1,392 @@
+external updating procedure FindAcptRulesAndCreateAcceptanceAlert(Integer,Integer,string,string,string,val,string,string,string,string);
+external updating procedure CancelApprovalRequestActivities(Integer,string,string,string);
+external function Boolean AcceptanceRulesExists(Integer,string);
+external function val GetIntORRowReserv(LongInt,string,string,var val,var string,var string,var string,Boolean);
+//external updating procedure UpdateAcceptRec(LongInt,string,Integer);
+external function Date ConvertPlanShipString(string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+//external updating procedure GenerateAcceptRec(string,LongInt,string,string,val);
+external procedure SetIntORFlags(record IntORVc);
+external function Boolean SerNrTestIntORVc(LongInt,Date,var Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure B1ToB2Val(val,val,val,var val);
+external procedure GetCurUser(var record UserVc);
+external updating function Boolean DoReleaseIntORRsrvAll(record IntORVc,Integer);
+
+global
+function LongInt IntORVcRecordDefaults(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt long3,LongInt long4)
+begin
+  record DepVc Depr;
+  record UserVc USr;
+  LongInt res;
+
+  IntORr.SerNr = -1;
+  IntORr.TransDate = CurrentDate;
+  IntORr.StatusFlag = 0;
+  GetCurUser(USr);
+  IntORr.OurUser = USr.Code;
+  IntORr.Name = USr.Name;
+  IntORr.Department = USr.Department;
+  IntORr.Location = USr.Location;
+  IntORr.Phone = USr.Phone1;
+  IntORr.Fax = USr.Fax1;
+  IntORr.emailAddr = USr.emailAddr;
+  Depr.Code = IntORr.Department;
+  if (ReadFirstMain(Depr,1,true)) then begin
+    IntORr.ShipAddr0 = Depr.Addr0;
+    IntORr.ShipAddr1 = Depr.Addr1;
+    IntORr.ShipAddr2 = Depr.Addr2;
+    IntORr.ShipAddr3 = Depr.Addr3;
+    IntORr.DelAddr3 = Depr.Addr4;
+    IntORr.DelAddr4 = Depr.Addr5;
+  end;
+  if (SingleUserMode) then begin
+    IntORr.SerNr = NextSerNr("IntORVc",IntORr.TransDate,-1,false,"");
+  end;
+  IntORVcRecordDefaults = res;  
+  RETURN;
+END;
+
+global
+function LongInt IntORVcRecordDuplicate(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  row IntORVc IntORrw;
+  Integer rwcnt,i;
+  
+  IntORr.SerNr= -1;  
+  IntORr.StatusFlag = 0;
+  IntORr.Closed = 0;
+  IntORr.TransDate = CurrentDate;
+  IntORr.OKPersons = "";
+  rwcnt = MatRowCnt(IntORr);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(IntORr,i,IntORrw);
+    IntORrw.Shipd1 = BlankVal;
+    IntORrw.Shipd2 = BlankVal;
+    IntORrw.Sent = BlankVal;
+    IntORrw.POOrd = BlankVal;
+    MatRowPut(IntORr,i,IntORrw);
+  end;
+  if (SingleUserMode) then begin
+    IntORr.SerNr = NextSerNr("IntORVc",IntORr.TransDate,-1,false,"");
+  end;
+  IntORr.AcceptanceBy = "";
+  IntORr.AcceptanceFYI = "";
+  SetIntORFlags(IntORr);
+  IntORVcRecordDuplicate = res;  
+  RETURN;
+END;
+
+global
+updating function LongInt IntORVcRecordSave(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  SetIntORFlags(IntORr);
+  IntORVcRecordSave = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt IntORVcRecordSaveAfter(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+//  SetIntORAcceptState(IntORr,0);
+  IntORVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt IntORVcRecordUpdate(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  SetIntORFlags(IntORr);
+  IntORVcRecordUpdate = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt IntORVcRecordUpdateAfter(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  if (IntORr.Closed!=0) then begin
+    DoReleaseIntORRsrvAll(IntORr,-1);
+  end;
+  IntORVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+procedure IntORVcConvertB1ToB2Date(record IntORVc IntORp)
+BEGIN
+  row IntORVc IntORrw;
+  Integer i,rwcnt;
+  string 20 curncy;
+  val fr,to1,to2,br1,br2,t;
+
+  curncy = "";
+  GetFullCurncyRate(curncy,IntORp.TransDate,fr,to1,to2,br1,br2);
+  rwcnt = MatRowCnt(IntORp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntORp,i,IntORrw);
+    B1ToB2Val(IntORrw.Price,br1,br2,t);
+    IntORrw.Price = t;
+    B1ToB2Val(IntORrw.Sum,br1,br2,t);
+    IntORrw.Sum = t;
+    MatRowPut(IntORp,i,IntORrw);
+  end;
+  RETURN;
+END;
+ 
+global
+function LongInt IntORVcRecordImport(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Boolean gBase1ToBase2;
+  record ConvMasterBlock cvm;
+      
+  BlockLoad(cvm);
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    IntORVcConvertB1ToB2Date(IntORr);
+  end;
+  if (blankdate(IntORr.PlanShipDate)) then begin
+    IntORr.PlanShipDate = ConvertPlanShipString(IntORr.PlanShip);
+  end;    
+  IntORVcRecordImport = res;
+  RETURN;
+END;
+
+
+function LongInt IntORRemoveTest(record IntORVc IntORp,LongInt errmf)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+  
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (IntORp.TransDate>DBLockRec.DeleteBeforeDate) then begin
+    if (IntORp.StatusFlag>0) then begin
+      if (errmf!=0) then begin MessageBox(1544,""); end;
+      res = 0;
+      goto LIntORRemoveTest;
+    end;
+  end;
+  if (IntORp.StatusFlag>0) then begin
+    if (errmf!=0) then begin MessageBox(1560,""); end;
+    res = 0;
+    goto LIntORRemoveTest;
+  end;
+LIntORRemoveTest:;
+  IntORRemoveTest = res;
+  RETURN;
+END;
+
+global
+function LongInt IntORVcRecordRemoveTest(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record IntORVc locIntORr;
+  Integer actnr;
+  record ActVc Actr;
+  record RLinkVc RLr;
+
+  locIntORr.SerNr = IntORr.SerNr;
+  if (ReadFirstMain(locIntORr,1,true)) then begin
+    res = IntORRemoveTest(locIntORr,long3);
+  end else begin
+    res = IntORRemoveTest(IntORr,long3);
+  end;
+  actnr = 1;
+  while (ReadRecordLink(IntORr,actnr,Actr,RLr)) begin
+    if (Actr.TodoFlag==kTodoFlagApproval) then begin
+      if (long3>0) then begin MessageBox(22408,""); end;
+      res = 0;
+      goto LIntORVcRecordRemoveTest;
+    end;
+    actnr = actnr + 1;
+  end;
+LIntORVcRecordRemoveTest:;
+  IntORVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+function LongInt IntORVcRecordCheck(record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt check)
+BEGIN
+  LongInt res;
+  Integer insertmode,updatemode;
+  record IntORVc lIntORr;
+  record LocationVc Locr;
+  Boolean gentrans;
+  Integer i,rwcnt;
+  record INVc INr;
+  row IntORVc IntORrw;
+  row IntORVc IntOR2rw;
+  string 5 itgroup,itgroup2,tstr,comment;
+  record IntORClassVc IntORClassr;
+  record IntORSettingBlock IntORRec;
+  val rsrvd,ordqty;
+  
+  BlockLoad(IntORRec);
+  res = 0;
+  insertmode = 1;
+  updatemode = 2;
+  if (IntORr.SerNr<=0) then begin
+    IntORr.SerNr = NextSerNr("IntORVc",IntORr.TransDate,-1,false,"");
+  end;
+  if ((stat==insertmode) or (IntORr.SerNr!=IntOR2r.SerNr)) then begin
+    lIntORr.SerNr = IntORr.SerNr;
+    if (ReadFirstMain(lIntORr,1,true)) then begin
+      RecordCheckError(1547,"",-1,"SerNr");      
+      res = -1;
+      goto LIntORVcRecordCheck;
+    end;
+    if (SerNrTestIntORVc(IntORr.SerNr,IntORr.TransDate,gentrans)==false) then begin
+      RecordCheckError(1557,"",-1,"SerNr");      
+      res = -1;
+      goto LIntORVcRecordCheck;
+    end;
+  end;  
+  if (blank(IntORr.Location)) then begin
+    RecordCheckError(1058,"",-1,"Location");      
+    res = -1; 
+    goto LIntORVcRecordCheck;
+  end;
+  if ((IntORRec.ReqIntORClass==1) and blank(IntORr.IntORClass)) then begin
+    RecordCheckError(20089,"",-1,"IntORClass");      
+    res = -1; 
+    goto LIntORVcRecordCheck;
+  end;
+  Locr.Code = IntORr.Location;
+  if(ReadFirstMain(Locr,1,true)==false) then begin
+    RecordCheckError(1120,IntORr.Location,-1,"Location");
+    res = -1;
+    goto LIntORVcRecordCheck;
+  end;
+  
+  if (nonblank(IntORr.FrLocation)) then begin
+    Locr.Code = IntORr.FrLocation;
+    if (ReadFirstMain(Locr,1,true)==false) then begin
+      RecordCheckError(1120,IntORr.FrLocation,-1,"FrLocation");
+      res = -1;
+      goto LIntORVcRecordCheck;
+    end;
+    
+    if (IntORr.FrLocation==IntORr.Location) then begin
+      if (Locr.RequirePos==0) then begin
+        RecordCheckError(1769,"",-1,"Location");
+        res = -1;
+        goto LIntORVcRecordCheck;
+      end;
+    end;
+  end;
+  
+  if ((stat==insertmode) or (IntORr.IntORClass!=IntOR2r.IntORClass)) then begin
+    if (nonblank(IntORr.IntORClass)) then begin
+      IntORClassr.Code = IntORr.IntORClass;
+      if (ReadFirstMain(IntORClassr,1,true)==false) then begin
+        RecordCheckError(20090,IntORr.IntORClass,-1,"IntORClass");      
+        res = -1; 
+        goto LIntORVcRecordCheck;
+      end;
+    end;
+  end; 
+  rwcnt = MatRowCnt(IntORr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IntORr,i,IntORrw);
+    if (nonblank(IntORrw.ArtCode)) then begin
+      if (ReadFirstItem(IntORrw.ArtCode,INr,true,false)==false) then begin
+        RecordCheckError(1120,IntORrw.ArtCode,i,"ArtCode");      
+        res = -1; 
+        goto LIntORVcRecordCheck;
+      end;
+      if (INr.Terminated!=0) then begin
+        RecordCheckError(1266,IntORrw.ArtCode,i,"ArtCode");      
+        res = -1; 
+        goto LIntORVcRecordCheck;
+      end;
+      if (INr.ItemType==2) then begin
+        RecordCheckError(1826,IntORrw.ArtCode,i,"ArtCode");      
+        res = -1; 
+        goto LIntORVcRecordCheck;
+      end;
+      if (IntORrw.Quant<IntORrw.Shipd1) then begin
+        RecordCheckError(22076,"",i,"Quant"); 
+        res = -1; 
+        goto LIntORVcRecordCheck;
+      end;
+    end;
+
+    if (i<MatRowCnt(IntOR2r)) then begin
+      MatRowGet(IntOR2r,i,IntOR2rw);
+      rsrvd = GetIntORRowReserv(IntORr.SerNr,IntOR2rw.ArtCode,IntOR2rw.SerialNr,ordqty,comment,tstr,tstr,true);
+      if (IntOR2rw.ArtCode!=IntORrw.ArtCode) then begin
+        if (rsrvd>0) then begin
+          RecordCheckError(20564,"",i,"ArtCode"); 
+          res = -1; 
+          goto LIntORVcRecordCheck;
+        end;
+      end;
+      if (rsrvd>IntORrw.Quant-IntORrw.Shipd1) then begin
+        RecordCheckError(22067,"",i,"ArtCode"); 
+        res = -1; 
+        goto LIntORVcRecordCheck;
+      end;
+    end;
+        
+  end;
+  //need more
+LIntORVcRecordCheck:;  
+  IntORVcRecordCheck = res; 
+  RETURN;
+END;
+
+procedure RetainIntORStatus(record IntORVc IntORp,record IntORVc IntOR2p)
+begin
+  Integer i,rwcnt;
+  row IntORVc IntORrw;
+  row IntORVc IntOR2rw;
+  Integer rwcnt2;
+  
+  IntORp.OSFlag = IntOR2p.OSFlag;
+  IntORp.StatusFlag = IntOR2p.StatusFlag;
+  IntORp.StatusMark = IntOR2p.StatusMark;
+  rwcnt = MatRowCnt(IntORp);
+  rwcnt2 = MatRowCnt(IntOR2p);
+  for (i=0;i<rwcnt;i=i+1) begin
+    if (i<rwcnt2) then begin
+      MatRowGet(IntORp,i,IntORrw);
+      MatRowGet(IntOR2p,i,IntOR2rw);
+      IntORrw.Sent = IntOR2rw.Sent;
+      IntORrw.POOrd = IntOR2rw.POOrd;
+      IntORrw.Shipd1 = IntOR2rw.Shipd1;
+      IntORrw.Shipd2 = IntOR2rw.Shipd2;
+      MatRowPut(IntORp,i,IntORrw);
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt IntORVcRecordProtectFields(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  RetainIntORStatus(IntOR2r,IntORr);
+  IntORVcRecordProtectFields = res;
+  return;
+end;
+
+global
+updating function LongInt IntORVcRecordRemove(var record IntORVc IntORr,record IntORVc IntOR2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  DoReleaseIntORRsrvAll(IntORr,-1);
+  IntORVcRecordRemove = res; 
+  return;
+end;

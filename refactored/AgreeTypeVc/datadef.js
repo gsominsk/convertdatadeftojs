@@ -1,0 +1,25 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fCode: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fPerType: { public: true, type: 'INTEGER' },
+     fPerLength: { public: true, type: 'INTEGER' },
+     fXInvPeriod: { public: true, type: 'INTEGER' },
+     fXInvLength: { public: true, type: 'INTEGER' },
+     fChargeBankHol: { public: true, type: 'INTEGER' },
+     fMinChargeQty: { public: true, type: 'FLOAT' },
+     fMinChargeType: { public: true, type: 'TEXT' },
+     fTemplate: { public: true, type: 'TEXT' },
+     AgreeTypeVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fPeriodType: { public: true, type: 'INTEGER' },
+           fLength: { public: true, type: 'INTEGER' },
+           fInvBeforeDays: { public: true, type: 'INTEGER' },
+           fPeriodUnit: { public: true, type: 'INTEGER' },
+           fPLCode: { public: true, type: 'TEXT' },
+           fComment: { public: true, type: 'TEXT' } } } },
+  indexes: { CodeIndex362: { fields: [ 'fCode' ], indicesType: 'UNIQUE' } } }

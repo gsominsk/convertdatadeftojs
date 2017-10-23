@@ -1,0 +1,114 @@
+
+global
+function string 255 RecaptchaSiteKey()
+begin
+  record WebNGRecaptchaBlock WCb;
+  
+  BlockLoad(WCb);
+  RecaptchaSiteKey = WCb.SiteKey;
+  return;
+end;
+
+global
+function boolean IsRecaptchaEnabled(integer form)
+begin
+  boolean res;
+  record WebNGRecaptchaBlock WCb;
+
+  BlockLoad(WCb);
+  if (blank(WCb.SiteKey) or blank(WCb.SecretKey)) then begin 
+    goto LIsRecaptchaEnabled;
+  end; 
+  switch (form) begin
+    case kElementTypeContactUsForm: res = WCb.EnabContactUsForm==1;
+    case kElementTypeRegisterNewCustomerForm: res = WCb.EnabCURegister==1;
+    case -1: res = (WCb.EnabCURegister==1 or WCb.EnabContactUsForm==1);    // Check for any form enabled.
+  end;  
+LIsRecaptchaEnabled:;
+  IsRecaptchaEnabled = res;
+  return;
+end;
+
+procedure GetRecaptchaResponseString(area a_POST,var string webrecaptcharesponse)
+begin
+  longint i,l,m,pos;
+  string 255 chunk;
+  string 10 res;
+  string 255 recaptchaparm,tmpstr;
+
+  webrecaptcharesponse = "";
+  recaptchaparm = "g-recaptcha-response=";
+  m = len(recaptchaparm);
+
+  l = GetAreaLength(a_POST);
+  for (i=0;i<l;i=i+1) begin
+    if (i+m >= l) then begin
+      goto LParser;
+    end;
+    chunk = GetStringFromArea(a_POST,i,m);
+    if (InString(chunk,recaptchaparm)!=0) then begin
+      webrecaptcharesponse = GetStringFromArea(a_POST,i+len(chunk),250);  // full g-recaptcha-response parameter length: 441 characters
+      webrecaptcharesponse = webrecaptcharesponse & GetStringFromArea(a_POST,i+len(chunk)+250,191); // 441 - 250 = 191
+      goto LParser;
+    end;
+  end;
+LParser:;
+  return;
+end;
+
+global
+function boolean CheckRecaptcha(area WebPostArea)
+begin
+  boolean res,docheckf;
+  area req,reply;
+  string 255 secret,host,jasonmsg,webrecaptcharesponse;
+  integer port;
+  json js;
+  record WebNGRecaptchaBlock WCb;
+  
+  BlockLoad(WCb);
+  secret = WCb.SecretKey;
+  host = "www.google.com";
+  port = 443;
+  
+  if (nonblank(secret)) then begin 
+    GetRecaptchaResponseString(WebPostArea,webrecaptcharesponse);
+  end else begin
+    res = true;
+    goto LCheckRecaptcha;
+  end;
+  if (nonblank(webrecaptcharesponse)) then begin 
+    docheckf = true;
+  end;
+  if (docheckf) then begin 
+    SetAreaZeroSize(req);
+    AddTextToArea("secret=" & secret,req);
+    AddTextToArea("&response=" & webrecaptcharesponse,req);
+    res = SendWebRequest(host,port,-1,true,"POST","/recaptcha/api/siteverify","application/x-www-form-urlencoded","",false,req,reply,40);
+//    LogAreaToFile("recaptcha.req",req);
+//    LogAreaToFile("recaptcha.reply",reply);
+    if (res) then begin 
+      js = ParseJSONArea(reply);
+      if (res) then begin 
+        jasonmsg = JSONGet(js,"success");
+        switch (jasonmsg) begin
+          case "true":  res = true;
+          case "false": res = false;
+          otherwise
+              res = false;
+        end;  
+      end;
+    end;
+  end;
+LCheckRecaptcha:;
+  CheckRecaptcha = res;
+  return;
+end;
+
+global
+procedure ShowGoogleReCaptchaHeader()
+begin
+  if (IsRecaptchaEnabled(-1)) then begin 
+    WebOutStringFormat("<script src=""https://www.google.com/recaptcha/api.js""></script>");
+  end;
+end;

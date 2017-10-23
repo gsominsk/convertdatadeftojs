@@ -1,0 +1,156 @@
+external Procedure GetCustName(String,var String);
+external Procedure GetAInvNr(LongInt,Var String,Var Boolean);
+external Procedure GetVatRegPL(String,var String,var String,var String,var String,var String);
+
+procedure GetUserDep( String User, var String ret )
+begin
+  Record UserVc Usr;
+  
+  Usr.Code= User; ret= "";
+  if ReadFirstMain(Usr,1,true) then begin
+    ret= Usr.Department;
+  end;
+  return;
+end;
+
+global
+procedure PersTelHisRn(var record RcVc RepSpec)
+begin
+  Integer i;
+  record TelCallsVc Callr;
+  record CallTypeVc CallTyper;
+  record CallRegTypeVc CallRegTyper;
+  Boolean TsHr,Skip,Dummy;
+  String 50 tstr;
+  Integer rw;
+  String 100 HdrStr;
+  Integer HdrLn;
+  Val ParCost,TotCost,TotTime;
+  String 10 aDepart,nDepart; //LGD
+  
+  TsHr = true;
+  TotTime = 0;
+  TotCost = 0;
+  
+  StartReportJob(USetStr(17760));
+  if nonBlank(RepSpec.f1) then begin  //LOBO80 
+    tstr = USetStr(17764) & ": " & RepSpec.f1;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if nonBlank(RepSpec.f4) then begin
+    tstr = USetStr(17761) & ": " & RepSpec.f4;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if nonBlank(RepSpec.f5) then begin  //LOBO80
+    tstr = USetStr(17762) & ": " & RepSpec.f5;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if nonBlank(RepSpec.f6) then begin  //LOBO80
+    tstr = USetStr(17763) & ": " & RepSpec.f6;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  
+  SetRepCol(2,0);
+  SetRepCol(3,55);
+  SetRepCol(4,115);
+  SetRepCol(5,180);
+  SetRepCol(6,270);
+  SetRepCol(8,480);
+
+  StartFormat(15);
+  OutString(2,0,USetStr(10151),false); 
+  OutString(3,0,USetStr(10152),false);
+  OutString(4,0,USetStr(10155),false);
+  OutString(5,0,USetStr(10156),false);
+  OutString(6,0,USetStr(10174),false);
+  OutString(8,0,USetStr(10157),true);  
+  EndFormat;
+
+  Gray_Divider(0,1);
+
+  Callr.TransDate = RepSpec.sStartDate;
+  if nonblank(RepSpec.f1) then begin
+    Callr.Person = RepSpec.f1;
+    GetUserDep( RepSpec.f1, aDepart );
+  end;
+  
+  while (LoopKey("Person",Callr,2,TsHr)) begin   
+    Skip = false;
+    If (Callr.TransDate>RepSpec.sEndDate) then begin
+      Skip = true;
+    end;
+    if ((RepSpec.f1<>Callr.Person) and (nonblank(RepSpec.f1))) then begin
+      Skip = true;
+    end;
+    if ((RepSpec.f2<>Callr.Type) and (nonblank(RepSpec.f2))) then begin
+      Skip = true;
+    end;
+    if ((RepSpec.f3<>Callr.RegCode) and (nonblank(RepSpec.f3))) then begin
+      Skip = true;
+    end;
+    if NonBlank(RepSpec.f4) then begin //LGD
+      GetUserDep( Callr.Person, nDepart );
+      if (aDepart<>nDepart) then begin
+        Skip = true;
+      end;
+    end;
+        
+    //LOBO80
+    if nonblank(RepSpec.f5) and (RepSpec.f5<>Callr.ExtNo) then begin 
+      Skip = true;
+    end;
+    if nonblank(RepSpec.f6) and (RepSpec.f5<>Callr.ResCode) then begin 
+      Skip = true;
+    end;
+    //LOBO80 END
+    
+    
+    if (Callr.Direction>0) then begin
+      Skip = true; // incomming and internal calls
+    end;
+    if (RepSpec.flags[3]<>0) then begin
+      if blank(Callr.RegCode) then begin
+        if (RepSpec.flags[3]==1) then begin
+          Skip = true;
+        end;
+      end else begin
+        if (RepSpec.flags[3]==2) then begin
+          Skip = true;
+        end;
+      end;
+    end;
+    If (not Skip) then begin
+      StartFormat(15);
+      OutDate(2,0,Callr.TransDate,false);
+      OutString(3,0,Callr.TransTime,false);
+      OutString(4,0,Callr.Duration,false);
+      OutString(5,0,Callr.Number,false);
+      CallRegTyper.Number = Callr.Number;
+      if readfirstkey("Number",CallRegTyper,1,true) then begin
+        OutString(6,0,CallRegTyper.Name,false);
+      end;
+      OutVal(8,0,Callr.Cost,M4Val,true);         
+      EndFormat;
+      TotTime = TotTime + GetHour(Callr.Duration)*60 + GetMinute(Callr.Duration);
+      TotCost = TotCost + Callr.Cost;
+    end;
+  end;
+
+  Gray_Divider(0,1);
+
+  StartFormat(15);
+  OutString(2,0,USetStr(8513),false);
+  tstr = ValToString(TotTime,M40Val,"","",0) & " " & USetStr(17765);
+  OutString(4,0,tstr,false);
+  OutVal(8,0,TotCost,M4Val,true);
+  EndFormat;
+  EndJob;
+
+L99:;
+  return;
+end;

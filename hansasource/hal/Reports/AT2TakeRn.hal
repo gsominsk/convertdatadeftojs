@@ -1,0 +1,356 @@
+external function Boolean CheckAssetRespPersonMatch(string,string,string,Date,Date);
+external function Boolean CheckAssetDepMatch(string,string,record RcVc,var Date);
+external procedure HTDepartment(string,var string);
+external procedure HTPers(string,var string);
+external procedure HTInventoryNrs(string,string,var string);
+external function Boolean GetInventoryNrWrofDate(string,var Date);
+
+procedure FindAssetValue(string InventoryNr,val PurchVal,var val resv)
+BEGIN
+  record AT2DprVc AT2Dpr;
+
+  resv = PurchVal;
+  AT2Dpr.InventoryNr = InventoryNr;
+  if (ReadLastKey("InventoryNr",AT2Dpr,1,true)) then begin 
+     resv = AT2Dpr.StartVal;
+  end;   
+  RETURN;  
+END;
+
+global
+function Boolean GetInventoryNrWrofQuant(string InventoryNr,var val resv)
+BEGIN
+  record InvrsVc Invrsr;
+  record AT2WrofVc AT2Wrofr;
+  row AT2WrofVc AT2Wrofrw;
+  Integer i,rwcnt;
+  Boolean res,TrHs;
+  
+  resv = blankval;
+  res = false;
+  TrHs = true;
+  Invrsr.InventoryNr = InventoryNr;
+  Invrsr.FileName = "AT2WrofVc";
+  while (LoopKey("FileName",Invrsr,2,TrHs)) begin
+    if (Invrsr.InventoryNr!=InventoryNr) then begin TrHs = false; end;
+    if (Invrsr.FileName!="AT2WrofVc") then begin TrHs = false; end;
+    if (TrHs) then begin
+      AT2Wrofr.SerNr = Invrsr.TransNr;
+      if (ReadFirstMain(AT2Wrofr,1,true)) then begin
+        rwcnt = MatRowCnt(AT2Wrofr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(AT2Wrofr,i,AT2Wrofrw);
+          if (AT2Wrofrw.InventoryNr==InventoryNr) then begin
+            resv = resv + AT2Wrofrw.Qty;
+            res = true;
+          end;
+        end;
+      end;
+    end;
+  end;  
+  GetInventoryNrWrofQuant = res;
+  RETURN;        
+END;
+
+function
+Boolean CheckInventoryNrStockDate(Date lastd,record AT2UnitVc ATUnitr,var val resv,var Integer ATTakeStatus)
+BEGIN
+  Boolean res;
+  record InvrsVc Invrsr;
+  record AT2TakeVc ATTaker;
+  row AT2TakeVc ATTakerw;
+  Boolean TrHs;
+  Date td;
+  val wq;
+  
+  TrHs = true;
+  res = true;
+  ATTakeStatus = -1;
+  if (GetInventoryNrWrofQuant(ATUnitr.InventoryNr,wq)) then begin
+    if (wq>=ATUnitr.Quantity) then begin 
+      TrHs = false; 
+      ATTakeStatus = 6;
+    end;
+  end;
+  Invrsr.FileName = "AT2TakeVc";
+  Invrsr.InventoryNr = ATUnitr.InventoryNr;
+  Invrsr.TransDate = lastd;
+  while (LoopBackKey("FileName",Invrsr,3,TrHs)) begin    
+    if (Invrsr.InventoryNr!=ATUnitr.InventoryNr) then begin TrHs = false; end;
+    if (Invrsr.TransDate>lastd) then begin TrHs = false; end;
+    if (Invrsr.FileName!="AT2TakeVc") then begin TrHs = false; end;
+    if (TrHs) then begin      
+      ATTaker.SerNr = Invrsr.TransNr;
+      if (ReadFirstMain(ATTaker,1,true)) then begin
+        if (ATTaker.PhysCheckf==2) then begin
+          if (Invrsr.Row<MatRowCnt(ATTaker)) then begin
+            MatRowGet(ATTaker,Invrsr.Row,ATTakerw);
+            resv = ATTakerw.Qty;
+            ATTakeStatus = ATTakerw.ATTakeStatus;
+          end;
+          res = true;
+          TrHs = false;
+        end;
+      end;
+    end;
+  end;
+  CheckInventoryNrStockDate = res;
+  RETURN;
+END;
+
+function Boolean CheckAssetDepAndRespPersonMatch(string InventoryNr,string at2depcode,string indepartment,string at2person,string forperson,Date atdate) 
+BEGIN
+  Boolean res,TrHs,at2takef;
+  Boolean depf,persf,at2takedepf,at2takepersf;
+  record InvrsVc Invrsr;
+  record AT2TakeVc ATTaker;
+  Date blankd;
+  
+  if (blank(indepartment)) then begin
+    depf = true;
+  end;
+  if (blank(forperson)) then begin
+    persf = true;
+  end;
+  at2takef = false;
+  TrHs = true;
+  Invrsr.InventoryNr = InventoryNr;
+  Invrsr.FileName = "AT2TakeVc";
+  Invrsr.TransDate = atdate;
+  while (LoopBackKey("FileName",Invrsr,3,TrHs)) begin
+    if (Invrsr.InventoryNr!=InventoryNr) then begin TrHs = false; end;
+    if (Invrsr.FileName!="AT2TakeVc") then begin TrHs = false; end;
+    if (TrHs) then begin    
+      ATTaker.SerNr = Invrsr.TransNr;
+      if (ReadFirstMain(ATTaker,1,true)) then begin
+        if (ATTaker.PhysCheckf==2) then begin
+          if (nonblank(indepartment)) then begin
+            if (nonblank(ATTaker.DepCode)) then begin
+              if (ATTaker.DepCode==indepartment) then begin
+                depf = true;
+                TrHs = false;
+              end else begin
+                depf = false;
+                TrHs = false;
+              end;
+              at2takedepf = true;
+            end;
+          end;
+          if (nonblank(forperson)) then begin
+            if (nonblank(ATTaker.RespPerson)) then begin
+              if (ATTaker.RespPerson==forperson) then begin
+                persf = true;
+                TrHs = false;
+              end else begin
+                persf = false;
+                TrHs = false;
+              end;
+              at2takepersf = true;
+            end;
+          end;
+        end;        
+      end;
+    end;
+  end;    
+  if (at2takedepf==false) then begin
+    if (nonblank(indepartment)) then begin
+      if (at2depcode==indepartment) then begin 
+        depf = true;
+      end;
+    end;
+  end;
+  if (at2takepersf==false) then begin
+    if (nonblank(forperson)) then begin
+      if (at2person==forperson) then begin 
+        persf = true;
+      end;
+    end;
+  end;
+  if (persf and depf) then begin
+    res = true;
+  end;
+  CheckAssetDepAndRespPersonMatch = res;
+  RETURN;
+END;
+
+global
+procedure AssInvOpen(string dblstr,string l,Integer currepwn)
+begin
+  Integer wn;
+  record AT2UnitVc ATUnitr;
+
+  if (nonblank(dblstr)) then begin
+    ATUnitr.InventoryNr = FirstInRange(dblstr,30);
+    if (ReadFirstMain(ATUnitr,1,true)) then begin  
+      wn = OpenWindow("AT2UnitDClass",1,0,"","",ATUnitr);
+    end; 
+  end;
+  return;
+end;
+
+procedure FindInventoryStatus(string InventoryNr,string DepCode,var record InvBalVc InvBalp)
+BEGIN
+  record InvBalVc InvBalr;
+  Boolean TrHs,testf;
+  
+  InvBalp.CurQuant = 0;
+  TrHs = true;
+  InvBalr.InventoryNr = InventoryNr;
+  while (LoopKey("MainKey",InvBalr,1,TrHs)) begin
+    if (InvBalr.InventoryNr!=InventoryNr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      if (nonblank(InvBalr.CurDepartment)) then begin
+        testf = true;
+        if (nonblank(DepCode)) then begin
+          if (InvBalr.CurDepartment!=DepCode) then begin
+            testf = false;
+          end;
+        end;
+        if (testf) then begin
+          InvBalp.CurQuant = InvBalp.CurQuant + InvBalr.CurQuant;      
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AT2StockTakeRn(record RcVc RepSpec)
+BEGIN
+  record AT2UnitVc ATUnitr;
+  Boolean TrHs,testf;
+  String 20 frinv,toinv;
+  val totval,totqty,purchval,qty;
+  Integer rw,ATTakeStatus;
+  String 255 tstr,depcode;
+  Date blankd,ed;
+  record InvBalVc InvBalr;
+
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;
+  frinv = FirstInRange(RepSpec.f1,20);
+  toinv   = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(5441));
+   rw = 1;
+   HTInventoryNrs(frinv,toinv,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;        
+   HTDepartment(RepSpec.AccStr,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   if (nonblank(RepSpec.LastAcc)) then begin
+     HTPers(RepSpec.LastAcc,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;  
+   end;  
+   if (nonblankdate(RepSpec.d1)) then begin
+     tstr = USetStr(2353) & ": " & RepSpec.d1;
+     Header(rw,tstr,1);
+     rw = rw + 1;  
+   end;
+  EndHeader;
+  SetRepCol(2,70);
+  SetRepCol(3,200);
+  SetRepCol(4,300);
+  SetRepCol(5,350);
+  SetRepCol(6,410);
+  SetRepCol(7,480);
+  StartFormat(15);
+  OutString(0,0,USetStr(5442),false);
+  OutString(2,0,USetStr(5443),false);
+  OutString(3,0,USetStr(5446),false);
+  OutString(4,0,USetStr(5444),true);
+  OutString(5,0,USetStr(2771),true);
+  OutString(6,0,USetStr(3284),true);
+  OutString(7,0,USetStr(5445),true);
+  EndFormat;
+  ATUnitr.InventoryNr = frinv;
+  Gray_Divider(0,1);
+  TrHs = true;
+  while LoopMain(ATUnitr,1,TrHs) begin
+    if (nonblank(toinv)) then begin
+      if (ATUnitr.InventoryNr>toinv) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      qty = blankval;
+      testf = true;
+      if (nonblank(RepSpec.TransStr)) then begin
+        if (ATUnitr.AT2Code<>RepSpec.TransStr) then begin
+         testf = false;
+        end;
+      end;
+      if (nonblank(RepSpec.ObjStr)) then begin
+        if (SetInSet(RepSpec.ObjStr,ATUnitr.Objects)==false) then begin
+         testf = false;
+        end;
+      end;
+      if (RepSpec.flags[1]!=0) then begin
+        if (ATUnitr.Activef==1) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if ((nonblank(RepSpec.AccStr)) or (nonblank(RepSpec.LastAcc))) then begin      
+//          if (CheckAssetDepAndRespPersonMatch(ATUnitr.InventoryNr,ATUnitr.DepCode,RepSpec.AccStr,ATUnitr.RespPerson,RepSpec.LastAcc,RepSpec.d1)==false) then begin testf = false; end;
+        end;  
+      end;
+      if (testf) then begin
+        if (nonblank(RepSpec.AccStr)) then begin      
+          RepSpec.sStartDate = RepSpec.d1;
+          RepSpec.sEndDate = RepSpec.d1;
+          ed = RepSpec.d1;
+          if (CheckAssetDepMatch(ATUnitr.InventoryNr,ATUnitr.DepCode,RepSpec,ed)==false) then begin testf = false; end;
+        end;        
+      end;
+      if (testf) then begin
+        if (nonblank(RepSpec.LastAcc)) then begin      
+          RepSpec.sStartDate = RepSpec.d1;
+          RepSpec.sEndDate = RepSpec.d1;
+          ed = RepSpec.d1;
+          if (CheckAssetRespPersonMatch(ATUnitr.InventoryNr,ATUnitr.RespPerson,RepSpec.LastAcc,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+        end;        
+      end;
+      if (testf) then begin
+        if (CheckInventoryNrStockDate(RepSpec.d1,ATUnitr,qty,ATTakeStatus)==false) then begin
+          testf = false;
+        end;
+      end;      
+      if (RepSpec.flags[0]!=0) then begin
+        if (ATTakeStatus==6) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        depcode = RepSpec.AccStr;
+        if (blank(depcode)) then begin
+          
+        end;
+        FindAssetValue(ATUnitr.InventoryNr,ATUnitr.PurchVal,purchval);
+        StartFormat(15);
+        OutString(0,"DblAT2UnitVc",ATUnitr.InventoryNr,false);
+        OutString(2,0,ATUnitr.Description,false);
+        OutString(3,0,USetStr(5448+ATTakeStatus),false);
+        FindInventoryStatus(ATUnitr.InventoryNr,depcode,InvBalr);
+        if (InvBalr.CurQuant==0) then begin
+          if (blank(ATUnitr.DepCode)) then begin
+            InvBalr.CurQuant = ATUnitr.Quantity;
+          end;
+        end;
+        OutVal(4,0,InvBalr.CurQuant,M4Qty,true);
+        OutVal(5,0,qty,M4Qty,true);
+        OutString(6,0,purchval,true);
+        OutString(7,0,USetStr(2766),true);
+        EndFormat;
+        totqty = totqty + InvBalr.CurQuant;
+        totval = totval + purchval;
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+   OutVal(4,0,totqty,M4Qty,true);
+   OutVal(6,0,totval,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

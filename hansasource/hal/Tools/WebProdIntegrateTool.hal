@@ -1,0 +1,537 @@
+external function LongInt POSNETHexToLong(string);
+external procedure LogAreaToFile(string,area);
+external procedure AddPlainXmlToArea(area,string,Integer);
+external procedure AddXmlTagToArea(area,string,string,string,Integer);
+forward procedure AmazonGetFeedSubmissionResult(string);
+
+function string 255 HexToBase64(string ahexs)
+begin
+//we need Base64Encoded like below, not what Base64Encode gives from 32 md5 chars
+//we need to convert 32hex string to 16 bytes string but our uchr doesnt work with all chars
+//  tstr = "83996150544BBCFFA8AD10089C7D3B2B";//g5lhUFRLvP+orRAInH07Kw==
+//  tstr = "9e107d9d372bb6826bd81d3542a419d6";//nhB9nTcrtoJr2B01QqQZ1g=="
+//http://www.vbaexpress.com/forum/archive/index.php/t-43900.html
+  string 255 res;
+  string 255 hexs;
+  Integer cnt,i,j,lenmod;
+  LongInt l,loc,ltmp;
+  string 255 byte,bytestr,b64,strb64encoded;
+  
+  b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  
+  hexs = ahexs;
+  lenmod = Mod(len(hexs),6);
+  switch (lenmod) begin
+    case 4: hexs = hexs & "00";
+    case 2: hexs = hexs & "0000";
+  end;
+
+  j = 0;
+  for (i=0;i<len(hexs);i=i+2) begin
+    j = j + 1;
+    byte = Mid(hexs,i,2);
+    bytestr = bytestr & byte;
+    if (j==3) then begin
+      l = POSNETHexToLong(bytestr);
+
+      ltmp = l / 64;
+      loc = l - (64 * ltmp);
+      strb64encoded = Mid(B64,loc,1);
+      l = ltmp;
+
+      ltmp = l / 64;
+      loc = l - (64 * ltmp);
+      strb64encoded = Mid(B64, loc, 1) & strb64encoded;
+      l = ltmp;
+
+      ltmp = l / 64;
+      loc = l - (64 * ltmp);
+      strb64encoded = Mid(B64, loc, 1) & strb64encoded;
+
+      strb64encoded = Mid(B64, ltmp, 1) & strb64encoded;
+
+      res = res & strb64encoded;
+
+      j = 0;
+      bytestr = "";
+      
+    end;
+  end;
+    
+  switch (lenmod) begin
+    case 4: res = Left(res, len(res) - 1) & "=";
+    case 2: res = Left(res, len(res) - 2) & "==";
+  end;
+  HexToBase64 = res;
+  return;
+end;
+
+function string 255 TimeOffset(val GMTOffset)
+begin
+  Time t;
+  LongInt l,min;
+  val dec;
+  string 255 res;
+  
+  res = GMTOffset;
+  res = StringToTime(GMTOffset);
+  res = Left(res,2);
+  l = GMTOffset;
+  dec = GMTOffset - l;
+  min = dec*60;
+  res = res & ":" & min;
+  if (min==0) then begin
+    res = res & "0";
+  end;  
+  if (GMTOffset>0) then begin
+    res = "+" & res;
+  end else begin
+    res = "-" & res;
+  end;
+  TimeOffset = res;
+  return;
+end;
+
+function LongInt ParseAmazonReply(string action,area a)
+begin
+  LongInt res;
+  xml x;
+  string 255 id;
+  
+  x = ParseXMLArea(a);
+  if (XmlNodeExists(x,"ErrorResponse")) then begin
+    MessageBox(0,XmlGet(x,"ErrorResponse/Error/Message"));
+  end else begin
+    switch (action) begin
+      case "SubmitFeed":
+        switch (XmlGet(x,"SubmitFeedResponse/SubmitFeedResult/FeedSubmissionInfo/FeedProcessingStatus")) begin
+          case "_SUBMITTED_":
+            MessageBox(0,XmlGet(x,"SubmitFeedResponse/SubmitFeedResult/FeedSubmissionInfo/FeedProcessingStatus"));
+            id = XmlGet(x,"SubmitFeedResponse/SubmitFeedResult/FeedSubmissionInfo/FeedSubmissionId");
+            if (nonblank(id )) then begin
+              AmazonGetFeedSubmissionResult(id);
+            end;
+        end;
+      case "GetFeedSubmissionResult":
+    end;
+  end;
+  ParseAmazonReply = res;
+  return;
+end;
+
+global
+procedure AmazonGetFeedSubmissionResult(string id)
+begin
+  area a;
+  string 255 timestamp,path,signstr,tstr;
+  record AmazonWSBlock AWSb;
+    transaction string 255 gAmazonAction;
+
+  BlockLoad(AWSb);
+
+  timestamp = DateToString(CurrentDate,"YYYY-MM-DD") & "T" & CurrentTime & "" & TimeOffset(AWSb.GMTOffset);//UTC
+  
+  path = "AWSAccessKeyId" & chr(61) & URLEncode(AWSb.AWSAccessKeyID);
+  path = path & "&Action" & chr(61) & "GetFeedSubmissionResult";
+  path = path & "&FeedSubmissionId" & chr(61) & id;
+  if (nonblank(AWSb.MWSAuthToken)) then begin
+    path = path & "&MWSAuthToken=" & URLEncode(AWSb.MWSAuthToken);//will be needed maybe for our custmomers
+  end;
+  path = path & "&MarketplaceIdList.Id.1" & chr(61) & AWSb.MarketplaceID;
+  path = path & "&SellerId" & chr(61) & URLEncode(AWSb.SellerID);
+  
+  path = path & "&SignatureMethod" & chr(61) & "HmacSHA256";
+  path = path & "&SignatureVersion" & chr(61) & "2";
+
+  path = path & "&Timestamp" & chr(61) & URLEncode(timestamp);
+//  path = path & "&Version" & chr(61) & URLEncode(DateToString(CurrentDate,"YYYY-MM-DD"));
+
+  signstr = "POST" & chr(10);
+  signstr = signstr & AWSb.Host & chr(10);
+  signstr = signstr & "/" & chr(10);
+  signstr = signstr & path;
+
+  path = path & "&Signature=" & URLEncode(HMACSHA256String(AWSb.SecretKey,signstr));
+
+  tstr = MD5Area(a);  
+  SetWebHeaders("Content-MD5: " & HexToBase64(tstr));
+
+  if (AWSb.LogCommunication) then begin
+    LogAreaToFile("AWSAmazon-request-GetFeedSubmissionResult.txt",a);
+  end;
+
+  gAmazonAction = "GetFeedSubmissionResult";
+  if (AWSb.Enable) then begin
+    SendAsyncWebRequest(AWSb.Host,443,-1,true,"POST","/?" & path,"text/xml; charset=""utf-8""","",a,"SendWebProductsToAmazonReply",30);
+  end;
+  return;
+end;
+
+
+global
+procedure SendWebProductsToAmazon(string wpcode)
+begin
+  Area a,ab,reply;
+  Integer level;
+  record AmazonWSBlock AWSb;
+  record BaseCurBlock BCb;
+  record WebNGProductVc WPr;
+  record INVc INr;
+  Boolean found;
+  string 255 path,signstr;
+  string 255 timestamp,secretkey,tstr,tstr2,c;
+  Integer i,l,cr;
+  transaction string 255 gAmazonAction;
+  
+/* http://docs.developer.amazonservices.com/en_US/feeds/Feeds_SubmitFeed.html */  
+/* https://images-na.ssl-images-amazon.com/images/G/01/rainier/help/XML_Documentation_Intl.pdf
+   page 3*/
+   
+  BlockLoad(AWSb);
+  if (blank(AWSb.Host)) then begin 
+    goto LSendWebProductsToAmazon;
+  end;
+  if (blank(AWSb.SellerID)) then begin 
+    goto LSendWebProductsToAmazon;
+  end;
+  if (blank(AWSb.SecretKey)) then begin 
+    goto LSendWebProductsToAmazon;
+  end;
+  if (blank(AWSb.AWSAccessKeyID)) then begin 
+    goto LSendWebProductsToAmazon;
+  end;
+  if (blank(AWSb.MarketplaceID)) then begin 
+    goto LSendWebProductsToAmazon;
+  end;
+  BlockLoad(BCb);
+  level = 0;
+  AddPlainXmlToArea(a,"<?xml version=""1.0"" encoding=""utf-8""?>",level);  
+  AddPlainXmlToArea(a,"<AmazonEnvelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:noNamespaceSchemaLocation=""amzn-envelope.xsd"">",level);
+  AddPlainXmlToArea(a,"<Header>",level);
+  level = level + 1;
+  AddXmlTagToArea(a,"DocumentVersion","","1.01",level);
+  AddXmlTagToArea(a,"DocumentVersion","",DateToString(CurrentDate,"YYYYMMDD"),level);
+  level = level - 1;
+  AddPlainXmlToArea(a,"</Header>",level);
+  AddXmlTagToArea(a,"MessageType","","Product",level);
+  AddXmlTagToArea(a,"PurgeAndReplace","","false",level);
+  level = level + 1;
+  AddPlainXmlToArea(a,"<Message>",level);
+  level = level + 1;
+  AddXmlTagToArea(a,"MessageID","","1",level);
+  AddXmlTagToArea(a,"OperationType","","Update",level);
+  
+  found = true;
+  WPr.Code = wpcode;
+  while (LoopMain(WPr,1,found)) begin
+    if (nonblank(wpcode)) then begin
+      if (WPr.Code!=wpcode) then begin found = false; end;
+    end;
+    if (found) then begin
+      INr.Code = WPr.Code;
+      ReadFirstMain(INr,1,true);
+      AddPlainXmlToArea(a,"<Product>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"SKU","",INr.Code,level);
+      AddPlainXmlToArea(a,"<StandardProductID>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"Type","","EAN",level);//INr.Group
+      AddXmlTagToArea(a,"Value","","0123456789012",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</StandardProductID>",level);
+      if (HasLocalization("USA")) then begin
+        AddXmlTagToArea(a,"ProductTaxCode","",INr.TaxTemplateCode,level);
+      end else begin
+        AddXmlTagToArea(a,"ProductTaxCode","","",level);
+      end;
+      AddPlainXmlToArea(a,"<DescriptionData>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"Title","",INr.Name,level);
+      AddXmlTagToArea(a,"Brand","",INr.WatchBrand,level);
+      AddXmlTagToArea(a,"Description","","This is an example product description.",level);
+      AddXmlTagToArea(a,"BulletPoint","",INr.Name,level);
+      AddXmlTagToArea(a,"BulletPoint","",INr.Name,level);
+      AddXmlTagToArea(a,"MSRP","currency=""" & BCb.BaseCur1 & """",ValToString(INr.UPrice1,M4Val,"",".",0),level);
+      AddXmlTagToArea(a,"Manufacturer","","Example Product Manufacturer",level);
+      AddXmlTagToArea(a,"ItemType","","Example Item Tyoe",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"<DescriptionData>",level);
+      AddPlainXmlToArea(a,"<ProductData>",level);
+      level = level + 1;
+      AddPlainXmlToArea(a,"<Health>",level);
+      level = level + 1;
+      AddPlainXmlToArea(a,"<ProductType>",level);
+      level = level + 1;
+      AddPlainXmlToArea(a,"<HealthMisc>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"Ingredients","","Example Ingredients",level);
+      AddXmlTagToArea(a,"Directions","","Example Directions",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</HealthMisc>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</ProductType>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</Health>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"<ProductData>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</Product>",level);
+    end;
+  end;
+  level = level - 1;
+  AddPlainXmlToArea(a,"</Message>",level);
+  level = level - 1;
+  AddTextToArea("</AmazonEnvelope>",a);
+  if (AWSb.LogCommunication) then begin
+    LogAreaToFile("AWSAmazon-products.txt",a);
+  end;
+
+//  timestamp = DateToString(CurrentDate,"YYYY-MM-DD") & "T" & CurrentTime & "+02:00";//UTC
+  
+  timestamp = DateToString(CurrentDate,"YYYY-MM-DD") & "T" & CurrentTime & "" & TimeOffset(AWSb.GMTOffset);//UTC
+  
+  path = "AWSAccessKeyId" & chr(61) & URLEncode(AWSb.AWSAccessKeyID);
+  path = path & "&Action" & chr(61) & "SubmitFeed";
+  path = path & "&FeedType" & chr(61) & "_POST_PRODUCT_DATA_";
+  if (nonblank(AWSb.MWSAuthToken)) then begin
+    path = path & "&MWSAuthToken=" & URLEncode(AWSb.MWSAuthToken);//will be needed maybe for our custmomers
+  end;
+  path = path & "&MarketplaceIdList.Id.1" & chr(61) & AWSb.MarketplaceID;
+  path = path & "&SellerId" & chr(61) & URLEncode(AWSb.SellerID);
+  
+  path = path & "&SignatureMethod" & chr(61) & "HmacSHA256";
+  path = path & "&SignatureVersion" & chr(61) & "2";
+
+  path = path & "&Timestamp" & chr(61) & URLEncode(timestamp);
+//  path = path & "&Version" & chr(61) & URLEncode(DateToString(CurrentDate,"YYYY-MM-DD"));
+
+  signstr = "POST" & chr(10);
+  signstr = signstr & AWSb.Host & chr(10);
+  signstr = signstr & "/" & chr(10);
+  signstr = signstr & path;
+
+  path = path & "&Signature=" & URLEncode(HMACSHA256String(AWSb.SecretKey,signstr));
+
+  tstr = MD5Area(a);  
+  SetWebHeaders("Content-MD5: " & HexToBase64(tstr));
+
+  if (AWSb.LogCommunication) then begin
+    LogAreaToFile("AWSAmazon-request.txt",a);
+  end;
+
+  gAmazonAction = "SubmitFeed";
+  if (AWSb.Enable) then begin
+    SendAsyncWebRequest(AWSb.Host,443,-1,true,"POST","/?" & path,"text/xml; charset=""utf-8""","",a,"SendWebProductsToAmazonReply",30);
+  end;
+  
+LSendWebProductsToAmazon:;
+  return;
+end;
+
+global
+updating procedure SendWebProductsToAmazonReply(area reply,area replyheader,Boolean timedout)
+begin
+  record AmazonWSBlock AWSb;
+  transaction string 255 gAmazonAction;
+
+  BlockLoad(AWSb);
+  if (AWSb.LogCommunication) then begin
+    LogAreaToFile("AWSAmazon-reply-" & gAmazonAction & ".txt",reply);
+  end;
+  if (timedout) then begin
+  end else begin
+    ParseAmazonReply(gAmazonAction,reply);
+  end;
+  return;
+end;
+
+global
+procedure WebProdInegrateEn(record RcVc RepSpec)
+begin
+  switch (RepSpec.ArtMode) begin
+    case 1:
+      SendWebProductsToAmazon("");
+  end;
+  return;
+end;
+
+
+
+
+//--------  example
+procedure TESTSendWebProductsToAmazon(string wpcode)
+begin
+  Area a,ab,reply;
+  Integer level;
+  record BaseCurBlock BCb;
+  record WebNGProductVc WPr;
+  record INVc INr;
+  Boolean found;
+  string 255 path,signstr;
+  string 255 timestamp,secretkey,tstr,tstr2,c;
+  Integer i,l,cr;
+  transaction string 255 gAmazonAction;
+  
+/* http://docs.developer.amazonservices.com/en_US/feeds/Feeds_SubmitFeed.html */  
+/* https://images-na.ssl-images-amazon.com/images/G/01/rainier/help/XML_Documentation_Intl.pdf
+   page 3*/
+   
+  BlockLoad(BCb);
+  level = 0;
+  AddPlainXmlToArea(a,"<?xml version=""1.0"" encoding=""utf-8""?>",level);  
+  AddPlainXmlToArea(a,"<AmazonEnvelope xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:noNamespaceSchemaLocation=""amzn-envelope.xsd"">",level);
+  AddPlainXmlToArea(a,"<Header>",level);
+  level = level + 1;
+  AddXmlTagToArea(a,"DocumentVersion","","1.01",level);
+  AddXmlTagToArea(a,"DocumentVersion","",DateToString(CurrentDate,"YYYYMMDD"),level);
+  level = level - 1;
+  AddPlainXmlToArea(a,"</Header>",level);
+  AddXmlTagToArea(a,"MessageType","","Product",level);
+  AddXmlTagToArea(a,"PurgeAndReplace","","false",level);
+  level = level + 1;
+  AddPlainXmlToArea(a,"<Message>",level);
+  level = level + 1;
+  AddXmlTagToArea(a,"MessageID","","1",level);
+  AddXmlTagToArea(a,"OperationType","","Update",level);
+  
+  found = true;
+  WPr.Code = wpcode;
+  while (LoopMain(WPr,1,found)) begin
+    if (nonblank(wpcode)) then begin
+      if (WPr.Code!=wpcode) then begin found = false; end;
+    end;
+    if (found) then begin
+      INr.Code = WPr.Code;
+      ReadFirstMain(INr,1,true);
+      AddPlainXmlToArea(a,"<Product>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"SKU","",INr.Code,level);
+      AddPlainXmlToArea(a,"<StandardProductID>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"Type","","EAN",level);//INr.Group
+      AddXmlTagToArea(a,"Value","","0123456789012",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</StandardProductID>",level);
+      if (HasLocalization("USA")) then begin
+        AddXmlTagToArea(a,"ProductTaxCode","",INr.TaxTemplateCode,level);
+      end else begin
+        AddXmlTagToArea(a,"ProductTaxCode","","",level);
+      end;
+      AddPlainXmlToArea(a,"<DescriptionData>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"Title","",INr.Name,level);
+      AddXmlTagToArea(a,"Brand","",INr.WatchBrand,level);
+      AddXmlTagToArea(a,"Description","","This is an example product description.",level);
+      AddXmlTagToArea(a,"BulletPoint","",INr.Name,level);
+      AddXmlTagToArea(a,"BulletPoint","",INr.Name,level);
+      AddXmlTagToArea(a,"MSRP","currency=""" & BCb.BaseCur1 & """",ValToString(INr.UPrice1,M4Val,"",".",0),level);
+      AddXmlTagToArea(a,"Manufacturer","","Example Product Manufacturer",level);
+      AddXmlTagToArea(a,"ItemType","","Example Item Tyoe",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"<DescriptionData>",level);
+      AddPlainXmlToArea(a,"<ProductData>",level);
+      level = level + 1;
+      AddPlainXmlToArea(a,"<Health>",level);
+      level = level + 1;
+      AddPlainXmlToArea(a,"<ProductType>",level);
+      level = level + 1;
+      AddPlainXmlToArea(a,"<HealthMisc>",level);
+      level = level + 1;
+      AddXmlTagToArea(a,"Ingredients","","Example Ingredients",level);
+      AddXmlTagToArea(a,"Directions","","Example Directions",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</HealthMisc>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</ProductType>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</Health>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"<ProductData>",level);
+      level = level - 1;
+      AddPlainXmlToArea(a,"</Product>",level);
+    end;
+  end;
+  level = level - 1;
+  AddPlainXmlToArea(a,"</Message>",level);
+  level = level - 1;
+  AddTextToArea("</AmazonEnvelope>",a);
+
+  LogAreaToFile("WebProdInegrateEn-request.txt",a);
+
+/* http://docs.developer.amazonservices.com/en_US/dev_guide/DG_RequiredRequestParameters.html */
+
+  timestamp = DateToString(CurrentDate,"YYYY-MM-DD") & "T" & CurrentTime & "+02:00";//UTC
+  
+  path = "AWSAccessKeyId" & chr(61) & URLEncode("AKIAISUCEKJBBX67TF7A");
+  path = path & "&Action" & chr(61) & "SubmitFeed";
+  path = path & "&FeedType" & chr(61) & "_POST_PRODUCT_DATA_";
+//  path = path & "&MWSAuthToken=" & URLEncode("A2WEMOH538F7DP");//will be needed maybe for our custmomers
+  path = path & "&MarketplaceIdList.Id.1" & chr(61) & "A1F83G8C2ARO7P";
+  path = path & "&SellerId" & chr(61) & URLEncode("A2WEMOH538F7DP");
+  
+/* http://docs.developer.amazonservices.com/en_US/dev_guide/DG_ClientLibraries.html#DG_ClientLibraries__Signatures */
+/* http://docs.aws.amazon.com/general/latest/gr/signature-version-2.html */
+
+  path = path & "&SignatureMethod" & chr(61) & "HmacSHA256";
+  path = path & "&SignatureVersion" & chr(61) & "2";
+
+  path = path & "&Timestamp" & chr(61) & URLEncode(timestamp);
+//  path = path & "&Version" & chr(61) & URLEncode(DateToString(CurrentDate,"YYYY-MM-DD"));
+
+  signstr = "POST" & chr(10);
+  signstr = signstr & "mws.amazonservices.co.uk" & chr(10);
+  signstr = signstr & "/" & chr(10);
+  signstr = signstr & path;
+
+
+/*
+https://elasticmapreduce.amazonaws.com?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE&Action=DescribeJobFlows&SignatureMethod=HmacSHA256&SignatureVersion=2&Timestamp=2011-10-03T15%3A19%3A30&Version=2009-03-31&Signature=i91nKc4PWAt0JJIdXwz9HxZCJDdiy6cf%2FMj6vPxyYIs%3D
+
+
+POST
+mws.amazonservices.co.uk
+/
+AWSAccessKeyId=AKIAISUCEKJBBX67TF7A&Action=SubmitFeed&FeedType=_POST_PRODUCT_DATA_&SellerId=A2WEMOH538F7DP&MarketplaceIdList.Id.1=A1F83G8C2ARO7P&SignatureMethod=HmacSHA256&SignatureVersion=2&Timestamp=2016-07-14T13%3A05%3A01%2B02%3A00&Version=2016-07-14
+
+*/
+
+  path = path & "&Signature=" & URLEncode(HMACSHA256String("STmJ6q7yAZNYlSadUrIAzX63REORPf5X4DYtBN+6",signstr));
+
+  tstr = MD5Area(a);  
+  SetWebHeaders("Content-MD5: " & HexToBase64(tstr));
+
+  gAmazonAction = "SubmitFeed";
+  SendAsyncWebRequest("mws.amazonservices.co.uk",443,-1,true,"POST","/?" & path,"text/xml; charset=""utf-8""","",a,"SendWebProductsToAmazonReply",30);
+  
+/*  
+  found = SendWebRequest("mws.amazonservices.co.uk",443,-1,true,"POST","/?" & path,"text/xml; charset=""utf-8""","",false,a,reply,30);
+  
+  if (found) then begin
+    ParseAmazonReply("SubmitFeed",reply);
+  end;
+
+  LogAreaToFile("WebProdInegrateEn-reply.txt",reply);
+*/  
+
+
+
+/*
+example
+POST /?AWSAccessKeyId=0PB842ExampleN4ZTR2
+&Action=SubmitFeed
+&FeedType=_POST_PRODUCT_DATA_
+&MWSAuthToken=amzn.mws.4ea38b7b-f563-7709-4bae-87aeaEXAMPLE
+&MarketplaceIdList.Id.1=ATVExampleDER
+&SellerId=A1XExample5E6
+&SignatureMethod=HmacSHA256
+&SignatureVersion=2
+&Timestamp=2009-01-26T23%3A51%3A31.315Z
+&Version=2009-01-01
+&Signature=SvSExamplefZpSignaturex2cs%3D HTTP/1.1
+Content-MD5: ExampleMd5HashOfHttpBodyAsPerRfc2616Example
+Content-Type: text/xml; charset=iso-8859-1
+Host: mws.amazonservices.com
+User-Agent: <Your User Agent Header>
+*/
+  return;
+end;

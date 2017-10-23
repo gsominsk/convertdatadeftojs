@@ -1,0 +1,317 @@
+external procedure AutomatedSalesOrderly(string);
+external procedure HTVatNr(string,var string);
+external procedure TRExtYc(record TRVc,var string);
+external procedure HT2Per(Date, Date , var string);
+
+procedure HTTrans(string a,var string res)
+BEGIN
+  if (blank(a)) then begin
+    res = USetStr(3009);
+  end else begin
+    res = USetStr(3010);
+    res = res & a;
+  end;
+  RETURN;
+END;
+
+function Boolean TestTransp2Corst(record TRVc TRp,LongInt corspser,var Integer startnr)
+BEGIN
+  Boolean res;
+  Boolean testf;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  Integer debcnt;
+  Integer credcnt;
+  val runbal;
+  
+  debcnt = 0;
+  credcnt = 0;
+  runbal = 0;
+  res = true;
+  rwcnt = MatRowCnt(TRp);
+  for (i=startnr;i<rwcnt;i=i+1) begin
+    MatRowGet(TRp,i,TRrw);
+    testf = true;
+    if (TRrw.stp<>1) then begin testf = false; end;
+    if (TRrw.ovst<>0) then begin testf = false; end;
+    if (TRrw.CorspSer!=corspser) then begin testf = false; end;
+    if (testf==true) then begin
+        if (i-1==startnr) then begin startnr = i; end;
+        if (TRrw.DebVal>0) then begin
+          debcnt = debcnt + 1;
+        end;
+        if (TRrw.CredVal>0) then begin
+          credcnt = credcnt + 1;
+        end;
+        if (TRrw.DebVal<0) then begin 
+          debcnt = debcnt + 1;
+        end;
+        if (TRrw.CredVal<0) then begin
+          credcnt = credcnt + 1;
+        end;
+    
+        runbal = runbal + TRrw.DebVal;
+        runbal = runbal - TRrw.CredVal;
+        if (runbal==0) then begin
+// Added check for not zero as well, otherwise a lonely line with zero in amount will say it doesn't follow corresp rules.
+          if ((debcnt<>1) and (credcnt<>1) and (debcnt!=0) and (credcnt!=0)) then begin
+            res = false;
+            goto L99;
+          end;
+          debcnt = 0;
+          credcnt = 0;
+        end;
+    end;
+  end;
+  if (runbal<>0) then begin
+    res = false;
+  end;
+L99:;
+  TestTransp2Corst = res;
+  RETURN;
+END;
+
+function string 255 FindGroupAccount(string accnumber,Integer glen)
+begin
+  string 255 res;
+  record AccVc Accr;
+  Boolean found,testf;
+  
+  found = true;
+  Accr.AccNumber = accnumber;
+  while (LoopBackKey("AccNumber",Accr,1,found)) begin
+    if (Accr.AccNumber>accnumber) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (Accr.GroupAcc==0) then begin testf = false; end;
+      if (len(Accr.AccNumber)!=glen) then begin testf = false; end;
+      if (testf) then begin
+        res = Accr.AccNumber;
+        found = false;
+      end;
+    end;
+  end;
+  FindGroupAccount = res;
+  return;
+end;
+
+function LongInt TestCrspAcc(record TRVc TRr,row TRVc mainTRrw,Integer rownr,record CrspAccBlock CAb)
+begin
+  LongInt res;
+  row CrspAccBlock CAbrw;
+  Integer cai,carwcnt;
+  Integer i,rwcnt;
+  string 255 groupacc;
+  row TRVc TRrw;
+  
+  res = 1583;
+  rwcnt = MatRowCnt(TRr);
+  carwcnt = MatRowCnt(CAb);
+  for (cai=0;cai<carwcnt;cai=cai+1) begin
+    MatRowGet(CAb,cai,CAbrw);
+    groupacc = FindGroupAccount(mainTRrw.AccNumber,len(CAbrw.AccGroup));
+    if (groupacc==CAbrw.AccGroup) then begin
+      for (i=rownr+1;i<rwcnt;i=i+1) begin
+        MatRowGet(TRr,i,TRrw);
+        if (mainTRrw.DebVal!=0) then begin
+          groupacc = FindGroupAccount(TRrw.AccNumber,len(CAbrw.CredAccGroup));
+          if (SetInSet(groupacc,CAbrw.CredAccGroup)==false) then begin
+            goto LTestCrspAcc;
+          end;
+        end else begin
+          groupacc = FindGroupAccount(TRrw.AccNumber,len(CAbrw.DebAccGroup));
+          if (SetInSet(groupacc,CAbrw.DebAccGroup)==false) then begin
+            goto LTestCrspAcc;
+          end;
+        end;
+      end;
+    end;
+  end;
+  res = 0;
+LTestCrspAcc:;  
+  TestCrspAcc = res;
+  return;
+end;
+
+global
+function LongInt TestTranspCorst2(record TRVc TRr)
+begin
+  LongInt res;
+  Boolean testf,caf;
+  row TRVc TRrw;
+  Integer i,j,rwcnt;
+  LongInt corspser;
+  record CrspAccBlock CAb;
+  
+  res = 1583;
+  BlockLoad(CAb);
+  caf = MatRowCnt(CAb)>0;
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    testf = true;
+    if (TRrw.stp<>1) then begin testf = false; end;
+    if (TRrw.ovst<>0) then begin testf = false; end;
+    if (testf==true) then begin
+      if (caf==false) then begin
+        corspser = TRrw.CorspSer;
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(TRr,j,TRrw);
+          if (corspser==TRrw.CorspSer) then begin testf = false; end;
+        end;
+        if (testf==true) then begin
+          if (TestTransp2Corst(TRr,corspser,i)==false) then begin 
+            goto LTestTranspCorst2; 
+          end;
+        end;
+      end else begin
+        res = TestCrspAcc(TRr,TRrw,i,CAb);
+        if (res!=0) then begin
+          goto LTestTranspCorst2; 
+        end;
+      end;
+    end;
+  end;  
+  res = 0;
+LTestTranspCorst2:;
+  TestTranspCorst2 = res;
+  return;
+end;
+
+global
+function Boolean TestTranspCorst(record TRVc TRr)
+begin
+  TestTranspCorst = TestTranspCorst2(TRr)!=0;
+  return;
+end;
+
+global
+procedure LstRegDat(var string res)
+begin
+  string 255 tstr;
+  record SRBlock SRRec;
+
+  BlockLoad(SRRec);
+  res = USetStr(3017);
+  tstr = SRRec.LastRegDate;  
+  res = res & tstr;
+  return;
+end;
+
+global
+procedure CorstRn(var record RcVc RepSpec)
+BEGIN
+  Boolean TrHs;
+  string 255 tstr;
+  Boolean testf;
+  Integer yc1,yc2;
+  LongInt n1,n2,trcnt;
+  record TRVc TRr;
+  val TransSum;
+  string 40 xkey;
+  Integer keyss;
+  Integer prwcnt;
+  val pdsum,pcsum;
+  Integer rw;
+  
+  prwcnt = 0;
+  n1 = FirstTransInRange(tstr);
+  n2 = LastTransInRange(tstr);
+  yc1 = FirstTransTypeInRange(RepSpec.f1);
+  yc2 = LastTransTypeInRange(RepSpec.f1);
+  StartReportJob(USetStr(6860));
+  rw = 1; 
+  HTTrans(RepSpec.f1,tstr); 
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  LstRegDat(tstr);
+  Header(rw,tstr,0);
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTVatNr(RepSpec.f2,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;  
+  EndHeader;
+  trcnt = 0;
+  StartFormat(15);
+  OutString(0,0,USetStr(3068),false);
+  OutString(80,0,USetStr(3069),false);
+  OutString(140,0,USetStr(3070),false);
+  OutString(1,0,USetStr(3071),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (RepSpec.flags[10]==0) then begin
+      xkey = "Number";
+      TRr.Number = n1;
+      TRr.IntYc = yc1;
+      TRr.TransDate = RepSpec.sStartDate;
+      keyss = 2;
+  end;
+  if (RepSpec.flags[10]==1) then begin
+      xkey = "TransDate";
+      TRr.Number = -1;
+      TRr.IntYc = 0;
+      TRr.TransDate = RepSpec.sStartDate;
+      keyss = 1;
+  end;
+  TrHs = true;
+  while (LoopKey(xkey,TRr,keyss,TrHs)) begin
+    if (TrHs) then begin
+      if (RepSpec.flags[10]==0) then begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (TRr.IntYc>yc2) then begin TrHs = false; end;
+          if (TRr.IntYc==yc2) then begin
+            if (TRr.Number>n2) then begin TrHs = false; end;
+          end;  
+        end;
+      end;
+    end;
+    if (TrHs) then begin
+      if (RepSpec.flags[10]==1) then begin
+        if (RepSpec.sEndDate<TRr.TransDate) then begin TrHs = false; end;
+      end;
+    end;
+
+    if (TrHs) then begin
+      testf = true;
+      if (RepSpec.flags[10]==0) then begin
+        if (TRr.TransDate>RepSpec.sEndDate) then begin testf = false; end;
+        if (TRr.TransDate<RepSpec.sStartDate) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[10]==1) then begin
+        if (nonblank(RepSpec.f1)) then begin
+          if ((yc1<TRr.IntYc) or (yc2>TRr.IntYc)) then begin testf = false; end;
+          if (testf) then begin
+            if ((n1>TRr.Number) or (n2<TRr.Number)) then begin testf = false; end;
+          end;  
+        end;
+      end;
+
+      if (testf) then begin
+        if (TestTranspCorst(TRr)==false) then begin
+          TRExtYc(TRr,tstr);
+          trcnt = trcnt + 1;
+          StartFormat(15);
+          OutString(0,"DblTrans",tstr,false);
+          OutDate(80,0,TRr.RegDate,false);
+          OutDate(140,0,TRr.TransDate,false);
+          OutString(280,0,TRr.Comment,false);
+          OutString(1,0,TRr.Sign,true);
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutString(0,0,USetStr(3079),false);
+  OutLongInt(160,0,trcnt,false);
+  EndFormat;
+  
+  EndJob; 
+  AutomatedSalesOrderly("HasIntegratedNL+Run_CorstRn");
+  return;
+end;

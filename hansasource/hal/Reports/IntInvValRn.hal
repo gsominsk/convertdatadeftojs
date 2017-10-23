@@ -1,0 +1,935 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTLevCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external function Boolean ReadFirstItemInclClosed(string,var record INVc,Boolean,Boolean);
+external function roundmode GetCostRoundMode(record RoundBlock);
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external function Integer ItemCostPerLocation(record INVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function val HALGetIntStockQty(string,string,Date);
+external procedure FindIntFIFOPrice(string,Integer,string,val,val,var val,Boolean,Boolean,Date);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure HTArts(string, string, var string);
+external procedure HTDepartment(string,var string);
+external procedure HTArtGroup(string, var string);
+external procedure HTSupplier(string, var string);
+external procedure GetItemGroupDescription(string,var string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure PrintOneBatch(string,string,val,Boolean);
+external procedure FindIntStockValue2(string,string,var record IntISVc,Integer,Date,Integer,Boolean,var val,Integer,Boolean);
+
+procedure SerialInInternalStock(string item,string ser,string location,var val q)
+BEGIN
+  record IntSerBalVc SBr;
+  record MainStockBlock MainStockRec;
+  
+  q = blankval;
+  SBr.Item = item;
+  SBr.Serial = ser;
+  SBr.Location = location;
+  if (blank(location)) then begin
+    BlockLoad(MainStockRec);
+    SBr.Location = MainStockRec.MainStock;
+  end;
+  if (ReadFirstMain(SBr,3,true)) then begin
+    q = SBr.Quant;
+  end;
+  RETURN;
+END;
+
+procedure FindAllStocksValue(string item,var val totvalp,Integer curncytday,Boolean print,Date todatp)
+BEGIN
+  Boolean TrHs;
+  record IntISVc IntISr,IntIS2r;
+  val loctotval;
+  record INVc INr;
+  Integer keys;
+  string 255 index,variety,lastitem;
+
+  index = "CodeVariety";
+  totvalp = blankval;
+  keys = 1;
+  TrHs = true;
+  IntISr.Code = item;
+  if (ReadFirstItem(item,INr,false,false)) then begin
+    if (item!=INr.Code) then begin
+      variety = right(item,len(item)-len(INr.Code));
+      IntISr.Variety = variety;
+      IntISr.Code = INr.Code;
+      keys = 2;
+    end;
+  end;
+  while (LoopKey(index,IntISr,keys,TrHs)) begin
+    if (IntISr.Code!=item) then begin TrHs = false; end;
+    if (nonblank(variety)) then begin
+      if (IntISr.Variety!=variety) then begin TrHs = false; end;
+    end;
+    if (lastitem==item) then begin TrHs = false; end;
+    if ((TrHs==true) and nonblank(IntISr.Location)) then begin
+      loctotval = blankval;
+      IntIS2r.Instock = HALGetIntStockQty(item,IntISr.Location,todatp);
+      if (IntIS2r.Instock!=0) then begin
+        FindIntFIFOPrice(item,-1,IntISr.Location,IntIS2r.Instock,blankval,loctotval,false,print,todatp);
+        totvalp = totvalp + loctotval;
+      end;
+      lastitem = item;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure PrintIntSerialNumbers(string item,Integer itemtype,val qtp,Date dp,string location)
+BEGIN
+  record IntSerBalVc SBr;
+  record INTransferVc INTransferr;
+  row INTransferVc INTransferrw;
+  record OffHireVc OHr;
+  row OffHireVc OHrw;
+  record RetVc Retr;
+  row RetVc Retrw;
+  Boolean found;
+  val q;
+  Boolean first;
+  record IntINrsVc IntINrsr;
+  Integer i,rwcnt;
+  val t,instock,rem;
+  string 20 loc2;
+
+  first = true;
+  if (blankdate(dp)) then begin
+    q = 0.00001;
+    SBr.Item = item;
+    found = true;
+    while (LoopMain(SBr,1,found)) begin
+      if (SBr.Item==item) then begin
+        if (SBr.Quant>=q) then begin
+          if (blank(location) or (location==SBr.Location)) then begin
+            if (first) then begin
+              Gray_Divider(2,300);
+            end;
+            PrintOneBatch(item,SBr.Serial,SBr.Quant,first);
+            first = false;
+          end;
+        end;
+      end;
+    end;
+    if (first==false) then begin // this means there were some serienumbers 
+      Gray_Divider(2,300);
+      StartFormat(10);
+      EndFormat;
+    end;
+  end else begin
+    // Now we read (qtp) goods receipts back to get the serial numbers     
+    rem = Round(qtp,SetRoundModeD(0));
+    if (rem<=0) then begin goto LPrintIntSerialNumbers; end;
+    IntINrsr.ItemCode = item;
+    IntINrsr.TransDate = dp;
+    IntINrsr.FIFO = 1;
+    found = true;
+    while (LoopBackKey("FIFO",IntINrsr,3,found)) begin
+      if (found) then begin
+        if (IntINrsr.ItemCode!=item) then begin found = false; end;
+        if (IntINrsr.FIFO==0) then begin found = false; end;
+      end;  
+      if (found) then begin
+        if (IntINrsr.FileName=="INTransferVc") then begin
+          INTransferr.SerNr = IntINrsr.TransNr;
+          if (ReadFirstMain(INTransferr,1,true)) then begin
+            rwcnt = MatRowCnt(INTransferr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(INTransferr,i,INTransferrw);
+              if (INTransferrw.ArtCode==item) then begin
+                if (nonblank(INTransferrw.SerialNr)) then begin
+                  loc2 = INTransferr.Location;
+                  if (nonblank(INTransferrw.Location)) then begin
+                    loc2 = INTransferrw.Location;
+                  end;
+                  if ((location==loc2) or (blank(location))) then begin
+                    SerialInInternalStock(IntINrsr.ItemCode,INTransferrw.SerialNr,loc2,instock);
+                    if (first) then begin
+                      Gray_Divider(2,300);
+                    end;
+                    t = rem - instock;
+                    if (t<=0) then begin
+                      q = rem;
+                    end else begin
+                      q = instock;
+                    end;  
+//                    if (itemtype==1) then begin q = 1; end;//what is it for
+                    PrintOneBatch(item,INTransferrw.SerialNr,q,first);
+                    first = false;
+                    rem = rem - instock; 
+                    if (rem<=0) then begin goto LPrintIntSerialNumbers; end;
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+        if (IntINrsr.FileName=="OffHireVc") then begin
+          OHr.SerNr = IntINrsr.TransNr;
+          if (ReadFirstMain(OHr,1,true)) then begin
+            rwcnt = MatRowCnt(OHr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(OHr,i,OHrw);
+              if (OHrw.ArtCode==item) then begin
+                if (nonblank(OHrw.SerialNr)) then begin
+                  loc2 = OHr.Location;
+                  if (nonblank(OHrw.Location)) then begin
+                    loc2 = OHrw.Location;
+                  end;
+                  if ((location==loc2) or (blank(location))) then begin
+                    SerialInInternalStock(IntINrsr.ItemCode,OHrw.SerialNr,loc2,instock);
+                    if (first) then begin
+                      Gray_Divider(2,300);
+                    end;
+                    t = rem - instock;
+                    if (t<=0) then begin
+                      q = rem;
+                    end else begin
+                      q = instock;
+                    end;  
+//                    if (itemtype==1) then begin q = 1; end;//what is it for
+                    PrintOneBatch(item,OHrw.SerialNr,q,first);
+                    first = false;
+                    rem = rem - instock; 
+                    if (rem<=0) then begin goto LPrintIntSerialNumbers; end;
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+        
+      end;
+    end;
+LPrintIntSerialNumbers:;
+  end;
+  RETURN;
+END;
+
+global
+procedure InvListOneInternalItem(record RcVc RepSpec,record INVc INp,var Boolean itemoutp,var Boolean groutp,var string lastgroup,var val sum1p,var val nrp,var val groupsump,roundmode roundof)
+BEGIN
+  record WeigAvVc war;
+  record IntISVc IntISr;
+  Integer typ;
+  Boolean plhit;
+  val upric,zero;
+  val instock,t,t2;
+  string 255 tstr;
+  record GeneralOptionBlock GenOptRec;
+  Boolean fManyLocations;
+  record MainStockBlock mst;
+
+  BlockLoad(mst);
+  fManyLocations = false;
+  if (CountRecords("LocationVc")>1) then begin
+    fManyLocations = true;
+  end;
+  if (ItemCostPerLocation(INp)==0) then begin
+    fManyLocations = false;
+  end;
+  if (blank(mst.MainStock)) then begin
+    fManyLocations = false;
+  end;  
+  if (INp.ItemType==1) then begin
+    instock = HALGetIntStockQty(INp.Code,RepSpec.f2,RepSpec.d1);
+    if (RepSpec.UsedOnly==1) then begin
+      if (instock==0) then begin
+        goto LInvListOneInternalItem;
+      end;
+    end;
+    BlockLoad(GenOptRec);
+    if (RepSpec.flags[2]==1) then begin
+      if (lastgroup!=INp.Group) then begin
+        if (itemoutp==true) then begin
+          if (blank(groupsump)==false) then begin
+            Gray_Divider(0,1);
+            StartFormat(15);
+            OutString(20,0,lastgroup,false);
+            GetItemGroupDescription(lastgroup,tstr);
+            OutString(100,0,tstr,false);
+            OutString(300,0,3248,true);
+            OutVal(480,0,groupsump,M45Val,true);
+            EndFormat;
+            groupsump = blankval;
+            Gray_Divider(0,1);
+          end;
+          groutp = false;
+        end;  
+        lastgroup = INp.Group;
+      end;
+    end;
+    itemoutp = true;
+    upric = INp.UPrice1;
+    plhit = true;
+    if (RepSpec.flags[2]==1) then begin
+      if (groutp==false) then begin
+        StartFormat(15);
+        OutString(20,0,INp.Group,false);
+        GetItemGroupDescription(INp.Group,tstr);      
+        OutString(100,0,tstr,false);
+        EndFormat;
+        Gray_Divider(0,1);
+        groutp = true;
+      end;
+    end;
+    war.ArtCode = INp.Code;
+    war.Location = RepSpec.f2;
+    if (ReadFirstMain(war,2,true)==false) then begin
+      war.WeighedAvPrice = blankval;
+      war.WeighedAvPriceB2 = blankval;
+    end;
+    if (RepSpec.ArtMode==1) begin// Detailed 
+      StartFormat(15);
+//      OutString(0,"VarMaskVarDbl",INp.Code,false);
+      OutString(0,0,INp.Code,false);
+      OutString(2,0,INp.Name,false);
+      OutString(4,0,INp.Unittext,false);
+      EndFormat;
+      if (blank(RepSpec.f2) and fManyLocations) then begin
+        FindAllStocksValue(INp.Code,t,RepSpec.flags[1],true,RepSpec.d1);
+      end else begin
+        FindIntFIFOPrice(INp.Code,-1,RepSpec.f2,instock,blankval,t,false,true,RepSpec.d1);
+      end;
+      Black_Divider(2,1);
+      StartFormat(15);
+      OutVal(3,0,instock,M4UVal,true);
+      if ((RepSpec.flags[11]==0) or (RepSpec.flags[11]==3)) then begin
+         t2 = t/instock;
+      end;
+      if (RepSpec.flags[11]==1) then begin      
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.UPrice1,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.UPrice1/INp.PriceFactor;
+        end else begin
+          t2 = INp.UPrice1;
+          t = INp.UPrice1*instock;
+        end;
+      end;     
+      if (RepSpec.flags[11]==2) then begin      
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.InPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.InPrice/INp.PriceFactor;
+        end else begin
+          t2 = INp.InPrice;
+          t = INp.InPrice*instock;
+        end;
+      end;
+      if (RepSpec.flags[11]==4) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.WeighedAvPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.WeighedAvPrice/INp.PriceFactor;
+        end else begin
+          t2 = INp.WeighedAvPrice;
+          t = INp.WeighedAvPrice*instock;
+        end;
+      end;
+      if (RepSpec.flags[11]==5) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,war.WeighedAvPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = war.WeighedAvPrice/INp.PriceFactor;
+        end else begin
+          t2 = war.WeighedAvPrice;
+          t = war.WeighedAvPrice*instock;
+        end;
+      end;
+      t2 = Round(t2,roundof);
+      OutVal(4,0,t/instock,M45Val,true);
+      typ = M45Val;
+      if (RepSpec.flags[16]!=0) then begin
+        t = Round(t,DefaultRoundMode);
+        typ = M4Val;
+      end;
+      OutVal(1,0,t,typ,true);
+      EndFormat;
+      if (RepSpec.flags[11]==3) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.UPrice1,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.UPrice1/INp.PriceFactor;
+        end else begin
+          t2 = INp.UPrice1;
+          t = INp.UPrice1*instock;
+        end;
+        StartFormat(15);
+        OutString(3,0,USetStr(2350),true);
+        OutVal(4,0,t2,M45Val,true);
+        OutVal(1,0,t,M45Val,true);
+        EndFormat;
+      end;
+      sum1p = sum1p + t;
+      nrp = nrp + instock;
+      groupsump = groupsump +t;
+      if (RepSpec.flags[10]!=0) then begin
+        PrintIntSerialNumbers(INp.Code,INp.ItemType,instock,RepSpec.d1,RepSpec.f2);
+      end;  
+      Gray_Divider(0,1);
+    end;
+    if (RepSpec.ArtMode==0) then begin// Overview 
+      StartFormat(15);
+//      OutString(0,"VarMaskVarDbl",INp.Code,false);
+      OutString(0,0,INp.Code,false);
+      OutString(2,0,INp.Name,false);
+      OutString(5,0,INp.Unittext,false);
+      OutVal(3,0,instock,M4UVal,true);
+      if ((RepSpec.flags[11]==0) or (RepSpec.flags[11]==3)) then begin
+        if (blank(RepSpec.f2) and fManyLocations) then begin
+          FindAllStocksValue(INp.Code,t,RepSpec.flags[1],false,RepSpec.d1);
+        end else begin
+          if (RepSpec.flags[1]!=0) then begin
+            FindIntFIFOPrice(INp.Code,-1,RepSpec.f2,instock,blankval,t,true,false,RepSpec.d1);
+          end else begin
+            FindIntFIFOPrice(INp.Code,INp.SerNrf,RepSpec.f2,instock,blankval,t,false,false,RepSpec.d1);
+          end;
+        end;      
+        t2 = t/instock;
+      end;      
+      if (RepSpec.flags[11]==1) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.UPrice1,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.UPrice1/INp.PriceFactor;
+        end else begin
+          t2 = INp.UPrice1;        
+          t = INp.UPrice1*instock;
+        end;
+      end;      
+      if (RepSpec.flags[11]==2) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.InPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.InPrice/INp.PriceFactor;
+        end else begin
+          t2 = INp.InPrice;        
+          t = INp.InPrice*instock;
+        end;
+      end;      
+      if (RepSpec.flags[11]==4) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.WeighedAvPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.WeighedAvPrice/INp.PriceFactor;
+        end else begin
+          t2 = INp.WeighedAvPrice;        
+          t = INp.WeighedAvPrice*instock;
+        end;
+      end;      
+      if (RepSpec.flags[11]==5) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,war.WeighedAvPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = war.WeighedAvPrice/INp.PriceFactor;
+        end else begin
+          t2 = war.WeighedAvPrice;        
+          t = war.WeighedAvPrice*instock;
+        end;
+      end;      
+      t2 = Round(t2,roundof);
+      OutVal(4,0,t2,M45Val,true);
+      typ = M45Val;
+      if (RepSpec.flags[16]!=0) then begin
+        t = Round(t,DefaultRoundMode);
+        typ = M4Val;
+      end;
+//      OutVal(1,0,t,typ,true);        
+      OutVal(1,0,t,M45Val,true);
+      EndFormat;
+      if (RepSpec.flags[11]==3) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(instock,INp.UPrice1,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.UPrice1/INp.PriceFactor;
+        end else begin
+          t2 = INp.UPrice1;        
+          t = INp.UPrice1*instock;
+        end;
+        StartFormat(15);
+        OutString(3,0,USetStr(2350),true);
+        OutVal(4,0,t2,M45Val,true);
+        typ = M45Val;
+        if (RepSpec.flags[16]!=0) then begin
+          t = Round(t,DefaultRoundMode);
+          typ = M4Val;
+        end;
+        OutVal(1,0,t,typ,true);        
+        EndFormat;
+        StartFormat(5);
+        EndFormat;
+      end;
+      sum1p = sum1p + t;
+      nrp = nrp + instock;
+      groupsump = groupsump + t;
+      if (RepSpec.flags[10]!=0) then begin
+        PrintIntSerialNumbers(INp.Code,INp.ItemType,instock,RepSpec.d1,RepSpec.f2);
+      end;  
+    end;
+    if (RepSpec.ArtMode==2) then begin// Per location          
+      StartFormat(15);
+//      OutString(0,"VarMaskVarDbl",INp.Code,false);
+      OutString(0,0,INp.Code,false);
+      OutString(2,0,INp.Name,false);
+      OutString(4,0,INp.Unittext,false);
+      EndFormat;
+
+      FindIntStockValue2(INp.Code,RepSpec.f2,IntISr,RepSpec.flags[1],RepSpec.d1,RepSpec.flags[14],fManyLocations,t,RepSpec.flags[11],true);
+      Black_Divider(2,1);
+      StartFormat(15);
+      OutVal(3,0,IntISr.Instock,M4UVal,true);
+
+      if (RepSpec.flags[11]==0) then begin
+        if ((nonblank(RepSpec.f2) and (RepSpec.flags[14]==1))) then begin
+          FindIntFIFOPrice(INp.Code,-1,RepSpec.f2,IntISr.Instock,blankval,t,false,false,RepSpec.d1);
+        end;
+        t2 = t/IntISr.Instock;
+      end;
+      if (RepSpec.flags[11]==1) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(IntISr.Instock,INp.UPrice1,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.UPrice1/INp.PriceFactor;
+        end else begin
+          t2 = INp.UPrice1;        
+          t = INp.UPrice1*IntISr.Instock;        
+        end;
+      end;      
+      if (RepSpec.flags[11]==2) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(IntISr.Instock,INp.InPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.InPrice/INp.PriceFactor;
+        end else begin
+          t2 = INp.InPrice;        
+          t = INp.InPrice*IntISr.Instock;        
+        end;
+      end;
+      if (RepSpec.flags[11]==4) then begin
+        if (INp.PriceFactor!=0) then begin
+          CalcSum(IntISr.Instock,INp.WeighedAvPrice,INp.PriceFactor,zero,t,GenOptRec.UseDiscount);
+          t2 = INp.WeighedAvPrice/INp.PriceFactor;
+        end else begin
+          t2 = INp.WeighedAvPrice;        
+          t = INp.WeighedAvPrice*IntISr.Instock;        
+        end;
+      end;
+      if (RepSpec.flags[11]==5) then begin
+        t2 = blankval;
+      end;
+
+      t2 = Round(t2,roundof);
+      OutVal(4,0,t/IntISr.Instock,M45Val,true);
+      OutVal(1,0,t,M4Val,true);
+      EndFormat;
+      sum1p = sum1p + t;
+      nrp = nrp + IntISr.Instock;
+      groupsump = groupsump + t;
+      Gray_Divider(0,1);
+    end;
+  end;
+LInvListOneInternalItem:;
+  RETURN;
+END;
+
+procedure IntLLoopIS(record RcVc RepSpec,var val sum1p,var val nrp,roundmode roundof)
+BEGIN
+  record PIVc PIr;
+  record INVc INr;
+  record IntISVc IntISr;
+  string 255 lastgroup;
+  Boolean itemout,grout;
+  Boolean testf;
+  string 255 fromart,toart;
+  string 255 frvariety,tovariety;
+  string 255 frcc,tocc;
+  Boolean TrHs,found;
+  string 255 lastitem;
+  val groupsum;
+  string 255 keystr;
+  Integer keys,keys2;
+  string 60 sz,msk,mskrep;  
+  string 200 varsubset;  
+
+  itemout = false;
+  grout = false;
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart = LastInRange(RepSpec.f1,20);
+  if (nonblank(fromart)) then begin
+    if (ReadFirstItem(fromart,INr,false,false)) then begin
+      frvariety = right(fromart,len(fromart)-len(INr.Code));
+      fromart = INr.Code;
+    end;
+  end;
+  if (nonblank(toart)) then begin
+    if (ReadFirstItem(toart,INr,false,false)) then begin
+      tovariety = right(toart,len(toart)-len(INr.Code));
+      toart = INr.Code;
+    end;
+  end;
+  frcc = FirstInRange(RepSpec.f3,20);
+  tocc = LastInRange(RepSpec.f3,20);  
+  Gray_Divider(0,1);
+  TrHs = true;
+
+  keys = 1;
+  keystr = "CodeVariety";
+  IntISr.Code = fromart;    
+  if (nonblank(frvariety)) or (nonblank(tovariety)) then begin
+    keys = 2;
+    keystr = "CodeVariety";
+    IntISr.Variety = frvariety;    
+  end;
+  while (LoopKey(keystr,IntISr,keys,TrHs)) begin  
+    if (ReadFirstItemInclClosed(IntISr.Code,INr,false,false)==false) then begin goto LIntLLoopISEnd; end;
+    if (INr.Code==lastitem) then begin goto LIntLLoopISEnd; end;
+    IntISr.Code = INr.Code;
+    lastitem = INr.Code;
+
+    testf = true;
+    if (nonblank(frvariety)) or (nonblank(tovariety)) then begin
+      if (IntISr.Variety>tovariety) then begin TrHs = false; end;
+    end;    
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group>tocc) then begin
+          if (RepSpec.flags[2]==1) then begin
+            TrHs = false;
+          end else begin
+            testf = false;
+          end;
+        end;  
+      end;   
+    end;        
+    if (TrHs) then begin
+      if (nonblank(toart)) then begin 
+        if (INr.Code>toart) then begin
+          if (RepSpec.flags[2]==0) then begin
+            TrHs = false;
+          end else begin
+            testf = false;
+          end;
+        end;
+      end;
+    end;        
+    if (TrHs) then begin
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (INr.Department!=RepSpec.AccStr) then begin
+          testf = false;
+        end;
+      end;    
+    end;
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group<frcc) then begin
+          testf = false;
+        end;
+      end;
+    end;      
+    if (TrHs) then begin
+      if (nonblank(RepSpec.LastAcc) or nonblank(RepSpec.f4) or nonblank(RepSpec.f5)) then begin
+        PIr.ItemCode = INr.Code;
+        PIr.Location = RepSpec.f2;
+        keys2 = 2;
+        if (nonblank(RepSpec.LastAcc)) then begin 
+          PIr.VECode = RepSpec.LastAcc;
+          keys2 = 3;
+        end;
+        found = ReadFirstMain(PIr,keys2,true);
+        if (found==false) then begin
+          if (nonblank(RepSpec.f2)) then begin
+            PIr.ItemCode = INr.Code;
+            PIr.Location = "";
+            keys2 = 2;
+            if (nonblank(RepSpec.LastAcc)) then begin 
+              PIr.VECode = RepSpec.LastAcc;
+              keys2 = 3;
+            end;
+            found = ReadFirstMain(PIr,keys2,true);
+          end;
+        end;
+        if (found) then begin
+          if (PIr.ItemCode!=INr.Code) then begin testf = false; end;
+          if (nonblank(RepSpec.LastAcc)) then begin 
+            if (PIr.VECode!=RepSpec.LastAcc) then begin testf = false; end;
+          end;
+          if (PIr.DefaultChoice==0) then begin testf = false; end;
+          if (testf and nonblank(PIr.VECode)) then begin
+            testf = ContactInGroupClass(PIr.VECode,RepSpec.f4,RepSpec.f5,"SUPP","","");
+          end;
+        end else begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (TrHs==false) then begin testf = false; end;
+    if (testf) then begin
+      InvListOneInternalItem(RepSpec,INr,itemout,grout,lastgroup,sum1p,nrp,groupsum,roundof);
+    end;
+LIntLLoopISEnd:;
+  end;
+  RETURN;
+END;
+
+procedure IntLLoopIN(record RcVc RepSpec,var val sum1p,var val nrp,roundmode roundof)
+BEGIN
+  record PIVc PIr;
+  record INVc INr;
+  Integer keys,keys2;
+  string 255 lastgroup;
+  string 255 fromart,toart;
+  string 255 frcc,tocc;
+  string 255 tstr;
+  string 255 ckey;
+  Boolean itemout,grout;
+  Boolean TrHs,testf,found;
+  val groupsum;
+
+  itemout = false;
+  grout = false;
+  fromart = FirstInRange(RepSpec.f1,20);
+  toart = LastInRange(RepSpec.f1,20);
+  frcc = FirstInRange(RepSpec.f3,20);
+  tocc = LastInRange(RepSpec.f3,20);  
+  if (RepSpec.flags[2]==0) then begin
+    INr.Code = fromart;
+    ckey = "Code";
+    keys = 1;
+  end;
+  if (RepSpec.flags[2]==1) then begin
+    INr.Group = frcc;
+    INr.Code = fromart;
+    ckey = "Group";
+    keys = 2;
+  end;
+  if (RepSpec.flags[2]==2) then begin
+    INr.Name = "";
+    INr.Code = "";
+    ckey = "Name";
+    keys = 1;
+  end;
+  if (RepSpec.flags[2]==3) then begin
+    INr.Code = fromart;
+    INr.BarCode = "";
+    ckey = "BarCode";
+    keys = 2;
+  end;
+  
+  Gray_Divider(0,1);
+  TrHs = true;
+  while (LoopKey(ckey,INr,keys,TrHs)) begin    
+    testf = true;
+    if (INr.Terminated == 1) then begin
+      testf = false;
+    end;
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group>tocc) then begin
+          if (RepSpec.flags[2]==1) then begin
+            TrHs = false;
+          end else begin
+            testf = false;
+          end;
+        end;
+      end;
+    end;        
+    if (TrHs) then begin
+      if (nonblank(toart)) then begin
+        if (INr.Code>toart) then begin
+          if (RepSpec.flags[2]==0) then begin
+            TrHs = false;
+          end else begin
+            testf = false;
+          end;
+        end;
+      end;
+    end;        
+    if (TrHs) then begin
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (INr.Department!=RepSpec.AccStr) then begin
+          testf = false;
+        end;
+      end;    
+    end;
+    if (TrHs) then begin
+      if (nonblank(RepSpec.f3)) then begin
+        if (INr.Group<frcc) then begin
+          testf = false;
+        end;
+      end;
+    end;      
+    if (TrHs) then begin
+      if (nonblank(RepSpec.LastAcc) or nonblank(RepSpec.f4) or nonblank(RepSpec.f5)) then begin
+        PIr.ItemCode = INr.Code;
+        PIr.Location = RepSpec.f2;
+        keys2 = 2;
+        if (nonblank(RepSpec.LastAcc)) then begin         
+          PIr.VECode = RepSpec.LastAcc;
+          keys2 = 3;
+        end;
+        found = ReadFirstMain(PIr,keys2,true);
+        if (found==false) then begin
+          if (nonblank(RepSpec.f2)) then begin
+            PIr.ItemCode = INr.Code;
+            PIr.Location = "";
+            keys2 = 2;
+            if (nonblank(RepSpec.LastAcc)) then begin
+              PIr.VECode = RepSpec.LastAcc;
+              keys2 = 3;
+            end;
+            found = ReadFirstMain(PIr,keys2,true);
+          end;
+        end;
+        if (found) then begin
+          if (PIr.ItemCode!=INr.Code) then begin testf = false; end;
+          if (nonblank(RepSpec.LastAcc)) then begin  
+            if (PIr.VECode!=RepSpec.LastAcc) then begin testf = false; end;
+          end;
+          if (PIr.DefaultChoice==0) then begin testf = false; end;
+          if (testf and nonblank(PIr.VECode)) then begin
+            testf = ContactInGroupClass(PIr.VECode,RepSpec.f4,RepSpec.f5,"SUPP","","");
+          end;          
+        end else begin
+          testf = false;
+        end;
+      end;
+    end;
+    if (TrHs==false) then begin testf = false; end;
+  
+    if (testf) then begin
+      InvListOneInternalItem(RepSpec,INr,itemout,grout,lastgroup,sum1p,nrp,groupsum,roundof);
+    end;
+  end;
+  if (RepSpec.flags[2]==1) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(20,0,lastgroup,false);
+    GetItemGroupDescription(lastgroup,tstr);
+    OutString(100,0,tstr,false);
+    OutString(300,0,USetStr(3248),true);
+    OutVal(480,0,groupsum,M45Val,true);
+    groupsum = 0;
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  RETURN;
+END;
+
+global
+procedure IntInvValRn(record RcVc RepSpec)
+BEGIN
+  record RoundBlock RoundRec;
+  record CostAccBlock CostAccRec;
+  val nr;
+  val sum1;
+  Integer vatflag;
+  string 255 tstr;
+  Integer rw;
+
+  BlockLoad(CostAccRec);
+  BlockLoad(RoundRec);
+  vatflag = 0;
+  StartReportJob(USetStr(11360));
+  rw = 1;
+  if ((nonblank(RepSpec.f1)) or (blank(RepSpec.AccStr))) then begin
+    HTArts(RepSpec.f1,RepSpec.f1,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.AccStr)) then begin
+    HTDepartment(RepSpec.AccStr,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f2)) then begin
+    tstr = USetStr(2768);
+    tstr = RepSpec.f2;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  HTArtGroup(RepSpec.f3,tstr);
+  if (nonblank(tstr)) then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.LastAcc)) then begin
+    HTSupplier(RepSpec.LastAcc,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (HasCategories) then begin
+    HTLevCat(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f5,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if ((ProgramType!=typFirstOffice) and IsBooks==false) then begin
+    if (RepSpec.flags[1]==0) then begin
+      tstr = USetStr(2345); 
+    end;  
+    if (RepSpec.flags[1]==1) then begin
+      tstr = USetStr(2346);      
+    end;  
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblankdate(RepSpec.d1)) then begin
+    tstr = RepSpec.d1;
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  Header(rw,USetStr(10549) & ": " & USetStr(10550+RepSpec.flags[11]),1);
+  rw = rw + 1;
+  EndHeader;
+  SetRepCol(2,70);
+  SetRepCol(3,320);
+  SetRepCol(4,400);
+  SetRepCol(5,240);
+  if ((RepSpec.ArtMode==0) or (RepSpec.ArtMode==2)) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2325),false);
+    OutString(2,0,USetStr(2326),false);
+    OutString(3,0,USetStr(2330),true);
+    if (RepSpec.flags[11]==1) then begin
+      OutString(4,0,USetStr(2350),true);
+    end else begin
+      OutString(4,0,USetStr(2331),true);
+    end;
+    OutString(1,0,USetStr(2332),true);
+    EndFormat;
+  end;  
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2325),false);
+    OutString(2,0,USetStr(2326),false);
+    OutString(460,0,USetStr(2327),true);
+    EndFormat;
+    StartFormat(15);
+    OutString(80,0,USetStr(2344),false);
+    OutString(3,0,USetStr(2330),true);
+    if (RepSpec.flags[11]==1) then begin
+      OutString(4,0,USetStr(2350),true);
+    end else begin
+      OutString(4,0,USetStr(2331),true);
+    end;
+    OutString(1,0,USetStr(2332),true);
+    EndFormat;
+  end;
+  
+  if ((RepSpec.flags[2]==0) and (RepSpec.UsedOnly!=0) and (blankdate(RepSpec.d1))) then begin  
+    IntLLoopIS(RepSpec,sum1,nr,GetCostRoundMode(RoundRec));
+  end else begin  
+    IntLLoopIN(RepSpec,sum1,nr,GetCostRoundMode(RoundRec));
+  end;
+  if (RepSpec.ArtMode==0) then begin
+    Gray_Divider(0,1);
+  end;  
+  StartFormat(15);
+  OutVal(3,0,nr,M4UVal,true);
+  OutVal(1,0,sum1,M45Val,true);
+  EndFormat;
+  EndJob;
+  RETURN;
+END;

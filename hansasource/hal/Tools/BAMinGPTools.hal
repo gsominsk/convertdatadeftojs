@@ -1,0 +1,465 @@
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure FindUserMailboxName(string,var string,var string);
+external function Boolean CurUserHasMailbox(var string);
+
+procedure SplitPersons(string allpersons,var array string person,var integer k,var boolean range)
+begin
+  integer i,j,n,l;
+  string 10 tstr;
+  string 1 c;
+
+  k = 0;
+  tstr = "";
+  j = 0;
+  l = len(allpersons);
+  range  = false;
+  if nonblank(allpersons) then begin
+    for (i=0;i<=l;i=i+1) begin
+      c = Mid(allpersons,i,1);
+      if (c == ":") then begin
+        range = true;
+        goto LSplitPersons;
+      end;
+      if (c == ",") or (i == l)then begin
+        person[j] = tstr;
+        tstr = "";
+        j = j + 1;
+      end else begin
+        tstr = tstr & c;
+      end;
+    end;
+    k = j;
+  end;
+LSplitPersons:;
+  return;
+end;
+
+updating procedure BA_CreateFollowUpAct(string Persons,string TxtCode,string Filename,LongInt SerNr)
+begin
+  record QTVc QTr;
+  record IVVc IVr;
+  record ORVc ORr;
+  record PUVc PUr;
+  record ActVc Actr;
+  row ActVc Actrw;
+  integer i,rwcnt;
+  record LTxtVc LTxtr;
+  
+  if (blank(SerNr) or SerNr == -1) then begin
+    goto LBA_CreateFollowUpAct;
+  end;
+  Actr.SerNr = -1;
+  Actr.Invalid = 0;
+  Actr.TodoFlag = 1;
+  Actr.Comment = USetStr(34390);
+  switch (Filename) begin
+    case "QTVc" : 
+      QTr.SerNr = SerNr;
+      if (ReadFirstMain(QTr,1,true)) then begin end;
+      Actr.Comment = Actr.Comment & " " & USetStr(1820) & "  " & SerNr;
+    case "IVVc" : 
+      IVr.SerNr = SerNr;
+      if (ReadFirstMain(IVr,1,true)) then begin end;
+      Actr.Comment = Actr.Comment & " " & USetStr(1803) & "  " & SerNr;
+    case "ORVc" : 
+      ORr.SerNr = SerNr;
+      if (ReadFirstMain(ORr,1,true)) then begin end;
+      Actr.Comment = Actr.Comment & " " & USetStr(1822) & "  " & SerNr;
+    case "PUVc" :
+      PUr.SerNr = SerNr;
+      if (ReadFirstMain(PUr,1,true)) then begin end;
+      Actr.Comment = Actr.Comment & " " & USetStr(1828) & "  " & SerNr;
+    otherwise
+      goto LBA_CreateFollowUpAct;
+  end;
+  Actr.TransDate = CurrentDate;
+  Actr.EndDate = CurrentDate;
+  Actr.MainPersons = Persons;
+  
+  LTxtr.Code = TxtCode;
+  if (ReadFirstMain(LTxtr,1,true)) then begin
+    rwcnt = LineTextCnt(LTxtr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      ClearRow(Actr,Actrw,1);
+      Actrw.Text = LineTextGet(LTxtr,i);
+      if (MatRowCnt(Actr)<99) then begin
+        MatRowPut(Actr,MatRowCnt(Actr),Actrw);
+      end else begin
+        i = rwcnt;
+      end;
+    end;    
+  end;
+  Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");  
+  if (RecordStore(Actr,false)) then begin 
+    switch (Filename) begin
+      case "QTVc" : CreateRecordLink(Actr,CurrentCompany,QTr,CurrentCompany);  
+      case "IVVc" : CreateRecordLink(Actr,CurrentCompany,IVr,CurrentCompany);  
+      case "ORVc" : CreateRecordLink(Actr,CurrentCompany,ORr,CurrentCompany);  
+      case "PUVc" : CreateRecordLink(Actr,CurrentCompany,PUr,CurrentCompany);
+    end;
+  end; 
+LBA_CreateFollowUpAct:;
+  return;
+end;
+
+global
+updating procedure BA_SendEmail(string persons,string TxtCode,Integer email,string Filename,longint SerNr)
+begin
+  record QTVc QTr;
+  record IVVc IVr;
+  record ORVc ORr;
+  record PUVc PUr;
+  record MailVc Mailr;
+  row MailVc marw;
+  record LTxtVc LTxtr;
+  string 255 tstr;
+  Integer line,i,rwcnt;
+  record ConfVc Confr;
+  array string 10 personarr;
+  integer personcnt;
+  boolean range;
+  string 60 mailboxname,mailboxcode;
+  
+
+  if (SerNr<=0) then begin
+    goto LBA_SendEmail;
+  end;
+  
+  if (email!=0) then begin
+    if (CurUserHasMailbox(tstr)==false) then begin
+      goto LBA_SendEmail;
+    end;
+    
+    RecordNew(Mailr);
+
+    switch (Filename) begin
+      case "IVVc" : Mailr.Header = USetStr(1803) & "  " & SerNr;
+      case "QTVc" : Mailr.Header = USetStr(1820) & "  " & SerNr;
+      case "ORVc" : Mailr.Header = USetStr(1822) & "  " & SerNr;
+      case "PUVc" : Mailr.Header = USetStr(1828) & "  " & SerNr;
+      otherwise
+        goto LBA_SendEmail;
+    end;
+    
+    SplitPersons(persons,personarr,personcnt,range);
+    if (range) then begin
+      goto LBA_SendEmail;
+    end;
+    rwcnt = 1;
+    for (i=0;i<personcnt;i=i+1) begin
+      FindUserMailboxName(personarr[i],mailboxcode,mailboxname);
+      if (nonblank(mailboxname)) then begin
+        ClearRow(Mailr,marw,1);
+        marw.RowTyp = 0;
+        marw.AddrCode = mailboxname;
+        MatRowPut(Mailr,rwcnt,marw);
+        rwcnt = rwcnt+1;
+      end;
+    end;
+
+    LTxtr.Code = TxtCode;
+    if (ReadFirstMain(LTxtr,1,true)) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        LineTextPut(Mailr,LineTextCnt(Mailr),LineTextGet(LTxtr,i));
+        line = line + 1;        
+      end;    
+      AddCRToText(Mailr);
+    end;
+
+    Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+    Mailr.SendFlag = 1;
+    if (RecordStore(Mailr,false)) then begin
+      switch (Filename) begin
+        case "QTVc":
+          QTr.SerNr = SerNr;
+          if (ReadFirstMain(QTr,1,true)) then begin
+            CreateRecordLink(Mailr,CurrentCompany,QTr,CurrentCompany);
+          end;
+        case "IVVc":
+          IVr.SerNr = SerNr;
+          if (ReadFirstMain(IVr,1,true)) then begin
+            CreateRecordLink(Mailr,CurrentCompany,IVr,CurrentCompany);
+          end;
+        case "ORVc":
+          ORr.SerNr = SerNr;
+          if (ReadFirstMain(ORr,1,true)) then begin
+            CreateRecordLink(Mailr,CurrentCompany,ORr,CurrentCompany);
+          end;
+        case "PUVc":
+          PUr.SerNr = SerNr;
+          if (ReadFirstMain(PUr,1,true)) then begin
+            CreateRecordLink(Mailr,CurrentCompany,PUr,CurrentCompany);
+          end;
+      end;
+    end;
+    if (nonblank(persons)) then begin
+      BA_CreateFollowUpAct(persons,TxtCode,Filename,SerNr)
+    end;
+  end;
+LBA_SendEmail:;
+  return;
+end;
+           
+global
+updating procedure SysRunsBA_Email(string arg)
+begin
+  longint pos;
+  integer Comp;
+  String 255 persons,TxtCode,email;
+  String 255 Filename,SerNr,CompStr;
+  
+  pos = -1;
+  GetNextSubstring(arg,pos,"#",persons);
+  GetNextSubstring(arg,pos,"#",TxtCode);
+  GetNextSubstring(arg,pos,"#",email);
+  GetNextSubstring(arg,pos,"#",Filename);
+  GetNextSubstring(arg,pos,"#",SerNr);
+  GetNextSubstring(arg,pos,"#",CompStr);
+  
+  Comp = StringToInt(CompStr);
+  SetCompanyCode(Comp,false);
+
+  BA_SendEmail(persons,TxtCode,StringToInt(email),Filename,StringToLongInt(SerNr));  
+  return;
+end;
+          
+global
+updating procedure StartSysRunsBA_Email(string persons,string TxtCode,Integer email,string Filename,longint SerNr)
+begin
+  String 255 CommandString;
+  Date td;
+  time t;
+
+  CommandString = persons & "#" & TxtCode & "#" & email & "#" & Filename & "#" & SerNr & "#" & CurrentCompany;
+  td = CurrentDate;
+  t = CurrentTime;
+  t = AddSeconds(t,5); 
+  
+  NewTimedTask("SYSRUN_BA_EMAIL" & Filename&SerNr,"Business Alerts Email","SysRunsBA_Email",CommandString,td,t,"","");
+  return;
+end;
+
+global
+updating function Boolean BA_IVMinMarkupWarning(record IVVc IVr,var Integer rownr)
+begin
+  Boolean res;
+  integer i,cnt;
+  row IVVc IVrw;
+  record BAGPBlock BAGPr;
+  record LocationVc Locationr;
+  val s,rowsum,TotRowCost,TotRowGP;
+  record TaxMatrixVc TMr;
+  
+  res = false;
+  if (blank(IVr.CredMark)) then begin
+    BlockLoad(BAGPr);
+    if (BAGPr.Email!=1) then begin 
+      goto LBA_IVMinMarkupWarning;
+    end;      
+    cnt = MatRowCnt(IVr);
+    for (i=0;i<cnt;i=i+1) begin
+      MatRowGet(IVr,i,IVrw);
+      if (nonblank(IVrw.BasePrice) and IVrw.BasePrice!=0 and IVrw.stp==kInvoiceRowTypeNormal) then begin
+        s = MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);// sales
+        UnpackRowFieldMatrix(IVrw,"TaxMatrix",TMr);
+        FindSalesExVat(TMr,IVrw.VATCode,s,IVr.InclVAT,IVr.NoTAXonVAT,rowsum);
+        TotRowCost = IVrw.BasePrice * IVrw.Quant;
+        if (TotRowCost>0) then begin 
+          TotRowGP = (rowsum-TotRowCost)/TotRowCost * 100;
+        end;
+        if (TotRowGP < BAGPr.MinMarkup) then begin
+          res = true;
+          Locationr.Code = IVr.Location;
+          if (ReadFirstMain(Locationr,1,true)) then begin
+            StartSysRunsBA_Email(Locationr.RespPerson,BAGPr.TxtCode,BAGPr.Email,"IVVc",IVr.SerNr);
+          end;
+          rownr = i;
+          goto LBA_IVMinMarkupWarning;
+        end;
+      end;
+    end;
+  end;
+LBA_IVMinMarkupWarning:;
+  BA_IVMinMarkupWarning = res;
+  return;
+end;
+
+global
+updating function Boolean BA_ORMinMarkupWarning(record ORVc ORr,var Integer rownr)
+begin
+  Boolean res;
+  integer i,cnt;
+  row ORVc ORrw;
+  record BAGPBlock BAGPr;
+  record LocationVc Locationr;
+  val s, rowsum,TotRowCost,TotRowGP;
+  record TaxMatrixVc TMr;
+  
+  BlockLoad(BAGPr);
+  if (BAGPr.Email!=1) then begin 
+    goto LBA_ORMinMarkupWarning;
+  end;  
+  cnt = MatRowCnt(ORr);
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(ORr,i,ORrw);
+    if (nonblank(ORrw.BasePrice) and ORrw.BasePrice!=0 and ORrw.stp==kInvoiceRowTypeNormal) then begin
+      s = MulRateToBase1(ORr.CurncyCode,ORrw.Sum,ORr.FrRate,ORr.ToRateB1,ORr.ToRateB2,ORr.BaseRate1,ORr.BaseRate2,DefaultCurRoundOff);// sales
+      UnpackRowFieldMatrix(ORrw,"TaxMatrix",TMr);
+      FindSalesExVat(TMr,ORrw.VATCode,s,ORr.InclVAT,ORr.NoTAXonVAT,rowsum);
+      TotRowCost = ORrw.BasePrice * ORrw.Quant;
+      if (TotRowCost>0) then begin 
+        TotRowGP = (rowsum-TotRowCost)/TotRowCost * 100;
+      end;
+      if (TotRowGP < BAGPr.MinMarkup) then begin
+        res = true;
+        Locationr.Code = ORr.Location;
+        if (ReadFirstMain(Locationr,1,true)) then begin
+          StartSysRunsBA_Email(Locationr.RespPerson,BAGPr.TxtCode,BAGPr.Email,"ORVc",ORr.SerNr);
+        end;
+        rownr = i;
+        goto LBA_ORMinMarkupWarning;
+      end;
+    end;
+  end;
+LBA_ORMinMarkupWarning:;
+  BA_ORMinMarkupWarning = res;
+  return;
+end;
+
+global
+updating function Boolean BA_QTMinMarkupWarning(record QTVc QTr,var Integer rownr)
+begin
+  Boolean res;
+  integer i,cnt;
+  row QTVc QTrw;
+  record BAGPBlock BAGPr;
+  record LocationVc Locationr;
+  val s, rowsum,TotRowCost,TotRowGP;
+  record TaxMatrixVc TMr;
+  
+  BlockLoad(BAGPr);
+  if (BAGPr.Email!=1) then begin 
+    goto LBA_QTMinMarkupWarning;
+  end;
+  cnt = MatRowCnt(QTr);
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(QTr,i,QTrw);
+    if (nonblank(QTrw.BasePrice) and QTrw.BasePrice!=0) then begin
+      s = MulRateToBase1(QTr.CurncyCode,QTrw.Sum,QTr.FrRate,QTr.ToRateB1,QTr.ToRateB2,QTr.BaseRate1,QTr.BaseRate2,DefaultCurRoundOff);// sales
+      UnpackRowFieldMatrix(QTrw,"TaxMatrix",TMr);
+      FindSalesExVat(TMr,QTrw.VATCode,s,QTr.InclVAT,QTr.NoTAXonVAT,rowsum);
+      TotRowCost = QTrw.BasePrice * QTrw.Quant;
+      if (TotRowCost>0) then begin 
+        TotRowGP = (rowsum-TotRowCost)/TotRowCost * 100;
+      end;
+      if (TotRowGP < BAGPr.MinMarkup) then begin
+        res = true;
+        Locationr.Code = QTr.Location;
+        if (ReadFirstMain(Locationr,1,true)) then begin
+           StartSysRunsBA_Email(Locationr.RespPerson,BAGPr.TxtCode,BAGPr.Email,"QTVc",QTr.SerNr);
+        end;
+        rownr = i;
+        goto LBA_QTMinMarkupWarning;
+      end;
+    end;
+  end;
+LBA_QTMinMarkupWarning:
+  BA_QTMinMarkupWarning = res;
+  return;
+end;
+
+global
+updating function Boolean BA_OYMinMarkupWarning(record OYVc OYr,var Integer rownr)
+begin
+  Boolean res;
+  integer i,cnt;
+  row OYVc OYrw;
+  record BAGPBlock BAGPr;
+  record LocationVc Locationr;
+  val s, rowsum,TotRowCost,TotRowGP;
+  record TaxMatrixVc TMr;
+  
+  BlockLoad(BAGPr);
+  if (BAGPr.Email!=1) then begin 
+    goto LBA_OYMinMarkupWarning;
+  end;
+  cnt = MatRowCnt(OYr);
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(OYr,i,OYrw);
+    if (nonblank(OYrw.BasePrice) and OYrw.BasePrice!=0) then begin
+      s = MulRateToBase1(OYr.CurncyCode,OYrw.Sum,OYr.FrRate,OYr.ToRateB1,OYr.ToRateB2,OYr.BaseRate1,OYr.BaseRate2,DefaultCurRoundOff);// sales
+      UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+      FindSalesExVat(TMr,OYrw.VATCode,s,OYr.InclVAT,OYr.NoTAXonVAT,rowsum);
+      TotRowCost = OYrw.BasePrice * OYrw.Quant;
+      if (TotRowCost>0) then begin 
+        TotRowGP = (rowsum-TotRowCost)/TotRowCost * 100;
+      end;
+      if (TotRowGP < BAGPr.MinMarkup) then begin
+        res = true;
+        Locationr.Code = OYr.Location;
+        if (ReadFirstMain(Locationr,1,true)) then begin
+           StartSysRunsBA_Email(Locationr.RespPerson,BAGPr.TxtCode,BAGPr.Email,"OYVc",OYr.SerNr);
+        end;
+        rownr = i;
+        goto LBA_OYMinMarkupWarning;
+      end;
+    end;
+  end;
+LBA_OYMinMarkupWarning:
+  BA_OYMinMarkupWarning = res;
+  return;
+end;
+
+global
+updating function Boolean BA_GRNCostVarianceWarning(record PUVc PUr,var Integer rownr)
+begin
+  Boolean res;
+  integer i,cnt;
+  row PUVc PUrw;
+  record INVc INr;
+  record BACostVarBlock BACVr;
+  record LocationVc Locationr;
+  val costvar;
+  record ItemStatusVc ISr;
+  string 255 location;
+  
+  rownr = -1;
+  BlockLoad(BACVr);
+  cnt = MatRowCnt(PUr);
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(PUr,i,PUrw);
+    if (nonblank(PUrw.ArtCode)) then begin
+      if (ReadFirstItem(PUrw.ArtCode,INr,true,false)) then begin
+        location = PUrw.Location;
+        if (blank(location)) then begin
+          location = PUr.Location;
+        end;
+        FindStockValue(PUrw.ArtCode,location,ISr);
+        if (ISr.Instock>0) then begin
+          if (PUrw.CostPrice < INr.WeighedAvPrice) then begin
+            costvar = 1.0 - (PUrw.CostPrice/INr.WeighedAvPrice);
+          end else begin
+            costvar = (PUrw.CostPrice/INr.WeighedAvPrice) - 1.0;
+          end;
+          if ((costvar*100 > BACVr.CostVariance) or (costvar*100 < -BACVr.CostVariance)) then begin
+            res = true;
+            Locationr.Code = location;
+            if (ReadFirstMain(Locationr,1,true)) then begin
+              StartSysRunsBA_Email(Locationr.RespPerson,BACVr.TxtCode,BACVr.Email,"PUVc",PUr.SerNr);
+            end;
+            rownr = i;
+            goto LBA_GRNCostVarianceWarning;
+          end;
+        end;
+      end;
+    end;
+  end;
+LBA_GRNCostVarianceWarning:
+  BA_GRNCostVarianceWarning = res;
+  return;
+end;
+

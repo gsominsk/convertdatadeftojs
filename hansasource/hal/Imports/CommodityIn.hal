@@ -1,0 +1,327 @@
+external function roundmode DefaultRoundMode();
+external procedure M4ILMidstr(string,var string,Integer,Integer);
+
+global
+function Boolean SpecialCharge(string chargestr,var string chargecomment,Integer type)
+BEGIN
+  record SpecChargeDealBlock SpecChargeDealRec;
+  row SpecChargeDealBlock SpecChargeDealrw;
+  Integer i,rwcnt;
+  Boolean res;
+
+  BlockLoad(SpecChargeDealRec);  
+  rwcnt = MatRowCnt(SpecChargeDealRec);
+  for (i=0; i<rwcnt;i=i+1) begin
+    MatRowGet(SpecChargeDealRec,i,SpecChargeDealrw);
+    if ( (chargestr==SpecChargeDealrw.Code) and ((type==SpecChargeDealrw.Type) or (type==-1)) ) then begin
+      chargecomment = SpecChargeDealrw.Comment;
+      res = true;
+      goto LSpecialCharge;
+    end;
+  end;
+LSpecialCharge:;
+  SpecialCharge = res;
+  RETURN;
+END;
+
+global
+procedure RemoveCharactersFromString(var string res,string character)
+BEGIN
+  Integer i,l;
+  string 255 tstr,t2;
+  string 1 ch;
+  
+LBEGIN:;  
+  tstr = res;
+  l = len(res);
+  for (i=l;i>=0;i=i-1) begin  
+    ch = Mid(tstr,i,1);
+    if (ch==character) then begin
+      res = Left(tstr,i);
+      t2 = Right(tstr,(len(tstr)-i-1));
+      res = res & t2;
+      goto LBEGIN;
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure FixIndications(var string codes,string t1)
+BEGIN
+  string 255 tstr;
+
+  tstr = t1;
+  RemoveCharactersFromString(tstr," ");
+  if (nonblank(tstr)) then begin
+    if (nonblank(codes)) then begin
+      codes = codes & ",";
+    end;  
+    codes = codes & tstr;
+  end;
+  RETURN;
+END;
+
+updating procedure FixAndAddCertificates(var string codes,string t1)
+BEGIN
+  record CertificateVc CRr;
+  string 255 tstr;
+
+  tstr = t1;
+  RemoveCharactersFromString(tstr," ");
+  if (nonblank(tstr)) then begin
+    CRr.Code = tstr;
+    if (ReadFirstMain(CRr,1,true)==false) then begin
+      RecordNew(CRr);
+      CRr.Code = tstr;
+      if (RecordStore(CRr,true)) then begin
+      end;
+    end;
+    if (nonblank(codes)) then begin
+      codes = codes & ",";
+    end;  
+    codes = codes & tstr;
+  end;
+  RETURN;
+END;
+
+updating function
+Boolean FixAndStoreCharge(string number,var string codes,var val ataxprc,var val ataxval,var string vatcode,string t1,string t2,string t3)
+BEGIN
+  Boolean res,foundf;
+  string 255 chargestr,chargecomment;
+  val tv;
+  record ChargesVc Charger;
+  record CommDealVc CDr;
+
+  res = true;
+  chargestr = t1;
+  RemoveCharactersFromString(chargestr," ");
+  if (blank(chargestr)) then begin
+    goto LFixAndStoreCharge;
+  end;  
+ if ((SpecialCharge(chargestr,chargecomment,1)) and (ataxprc!=-1) and (ataxval!=-1)) then begin
+    tv = StringToVal(t2,M4Val);
+    tv = tv/100;
+    ataxprc = Round(tv,DefaultRoundMode);
+    tv = StringToVal(t3,M4Val);
+    tv = tv/100;
+    ataxval = Round(tv,DefaultRoundMode);
+    goto L44;
+  end;
+  if (SpecialCharge(chargestr,chargecomment,2)) then begin
+    vatcode = chargestr;
+    goto LFixAndStoreCharge;
+  end;
+  if (SpecialCharge(chargestr,chargecomment,0)) then begin
+    CDr.Number = number;
+    CDr.DutiesCode = chargestr;
+    foundf = ReadFirstMain(CDr,2,true);
+    if (foundf==false) then begin
+      RecordNew(CDr);
+      CDr.Number = number;
+      CDr.DutiesCode = chargestr;
+      CDr.Comment = chargecomment;
+    end;
+    tv = StringToVal(t2,M4Val);
+    tv = tv/100;
+    tv = Round(tv,DefaultRoundMode);
+    if (foundf) then begin
+      if (tv!=CDr.GattPrc) then begin
+        res = false;
+      end;  
+    end;
+    CDr.GattPrc = tv;
+    tv = StringToVal(t3,M4Val);
+    tv = tv/100;
+    tv = Round(tv,DefaultRoundMode);
+    if (foundf) then begin
+      if (tv!=CDr.GattAmount) then begin
+        res = false;
+      end;  
+    end;
+    CDr.GattAmount = tv;
+    if ((CDr.GattPrc!=0) or (CDr.GattAmount!=0)) then begin
+      if (RecordStore(CDr,true)) then begin
+      end;
+    end;  
+  end;
+L44:;
+  Charger.Code = chargestr;
+  foundf = ReadFirstMain(Charger,1,true);
+  if (foundf==false) then begin
+    RecordNew(Charger);
+    Charger.Code = chargestr;
+    Charger.Comment = chargecomment;
+    Charger.GattAmount = blankval;
+    Charger.GattPrc = blankval;
+  end;
+  if (SpecialCharge(chargestr,chargecomment,-1)==false) then begin
+    tv = StringToVal(t2,M4Val);
+    tv = tv/100;
+    tv = Round(tv,DefaultRoundMode);
+    if (foundf) then begin
+      if (tv!=Charger.GattPrc) then begin
+        res = false;
+      end;
+    end;
+    Charger.GattPrc = tv;
+    tv = StringToVal(t3,M4Val);
+    tv = tv/100;
+    tv = Round(tv,DefaultRoundMode);
+    if (foundf) then begin
+      if (tv!=Charger.GattAmount) then begin
+        res = false;
+      end;
+    end;
+    Charger.GattAmount = tv;
+  end;
+  if (Charger.GattPrc!=0) then begin
+    Charger.CalcMethod = 2;
+  end;  
+  if (RecordStore(Charger,true)) then begin
+  end;
+  if (nonblank(codes)) then begin  
+    codes = codes & ",";
+  end;  
+  codes = codes & chargestr;
+LFixAndStoreCharge:;
+  FixAndStoreCharge = res;
+  RETURN;
+END;
+
+
+global
+updating procedure CommodityIn()
+BEGIN
+  record CommodityVc ctr;
+  string 255 lstr;
+  string 60 t1,t2,t3;
+  string 60 tmpCodes,vatcode;
+  val aTaxPrc,aTaxVal;
+  val tv,nilv;
+  Integer exceptcnt,i;
+
+  nilv = -1;
+  exceptcnt = 0;
+  while (TestEOF==false) begin
+    RecordNew(ctr);
+    lstr = ImportField;
+    M4ILMidstr(lstr,t1,1,1); // Row Nr 
+    if (t1=="1") then begin
+      M4ILMidstr(lstr,t1,2,8); // Commodity Nr 
+      M4ILMidstr(t1,t3,1,4); // Splitting up the Commodity code 
+      ctr.Number = t3;
+      M4ILMidstr(t1,t2,5,4);
+//      ctr.Number = ctr.Number & ".";//?
+      ctr.Number = ctr.Number & t2;
+      tmpCodes = "";
+      aTaxPrc = blankval;
+      aTaxVal = blankval;
+      vatcode = "";
+      ctr.DutiesCodes = "";
+      for (i=0;i<18;i=i+1) begin
+        M4ILMidstr(lstr,t1,10+(i*13),2); // DutieCode 
+        M4ILMidstr(lstr,t2,12+(i*13),5); // Dutie % 
+        M4ILMidstr(lstr,t3,17+(i*13),6); // Dutie Kr 
+        if (FixAndStoreCharge(ctr.Number,tmpCodes,aTaxPrc,aTaxVal,vatcode,t1,t2,t3)==false) then begin
+          exceptcnt = exceptcnt + 1;
+        end;
+      end;
+      ctr.DutiesCodes = tmpCodes;
+      ctr.ATaxPrc = aTaxPrc;
+      ctr.ATaxVal = aTaxVal;
+      ctr.VATCode = vatcode;
+      M4ILMidstr(lstr,t1,244,1); // Import/Export 
+      if (t1=="I") then begin
+        ctr.ImportFlag = 0;
+      end else begin
+        ctr.ImportFlag = 1;
+      end;  
+      if (RecordStore(ctr,true)) then begin
+      end;
+    end;
+    if (t1=="2") then begin
+      M4ILMidstr(lstr,t1,2,8); // Commodity Nr 
+      M4ILMidstr(t1,t3,1,4); // Splitting up the Commodity code 
+      ctr.Number = t3;
+      M4ILMidstr(t1,t2,5,4);
+//      ctr.Number = ctr.Number & ".";
+      ctr.Number = ctr.Number & t2;
+      if (ReadFirstMain(ctr,1,true)==false) then begin
+        RecordNew(ctr);
+        ctr.Number = t1;
+      end;
+      ctr.ChargesCodes = "";
+      ctr.LicencesCodes = "";
+      ctr.ProhibitsCodes = "";
+      ctr.IndicationCodes = "";
+      tmpCodes = "";
+      vatcode = "";
+      for (i=0;i<10;i=i+1) begin
+        M4ILMidstr(lstr,t1,10+(i*13),2); // ChargesCode 
+        M4ILMidstr(lstr,t2,12+(i*13),5); // Charges % 
+        M4ILMidstr(lstr,t3,17+(i*13),6); // Charges Kr 
+        if (FixAndStoreCharge(ctr.Number,tmpCodes,nilv,nilv,vatcode,t1,t2,t3)==false) then begin
+          exceptcnt = exceptcnt + 1;
+        end;  
+      end;
+      ctr.ChargesCodes = tmpCodes;
+      ctr.ATaxPrc = aTaxPrc;
+      ctr.ATaxVal = aTaxVal;
+      ctr.VATCode = vatcode;      
+      t3 = "";
+      for (i=0;i<7;i=i+1) begin
+        M4ILMidstr(lstr,t1,140+(i*3),3); // Certificates 
+        FixAndAddCertificates(t3,t1);
+        ctr.LicencesCodes = t3;
+      end;
+      t3 = "";
+      for (i=0;i<3;i=i+1) begin
+        M4ILMidstr(lstr,t1,161+(i*3),3); // Prohibits 
+        FixAndAddCertificates(t3,t1);
+        ctr.ProhibitsCodes = t3;
+      end;
+      t3 = "";
+      for (i=0;i<3;i=i+1) begin
+        M4ILMidstr(lstr,t1,170+(i*5),5); // Indicates 
+        FixIndications(t3,t1);
+        ctr.IndicationCodes = t3;
+      end;
+      t3 = "";
+      ctr.DemandNo = 0;
+      ctr.DemandQty = 0;
+      ctr.GattBaseQty = 0;
+      ctr.LiterBased = 0;
+      ctr.NetweightBased = 0;
+      M4ILMidstr(lstr,t1,185,1); // Fixed Number 
+      if (t1=="F") then begin ctr.DemandNo = 1; end;
+      M4ILMidstr(lstr,t1,186,1); // Fixed Qty 
+      if (t1=="E") then begin ctr.DemandQty = 1; end;
+      M4ILMidstr(lstr,t1,187,5); // Gatt Prc 
+      tv = StringToVal(t1,M4Val);
+      tv = tv/1000;
+      ctr.GattPrc = Round(tv,DefaultRoundMode);
+      M4ILMidstr(lstr,t1,192,6); // Gatt Val 
+      tv = StringToVal(t1,M4Val);
+      tv = tv/100;
+      ctr.GattAmount = Round(tv,DefaultRoundMode);
+      M4ILMidstr(lstr,t1,198,1); // Gatt Base Binding 
+      if (t1=="E") then begin ctr.GattBaseQty = 1; end;
+      if (t1=="K") then begin ctr.GattBaseQty = 2; end;
+      M4ILMidstr(lstr,t1,199,1); // Liter Based 
+      if (t1=="L") then begin ctr.LiterBased = 1; end;
+      M4ILMidstr(lstr,t1,200,1); // Netweight Based 
+      if (t1=="N") then begin ctr.NetweightBased = 1; end;
+      if (RecordStore(ctr,true)) then begin
+      end;
+    end;
+    UserTrace(ctr.Number,M4Str);
+    if (NextImportLine(true)) then begin
+    end;
+  end;
+  if (exceptcnt>0) then begin 
+    lstr = USetStr(1362);
+    UserTrace(lstr & exceptcnt,M4Str);
+  end;
+  RETURN;
+END;

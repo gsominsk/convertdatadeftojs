@@ -1,0 +1,215 @@
+external function Boolean GetPD(var record PDVc);
+external procedure VIVc_PastePayDeal(var record VIVc);
+external procedure VICalcVals(var record VIVc);
+external procedure VISumup(record VIVc,var val);
+external function Boolean VIVc_PasteVECode(var record VIVc,Integer,Boolean,Boolean,var string);
+external function Boolean GetAccName(string,var string,Integer);
+
+procedure AddBBtoVIRow(record VIVc VIr,record BuyBackVc BBr,Boolean credf)
+begin
+  row VIVc VIrw;
+  string 255 tstr;
+  
+  ClearRow(VIr,VIrw,1);
+  VIrw.AccNumber = BBr.BBVarAcc;
+  VIrw.Objects = "";
+  GetAccName(VIrw.AccNumber,tstr,60);
+  VIrw.Comment = tstr;
+  if (credf) then begin
+    VIrw.Sum = BBr.ActualCredit;
+    if (blank(VIrw.Sum)) then begin
+      VIrw.Sum = BBr.Quant*BBr.BuyBackPrice;
+    end;
+  end else begin
+    VIrw.Sum = BBr.ActualDebit;
+    if (blank(VIrw.Sum)) then begin
+      VIrw.Sum = BBr.Quant*BBr.OrgPrice;
+    end;
+  end;
+  VIrw.Item = BBr.ArtCode;
+  VIrw.qty = BBr.Quant;
+  VIrw.PRCode = "";
+  VIrw.VATCode = BBr.VATCode;
+  VIrw.VEPNr = -1;
+  VIrw.PrepayNr = -1;
+  VIrw.PrepayAmount = blankval;
+  VIrw.OrdRow = -1;
+  VIrw.VATVal = blankval;
+  VIrw.PeriodCode = "";
+  VIrw.ACShort = "";
+  VIrw.PUNr = -1;
+  VIrw.PURow = -1;
+  VIrw.VarianceAmount = blankval;
+  VIrw.POCORow = -1;
+  VIrw.TAX2Prc = blankval;
+  VIrw.PONr = -1;
+  VIrw.StockType = 0;
+  VIrw.SerialNr = BBr.SerialNr;
+  MatRowPut(VIr,MatRowCnt(VIr),VIrw);
+  VICalcVals(VIr);
+  return;
+end;
+
+procedure AddBBtoVICombinedRow(record VIVc VIr,record BuyBackVc BBr,Boolean credf)
+begin
+  row VIVc VIrw;
+  row VIVc VI2rw;
+  string 255 tstr;
+  Integer i,rwcnt,rownr;
+  
+  rwcnt = MatRowCnt(VIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIr,i,VI2rw);
+    if (BBr.BBVarAcc==VI2rw.AccNumber) then begin
+      rownr = i;
+      MatRowGet(VIr,rownr,VIrw);
+      goto LVIRowFound;
+    end;
+  end; 
+  ClearRow(VIr,VIrw,1);
+  rownr = MatRowCnt(VIr);
+LVIRowFound:;
+  VIrw.AccNumber = BBr.BBVarAcc;
+  VIrw.Objects = "";
+  GetAccName(VIrw.AccNumber,tstr,60);
+  VIrw.Comment = tstr;
+  if (credf) then begin
+    VIrw.Sum = VIrw.Sum + BBr.ActualCredit;
+    if (blank(VIrw.Sum)) then begin
+      VIrw.Sum = BBr.Quant*BBr.BuyBackPrice;
+    end;
+  end else begin
+    VIrw.Sum = VIrw.Sum + BBr.ActualDebit;
+    if (blank(VIrw.Sum)) then begin
+      VIrw.Sum = BBr.Quant*BBr.OrgPrice;
+    end;
+  end;
+//  VIrw.Item = BBr.ArtCode;
+//  VIrw.qty = BBr.Quant;
+//  VIrw.SerialNr = BBr.SerialNr;
+  VIrw.PRCode = "";
+  VIrw.VATCode = BBr.VATCode;
+  VIrw.VEPNr = -1;
+  VIrw.PrepayNr = -1;
+  VIrw.PrepayAmount = blankval;
+  VIrw.OrdRow = -1;
+  VIrw.VATVal = blankval;
+  VIrw.PeriodCode = "";
+  VIrw.ACShort = "";
+  VIrw.PUNr = -1;
+  VIrw.PURow = -1;
+  VIrw.VarianceAmount = blankval;
+  VIrw.POCORow = -1;
+  VIrw.TAX2Prc = blankval;
+  VIrw.PONr = -1;
+  VIrw.StockType = 0;
+  MatRowPut(VIr,rownr,VIrw);
+  VICalcVals(VIr);
+  return;
+end;
+
+global
+updating procedure VIFromBuyBackMn(record RcVc RepSpec)
+begin
+  record BuyBackVc BBr;
+  record BuyBackVc oldBBr;
+  Boolean found,testf,vif,credvif;
+  record VIVc VIr;
+  record VIVc credVIr;
+  string 255 tstr;
+  val t;
+  Array record BuyBackVc aBBr;
+  Integer i,acnt;
+  record PDVc PDr;
+  
+  if (blank(RepSpec.f1)) then begin
+    goto LVIFromBuyBackMn;
+  end;
+  if (blank(RepSpec.FirstAcc)) then begin
+    goto LVIFromBuyBackMn;
+  end;
+  PDr.Code = RepSpec.FirstAcc;
+  if (GetPD(PDr)==false) then begin
+    goto LVIFromBuyBackMn;
+  end;
+  if (PDr.PDType!=kInvoiceTypeCredit) then begin
+    goto LVIFromBuyBackMn;
+  end;
+  if (blank(RepSpec.LastAcc)) then begin
+    goto LVIFromBuyBackMn;
+  end;
+  RecordNew(VIr);
+  RecordNew(credVIr);
+  BBr.BuyBackNr = RepSpec.f1;
+  BBr.TransDate = RepSpec.sStartDate;
+  found = true;
+  while (LoopKey("BuyBackNr",BBr,2,found)) begin
+    if (BBr.BuyBackNr!=RepSpec.f1) then begin found = false; end;
+    if (BBr.TransDate>RepSpec.sEndDate) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (BBr.OKFlag==0) then begin testf = false; end;
+      if (BBr.InvdFlag!=0) then begin testf = false; end;
+      if (testf) then begin
+        if (blank(VIr.VECode)) then begin
+          VIr.VECode = BBr.VECode;
+          VIr.InvoiceNr = BBr.VEInvoiceNr;
+          if (VIVc_PasteVECode(VIr,0,false,false,tstr)==false) then begin
+          end;
+          credVIr.VECode = BBr.VECode;
+          credVIr.InvoiceNr = BBr.VECredInvoiceNr;
+          if (VIVc_PasteVECode(credVIr,0,false,false,tstr)==false) then begin
+          end;          
+        end;
+        AddBBtoVICombinedRow(VIr,BBr,false);
+        AddBBtoVICombinedRow(credVIr,BBr,true);
+        aBBr[acnt] = BBr;
+        acnt = acnt + 1;
+      end;
+    end;
+  end;
+  if (MatRowCnt(credVIr)>0) then begin
+    if (nonblankdate(RepSpec.d1)) then begin 
+      credVIr.TransDate = RepSpec.d1;
+      credVIr.InvDate = RepSpec.d1;
+    end;  
+    credVIr.SerNr = NextSerNr("VIVc",credVIr.TransDate,-1,false,"");
+    if (credVIr.SerNr>0) then begin
+      VISumup(credVIr,t);  
+      credVIr.PayVal = -t;
+      credVIr.PayDeal = RepSpec.FirstAcc;
+      VIVc_PastePayDeal(credVIr);
+//      credVIr.OKFlag = 1;
+      credvif = RecordStore(credVIr,false);
+    end;
+  end;
+  if (MatRowCnt(VIr)>0) then begin
+    if (nonblankdate(RepSpec.d1)) then begin 
+      VIr.TransDate = RepSpec.d1;
+      VIr.InvDate = RepSpec.d1;
+    end;  
+    VIr.SerNr = NextSerNr("VIVc",VIr.TransDate,-1,false,"");
+    if (VIr.SerNr>0) then begin
+      VISumup(VIr,t);  
+      VIr.PayVal = -t;
+      VIr.PayDeal = RepSpec.LastAcc;
+      VIVc_PastePayDeal(VIr);
+//      VIr.OKFlag = 1;
+      vif = RecordStore(VIr,false);
+    end;
+  end;
+  for (i=0;i<acnt;i=i+1) begin
+    BBr = aBBr[i];
+    RecordCopy(oldBBr,BBr);
+    if (vif) then begin
+      BBr.VINr = VIr.SerNr;
+    end;
+    if (vif) then begin
+      BBr.CredVINr = credVIr.SerNr;
+    end;
+    BBr.InvdFlag = 1;    
+    RecordUpdate(oldBBr,BBr,false);
+  end;
+LVIFromBuyBackMn:;  
+  return;
+end;

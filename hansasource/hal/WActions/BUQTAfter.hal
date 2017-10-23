@@ -1,0 +1,254 @@
+external function string 255 FindINObjects(string,string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure CalcExtra(val,string,var val);
+remote procedure GetPRItemCost(string,string,string,string,Integer,var val);
+external procedure BUQTSumup(var record BUQTVc);
+remote procedure GetProjectPrice(string,string,string,string,string,val,var val,var val,var string,var val,var string);
+external function Boolean GetFirstItem(var string,var record INVc);
+external function Boolean GetItemNameStr(Integer,var string,string,string,string);
+
+
+procedure BUQTMultiLineText(record BUQTVc BUQTr,record INVc INr,string  langcode,Integer arow)
+BEGIN
+  row BUQTVc BUQTrw;
+  string 255 tstr;
+  Integer tcnt;
+ 
+  tcnt = 2;
+  while (GetItemNameStr(tcnt,tstr,langcode,INr.Name,INr.Code)) begin      
+    ClearRow(BUQTr,BUQTrw,1);
+    BUQTrw.Comment = tstr;
+    MatRowInsert(BUQTr,arow+tcnt-1,BUQTrw);
+    tcnt = tcnt + 1;
+  end;
+  RETURN;
+END;
+
+procedure BUQTDchrsum(var record BUQTVc BUQTr,Integer rownr,Boolean pritemf)
+BEGIN
+  val t,v,totcost,pritcost;
+  row BUQTVc BUQTrw;
+
+  MatRowGet(BUQTr,rownr,BUQTrw);
+  if (BUQTrw.Price!=blankval) then begin
+    CalcSum(BUQTrw.Qty,BUQTrw.Price,0,BUQTrw.Discount,t,0);
+    CalcExtra(t,BUQTrw.Markup,v);
+    BUQTrw.Sum = t + v;
+    if (pritemf) then begin
+      GetPRItemCost(BUQTr.PRCode,BUQTrw.EMCode,BUQTrw.ArtCode,BUQTrw.TimeClass,BUQTrw.ItemType,t);
+      BUQTrw.Cost = t;
+    end;  
+    totcost = BUQTrw.Cost*BUQTrw.Qty;
+    BUQTrw.GP = BUQTrw.Sum-totcost;
+    t = BUQTrw.GP*100;
+    BUQTrw.GM = t/BUQTrw.Sum;
+  end else begin
+    if (pritemf) then begin
+      GetPRItemCost(BUQTr.PRCode,BUQTrw.EMCode,BUQTrw.ArtCode,BUQTrw.TimeClass,BUQTrw.ItemType,t);
+      BUQTrw.Cost = t;
+    end;  
+    if (nonblank(BUQTrw.Markup)) then begin
+      CalcExtra(t,BUQTrw.Markup,v);
+      BUQTrw.Price = t + BUQTrw.Cost;
+      CalcSum(BUQTrw.Qty,BUQTrw.Price,v,BUQTrw.Discount,t,0);
+      BUQTrw.Sum = t;
+      totcost = BUQTrw.Cost*BUQTrw.Qty;
+      BUQTrw.GP = BUQTrw.Sum - totcost;
+      t = BUQTrw.GP/100;
+      BUQTrw.GM = t/BUQTrw.Sum;
+    end else begin
+      BUQTrw.Sum = 0;
+    end;
+  end;
+  MatRowPut(BUQTr,rownr,BUQTrw);
+  RETURN;
+END;
+
+global 
+function Boolean BUQTDClassDiscountEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin  
+  record BUQTVc BUQTr;
+  Boolean chrsum,chsum;
+
+  if (changedf!=0) then begin
+    chrsum = true;
+    GetWindowRecord(wn,BUQTr);
+    
+    if (chrsum) then begin
+      BUQTDchrsum(BUQTr,rownr,true);
+      chsum = true;
+    end;    
+    if (chsum) then begin
+      BUQTSumup(BUQTr);
+    end;
+    
+    PutWindowRecord(wn,BUQTr);
+  end;
+  BUQTDClassDiscountEFAfter = true;
+  return;
+end;
+
+
+global 
+function Boolean BUQTDClassEMCodeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin  
+  record BUQTVc BUQTr;
+  row BUQTVc BUQTrw;
+  val price,reb,priceincur;
+  string 10 markup,markupincur;
+  
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,BUQTr);
+    MatRowGet(BUQTr,rownr,BUQTrw);
+    GetProjectPrice(BUQTr.PRCode,BUQTrw.ArtCode,BUQTrw.EMCode,BUQTrw.TimeClass,"",BUQTrw.Qty,price,reb,markup,priceincur,markupincur);
+    BUQTrw.Price = price;
+    BUQTrw.Discount = reb;
+    BUQTrw.Markup = markup;
+    MatRowPut(BUQTr,rownr,BUQTrw);
+    BUQTDchrsum(BUQTr,rownr,true);
+    BUQTSumup(BUQTr);
+    PutWindowRecord(wn,BUQTr);
+  end;  
+  BUQTDClassEMCodeEFAfter = true;
+  return;
+end;
+
+global 
+function Boolean BUQTDClassArtCodeEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin  
+  record INVc INr;
+  record BUQTVc BUQTr;  
+  row BUQTVc BUQTrw;
+  string 255 tstr,markup,markupincur;
+  val price,reb,v,priceincur;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,BUQTr);
+    MatRowGet(BUQTr,rownr,BUQTrw);
+    if (nonblank(BUQTrw.ArtCode)) then begin
+      if (GetFirstItem(BUQTrw.ArtCode,INr)) then begin
+        if (INr.ItemType==1) then begin        
+          BUQTrw.RowType = BUQTr.BudStocked;
+        end;    
+        if (INr.ItemType==3) then begin        
+          BUQTrw.RowType = BUQTr.BudTime;
+        end;    
+        if ((INr.ItemType!=1) and (INr.ItemType!=3)) then begin
+          if (INr.ItemMaterial!=0) then begin
+            BUQTrw.RowType = BUQTr.BudMaterial;
+          end else begin
+            BUQTrw.RowType = BUQTr.BudOther;
+          end;      
+        end;
+        BUQTrw.ItemType = INr.ItemType;
+        if (BUQTrw.ItemType==0) then begin 
+          if (INr.ItemMaterial!=0) then begin            
+            BUQTrw.ItemType = 5;
+          end;
+        end;      
+        if ((INr.ItemType==2) and (nonblank(INr.Recepy))) then begin
+          BUQTrw.Recepy = INr.Recepy;
+        end else begin
+          BUQTrw.Recepy = "";
+        end;    
+        if (GetItemNameStr(1,tstr,BUQTr.LangCode,INr.Name,INr.Code)) then begin end;
+        BUQTrw.Comment = tstr;
+        MatRowPut(BUQTr,rownr,BUQTrw);
+        if ((INr.ExplodeRec==0) or (blank(BUQTrw.Recepy))) then begin
+          BUQTMultiLineText(BUQTr,INr,BUQTr.LangCode,rownr);
+        end;          
+      end else begin
+        Beep;
+      end;
+      if (BUQTrw.Price==0) then begin
+        GetProjectPrice(BUQTr.PRCode,BUQTrw.ArtCode,BUQTrw.EMCode,BUQTrw.TimeClass,"",BUQTrw.Qty,price,reb,markup,priceincur,markupincur);
+        BUQTrw.Price = price;
+        BUQTrw.Discount = reb;        
+        BUQTrw.Markup = markup;        
+        if (BUQTrw.Price==0) then begin
+          BUQTrw.Cost = INr.InPrice; 
+          BUQTrw.Price = BUQTrw.Cost*INr.Markup;
+          BUQTrw.Price = BUQTrw.Price/100;
+          BUQTrw.Price = BUQTrw.Price + BUQTrw.Cost;
+          BUQTrw.Price = BUQTrw.Price + INr.ExtraCost;
+          if (INr.Bonus!=0) then begin
+            v = BUQTrw.Price*INr.Bonus;
+            v = v /100;
+            BUQTrw.Price = BUQTrw.Price - v;
+          end;          
+        end;
+      end;           
+      BUQTrw.Objects = FindINObjects(INr.Objects,INr.Group);
+      MatRowPut(BUQTr,rownr,BUQTrw);
+      BUQTDchrsum(BUQTr,rownr,true);
+      BUQTSumup(BUQTr);
+      PutWindowRecord(wn,BUQTr);
+    end;    
+  end;
+  BUQTDClassArtCodeEFAfter = true;
+  return;
+end;
+/*
+global 
+function Boolean BUQTDClassQtyEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin  
+  record INVc INr;
+  record BUQTVc BUQTr;  
+  row BUQTVc BUQTrw;
+  string 255 tstr;
+  val price,reb,v;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,BUQTr);
+    MatRowGet(BUQTr,rownr,BUQTrw);
+
+    if (nonblank(BUQTrw.ArtCode)) then begin
+      INr.Code = BUQTrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+        if (INr.ExplodeRec==0) then begin
+          if ((INr.ItemType==2) and (nonblank(INr.Recepy))) then begin
+            BUQTrw.Recepy = INr.Recepy;
+          end else begin
+            BUQTrw.Recepy = "";
+          end;
+        end;
+        if ((INr.ExplodeRec!=0) and (nonblank(BUQTrw.Recepy))) then begin
+//              ExplodeRecepy(BUQTVc,&INr,&BUQTrw.Qty,BUQTp,BUQTrw.Recepy,row);
+          MatRowGet(BUQTr,rownr,BUQTrw);
+          BUQTrw.Recepy = "";
+        end;
+      end;
+      MatRowPut(BUQTr,rownr,BUQTrw);
+      BUQTDchrsum(BUQTr,rownr,true);
+      BUQTSumup(BUQTr);
+      PutWindowRecord(wn,BUQTr);          
+    end;
+  end;  
+  BUQTDClassQtyEFAfter = true;
+  return;
+end;
+*/
+global 
+function Boolean BUQTDClassPriceEFAfter(Integer wn,Integer fn,Integer rownr,Integer changedf)
+begin  
+  record INVc INr;
+  record BUQTVc BUQTr;  
+  row BUQTVc BUQTrw;
+  string 255 tstr;
+  val price,reb,v;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,BUQTr);
+    MatRowGet(BUQTr,rownr,BUQTrw);
+
+    if (nonblank(BUQTrw.ArtCode)) then begin
+      BUQTDchrsum(BUQTr,rownr,true);
+      BUQTSumup(BUQTr);
+//      MatRowGet(BUQTr,rownr,BUQTrw);      
+      PutWindowRecord(wn,BUQTr);          
+    end;
+  end;  
+  BUQTDClassPriceEFAfter = true;
+  return;
+end;
+

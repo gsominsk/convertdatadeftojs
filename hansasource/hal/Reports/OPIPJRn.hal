@@ -1,0 +1,219 @@
+external procedure HT2Per(Date, Date , var string);
+external function val FindAccBalance(string,string,date,record ObjBalVc,Integer,Integer,Integer,string,Integer);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure HTInv(string, var string);
+
+function
+Boolean CheckPMAcc(string paymode,string firstacc) 
+BEGIN
+  record PMBlock pmrp;
+  row PMBlock pmrpw;
+  Integer rwcnt,i;
+  Boolean res;
+  
+  res = false;
+  BlockLoad(pmrp);
+  rwcnt = MatRowCnt(pmrp);
+  for (i=0;i<rwcnt;i=i+1) begin
+     if (res==false) then begin
+       MatRowGet(pmrp,i,pmrpw);
+       if (paymode==pmrpw.Code) then begin
+         if (pmrpw.AccNr==firstacc) then begin
+           res = true;
+         end;
+       end;
+     end;  
+  end;
+  CheckPMAcc = res;
+  RETURN;
+END;
+
+procedure GetAcc2StartBalance(string accstr,string objstr,Date bdp,Integer simf,Integer basecurncy,var val vp,string crncycode)
+BEGIN
+  Date sbd;
+  record ObjBalVc ObjBalr;
+  Boolean ObjBals;
+  
+  ObjBalr.AccNumber = accstr;
+  ObjBalr.Object = objstr;
+  ObjBals = ReadFirstMain(ObjBalr,2,true);
+  
+  sbd = AddDay(bdp,-1);
+  if (ObjBals) then begin
+    vp = FindAccBalance(accstr,objstr,sbd,ObjBalr,simf,basecurncy,0,crncycode,0);
+  end else begin
+    vp = 0;
+  end;  
+  RETURN;
+END;
+
+global
+procedure OPIPJRn(record RcVc RepSpec)
+BEGIN
+  record OPVc  OPr;
+  record IPVc IPr;
+  row IPVc IPrw;
+  row OPVc OPrw;
+  Integer rw;
+  Boolean testf,foundOP,foundIP,foundOPOP,foundIPIP,L99f;
+  Date curDate;  
+  val v,totsum,StartBal;
+  string 255 tstr;
+  record AccVc Accr;
+  Integer rwcnt,i;
+  
+  StartReportJob(USetStr(8915));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTInv(RepSpec.f1,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  tstr = USetStr(2407);
+  tstr = tstr & " ";
+  tstr = tstr & RepSpec.FirstAcc;
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  EndHeader;
+  
+  StartFormat(15);
+    OutString(0,0,USetStr(2358),false);
+    OutString(50,0,USetStr(2453),false);
+    OutString(100,0,USetStr(2442),false);
+    OutString(150,0,USetStr(2445),false);
+    OutString(200,0,USetStr(4103),false);
+    OutString(320,0,USetStr(3057),false);
+    OutString(400,0,USetStr(2450),false);
+    OutString(480,0,USetStr(2424),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  
+  OPr.TransDate = RepSpec.sStartDate;
+  IPr.TransDate = RepSpec.sStartDate;
+  curDate = RepSpec.sStartDate;
+  
+  
+  foundOPOP = true;
+  foundIPIP = true;
+  L99f = false;
+  
+  Accr.AccNumber = RepSpec.FirstAcc;
+  if (ReadFirstMain(Accr,1,true)==false) then begin L99f = true; end; 
+  GetAcc2StartBalance(RepSpec.FirstAcc,"",RepSpec.sStartDate,0,0,StartBal,RepSpec.CurncyCode);
+  StartFormat(15);
+  OutString(200,0,USetStr(2492),false);
+  OutVal(480,0,StartBal,M4Val,true);
+  EndFormat;
+  totsum = totsum + StartBal;
+  if (L99f==false) then begin
+  while ((curDate<=RepSpec.sEndDate) and (foundOPOP or foundIPIP)) begin
+
+    if (foundOPOP) then begin
+      foundOP = true;
+     while (LoopKey("TransDate",OPr,2,foundOP)) begin
+      testf = true;
+      if (curDate<>OPr.TransDate) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (CheckPMAcc(OPr.PayMode,RepSpec.FirstAcc)==false) then begin testf = false; end;
+        if (OPr.OrderedFlag==0) then begin testf = false; end;
+        if (OPr.RejectedFlag==1) then begin testf = false; end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) begin
+/* Must convert to loop over rows as well, with the new design */
+            rwcnt = MatRowCnt(OPr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(OPr,i,OPrw);
+              tstr = OPrw.PayMode;
+              if (blank(tstr)) then begin
+                tstr = OPr.PayMode;
+              end;
+              StartFormat(15);
+              OutString(0,0,USetStr(4072),false);
+              OutDate(50,0,OPr.TransDate,false);
+              OutLongInt(100,0,OPr.SerNr,false);
+              OutString(150,0,tstr,false);
+              OutString(200,0,OPr.BankAcc,false);
+              OutString(320,0,OPr.PayNumber,false);
+              v = MulWithRateToBase1(OPrw.RecCurncy,OPr.PayDate,OPrw.RecVal,DefaultCurRoundOff); 
+              v = -v;
+              OutVal(400,0,v,M4Val,false);
+              totsum = totsum + v;
+              OutVal(480,0,totsum,M4Val,true);
+              EndFormat;
+            end;
+          end;
+        end;
+      end else begin
+        foundOP = false;
+        if (RepSpec.sEndDate<OPr.TransDate) then begin
+          foundOPOP = false;
+        end;
+      end;     
+
+
+     end;
+    end;
+   if (foundOP==false) then begin
+    StepBack(OPr);
+   end;
+
+    if (foundIPIP) then begin
+      foundIP = true;
+     while (LoopKey("TransDate",IPr,2,foundIP)) begin
+      testf = true;
+      if (curDate<>IPr.TransDate) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (CheckPMAcc(IPr.PayMode,RepSpec.FirstAcc)==false) then begin testf = false; end;
+        if (IPr.ReceivedFlag==0) then begin testf = false; end;
+        if (IPr.RejectedFlag==1) then begin testf = false; end;
+        if (testf) then begin
+          if (RepSpec.ArtMode==0) then begin
+            rwcnt = MatRowCnt(IPr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(IPr,i,IPrw);
+              tstr = IPrw.PayMode;
+              if (blank(tstr)) then begin
+                tstr = IPr.PayMode;
+              end;
+              StartFormat(15);
+              OutString(0,0,USetStr(2486),false);
+              OutDate(50,0,IPr.TransDate,false);
+              OutLongInt(100,0,IPr.SerNr,false);
+              OutString(150,0,tstr,false);
+              OutString(200,0,IPr.Comment,false); /* Maybe, it Should be the Customer Name instead */
+              OutString(320,0,IPr.RecNumber,false);
+              v = MulWithRateToBase1(IPrw.InvCurncy,IPr.TransDate,IPrw.InvVal,DefaultCurRoundOff); 
+              OutVal(400,0,v,M4Val,false);
+              totsum = totsum + v;
+              OutVal(480,0,totsum,M4Val,true);
+              EndFormat;
+            end;
+          end;
+        end;
+      end else begin
+        foundIP = false;
+        if (RepSpec.sEndDate<IPr.TransDate) then begin
+          foundIPIP = false;
+        end;
+      end;     
+     end;
+    end;
+     if (foundIP==false) then begin
+      StepBack(IPr);
+    end;
+    curDate = AddDay(curDate,1);
+end;
+  end;    
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutVal(400,0,totsum,M4Val,false);
+  EndFormat;
+L99:;  
+  EndJob;
+  RETURN;
+END;

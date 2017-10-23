@@ -1,0 +1,28 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fProject: { public: true, type: 'TEXT' },
+     fItem: { public: true, type: 'TEXT' },
+     fDesc: { public: true, type: 'TEXT' },
+     fEstimate: { public: true, type: 'INTEGER' },
+     fValue: { public: true, type: 'FLOAT' },
+     fDiscount: { public: true, type: 'FLOAT' },
+     fPRName: { public: true, type: 'TEXT' },
+     fInvSeparately: { public: true, type: 'INTEGER' },
+     fSum: { public: true, type: 'FLOAT' },
+     fNoInvBefore: { public: true, type: 'DATE' },
+     fSumInvoiced: { public: true, type: 'FLOAT' },
+     PBVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fDescr: { public: true, type: 'TEXT' },
+           fBudQty: { public: true, type: 'FLOAT' },
+           fSpentQty: { public: true, type: 'FLOAT' },
+           fPrice: { public: true, type: 'FLOAT' },
+           fDiscount: { public: true, type: 'FLOAT' },
+           fMarkup: { public: true, type: 'FLOAT' },
+           fTotal: { public: true, type: 'FLOAT' },
+           fInvoiced: { public: true, type: 'FLOAT' } } } },
+  indexes: { ProjectIndex83: { fields: [ 'fProject', 'fItem' ], indicesType: 'UNIQUE' } } }

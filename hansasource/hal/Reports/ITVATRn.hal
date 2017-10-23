@@ -1,0 +1,474 @@
+external function roundmode SetRoundModeD(Integer);
+external procedure ValToHALString(val,string,var string);
+//external procedure CalcGPProc(var val,val,var string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure GetVATproc(string,Integer,var val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure HTClasses(string,string,var string);
+external procedure HTITs(string,string,var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTArtSel(string,string, var string);
+external procedure HTInvTypes2(Integer,Integer,Integer,Integer,Integer,Integer,var string);
+
+procedure InvoicesData(record RcVc RepSpec,vector val sex,vector val svbl,vector val sexempt,vector val vat,vector val qty,
+                       vector val cost)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  Boolean found,negf,testf;
+  val salesv,v,vatprc,vatv,t1;
+  record INVc INr;
+  string 255 frin,toin;
+  string 255 frit,toit;
+  
+  frit = FirstInRange(RepSpec.f2,20);
+  toit = LastInRange(RepSpec.f2,20);
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  found = true;
+  IVr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",IVr,1,found)) begin
+    if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (IVr.OKFlag==0) then begin testf = false; end;
+      if (IVr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(IVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          testf = true;
+          ReadFirstItem(IVrw.ArtCode,INr,true,false);
+          if (nonblank(RepSpec.f1)) then begin
+            if (INr.Code<frin) then begin testf = false; end;
+            if (INr.Code>toin) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f2)) then begin
+            if (INr.Group<frit) then begin testf = false; end;
+            if (INr.Group>toit) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f3)) then begin
+            if (SetInSet(RepSpec.f3,INr.DispGroups)==false) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            negf = false;
+            if (IVr.InvType==kInvoiceTypeCredit) or (IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              if (IVrw.stp==kInvoiceRowTypeCorrection) then begin
+                negf = false;
+              end else begin
+                negf = true;
+              end;
+            end;
+            GetVATproc(IVrw.VATCode,0,vatprc);
+            v = MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            MulVATIV(IVrw.VATCode,IVrw.Sum,vatv,t1,IVr.InclVAT,IVr.NoTAXonVAT);
+            switch (IVrw.stp) begin
+              case kInvoiceRowTypeStructuredItemComponent:
+                goto LkInvoiceRowTypeNormal;
+              case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;
+                if (vatprc==0) then begin
+                  if (negf) then begin
+                    sexempt[INr.Group] = sexempt[INr.Group] - v;
+                    sex[INr.Group] = sex[INr.Group] - IVrw.Sum;
+                    vat[INr.Group] = vat[INr.Group] - vatv;
+                    qty[INr.Group] = qty[INr.Group] - IVrw.Quant;
+                    cost[INr.Group] = cost[INr.Group] - IVrw.Quant*IVrw.BasePrice;
+                    svbl[INr.Group] = svbl[INr.Group] + 0;
+                  end else begin
+                    sexempt[INr.Group] = sexempt[INr.Group] + v;
+                    sex[INr.Group] = sex[INr.Group] + IVrw.Sum;
+                    vat[INr.Group] = vat[INr.Group] + vatv;
+                    qty[INr.Group] = qty[INr.Group] + IVrw.Quant;
+                    cost[INr.Group] = cost[INr.Group] + IVrw.Quant*IVrw.BasePrice;
+                    svbl[INr.Group] = svbl[INr.Group] + 0;
+                  end;
+                end else begin
+                  if (negf) then begin
+                    if (IVr.InclVAT!=0) then begin
+                      svbl[INr.Group] = svbl[INr.Group] - (IVrw.Sum-vatv);
+                      sex[INr.Group] = sex[INr.Group] - (IVrw.Sum-vatv);
+                    end else begin
+                      svbl[INr.Group] = svbl[INr.Group] - IVrw.Sum;
+                      sex[INr.Group] = sex[INr.Group] - IVrw.Sum;
+                    end;
+                    vat[INr.Group] = vat[INr.Group] - vatv;
+                    qty[INr.Group] = qty[INr.Group] - IVrw.Quant;
+                    cost[INr.Group] = cost[INr.Group] - IVrw.Quant*IVrw.BasePrice;
+                    sexempt[INr.Group] = sexempt[INr.Group] + 0;
+                  end else begin
+                    if (IVr.InclVAT!=0) then begin
+                      svbl[INr.Group] = svbl[INr.Group] + (IVrw.Sum-vatv);
+                      sex[INr.Group] = sex[INr.Group] + (IVrw.Sum-vatv);
+                    end else begin
+                      svbl[INr.Group] = svbl[INr.Group] + IVrw.Sum;
+                      sex[INr.Group] = sex[INr.Group] + IVrw.Sum;
+                    end;
+                    vat[INr.Group] = vat[INr.Group] + vatv;
+                    qty[INr.Group] = qty[INr.Group] + IVrw.Quant;
+                    cost[INr.Group] = cost[INr.Group] + IVrw.Quant*IVrw.BasePrice;
+                    sexempt[INr.Group] = sexempt[INr.Group] + 0;
+                  end;
+                end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure POSInvoicesData(record RcVc RepSpec,vector val sex,vector val svbl,vector val sexempt,vector val vat,vector val qty,
+                       vector val cost)
+begin
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  val salesv,v,vatprc,vatv,t1;
+  record INVc INr;
+  string 255 frin,toin;
+  string 255 frit,toit;
+  
+  frit = FirstInRange(RepSpec.f2,20);
+  toit = LastInRange(RepSpec.f2,20);
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  found = true;
+  IVCashr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",IVCashr,1,found)) begin
+    if (DateInRange(IVCashr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (IVCashr.OKFlag==0) then begin testf = false; end;
+      if (IVCashr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(IVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVCashr,i,IVCashrw);
+          testf = true;
+          ReadFirstItem(IVCashrw.ArtCode,INr,true,false);
+          if (nonblank(RepSpec.f1)) then begin
+            if (INr.Code<frin) then begin testf = false; end;
+            if (INr.Code>toin) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f2)) then begin
+            if (INr.Group<frit) then begin testf = false; end;
+            if (INr.Group>toit) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f3)) then begin
+            if (SetInSet(RepSpec.f3,INr.DispGroups)==false) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            GetVATproc(IVCashrw.VATCode,0,vatprc);
+            if (IVCashr.InvType==kPOSInvoiceTypeCredit) then begin
+              IVCashrw.Sum = -IVCashrw.Sum;
+            end;
+            v = MulRateToBase1(IVCashr.CurncyCode,IVCashrw.Sum,IVCashr.FrRate,IVCashr.ToRateB1,IVCashr.ToRateB2,IVCashr.BaseRate1,IVCashr.BaseRate2,DefaultCurRoundOff);
+            MulVATIV(IVCashrw.VATCode,IVCashrw.Sum,vatv,t1,IVCashr.InclVAT,IVCashr.NoTAXonVAT);
+            switch (IVCashrw.stp) begin
+              case kInvoiceRowTypeStructuredItemComponent:
+                goto LkInvoiceRowTypeNormalPOS;
+              case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormalPOS:;
+                if (vatprc==0) then begin
+                  sexempt[INr.Group] = sexempt[INr.Group] + v;
+                  sex[INr.Group] = sex[INr.Group] + IVCashrw.Sum;
+                  vat[INr.Group] = vat[INr.Group] + vatv;
+                  qty[INr.Group] = qty[INr.Group] + IVCashrw.Quant;
+                  cost[INr.Group] = cost[INr.Group] + IVCashrw.Quant*IVCashrw.BasePrice;
+                  svbl[INr.Group] = svbl[INr.Group] + 0;
+                end else begin
+                  if (IVCashr.InclVAT!=0) then begin
+                    svbl[INr.Group] = svbl[INr.Group] + (IVCashrw.Sum-vatv);
+                    sex[INr.Group] = sex[INr.Group] + (IVCashrw.Sum-vatv);
+                  end else begin
+                    svbl[INr.Group] = svbl[INr.Group] + IVCashrw.Sum;
+                    sex[INr.Group] = sex[INr.Group] + IVCashrw.Sum;
+                  end;
+                  vat[INr.Group] = vat[INr.Group] + vatv;
+                  qty[INr.Group] = qty[INr.Group] + IVCashrw.Quant;
+                  cost[INr.Group] = cost[INr.Group] + IVCashrw.Quant*IVCashrw.BasePrice;
+                  sexempt[INr.Group] = sexempt[INr.Group] + 0;
+                end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure BarTabsData(record RcVc RepSpec,vector val sex,vector val svbl,vector val sexempt,vector val vat,vector val qty,
+                       vector val cost)
+begin
+  record RestAccVc RestAccr;
+  row RestAccVc RestAccrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  val salesv,v,vatprc,vatv,t1;
+  record INVc INr;
+  string 255 frin,toin;
+  string 255 frit,toit;
+  
+  frit = FirstInRange(RepSpec.f2,20);
+  toit = LastInRange(RepSpec.f2,20);
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  found = true;
+  RestAccr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",RestAccr,1,found)) begin
+    if (DateInRange(RestAccr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (RestAccr.Closed==0) then begin testf = false; end;
+      if (RestAccr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(RestAccr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(RestAccr,i,RestAccrw);
+          testf = true;
+          ReadFirstItem(RestAccrw.ArtCode,INr,true,false);
+          if (nonblank(RepSpec.f1)) then begin
+            if (INr.Code<frin) then begin testf = false; end;
+            if (INr.Code>toin) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f2)) then begin
+            if (INr.Group<frit) then begin testf = false; end;
+            if (INr.Group>toit) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f3)) then begin
+            if (SetInSet(RepSpec.f3,INr.DispGroups)==false) then begin testf = false; end;
+          end;
+          if (testf) then begin
+            GetVATproc(RestAccrw.VATCode,0,vatprc);
+            v = MulRateToBase1(RestAccrw.CurncyCode,RestAccrw.Sum,RestAccrw.FrRate,RestAccrw.ToRateB1,RestAccrw.ToRateB2,RestAccrw.BaseRate1,RestAccrw.BaseRate2,DefaultCurRoundOff);
+            MulVATIV(RestAccrw.VATCode,RestAccrw.Sum,vatv,t1,RestAccr.InclVAT,0);
+            switch (RestAccrw.stp) begin
+              case kInvoiceRowTypeStructuredItemComponent:
+                goto LkInvoiceRowTypeNormalBarTab;
+              case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormalBarTab:;
+                if (vatprc==0) then begin
+                  sexempt[INr.Group] = sexempt[INr.Group] + v;
+                  sex[INr.Group] = sex[INr.Group] + RestAccrw.Sum;
+                  vat[INr.Group] = vat[INr.Group] + vatv;
+                  qty[INr.Group] = qty[INr.Group] + RestAccrw.Quant;
+                  cost[INr.Group] = cost[INr.Group] + RestAccrw.Quant*RestAccrw.BasePrice;
+                  svbl[INr.Group] = svbl[INr.Group] + 0;
+                end else begin
+                  if (RestAccr.InclVAT!=0) then begin
+                    svbl[INr.Group] = svbl[INr.Group] + (RestAccrw.Sum-vatv);
+                    sex[INr.Group] = sex[INr.Group] + (RestAccrw.Sum-vatv);
+                  end else begin
+                    svbl[INr.Group] = svbl[INr.Group] + RestAccrw.Sum;
+                    sex[INr.Group] = sex[INr.Group] + RestAccrw.Sum;
+                  end;
+                  vat[INr.Group] = vat[INr.Group] + vatv;
+                  qty[INr.Group] = qty[INr.Group] + RestAccrw.Quant;
+                  cost[INr.Group] = cost[INr.Group] + RestAccrw.Quant*RestAccrw.BasePrice;
+                  sexempt[INr.Group] = sexempt[INr.Group] + 0;
+                end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure MakeMarginString(val t,var string res)
+begin
+  string 255 tstr;
+  record SysFormatBlock SFb;
+
+  BlockLoad(SFb);
+  tstr = ValToString(t,M4Val,SFb.thousSep,SFb.decimalPt,0);
+  if (t<0) then begin
+    res = "-";
+    res = "";
+  end else begin
+    res = "+";
+  end;
+  res = res & tstr;
+  res = res & "%";
+  return;
+end;
+
+procedure CalcGPProc(var val gp,val total,var string gppstr)
+begin
+  val gpp;
+  
+  if (gp==0) then begin gp = 1; end;
+  gpp = gp * 100;
+  gpp = gpp / total;  
+  if (gp==total) then begin gpp = 100; end;
+  gpp = Round(gpp,SetRoundModeD(2));
+  MakeMarginString(gpp,gppstr);
+  return;
+end;
+
+procedure PrintResults(record RcVc RepSpec,vector val sex,vector val svbl,vector val sexempt,
+                       vector val vat,vector val qty,vector val cost,
+                       var val totsex,var val totsvbl,var val totsexempt,var val totvat,
+                       var val totqty,var val totcost)
+begin
+  Boolean found;
+  string 255 frit,toit,tstr;
+  record ITVc ITr;
+  val t;
+  
+  frit = FirstInRange(RepSpec.f2,20);
+  toit = LastInRange(RepSpec.f2,20);  
+  found = true;
+  ITr.Code = frit;
+  while (LoopMain(ITr,1,found)) begin
+    if (nonblank(RepSpec.f2)) then begin
+      if (ITr.Code<frit) then begin found = false; end;
+      if (ITr.Code>toit) then begin found = false; end;
+    end;
+    if (found) then begin
+      if (sex[ITr.Code]!=0) or (svbl[ITr.Code]!=0) or (sexempt[ITr.Code]!=0) then begin
+        StartFormat(15);
+         OutString(0,0,ITr.Code,false);
+         OutString(2,0,ITr.Comment,false);
+         if (RepSpec.flags[0]==0) then begin
+           OutVal(3,0,qty[ITr.Code],M4Val,true);
+           OutVal(4,0,cost[ITr.Code],M4Val,true);
+           t = sex[ITr.Code] - cost[ITr.Code];
+           CalcGPProc(t,sex[ITr.Code],tstr);
+           OutString(5,0,tstr,true);
+        end;
+         OutVal(6,0,sex[ITr.Code],M4Val,true);
+         OutVal(7,0,svbl[ITr.Code],M4Val,true);
+         OutVal(8,0,sexempt[ITr.Code],M4Val,true);
+         OutVal(1,0,vat[ITr.Code],M4Val,true);
+        EndFormat;
+        totsex = totsex + sex[ITr.Code];
+        totsvbl = totsvbl + svbl[ITr.Code];
+        totsexempt = totsexempt + sexempt[ITr.Code];
+        totvat = totvat + vat[ITr.Code];
+        totqty = totqty + qty[ITr.Code];
+        totcost = totcost + cost[ITr.Code];
+      end;
+    end;
+  end;
+
+  StartFormat(15);
+   OutString(0,0,USetStr(12534),false);   
+   if (RepSpec.flags[0]==0) then begin
+     OutVal(3,0,qty[""],M4Val,true);
+     OutVal(4,0,cost[""],M4Val,true);
+     t = sex[""] - cost[""];
+     CalcGPProc(t,sex[""],tstr);
+     OutString(5,0,tstr,true);
+   end;
+   OutVal(6,0,sex[""],M4Val,true);
+   OutVal(7,0,svbl[""],M4Val,true);
+   OutVal(8,0,sexempt[""],M4Val,true);
+   OutVal(1,0,vat[""],M4Val,true);
+  EndFormat;
+  totsex = totsex + sex[""];
+  totsvbl = totsvbl + svbl[""];
+  totsexempt = totsexempt + sexempt[""];
+  totvat = totvat + vat[""];
+  totqty = totqty + qty[""];
+  totcost = totcost + cost[""];
+
+  return;
+end;
+
+global
+procedure ITVATRn(record RcVc RepSpec)
+begin
+  Integer rw;
+  string 255 tstr;
+  string 255 frin,toin;
+  string 255 frit,toit;
+  val t;
+  vector val sex,svbl,sexempt,vat,qty,cost;
+  val totsex,totsvbl,totsexempt,totvat,totqty,totcost;
+  
+  frit = FirstInRange(RepSpec.f2,20);
+  toit = LastInRange(RepSpec.f2,20);
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(28670));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTInvTypes2(RepSpec.flags[1],0,0,0,RepSpec.flags[2],RepSpec.flags[3],tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTITs(frit,toit,tstr);
+  Header(rw,tstr,0);
+  HTArtSel(RepSpec.f1,RepSpec.f2,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTClasses(RepSpec.f3,RepSpec.f3,tstr);
+  Header(rw,tstr,1); 
+  rw = rw + 1; 
+  EndHeader;
+  SetRepCol(2,50);
+   if (RepSpec.flags[0]==0) then begin
+    SetRepCol(3,190);
+    SetRepCol(4,240);
+    SetRepCol(5,290);
+    SetRepCol(6,340);
+    SetRepCol(7,390);
+    SetRepCol(8,440);
+  end else begin
+    SetRepCol(6,300);
+    SetRepCol(7,360);
+    SetRepCol(8,420);
+  end;
+  StartFormat(15);
+   OutString(0,0,USetStr(28671),false);
+   OutString(2,0,USetStr(28672),false);
+   if (RepSpec.flags[0]==0) then begin
+     OutString(3,0,USetStr(28673),true);
+     OutString(4,0,USetStr(28674),true);
+     OutString(5,0,USetStr(28675),true);
+   end;
+   OutString(6,0,USetStr(28676),true);
+   OutString(7,0,USetStr(28677),true);
+   OutString(8,0,USetStr(28678),true);
+   OutString(1,0,USetStr(28679),true);
+  EndFormat;
+  Gray_Divider(0,1);
+
+  if (RepSpec.flags[1]!=0) then begin
+    InvoicesData(RepSpec,sex,svbl,sexempt,vat,qty,cost);
+  end;
+  if (RepSpec.flags[2]!=0) then begin
+    POSInvoicesData(RepSpec,sex,svbl,sexempt,vat,qty,cost);
+  end;
+  if (RepSpec.flags[3]!=0) then begin
+    BarTabsData(RepSpec,sex,svbl,sexempt,vat,qty,cost);
+  end;
+  PrintResults(RepSpec,sex,svbl,sexempt,vat,qty,cost,totsex,totsvbl,totsexempt,totvat,totqty,totcost);
+  Gray_Divider(0,1);
+  StartFormat(15);
+   if (RepSpec.flags[0]==0) then begin
+     OutVal(3,0,totqty,M4Val,true);
+     OutVal(4,0,totcost,M4Val,true);
+     t = totsex - totcost;
+     CalcGPProc(t,totsex,tstr);
+     OutString(5,0,tstr,true);
+   end;
+   OutVal(6,0,totsex,M4Val,true);
+   OutVal(7,0,totsvbl,M4Val,true);
+   OutVal(8,0,totsexempt,M4Val,true);
+   OutVal(1,0,totvat,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

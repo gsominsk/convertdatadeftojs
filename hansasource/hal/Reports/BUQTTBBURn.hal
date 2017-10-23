@@ -1,0 +1,1042 @@
+external procedure PrintApprovalAcivity(record AcceptanceRulesVc,record ActVc,var Boolean);
+external function Boolean ReadAcceptanceRules(Integer,string,var record AcceptanceRulesVc);
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external procedure PrintAcceptanceActivities(Integer,string,string,string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function roundmode SetRoundModeD(Integer);
+external procedure ValToHALString(val,string,var string);
+external procedure HTProjects(string,string,var string);
+external procedure HTPRClass(string, var string);
+external procedure HTOBJ(string,var string);
+external procedure HTCusts(string, string, var string);
+external procedure HT2Per(Date,Date, var string);
+external procedure GetPRName(string,var string);
+
+global
+procedure BUQTStatusReport()
+BEGIN
+  record QTVc QTr;
+  record RcVc RepSpec;
+  
+  GetWindowRecord(CurWindow,QTr);
+  RepSpec.repname = "BUQTTBBURn";
+  RepSpec.Media = mtScreen;
+  RepSpec.ArtMode = 1;
+  RepSpec.flags[0] = 1;
+  RepSpec.f1 = QTr.PRCode;
+  RunReport(RepSpec,0);
+  RETURN;
+END;
+
+global
+procedure TBBUStatusReport()
+BEGIN
+  record TBBUVc TBBUr;
+  record RcVc RepSpec;
+  
+  GetWindowRecord(CurWindow,TBBUr);
+  RepSpec.repname = "BUQTTBBURn";
+  RepSpec.Media = mtScreen;
+  RepSpec.ArtMode = 1;
+  RepSpec.flags[0] = 0;
+  RepSpec.f1 = TBBUr.PRCode;
+  RunReport(RepSpec,0);
+  RETURN;
+END;
+
+procedure PrintQTDifferences(record SMVc SMr,record TBBUVc TBBUr)
+BEGIN
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  val t;
+  Boolean printedf;
+  val totdiff,totbu,totqt;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    t = SMrw.DebVal - SMrw.CredVal;
+//    if (t<>0) then begin
+    if (true) then begin
+      if (printedf==false) then begin
+        StartFormat(15);
+         OutString(0,0,TBBUr.PRCode,false);
+         OutString(60,0,TBBUr.PRName,false);
+         OutString(200,0,TBBUr.CustName,false);
+        EndFormat;
+        printedf = true;
+      end;
+      StartFormat(15);
+       OutString(60,0,SMrw.Objects,false);
+       OutVal(360,0,SMrw.DebVal,M4Val,true);     
+       OutVal(420,0,SMrw.CredVal,M4Val,true);  
+       OutVal(480,0,t,M4Val,true);   
+       totbu = totbu + SMrw.DebVal;  
+       totqt = totqt + SMrw.CredVal;  
+       totdiff = totdiff + t;  
+      EndFormat;
+    end;
+  end;  
+  Gray_Divider(300,1);
+  if ((totbu>0) or (totqt>0) or (totdiff>0)) then begin
+    StartFormat(15);
+     OutVal(360,0,totbu,M4Val,true);     
+     OutVal(420,0,totqt,M4Val,true);  
+     OutVal(480,0,totdiff,M4Val,true);   
+    EndFormat;  
+  end;
+  RETURN;
+END;
+
+procedure AddDummyRow(record SMVc SMr,string artcode,val sum,Boolean buf)
+BEGIN
+  row SMVc SMrw;
+  Integer i,rwcnt,rwnr;
+
+  rwcnt = MatRowCnt(SMr);
+  rwnr = rwcnt;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    if (SMrw.Objects==artcode) then begin
+      if (buf) then begin
+        SMrw.DebVal = SMrw.DebVal + sum;
+      end else begin
+        SMrw.CredVal = SMrw.CredVal + sum;
+      end;  
+      rwnr = i;
+      goto L99;
+    end;
+  end;  
+  SMrw.Objects = artcode;
+  if (buf) then begin
+    SMrw.DebVal = sum;
+    SMrw.CredVal = 0;
+  end else begin
+    SMrw.CredVal = sum;
+    SMrw.DebVal = 0;
+  end;  
+L99:;    
+  MatRowPut(SMr,rwnr,SMrw);
+  RETURN;
+END;
+
+procedure PrintDummyMatrix(record SMVc SMr)
+BEGIN
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+      StartFormat(15);
+       OutString(0,0,SMrw.Objects,false);
+       OutVal(360,0,SMrw.DebVal,M4Val,true);     
+       OutVal(420,0,SMrw.CredVal,M4Val,true);  
+      EndFormat;    
+  end;
+  Gray_Divider(0,1);
+  RETURN;
+END;
+
+procedure BuildDummyMatrix(record SMVc SMr,record TBBUVc TBBUr,record QTVc QTr)
+BEGIN
+  row TBBUVc TBBUrw;
+  row QTVc QTrw;
+  Integer i,rwcnt;
+  val sum;
+  
+  rwcnt = MatRowCnt(TBBUr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TBBUr,i,TBBUrw);
+    if (TBBUrw.stp!=9) then begin
+      sum = MulRateToBase1(TBBUr.CurncyCode,TBBUrw.Sum,TBBUr.FrRate,TBBUr.ToRateB1,TBBUr.ToRateB2,TBBUr.BaseRate1,TBBUr.BaseRate2,DefaultCurRoundOff);
+      AddDummyRow(SMr,TBBUrw.ArtCode,sum,true);
+    end;  
+  end;  
+  if (QTr.Rejected!=1) then begin
+    rwcnt = MatRowCnt(QTr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(QTr,i,QTrw);
+      if (QTrw.stp!=9) then begin
+        sum = MulRateToBase1(QTr.CurncyCode,QTrw.Sum,QTr.FrRate,QTr.ToRateB1,QTr.ToRateB2,QTr.BaseRate1,QTr.BaseRate2,DefaultCurRoundOff);
+        AddDummyRow(SMr,QTrw.ArtCode,sum,false);
+      end;  
+    end;  
+  end;  
+  RETURN;
+END;
+
+procedure FindQTifferences(record TBBUVc TBBUr,record QTVc QTr)
+BEGIN
+  record SMVc SMr;
+  row QTVc QTrw;
+  Integer i,qtcnt;
+  Boolean printedf;
+  
+  BuildDummyMatrix(SMr,TBBUr,QTr);
+//  PrintDummyMatrix(SMr);
+  PrintQTDifferences(SMr,TBBUr);
+  RETURN;
+END;
+
+procedure PrintQTHeader(record RcVc RepSpec)
+BEGIN
+  if ((RepSpec.ArtMode==0) or (RepSpec.ArtMode==1)) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(8884),false);
+     OutString(60,0,USetStr(8885),false);
+     OutString(300,0,USetStr(8886),true);
+     OutString(360,0,USetStr(8887),true);
+     OutString(420,0,USetStr(8888),true); 
+     OutString(480,0,USetStr(8889),true);       
+    EndFormat;
+  end;  
+  if (RepSpec.ArtMode==2) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(8884),false);
+     OutString(60,0,USetStr(8885),false);
+     OutString(200,0,USetStr(4923),false);
+     OutString(360,0,USetStr(8890),true);
+     OutString(420,0,USetStr(8891),true); 
+     OutString(480,0,USetStr(8892),true);       
+    EndFormat;  
+  end;
+  Gray_Divider(0,1);  
+  RETURN;
+END;
+
+procedure MakeMarginString(val t,var string res)
+BEGIN
+  string 255 tstr;
+
+  ValToHALString(t,"2",tstr);  
+  if (t<0) then begin
+//    res = "-";
+    res = "";
+  end else begin
+    res = "+";
+  end;
+  res = res & tstr;
+  res = res & "%";
+  RETURN;
+END;
+
+procedure CalcGPProc(val total,var string gppstr,val cost)
+BEGIN
+  val gpp;
+  
+  if (cost==0) then begin 
+    gpp = 100;
+  end else begin
+    gpp = (total-cost)/total;
+    gpp = gpp * 100;
+  end;   
+  gpp = Round(gpp,SetRoundModeD(0));
+  MakeMarginString(gpp,gppstr);
+  RETURN;
+END;
+
+procedure PrintBudgetDetails(string artcode,string emcode,string comment,val qty,val sum,val cost,val gp)
+BEGIN
+  val t;
+  string 255 tstr;
+  
+  if (nonblank(artcode)) then begin
+    StartFormat(15);
+     OutString(20,0,artcode,false);
+     OutString(80,0,emcode,false);
+     OutString(140,0,comment,false);     
+     OutVal(300,0,qty,M4Qty,true);
+     OutVal(360,0,sum,M4Val,true);
+     t = qty * cost;
+     OutVal(420,0,t,M4Val,true); 
+     CalcGPProc(sum,tstr,t); 
+     OutString(480,0,tstr,true);   
+//    OutVal(420,0,gp,M4Val,true); 
+    EndFormat;  
+  end;  
+  RETURN;
+END;
+
+procedure TBBUSorting(record TBBUVc TBBUr)
+BEGIN
+  Integer changing;
+  Integer i,rwcnt;
+  row TBBUVc res;
+  row TBBUVc acum;
+    
+  rwcnt = MatRowCnt(TBBUr);
+  changing = 1;
+  while (changing==1) begin
+    changing = 0;
+    for (i=0;i<rwcnt-1;i=i+1) begin
+      MatRowGet(TBBUr,i,res);
+      MatRowGet(TBBUr,i+1,acum);      
+      if (res.ItemType<acum.ItemType) then begin
+        changing = 1;     
+        MatRowPut(TBBUr,i+1,res);
+        MatRowPut(TBBUr,i,acum);           
+      end;
+    end;
+  end;   
+  RETURN;
+END;
+ 
+procedure PrintTypeTotal(var val typeqty,var val typesum,var val typecost,var val typegp,Integer itemtype)
+BEGIN
+  string 255 tstr;
+  
+  Black_Divider(280,1);
+  StartFormat(15);
+  if (itemtype==0) then begin
+    OutString(200,0,USetStr(8896),false);
+  end;
+  if (itemtype==1) then begin
+    OutString(200,0,USetStr(8894),false);
+  end;
+  if (itemtype==5) then begin
+    OutString(200,0,USetStr(8895),false);
+  end;
+  if (itemtype==3) then begin
+    OutString(200,0,USetStr(8893),false);
+  end;
+  OutVal(300,0,typeqty,M4Qty,true);
+  OutVal(360,0,typesum,M4Val,true);
+  OutVal(420,0,typecost,M4Val,true);
+  CalcGPProc(typesum,tstr,typecost);
+  OutString(480,0,tstr,true);          
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  typeqty = blankval;
+  typesum = blankval;
+  typecost = blankval;
+  typegp = blankval;
+  RETURN;        
+END;
+ 
+global
+procedure TBBUPrintApprovalActivities(record TBBUVc TBBUr)
+begin
+  record ActVc Actr;
+  record AcceptanceRulesVc Acptr;
+  Integer actnr;
+  record RLinkVc RLr;
+  Boolean firstf;
+
+  ReadAcceptanceRules(kAcceptanceTBBU,TBBUr.CustCode,Acptr);
+  actnr = 1;
+  while (ReadRecordLink(TBBUr,actnr,Actr,RLr)) begin
+    PrintApprovalAcivity(Acptr,Actr,firstf);      
+    actnr = actnr + 1;
+  end;
+  return;
+end;
+ 
+procedure PrintOneBudget(record TBBUVc TBBUr,record RcVc RepSpec,var val totqty,var val totsum,var val totcost,var val totgp)
+BEGIN
+  row TBBUVc TBBUrw;
+  Integer i,rwcnt;
+  val buqty,busum,bucost,bugp,sum;
+  string 255 tstr;
+  val gp;
+  Integer lastitemtype;
+  val typeqty,typesum,typecost,typegp;
+  Boolean testf;
+
+  if (RepSpec.ArtMode==1) then begin
+    TBBUSorting(TBBUr);
+    lastitemtype = -1;
+  end;  
+  rwcnt = MatRowCnt(TBBUr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TBBUr,i,TBBUrw);
+    if (TBBUrw.stp!=9) then begin
+      testf = true;
+      switch (RepSpec.flags[1]) begin     
+        case 0:
+        case 1: 
+          if (blank(TBBUrw.EMCode)) then begin
+            testf = false;
+          end;
+        case 2:
+          if (nonblank(TBBUrw.EMCode)) then begin
+            testf = false;
+          end;
+      end;
+      if (testf==false) then begin
+        goto LSKIPTBBURow;
+      end;
+      if (RepSpec.ArtMode==1) then begin     
+        if ((lastitemtype!=TBBUrw.ItemType) and (lastitemtype!=-1)) then begin
+          PrintTypeTotal(typeqty,typesum,typecost,typegp,lastitemtype);      
+        end;
+      end;  
+      sum = MulRateToBase1(TBBUr.CurncyCode,TBBUrw.Sum,TBBUr.FrRate,TBBUr.ToRateB1,TBBUr.ToRateB2,TBBUr.BaseRate1,TBBUr.BaseRate2,DefaultCurRoundOff);
+      if ((TBBUrw.GP==0) or (blank(TBBUrw.GP))) then begin      
+        gp = sum;
+      end else begin
+        gp = TBBUrw.GP;
+      end;          
+      if (RepSpec.ArtMode==1) then begin PrintBudgetDetails(TBBUrw.ArtCode,TBBUrw.EMCode,TBBUrw.Comment,TBBUrw.Qty,sum,TBBUrw.Cost,gp); end;
+      buqty = buqty + TBBUrw.Qty;
+      busum = busum + sum;
+      bucost = bucost + TBBUrw.Cost*TBBUrw.Qty;
+
+      typeqty = typeqty + TBBUrw.Qty;
+      typesum = typesum + sum;
+      typecost = typecost + TBBUrw.Cost*TBBUrw.Qty;
+      if ((TBBUrw.GP==0) or (blank(TBBUrw.GP))) then begin
+        bugp = bugp + gp;
+        typegp = typegp + gp;
+      end else begin
+        bugp = bugp + TBBUrw.GP;
+        typegp = typegp + TBBUrw.GP;
+      end;
+      lastitemtype = TBBUrw.ItemType;
+LSKIPTBBURow:;      
+    end;  
+  end;
+  if (RepSpec.ArtMode==1) then begin     
+    if (typeqty<>blankval) then begin
+      PrintTypeTotal(typeqty,typesum,typecost,typegp,lastitemtype);      
+    end;  
+  end;  
+  if (RepSpec.ArtMode==1) then begin Gray_Divider(240,1); end;  
+  StartFormat(15);
+   if (RepSpec.ArtMode==0) then  begin
+     OutString(0,0,TBBUr.PRCode,false);
+     OutString(60,0,TBBUr.PRName,false);
+   end;  
+   if (RepSpec.ArtMode==1) then  begin
+     OutString(0,0,USetStr(8883),false);
+   end;  
+   OutVal(300,0,buqty,M4Qty,true);
+   OutVal(360,0,busum,M4Val,true);
+   OutVal(420,0,bucost,M4Val,true);   
+   CalcGPProc(busum,tstr,bucost);
+   OutString(480,0,tstr,true);      
+//   OutVal(480,0,bugp,M4Val,true);   
+  EndFormat;
+  if (RepSpec.ArtMode==1) then begin Gray_Divider(0,1); end;  
+  totqty = totqty + buqty;
+  totsum = totsum + busum;
+  totcost = totcost + bucost;
+  totgp = totgp + bugp;
+  TBBUPrintApprovalActivities(TBBUr);
+  RETURN;
+END;
+
+procedure PrintProjectActualsPerType(record TBBUVc TBBUr,record RcVc RepSpec,Integer ItemType,var val totqty,var val totsum,var val totcost,var val totgp)
+begin
+  record TBIVVc TBIVr;
+  Boolean found,testf;
+  val actualincome,actualcost;
+  val budgetincome,budgetcost;
+  val v;
+  Integer keys;
+  Date td;
+  Array string 255 aitembuddone;
+  Integer aitembuddonecnt;
+  string 255 keystr;
+  row TBBUVc TBBUrw;
+  integer i,ar;
+  val actqty,actsum,actcost,sum;
+  string 255 tstr;
+  boolean isbudget;
+
+  isbudget = false;
+  switch (ItemType) begin
+    case 0://Purchase
+      if (TBBUr.BudOther==1) then begin isbudget = true; end;
+    case 1://Stocked
+      if (TBBUr.BudStocked==1) then begin isbudget = true; end;
+    case 3://Service
+      if (TBBUr.BudTime==1) then begin isbudget = true; end;
+    case 5://Material
+      if (TBBUr.BudMaterial==1) then begin isbudget = true; end;
+  end;    
+  
+  
+  if (isbudget) then begin
+    ar = MatRowCnt(TBBUr);
+    for (i=0;i<ar;i=i+1) begin
+      MatRowGet(TBBUr,i,TBBUrw);
+      testf = true;
+      if (TBBUrw.ItemType!=ItemType) then begin
+        testf = false;
+      end;
+      if not(TBBUrw.BudType==0 or TBBUrw.BudType==2) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        actqty = actqty + TBBUrw.Qty;
+        sum = MulRateToBase1(TBBUr.CurncyCode,TBBUrw.Sum,TBBUr.FrRate,TBBUr.ToRateB1,TBBUr.ToRateB2,TBBUr.BaseRate1,TBBUr.BaseRate2,DefaultCurRoundOff);
+        actsum = actsum + sum;
+        totqty = totqty + TBBUrw.Qty;
+        totsum = totsum + sum;
+      end;
+    end;
+  end;
+ 
+  found = true;
+  keys = 2;
+  TBIVr.PRCode = TBBUr.PRCode;
+  TBIVr.ItemType = itemtype;
+  keystr = "ItemTypeArtCode";
+  while (LoopKey(keystr,TBIVr,keys,found)) begin
+    if (TBIVr.PRCode!=TBBUr.PRCode) then begin found = false; end;
+    if (TBIVr.ItemType!=itemtype) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (DateInRange(TBIVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;     
+
+      if (testf) then begin
+        if (not(isbudget)) then begin
+          totqty = totqty + TBIVr.InvQty;
+          totsum = totsum + TBIVr.Sum;
+          totcost = totcost + TBIVr.Qty*TBIVr.CostPrice;
+          totgp = totgp + TBIVr.GP;
+        end;
+        actcost = actcost +  TBIVr.Qty*TBIVr.CostPrice;
+      end;              
+    end;
+  end;
+  
+  StartFormat(15);
+  if (RepSpec.ArtMode==0) then  begin
+    OutString(0,0,TBBUr.PRCode,false);
+    OutString(60,0,TBBUr.PRName,false);
+  end;  
+  if (RepSpec.ArtMode==1) then  begin
+    OutString(0,0,USetStr(8883),false);
+  end;  
+  OutVal(300,0,actqty,M4Qty,true);
+  OutVal(360,0,actsum,M4Val,true);
+  OutVal(420,0,actcost,M4Val,true);   
+  CalcGPProc(actsum,tstr,actcost);
+  OutString(480,0,tstr,true);      
+  EndFormat;
+  
+  return;
+end;
+
+procedure PrintProjectActuals(record TBBUVc TBBUr,record RcVc RepSpec,var val totqty,var val totsum,var val totcost,var val totgp)
+begin
+  record TBIVVc TBIVr;
+  Boolean found,testf;
+  row TBBUVc TBBUrw,TBBU2rw;
+  integer i,j,ar;
+  val actitemqty,actitemsum,actitemcost,actqty,actsum,actcost,sum;
+  string 255 tstr;
+  Boolean isbudget;
+  Vector Boolean itemchecked;
+  
+  ar = MatRowCnt(TBBUr);
+  for (i = 0; i<ar; i = i + 1) begin
+    MatRowGet(TBBUr,i,TBBUrw);
+    testf = true;
+    actitemqty = blankval;
+    actitemsum = blankval;
+    actitemcost = blankval;
+    if (itemchecked[TBBUrw.ArtCode]) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      isbudget = false;
+      switch (TBBUrw.ItemType) begin
+        case 0://Purchase
+          if (TBBUr.BudOther==1) then begin isbudget = true; end;
+        case 1://Stocked
+          if (TBBUr.BudStocked==1) then begin isbudget = true; end;
+        case 3://Service
+          if (TBBUr.BudTime==1) then begin isbudget = true; end;
+        case 5://Material
+          if (TBBUr.BudMaterial==1) then begin isbudget = true; end;
+      end;
+      if (isbudget) then begin
+        testf = true;
+        if ((TBBUrw.BudType==0 or TBBUrw.BudType==2)==false) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          actitemqty = actitemqty + TBBUrw.Qty;
+          sum = MulRateToBase1(TBBUr.CurncyCode,TBBUrw.Sum,TBBUr.FrRate,TBBUr.ToRateB1,TBBUr.ToRateB2,TBBUr.BaseRate1,TBBUr.BaseRate2,DefaultCurRoundOff);
+          actitemsum = actitemsum + sum;
+          for (j = i + 1; j<ar; j = j + 1) begin
+            MatRowGet(TBBUr,j,TBBU2rw);
+            testf = true;
+            if (TBBU2rw.ArtCode!=TBBUrw.ArtCode) then begin
+              testf = false;
+            end;
+            if ((TBBU2rw.BudType==0 or TBBU2rw.BudType==2)==false) then begin
+              testf = false;
+            end;
+            if (testf) then begin
+              actitemqty = actitemqty + TBBU2rw.Qty;
+              sum = MulRateToBase1(TBBUr.CurncyCode,TBBU2rw.Sum,TBBUr.FrRate,TBBUr.ToRateB1,TBBUr.ToRateB2,TBBUr.BaseRate1,TBBUr.BaseRate2,DefaultCurRoundOff);
+              actitemsum = actitemsum + sum;
+            end;
+          end;
+        end;
+      end;
+      found = true;
+      ResetLoop(TBIVr);
+      TBIVr.ArtCode = TBBUrw.ArtCode;
+      TBIVr.PRCode = TBBUr.PRCode;
+      while (LoopKey("ArtCode",TBIVr,2,found)) begin
+        if (TBIVr.PRCode!=TBBUr.PRCode) then begin found = false; end;
+        if (TBIVr.ArtCode!=TBBUrw.ArtCode) then begin found = false; end;
+        if (found) then begin
+          testf = true;
+          if (DateInRange(TBIVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            if (isbudget==false) then begin
+              actitemqty = actitemqty + TBIVr.InvQty;
+              actitemsum = actitemsum + TBIVr.Sum;
+              totgp = totgp + TBIVr.GP;
+            end;
+            actitemcost = actitemcost + TBIVr.Qty*TBIVr.CostPrice;
+          end;
+        end;
+      end;
+      itemchecked[TBBUrw.ArtCode] = true;
+      actqty = actqty + actitemqty;
+      actsum = actsum + actitemsum;
+      actcost = actcost + actitemcost;
+      if (RepSpec.ArtMode==1) then begin
+        StartFormat(15);
+        OutString(0,0,TBBUrw.ArtCode,false);
+        OutVal(300,0,actitemqty,M4Qty,true);
+        OutVal(360,0,actitemsum,M4Val,true);
+        OutVal(420,0,actitemcost,M4Val,true);
+        CalcGPProc(actitemsum,tstr,actitemcost);
+        OutString(480,0,tstr,true);
+        EndFormat;
+      end;
+    end;
+  end;
+  
+  totqty = totqty + actqty;
+  totsum = totsum + actsum;
+  totcost = totcost + actcost;
+  
+  StartFormat(15);
+  if (RepSpec.ArtMode==0) then begin
+    OutString(0,0,TBBUr.PRCode,false);
+    OutString(60,0,TBBUr.PRName,false);
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    OutString(0,0,USetStr(8883),false);
+  end;
+  OutVal(300,0,actqty,M4Qty,true);
+  OutVal(360,0,actsum,M4Val,true);
+  OutVal(420,0,actcost,M4Val,true);
+  CalcGPProc(actsum,tstr,actcost);
+  OutString(480,0,tstr,true);
+  EndFormat;
+end;
+
+procedure QTSorting(record QTVc QTr)
+BEGIN
+  Integer changing;
+  Integer i,rwcnt;
+  row QTVc res;//QTRowType
+  row QTVc acum;
+  row QTVc tmp;
+    
+  rwcnt = MatRowCnt(QTr);
+  changing = 1;
+  while (changing==1) begin
+    changing = 0;
+    for (i=0;i<rwcnt-1;i=i+1) begin
+      MatRowGet(QTr,i,res);
+      MatRowGet(QTr,i+1,acum);      
+      if (res.ItemType<acum.ItemType) then begin
+        changing = 1;
+        MatRowPut(QTr,i+1,res);
+        MatRowPut(QTr,i,acum);            
+      end;
+    end;
+  end;   
+  RETURN;
+END;
+
+procedure PrintOneQutation(record QTVc QTr,record RcVc RepSpec,var val totqty,var val totsum,var val totcost,var val totgp)
+BEGIN
+  row QTVc QTrw;
+  Integer i,rwcnt;
+  val buqty,busum,bucost,bugp,sum;
+  string 255 tstr;
+  Integer lastitemtype;
+  val typeqty,typesum,typecost,typegp;
+  Boolean testf;
+  
+  if (QTr.Rejected!=0) then begin goto LPrintOneQutation; end;
+  if (RepSpec.ArtMode==1) then begin  
+    QTSorting(QTr);
+    lastitemtype = -1;
+  end;  
+  rwcnt = MatRowCnt(QTr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(QTr,i,QTrw);
+    if (QTrw.stp!=9) then begin
+      testf = true;
+      switch (RepSpec.flags[1]) begin     
+        case 0:
+        case 1: 
+          if (blank(QTrw.EMCode)) then begin
+            testf = false;
+          end;
+        case 2:
+          if (nonblank(QTrw.EMCode)) then begin
+            testf = false;
+          end;
+      end;
+      if (testf==false) then begin
+        goto LSKIPQTRow;
+      end;
+      if (RepSpec.ArtMode==1) then begin
+        if ((lastitemtype!=QTrw.ItemType) and (lastitemtype!=-1)) then begin
+          PrintTypeTotal(typeqty,typesum,typecost,typegp,lastitemtype);      
+        end;    
+      end;  
+      sum = MulRateToBase1(QTr.CurncyCode,QTrw.Sum,QTr.FrRate,QTr.ToRateB1,QTr.ToRateB2,QTr.BaseRate1,QTr.BaseRate2,DefaultCurRoundOff);
+      if (RepSpec.ArtMode==1) then begin PrintBudgetDetails(QTrw.ArtCode,QTrw.EMCode,QTrw.Spec,QTrw.Quant,sum,QTrw.BasePrice,QTrw.rowGP); end;
+      buqty = buqty + QTrw.Quant;
+      busum = busum + sum;
+      bucost = bucost + QTrw.BasePrice*QTrw.Quant;
+      bugp = bugp + QTrw.rowGP;
+
+      typeqty = typeqty + QTrw.Quant;
+      typecost = typecost + sum;
+      typecost = typecost + QTrw.BasePrice*QTrw.Quant;
+      typegp = typegp + QTrw.rowGP;
+      lastitemtype = QTrw.ItemType;
+LSKIPQTRow:;      
+    end;  
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    if (typeqty<>blankval) then begin
+      PrintTypeTotal(typeqty,typesum,typecost,typegp,lastitemtype);      
+    end;    
+  end;  
+  if (RepSpec.ArtMode==1) then begin Gray_Divider(240,1); end;  
+  StartFormat(15);
+   if (RepSpec.ArtMode==0) then  begin
+     OutString(0,0,QTr.PRCode,false);
+     GetPRName(QTr.PRCode,tstr);
+     OutString(60,0,tstr,false);
+   end;  
+   if (RepSpec.ArtMode==1) then  begin
+     OutString(0,0,USetStr(8883),false);
+   end;  
+   OutVal(300,0,buqty,M4Qty,true);
+   OutVal(360,0,busum,M4Val,true);
+   OutVal(420,0,bucost,M4Val,true);   
+   CalcGPProc(busum,tstr,bucost);
+   OutString(480,0,tstr,true);         
+//   OutVal(480,0,bugp,M4Val,true);   
+  EndFormat;
+  if (RepSpec.ArtMode==1) then begin Gray_Divider(0,1); end;  
+  totqty = totqty + buqty;
+  totsum = totsum + busum;
+  totcost = totcost + bucost;
+  totgp = totgp + bugp;
+LPrintOneQutation:;  
+  RETURN;
+END;
+/*
+procedure PrintButtonInfo(Integer button,string tstr)
+BEGIN
+  OutString(0,0,tstr,false);
+  if (button==0) then begin
+    OutString(100,0,"Estimate",false);
+  end else begin
+    OutString(100,0,"Fixed Amount",false);
+  end;
+  RETURN;
+END;
+*/
+procedure PrintBudgetDetailInfo(record TBBUVc TBBUr)
+BEGIN
+  StartFormat(15);
+   OutString(0,0,TBBUr.PRCode,false);            
+   OutString(60,0,TBBUr.PRName,false);            
+  EndFormat;
+  if (nonblank(TBBUr.CustCode)) then begin
+    StartFormat(15);
+     OutString(0,0,TBBUr.CustCode,false);            
+     OutString(60,0,TBBUr.CustName,false);            
+    EndFormat;              
+  end;  
+/*  
+  StartFormat(15);
+  PrintButtonInfo(TBBUr.BudTime,"Time ");
+  PrintButtonInfo(TBBUr.BudStocked,"Stocked ");
+  PrintButtonInfo(TBBUr.BudMaterial,"Material ");
+  PrintButtonInfo(TBBUr.BudOther,"Other ");
+  EndFormat;
+*/  
+  Gray_Divider(0,150);
+  RETURN;
+END;
+
+procedure PrintQuotationDetailInfo(record QTVc QTr)
+BEGIN
+  string 255 tstr;
+  
+  if (QTr.Rejected!=0) then begin goto LPrintQuotationDetailInfo; end;
+  StartFormat(15);
+   OutString(0,0,QTr.PRCode,false);            
+   GetPRName(QTr.PRCode,tstr);
+   OutString(60,0,tstr,false);            
+  EndFormat;
+  if (nonblank(QTr.CustCode)) then begin
+    StartFormat(15);
+     OutString(0,0,QTr.CustCode,false);            
+     OutString(60,0,QTr.Addr0,false);            
+    EndFormat;              
+  end;  
+  Gray_Divider(0,150);
+LPrintQuotationDetailInfo:;  
+  RETURN;
+END;
+
+function Boolean TestTBBUSpecification(record RcVc RepSpec,record TBBUVc TBBUr)
+begin
+  Boolean res;
+  Boolean testf;
+  row TBBUVc TBBUrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(TBBUr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TBBUr,i,TBBUrw);
+    if (TBBUrw.stp!=9) then begin
+      testf = true;
+      switch (RepSpec.flags[1]) begin     
+        case 0:
+        case 1: 
+          if (blank(TBBUrw.EMCode)) then begin
+            testf = false;
+          end;
+        case 2:
+          if (nonblank(TBBUrw.EMCode)) then begin
+            testf = false;
+          end;
+      end;
+      if (testf==false) then begin
+        goto L88TestTBBUSpecification;
+      end;
+      res = true;
+      goto LTestTBBUSpecification;
+L88TestTBBUSpecification:;      
+    end;
+  end;
+LTestTBBUSpecification:;  
+  TestTBBUSpecification = res;
+  RETURN;
+END;
+
+global
+procedure BUQTTBBURn(record RcVc RepSpec)
+BEGIN
+  record TBBUVc TBBUr;
+  record QTVc QTr;
+  record PRVc PRr;
+  Boolean TrHs,testf;
+  string 20 frcu,tocu,frpr,topr;
+  val totqty,totsum,totcost,totgp,t;
+  string 255 tstr;
+  Integer rw;
+    
+  frpr = FirstInRange(RepSpec.f1,20);
+  topr = LastInRange(RepSpec.f1,20);
+  frcu = FirstInRange(RepSpec.f2,20);
+  tocu = LastInRange(RepSpec.f2,20);
+  StartReportJob(USetStr(8880));
+   rw = 1;
+   HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   HTProjects(frpr,topr,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   HTCusts(frcu,tocu,tstr);
+   Header(rw,tstr,1);
+   if (HasCategories) then begin
+     HTCustCat(RepSpec.f5,tstr);
+     if (nonblank(tstr)) then begin
+       Header(rw,tstr,1);
+       rw = rw + 1;
+     end;
+   end;
+   if (HasContactClassification) then begin
+     HTCustClass(RepSpec.f4,tstr);
+     if (nonblank(tstr)) then begin
+       Header(rw,tstr,1);
+       rw = rw + 1;
+     end;
+   end;
+   rw = rw + 1;
+   if (nonblank(RepSpec.FirstAcc)) then begin
+     HTPRClass(RepSpec.FirstAcc,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   if (nonblank(RepSpec.ObjStr)) then begin
+     HTObj(RepSpec.ObjStr,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;   
+  tstr = "";
+  EndHeader;
+  PrintQTHeader(RepSpec);
+  if ((RepSpec.ArtMode==0) or (RepSpec.ArtMode==1)) then begin
+    TrHs = true;
+    if (RepSpec.flags[0]==0) then begin
+      TBBUr.PRCode = frpr;  
+      while (LoopMain(TBBUr,1,TrHs)) begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (TBBUr.PRCode>topr) then begin TrHs = false; end;
+        end;
+        if (TrHs) then begin
+          testf = true;
+          if (nonblank(RepSpec.f2)) then begin
+            if (TBBUr.CustCode<frcu) then begin testf = false; end;
+            if (TBBUr.CustCode>tocu) then begin testf = false; end;        
+          end;
+          if ((DateInRange(TBBUr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) and (nonblankdate(TBBUr.TransDate))) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            testf = ContactInGroupClass(TBBUr.CustCode,RepSpec.f5,RepSpec.f4,"CUST","","");
+          end;          
+          if (testf) then begin
+            PRr.Code = TBBUr.PRCode;
+            if (ReadFirstMain(PRr,1,true)) then begin end;
+            if (nonblank(RepSpec.FirstAcc)) then begin
+              if (RepSpec.FirstAcc!=PRr.PRClass) then begin testf = false; end;
+            end;
+            if (nonblank(RepSpec.ObjStr)) then begin
+              if (SetInSet(RepSpec.ObjStr,PRr.Objects)==false) then begin testf = false; end;
+            end;          
+          end;
+          if (testf) then begin
+            if (RepSpec.ArtMode==1) then begin 
+              if (TestTBBUSpecification(RepSpec,TBBUr)) then begin
+                PrintBudgetDetailInfo(TBBUr); 
+              end;
+            end;
+            if (RepSpec.flags[2]==0) then begin
+               PrintOneBudget(TBBUr,RepSpec,totqty,totsum,totcost,totgp);
+            end else begin
+              PrintProjectActuals(TBBUr,RepSpec,totqty,totsum,totcost,totgp);
+            end;
+          end;        
+        end;
+      end;
+    end;  
+    if (RepSpec.flags[0]==1) then begin
+      QTr.PRCode = frpr;  
+      while (LoopKey("PRCode",QTr,1,TrHs)) begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (QTr.PRCode>topr) then begin TrHs = false; end;
+        end;    
+        if (TrHs) then begin
+          testf = true;
+          if (nonblank(RepSpec.f2)) then begin
+            if (QTr.CustCode<frcu) then begin testf = false; end;
+            if (QTr.CustCode>tocu) then begin testf = false; end;        
+          end;
+          if ((DateInRange(QTr.QTDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) and (nonblankdate(QTr.QTDate))) then begin
+            testf = false;
+          end;
+          if (testf) then begin
+            testf = ContactInGroupClass(QTr.CustCode,RepSpec.f5,RepSpec.f4,"CUST","","");
+          end;          
+          if (testf) then begin
+            PRr.Code = QTr.PRCode;
+            if (ReadFirstMain(PRr,1,true)) then begin end;
+            if (nonblank(RepSpec.FirstAcc)) then begin
+              if (RepSpec.FirstAcc!=PRr.PRClass) then begin testf = false; end;
+            end;
+            if (nonblank(RepSpec.ObjStr)) then begin
+              if (SetInSet(RepSpec.ObjStr,PRr.Objects)==false) then begin testf = false; end;
+            end;          
+          end;
+          if (testf) then begin
+            if (RepSpec.ArtMode==1) then begin PrintQuotationDetailInfo(QTr); end;
+             PrintOneQutation(QTr,RepSpec,totqty,totsum,totcost,totgp);               
+          end;        
+        end;      
+      end;
+    end;
+  end;
+  if (RepSpec.ArtMode==2) then begin
+    QTr.PRCode = frpr;  
+    TrHs = true;
+    while (LoopKey("PRCode",QTr,1,TrHs)) begin
+      if (nonblank(RepSpec.f1)) then begin
+        if (QTr.PRCode>topr) then begin TrHs = false; end;
+      end;    
+      if (TrHs) then begin
+        testf = true;
+        if (nonblank(RepSpec.f2)) then begin
+          if (QTr.CustCode<frcu) then begin testf = false; end;
+          if (QTr.CustCode>tocu) then begin testf = false; end;        
+        end;
+        if ((DateInRange(QTr.QTDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) and (nonblankdate(QTr.QTDate))) then begin
+          testf = false;
+        end;     
+        if (testf) then begin
+          testf = ContactInGroupClass(QTr.CustCode,RepSpec.f5,RepSpec.f4,"CUST","","");
+        end;               
+        if (testf) then begin
+          PRr.Code = QTr.PRCode;
+          if (ReadFirstMain(PRr,1,true)) then begin end;
+          if (nonblank(RepSpec.FirstAcc)) then begin
+            if (RepSpec.FirstAcc!=PRr.PRClass) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.ObjStr)) then begin
+            if (SetInSet(RepSpec.ObjStr,PRr.Objects)==false) then begin testf = false; end;
+          end;          
+        end;
+          if (blank(QTr.PRCode)) then begin testf = false; end;   
+        if (testf) then begin
+          TBBUr.PRCode = QTr.PRCode;  
+          if (ReadFirstMain(TBBUr,1,true)) then begin
+            if ((DateInRange(TBBUr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)) or (blankdate(TBBUr.TransDate))) then begin
+              FindQTifferences(TBBUr,QTr);
+            end;        
+          end else begin
+            StartFormat(15);
+             OutString(0,0,USetStr(8881),false);
+            EndFormat;
+          end;          
+        end;        
+      end;      
+    end;    
+  end;    
+  if ((RepSpec.ArtMode==0) or (RepSpec.ArtMode==1)) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+     OutString(200,0,USetStr(8882),false);
+     OutVal(300,0,totqty,M4Qty,true);
+     OutVal(360,0,totsum,M4Val,true);
+     OutVal(420,0,totcost,M4Val,true); 
+     CalcGPProc(totsum,tstr,totcost);    
+     OutString(480,0,tstr,true);   
+//   OutVal(480,0,totgp,M4Val,true);   
+    EndFormat;    
+  end;  
+  EndJob;
+  RETURN;
+END;

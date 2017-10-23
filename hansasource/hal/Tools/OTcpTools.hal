@@ -1,0 +1,209 @@
+external function roundmode SetRoundModeD(Integer);
+external function Boolean SkipResTest(record ReservationStatusVc,Boolean);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+
+procedure FindOrAddItem(var array string itemar,var array val qtyar,var Integer rwcnt,string item,var val qtp)
+begin
+  Integer i;
+
+  for (i = 0 ; i<rwcnt ;i=i+1) begin
+    if (item==itemar[i]) then begin
+      qtyar[i] = qtyar[i] + qtp;
+      goto LFindOrAddItem;
+    end;
+  end;
+  itemar[rwcnt] = item;
+  qtyar[rwcnt] = qtp;
+  rwcnt = rwcnt + 1;
+LFindOrAddItem:;
+  return;
+end;
+
+procedure ExpandStructure2(var array string itemar,var array val qtyar,var Integer rwcnt,record INVc INr,string location,val qtp,var val outqtyp)
+begin
+  record RecVc Recr;
+  row RecVc recrw;
+  Integer recrwcnt,i;
+  val qtyused;
+
+  outqtyp = 0;
+  Recr.Code = INr.Recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    recrwcnt = MatRowCnt(Recr);
+    for (i=0;i<recrwcnt;i=i+1) begin
+      MatRowGet(Recr,i,recrw);
+      if (recrw.Item==INr.Code) then begin
+        outqtyp = outqtyp + recrw.OutQty;
+      end;
+    end;
+    if (outqtyp==0) then begin
+      outqtyp = 1;
+    end;
+    outqtyp = qtp / outqtyp;
+    for (i=0;i<recrwcnt;i=i+1) begin
+      MatRowGet(Recr,i,recrw);
+      if (recrw.Item!=INr.Code) then begin
+        if (recrw.InQty!=0) then begin
+          qtyused = outqtyp * recrw.InQty;
+          FindOrAddItem(itemar,qtyar,rwcnt,recrw.Item,qtyused);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure FindStructStockValue(var array string itemar,var array val qtyar,var Integer rwcnt,string recepy,string location,val qtp,var val stockp,var val orderp,var val resp,var val outqtyp)
+begin
+  record ItemStatusVc ISr;
+  record RecVc Recr;
+  row RecVc recrw;
+  Integer recrwcnt,i,j;
+  val temp,minval;
+  Boolean found;
+
+  found = false;
+  minval = 999999999;
+  Recr.Code = recepy;
+  if (ReadFirstMain(Recr,1,true)) then begin
+    recrwcnt = MatRowCnt(Recr);
+    for (i=0;i<recrwcnt;i=i+1) begin
+      MatRowGet(Recr,i,recrw);
+      if (recrw.InQty!=0) then begin
+        for (j = 0 ; j<rwcnt ;j=j+1) begin
+          if (recrw.Item==itemar[j]) then begin
+            FindStockValue(recrw.Item,location,ISr);
+            stockp = ISr.Instock;
+            orderp = ISr.OrddOut;
+            temp = outqtyp * recrw.InQty;
+            temp = qtyar[j] - temp;
+            temp = temp + orderp;
+            temp = stockp - temp;
+            temp = recrw.InQty / temp;
+            temp = round(temp,SetRoundModeD(0));
+            if (temp<minval) then begin
+              minval = temp;
+            end;
+            found = true;
+          end; 
+        end;
+      end;
+    end;
+  end;
+  if (found) then begin
+    resp = minval;
+  end;
+  return;
+end;
+
+global
+procedure SubAlreadyOrderedItems(record INVc INr,string location,val qtp,var val stockp,var val orderp,var val resp)
+begin
+  Integer i;
+  val rs,outqty;
+  array string 20 itemar;
+  array val qtyar;
+  Integer rwcnt;
+
+  rwcnt = 0;
+  if ((INr.ItemType==2) and (nonblank(INr.Recepy))) then begin
+    ExpandStructure2(itemar,qtyar,rwcnt,INr,location,qtp,outqty);
+    FindStructStockValue(itemar,qtyar,rwcnt,INr.Recepy,location,qtp,stockp,orderp,resp,outqty);
+  end else begin
+    FindOrAddItem(itemar,qtyar,rwcnt,INr.Code,qtp);
+    for (i=0 ; i<rwcnt ;i=i+1) begin
+      if (INr.Code==itemar[i]) then begin
+        resp = stockp - orderp;
+        rs = qtyar[i] - qtp;
+        resp = resp - rs;
+        i = rwcnt;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt IsReserved(string rescode,date dp,time tp)
+begin
+  record JobVc Jobp;
+  record ReservationStatusVc rsr;
+  string 255 ckey;
+  Boolean TrHs;
+  Boolean testf;
+  LongInt adcnt;
+  LongInt daycnt;
+  LongInt res;
+  Integer lenclass;
+  Date blankd;
+  
+  adcnt = 0;
+  daycnt = 0;
+  res = -1;
+  
+  if (blank(rescode)) then begin
+    goto LIsReserved;
+  end;  
+
+  ckey = "CalResStartTime";
+
+  lenclass = 4;
+  while (lenclass>=0) begin
+    Jobp.ResCode = rescode;
+    Jobp.LengthClass = lenclass;
+    Jobp.TransDate = dp;
+    if (lenclass==4) then begin
+      Jobp.TransDate = blankd;
+    end;  
+    if (lenclass==3) then begin
+      Jobp.TransDate = AddDay(Jobp.TransDate,-366);
+    end;  
+    if (lenclass==2) then begin
+      Jobp.TransDate = AddDay(Jobp.TransDate,-31);
+    end;  
+    if (lenclass==1) then begin
+      Jobp.TransDate = AddDay(Jobp.TransDate,-7);
+    end;  
+    TrHs = true;
+    ResetLoop(Jobp);
+    while (LoopKey(ckey,Jobp,3,TrHs)) begin
+      if (Jobp.TransDate>dp) then begin TrHs = false; end;
+      if (Jobp.LengthClass!=lenclass) then begin TrHs = false; end;
+      if (Jobp.ResCode!=rescode) then begin TrHs = false; end;
+      testf = false;
+      if (TrHs) then begin
+        testf = true;
+        rsr.Code = Jobp.ResStatus;
+        if (ReadFirstMain(rsr,1,true)) then begin
+          if (SkipResTest(rsr,true)) then begin
+            testf = false;
+          end;
+        end;
+        if (Jobp.EndDate<dp) then begin testf = false; end;
+        if (Jobp.TransDate==dp) then begin
+          if (nonblanktime(Jobp.StartTime)) then begin
+            if (tp<Jobp.StartTime) then begin
+              testf = false;
+            end;
+          end;
+        end;
+        if (Jobp.EndDate==dp) then begin
+          if (nonblanktime(Jobp.EndTime)) then begin
+            if (tp>Jobp.EndTime) then begin
+              testf = false;
+            end;
+          end;
+        end;
+        if (testf) then begin
+          res = Jobp.SerNr;
+          goto LIsReserved;
+        end;
+      end;
+    end;
+  lenclass = lenclass - 1;
+  end;
+LIsReserved:;
+  IsReserved = res;
+  return;
+end;
+

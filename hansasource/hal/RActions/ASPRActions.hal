@@ -1,0 +1,484 @@
+remote procedure RemoveRCS(record RemoteCloudServerVc,var boolean);
+external procedure UpdateClientBrowses(string);
+external procedure MarkUpdateClientBrowses(string);
+external procedure UpdateClientBrowsesIfNeeded(string);
+external procedure UpdateClosedRCS(record RemoteCloudServerVc);
+external function Boolean IsAllowedHansaMailFunction(record RemoteCloudServerVc);
+external procedure OpenPortsForServer(record RemoteCloudServerVc);
+external function LongInt FindUnusedPortOnCC2(string,LongInt,LongInt,Boolean,uuid);
+
+global
+function LongInt RemoteCloudServerVcRecordInIndex(record RemoteCloudServerVc RCSr,string indexname)
+begin
+  LongInt res;
+
+  res = 1;
+
+  if (RCSr.Closed!=0) then begin
+    if (indexname=="FastCheckFlag") then begin res = 0; end;
+    if (indexname=="NewController") then begin res = 0; end;
+    if (indexname=="CUCode") then begin res = 0; end;
+    if (indexname=="Port") then begin res = 0; end;
+    if (indexname=="HTTPPort") then begin res = 0; end;
+    if (indexname=="HTTPSPort") then begin res = 0; end;
+    if (indexname=="MaintPort") then begin res = 0; end;
+  end;
+
+  if (blank(RCSr.NewController)) then begin
+    if (indexname=="NewController") then begin res = 0; end;
+  end;
+
+  if (nonblank(RCSr.Controller)) then begin
+    if (indexname=="NewController") then begin res = 0; end;
+  end;
+
+  if (RCSr.FastCheckFlag==0) then begin
+    if (indexname=="FastCheckFlag") then begin res = 0; end;
+  end;
+
+  RemoteCloudServerVcRecordInIndex = res;
+  return;
+end;
+
+function Boolean PortsHaveChanged(record RemoteCloudServerVc RCSr,record RemoteCloudServerVc OldRCSr,var Boolean hpf,var Boolean httppf,var Boolean httpspf,var Boolean maintpf)
+begin
+  Boolean res;
+
+  if (RCSr.Port!=OldRCSr.Port) then begin
+    res = true;
+    hpf = true;
+  end;
+
+  if (RCSr.HTTPPort!=OldRCSr.HTTPPort) then begin
+    res = true;
+    httppf = true;
+  end;
+
+  if (RCSr.HTTPSPort!=OldRCSr.HTTPSPort) then begin
+    res = true;
+    httpspf = true;
+  end;
+
+  if (RCSr.MaintPort!=OldRCSr.MaintPort) then begin
+    res = true;
+    maintpf = true;
+  end;
+
+  PortsHaveChanged = res;
+  return;
+end;
+
+procedure AssignAvailablePorts(var record RemoteCloudServerVc RCSr,Boolean ignorercsf,Boolean hpf,Boolean httppf,Boolean httpspf,Boolean maintpf)
+begin
+  string 255 controller;
+  LongInt portno;
+
+  controller = RCSr.Controller;
+  if (blank(controller)) then begin controller = RCSr.NewController; end;
+  if (blank(controller)) then begin goto LAssignAvailablePorts; end;
+
+  if (hpf) then begin
+    portno = RCSr.Port;
+    if (portno>0) then begin
+      portno = FindUnusedPortOnCC2(controller,portno,65535,ignorercsf,RCSr.UUID);
+      RCSr.Port = portno;
+    end;
+  end;
+
+  if (httppf) then begin
+    portno = RCSr.HTTPPort;
+LAssignAvailablePorts_HTTPAgain:;
+    if (portno>0) then begin
+      portno = FindUnusedPortOnCC2(controller,portno,65535,ignorercsf,RCSr.UUID);
+      if (portno==RCSr.Port) then begin
+        portno = portno + 1;
+        goto LAssignAvailablePorts_HTTPAgain;
+      end;
+      RCSr.HTTPPort = portno;
+    end;
+  end;
+
+  if (httpspf) then begin
+    portno = RCSr.HTTPSPort;
+LAssignAvailablePorts_HTTPSAgain:;
+    if (portno>0) then begin
+      portno = FindUnusedPortOnCC2(controller,portno,65535,ignorercsf,RCSr.UUID);
+      if (portno==RCSr.Port or portno==RCSr.HTTPPort) then begin
+        portno = portno + 1;
+        goto LAssignAvailablePorts_HTTPSAgain;
+      end;
+      RCSr.HTTPSPort = portno;
+    end;
+  end;
+
+  if (maintpf) then begin
+    portno = RCSr.MaintPort;
+LAssignAvailablePorts_MaintAgain:;
+    if (portno>0) then begin
+      portno = FindUnusedPortOnCC2(controller,portno,65535,ignorercsf,RCSr.UUID);
+      if (portno==RCSr.Port or portno==RCSr.HTTPPort or portno==RCSr.HTTPSPort) then begin
+        portno = portno + 1;
+        goto LAssignAvailablePorts_MaintAgain;
+      end;
+      RCSr.HTTPSPort = portno;
+    end;
+  end;
+
+LAssignAvailablePorts:;
+  return;
+end;
+
+global
+updating function LongInt RemoteCloudServerVcRecordUpdate(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Boolean hpf,httppf,httpspf,maintpf;
+
+  if (PortsHaveChanged(RCSr,RCS2r,hpf,httppf,httpspf,maintpf)) then begin
+    AssignAvailablePorts(RCSr,true,hpf,httppf,httpspf,maintpf);
+    threadasync.OpenPortsForServer(RCSr);
+  end else begin
+    if (RCSr.Controller!=RCS2r.Controller) then begin
+      AssignAvailablePorts(RCSr,true,true,true,true,true);
+      threadasync.OpenPortsForServer(RCSr);
+    end;
+  end;
+
+  if (RCSr.Closed!=RCS2r.Closed) then begin
+    UpdateClosedRCS(RCSr);
+    goto LRemoteCloudServerVcRecordUpdate;
+  end;
+
+  if (RCSr.Closed!=0) then begin
+    RCSr.FastCheckFlag = 0;
+    goto LRemoteCloudServerVcRecordUpdate;
+  end;
+
+  if ((RCSr.WantedStatus!=RCS2r.WantedStatus) or 
+      (RCSr.WantedStatus==kWantedStatusImportBackup) or
+      (RCSr.WantedStatus==kWantedStatusCreateServer) or
+      (RCSr.WantedStatus==kWantedStatusCreateStartedServer) or
+      (RCSr.WantedStatus==kWantedStatusLaunchReserveSystem) or
+      (RCSr.WantedStatus==kWantedStatusLaunchTestSystem) or
+      (RCSr.WantedStatus==kWantedStatusLaunchUpdateSystem) or
+      (RCSr.WantedStatus==kWantedStatusImportBackupAndRun) or
+      (RCSr.WantedStatus==kWantedStatusMoveServer) or
+      (RCSr.WantedStatus==kWantedStatusResetToBackup)) then begin
+    RCSr.FastCheckFlag = 1;
+    goto LRemoteCloudServerVcRecordUpdate;
+  end;
+
+  switch (RCSr.CurrentStatus) begin
+    case kStatusConfigInError:            RCSr.FastCheckFlag = 1;
+    case kStatusStopped:                  RCSr.FastCheckFlag = 0;
+    case kStatusRunningPreparingUpdate:   RCSr.FastCheckFlag = 0;
+    case kStatusRunningUpdate:            RCSr.FastCheckFlag = 0;
+    case kStatusRunningPreparingTest:     RCSr.FastCheckFlag = 0;
+    case kStatusRunningTest:              RCSr.FastCheckFlag = 0;
+    case kStatusRunningReserve:           RCSr.FastCheckFlag = 0;
+    case kStatusRunningPreparingReserve:  RCSr.FastCheckFlag = 0;
+    case kStatusRunning:                  RCSr.FastCheckFlag = 0;
+    case kStatusStopping:                 RCSr.FastCheckFlag = 1;
+    case kStatusStarting:                 RCSr.FastCheckFlag = 1;
+    case kStatusDeleted:                  RCSr.FastCheckFlag = 0;
+    case kStatusUpdatingVersion:          RCSr.FastCheckFlag = 1;
+    case kStatusMaintenance:              RCSr.FastCheckFlag = 0;
+    case kStatusExportingDatabase:        RCSr.FastCheckFlag = 1;
+    case kStatusExportedDatabase:         RCSr.FastCheckFlag = 0;
+    case kStatusExportingRegister:        RCSr.FastCheckFlag = 1;
+    case kStatusExportedRegister:         RCSr.FastCheckFlag = 0;
+    case kStatusExportingCompany:         RCSr.FastCheckFlag = 1;
+    case kStatusExportedCompany:          RCSr.FastCheckFlag = 0;
+    case kStatusRunningPendingStop:       RCSr.FastCheckFlag = 1;
+  end;
+
+
+  switch (RCSr.WantedStatus) begin
+    case kWantedStatusStop:             if (RCSr.CurrentStatus!=kStatusStopped) then begin RCSr.FastCheckFlag = 1; end else begin RCSr.FastCheckFlag = 0; end;
+    case kWantedStatusForceStop:        if (RCSr.CurrentStatus!=kStatusStopped) then begin RCSr.FastCheckFlag = 1; end else begin RCSr.FastCheckFlag = 0; end;
+    case kWantedStatusChangeVersion:
+      RCSr.FastCheckFlag = 1;
+    case kWantedStatusRun:
+      if ((RCSr.CurrentStatus!=kStatusRunning) and
+          (RCSr.CurrentStatus!=kStatusRunningPreparingUpdate) and
+          (RCSr.CurrentStatus!=kStatusRunningUpdate) and
+          (RCSr.CurrentStatus!=kStatusRunningPreparingTest) and
+          (RCSr.CurrentStatus!=kStatusRunningTest) and
+          (RCSr.CurrentStatus!=kStatusRunningReserve) and
+          (RCSr.CurrentStatus!=kStatusRunningPreparingReserve) and
+          (RCSr.CurrentStatus!=kStatusRunningPendingStop)
+          ) then begin
+        RCSr.FastCheckFlag = 1;
+      end else begin
+        RCSr.FastCheckFlag = 0;
+      end;
+    case kWantedStatusRunUnjournaled:
+      if ((RCSr.CurrentStatus!=kStatusRunning) and
+          (RCSr.CurrentStatus!=kStatusRunningPreparingUpdate) and
+          (RCSr.CurrentStatus!=kStatusRunningUpdate) and
+          (RCSr.CurrentStatus!=kStatusRunningPreparingTest) and
+          (RCSr.CurrentStatus!=kStatusRunningTest) and
+          (RCSr.CurrentStatus!=kStatusRunningReserve) and
+          (RCSr.CurrentStatus!=kStatusRunningPreparingReserve) and
+          (RCSr.CurrentStatus!=kStatusRunningPendingStop)
+          ) then begin
+        RCSr.FastCheckFlag = 1;
+      end else begin
+        RCSr.FastCheckFlag = 0;
+      end;
+    case kWantedStatusOnDemand:
+    case kWantedStatusMaintenence:      if (RCSr.CurrentStatus!=kStatusMaintenance) then begin RCSr.FastCheckFlag = 1; end else begin RCSr.FastCheckFlag = 0; end;
+    case kWantedStatusManual:
+    case kWantedStatusUpdateVersion:    RCSr.FastCheckFlag = 1;
+    case kWantedStatusRestart:          RCSr.FastCheckFlag = 1;
+    case kWantedStatusExportDatabase:   RCSr.FastCheckFlag = 1;
+    case kWantedStatusExportRegister:   RCSr.FastCheckFlag = 1;
+    case kWantedStatusExportCompany:    RCSr.FastCheckFlag = 1;
+  end;
+
+LRemoteCloudServerVcRecordUpdate:;
+  RemoteCloudServerVcRecordUpdate = res;
+  return;
+end;
+
+global
+updating function LongInt RemoteCloudServerVcRecordSave(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt stat,LongInt long4)
+begin
+  longint res;
+
+  AssignAvailablePorts(RCSr,false,true,true,true,true);
+  threadasync.OpenPortsForServer(RCSr);
+
+  if (RCSr.Closed!=0) then begin
+    RCSr.FastCheckFlag = 0;
+    goto LRemoteCloudServerVcRecordSave;
+  end;
+
+  if ((RCSr.WantedStatus==kWantedStatusImportBackup) or
+      (RCSr.WantedStatus==kWantedStatusCreateServer) or
+      (RCSr.WantedStatus==kWantedStatusMoveServer) or
+      (RCSr.WantedStatus==kWantedStatusCreateStartedServer) or
+      (RCSr.WantedStatus==kWantedStatusLaunchReserveSystem) or
+      (RCSr.WantedStatus==kWantedStatusLaunchTestSystem) or
+      (RCSr.WantedStatus==kWantedStatusLaunchUpdateSystem) or
+      (RCSr.WantedStatus==kWantedStatusImportBackupAndRun) or
+      (RCSr.WantedStatus==kWantedStatusRestart) or
+      (RCSr.WantedStatus==kWantedStatusResetToBackup)) then begin
+    RCSr.FastCheckFlag = 1;
+    goto LRemoteCloudServerVcRecordSave;
+  end;
+
+  switch (RCSr.CurrentStatus) begin
+    case kStatusConfigInError:            RCSr.FastCheckFlag = 1;
+    case kStatusRunningPreparingUpdate:   RCSr.FastCheckFlag = 0;
+    case kStatusRunningUpdate:            RCSr.FastCheckFlag = 0;
+    case kStatusRunningPreparingTest:     RCSr.FastCheckFlag = 0;
+    case kStatusRunningTest:              RCSr.FastCheckFlag = 0;
+    case kStatusRunningReserve:           RCSr.FastCheckFlag = 0;
+    case kStatusRunningPreparingReserve:  RCSr.FastCheckFlag = 0;
+    case kStatusRunning:                  RCSr.FastCheckFlag = 0;
+    case kStatusStopping:                 RCSr.FastCheckFlag = 1;
+    case kStatusStarting:                 RCSr.FastCheckFlag = 1;
+    case kStatusDeleted:                  RCSr.FastCheckFlag = 0;
+    case kStatusUpdatingVersion:          RCSr.FastCheckFlag = 1;
+    case kStatusStopped:                  RCSr.FastCheckFlag = 0;
+    case kStatusMaintenance:              RCSr.FastCheckFlag = 0;
+    case kStatusExportingDatabase:        RCSr.FastCheckFlag = 1;
+    case kStatusExportedDatabase:         RCSr.FastCheckFlag = 0;
+    case kStatusExportingRegister:        RCSr.FastCheckFlag = 1;
+    case kStatusExportedRegister:         RCSr.FastCheckFlag = 0;
+    case kStatusExportingCompany:         RCSr.FastCheckFlag = 1;
+    case kStatusExportedCompany:          RCSr.FastCheckFlag = 0;
+    case kStatusRunningPendingStop:       RCSr.FastCheckFlag = 1;
+  end;
+
+LRemoteCloudServerVcRecordSave:;
+  RemoteCloudServerVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt RemoteCloudServerVcRecordUpdateAfter(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  if ((RCSr.CurrentStatus!=RCS2r.CurrentStatus) or
+      (RCSr.CurrentSubStatus!=RCS2r.CurrentSubStatus) or
+      (RCSr.WantedStatus!=RCS2r.WantedStatus) or
+      (RCSr.WantedSubStatus!=RCS2r.WantedSubStatus) or
+      (RCSr.Controller!=RCS2r.Controller) or
+      (RCSr.CUCode!=RCS2r.CUCode) or
+      (RCSr.HansaVersion!=RCS2r.HansaVersion) or
+      (RCSr.Closed!=RCS2r.Closed)) then begin
+    MarkUpdateClientBrowses("RemoteCloudServerVc");
+  end;
+
+  RemoteCloudServerVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+function LongInt RemoteCloudServerVcRecordDefaults(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  RCSr.WantedStatus = kWantedStatusCreateServer;
+  RCSr.CurrentStatus = kStatusNone;
+  RCSr.WebClientStartPort = 12000;
+  RCSr.WebClientEndPort = 12999;
+  RCSr.Port = 1200;
+  RCSr.HTTPPort = 80;
+  RCSr.HTTPSPort = 443;
+  RCSr.Controller = "";
+  RCSr.NewController = "";
+  RCSr.LogLevel = 2;
+  RCSr.HalcustUpdateRule = 3;
+  RCSr.HalpatchUpdateRule = 3;
+  RemoteCloudServerVcRecordDefaults = res;
+  return;
+end;
+
+global
+function LongInt RemoteCloudServerVcRecordDuplicate(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  RCSr.WantedStatus = kWantedStatusCreateServer;
+  RCSr.CurrentStatus = kStatusNone;
+  RCSr.WebClientStartPort = 12000;
+  RCSr.WebClientEndPort = 12999;
+  RCSr.NewController = RCSr.Controller;
+  RCSr.Controller = "";
+  RCSr.HMCUCode = "";
+  RCSr.Contract = -1;
+  RCSr.HMRegInCountry = 0;
+  RCSr.CreatedDate = "";
+  RCSr.CreatedTime = "";
+
+  RemoteCloudServerVcRecordDuplicate = res;
+  return;
+end;
+
+global
+function LongInt RemoteCloudServerVcRecordRemoveTest(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt long3,LongInt long4)
+begin
+  longint res;
+  boolean removedf;
+
+  res = 0; 
+
+  if (RCSr.Closed==0) then begin
+    MessageBox(0,"The server must be closed before it may be deleted.");
+    goto LRemoteCloudServerVcRecordRemoveTest;
+  end;
+
+  RemoveRCS(RCSr,removedf);
+
+  if (removedf==false) then begin
+    MessageBox(0,"The server folder for cloud server " & RCSr.UUID & " could not be removed.");
+    goto LRemoteCloudServerVcRecordRemoveTest;
+  end;
+  
+  res = 1;
+  
+LRemoteCloudServerVcRecordRemoveTest:;
+  RemoteCloudServerVcRecordRemoveTest = res;
+  return;
+end;
+
+global
+function LongInt RemoteCloudServerVcRecordCheck(var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  res = 0;
+  if (nonblank(RCSr.WatchpointExceptions) and blank(RCSr.ExceptionComment)) then begin
+    RecordCheckError(1058,"",-1,"ExceptionComment");
+    res = -1;
+    goto LRemoteCloudServerVcRecordCheck;
+  end;
+
+LRemoteCloudServerVcRecordCheck:;
+  RemoteCloudServerVcRecordCheck = res;
+return;
+end;
+
+global
+function LongInt RemoteCloudServerVcRecordCheckClient(Longint wn,var record RemoteCloudServerVc RCSr,record RemoteCloudServerVc RCS2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  res = 0;
+  if (ServerMode==false) then begin
+    if (IsAllowedHansaMailFunction(RCS2r)==false) then begin
+      res = -1;
+    end;
+  end;
+
+  RemoteCloudServerVcRecordCheckClient = res;
+return;
+end;
+
+global
+function LongInt HostingConfigurationVcRecordCheck(var record HostingConfigurationVc HCr,record HostingConfigurationVc HC2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (HCr.SerNr<=0) then begin
+    HCr.SerNr = NextSerNr("HostingConfigurationVc",CurrentDate,-1,false,"");
+  end;
+  res = 0;
+  
+  HostingConfigurationVcRecordCheck = res;
+  return;
+end;
+
+
+global
+function LongInt ASPArchiveVcRecordInIndex(record ASPArchiveVc AAr,string indexname)
+begin
+  LongInt res;
+
+  res = 1;
+
+  if (AAr.UpdatedFlag==0) then begin
+    if (indexname=="UpdatedFlag")  then begin res = 0; end;
+  end;
+
+  ASPArchiveVcRecordInIndex = res;
+  return;
+end;
+
+global
+updating function LongInt ASPArchiveVcRecordSave(var record ASPArchiveVc AAr,record ASPArchiveVc AA2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (AAr.UpdatedFlag==1) then begin
+    AAr.CreatedDate = CurrentDate;
+    AAr.CreatedTime = CurrentTime;
+    AAr.DateChanged = CurrentDate;
+    AAr.TimeChanged = CurrentTime;
+  end;
+
+  ASPArchiveVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt ASPArchiveVcRecordUpdate(var record ASPArchiveVc AAr,record ASPArchiveVc AA2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (AAr.UpdatedFlag==1) then begin
+    AAr.DateChanged = CurrentDate;
+    AAr.TimeChanged = CurrentTime;
+  end;
+  if (blank(AAr.CreatedDate)) then begin
+    AAr.CreatedDate = CurrentDate;
+    AAr.CreatedTime = CurrentTime;
+  end;
+
+  ASPArchiveVcRecordUpdate = res;
+  return;
+end;

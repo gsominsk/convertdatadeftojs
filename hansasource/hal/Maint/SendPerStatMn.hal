@@ -1,0 +1,74 @@
+external updating function Boolean RecordAction_raEMailQue(var record MailVc,Boolean);
+external function Boolean MakeMailFromCU(record CUVc,var record MailVc,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external procedure GetCurUser(var record UserVc);
+
+global
+updating procedure SendPerStatMn(record RcVc RepSpec)  
+begin
+  record CUVc CUr;
+  record MailVc Mailr;
+  row MailVc Mailrw;
+  record RcVc ReportSpec;
+  string 20 frcu,tocu;
+  boolean foundf,testf;
+  Integer cnt;
+  
+  cnt = 0;
+  frcu = FirstInRange(RepSpec.f1,20);
+  tocu = LastInRange(RepSpec.f1,20);
+  CUr.Code = frcu;
+  foundf = true;
+  while (LoopMain(CUr,1,foundf)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (CUr.Code>tocu) then begin
+        foundf = false;
+      end;
+    end;
+    testf = foundf;
+    if (nonblank(RepSpec.f3)) then begin
+      if (SetInSet(RepSpec.f3,CUr.CustCat) == false) then begin
+        testf = false;
+      end;
+    end;
+    if (nonblank(RepSpec.f4)) then begin
+      if (SetInSet(RepSpec.f4,CUr.Classification)) then begin
+        testf = false;
+      end;
+    end;      
+    if (testf) then begin
+      RecordNew(Mailr);
+      if (MakeMailFromCU(CUr,Mailr,false)) then begin
+        if (nonblank(RepSpec.f2)) then begin
+          if (MatRowCnt(Mailr)>0) then begin
+            MatRowGet(Mailr,0,Mailrw);
+            Mailrw.AddrCode = RepSpec.f2;
+            MatRowPut(Mailr,0,Mailrw);
+          end;
+        end;
+        Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+        if (Mailr.SerNr>0) then begin
+          if (RecordStore(Mailr,false)) then begin
+            RecordNew(ReportSpec);
+            ReportDefaults(ReportSpec,"SendPerStatVClass");
+            ReportSpec.Media = mtHttpHandle;
+            ReportSpec.RecidStr = BuildRecordIdStr(Mailr,CurrentCompany);
+            ReportSpec.f1 = CUr.Code;
+            ReportSpec.flags[1] = RepSpec.flags[1];
+            ReportSpec.flags[2] = RepSpec.flags[2];
+            ReportSpec.flags[5] = RepSpec.flags[5];
+            ReportSpec.flags[7] = RepSpec.flags[7];
+            ReportSpec.ArtMode = RepSpec.ArtMode;
+            ReportSpec.repname = "CuPerRn";
+            RunReport(ReportSpec,0);
+            if (RecordAction_raEMailQue(Mailr,true)) then begin
+            end;
+          end;
+        end;
+      end;
+      CheckFlush(cnt,10);
+    end;
+  end;
+  return;
+end;
+

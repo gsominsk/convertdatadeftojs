@@ -1,0 +1,610 @@
+external procedure PrintCurrencyCode(string,string);
+external function roundmode GetVATRoundModeRB();
+external function roundmode DefaultRoundMode();
+external function Boolean FindFormcode(Integer,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure CommonDocumentFields(record RcVc);
+external procedure GetShipModeText(string,string,var string);
+external procedure GetShipDealText(string,string,var string);
+external procedure GetFullCurncyRateText(Boolean,var string,val,val,val,val,val);
+external procedure GetPriceRangeText(string,var string);
+external procedure SelectUnitText(string,string,var string);
+external function Boolean GetPurchaseItem(string,string,var record PIVc);
+external procedure ItemBC39(string,var string);
+external procedure ItemBCEAN(string,var string);
+external procedure ItemBCEAN13(string,var string);
+external procedure BC39(string,var string);
+external procedure BCEAN(string,var string);
+external procedure GetCalcChargeCode(LongInt,Integer,var string);
+external procedure GetCalcChargeComment(LongInt,Integer,var string);
+external procedure GetCalcChargeCalcVal(LongInt,Integer,var string);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+
+procedure GetCustomsForeignCurncyRate(string curcode,var val from,var val to1,var val to2,Date dp)
+BEGIN
+  record CustomsERVc ERr;
+  Boolean res;
+
+  ERr.CurncyCode = curcode;
+  ERr.Date = dp;
+  if (ReadLastMain(ERr,2,false)) then begin
+    if (ERr.CurncyCode==curcode) then begin
+      from = ERr.FrRate;
+      to1 = ERr.ToRate1;
+      to2 = ERr.ToRate2;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure GetCustomsFullCurncyRate(var string curcode,Date dp,var val from,var val to1,var val to2,var val base1,var val base2)
+BEGIN
+  record BaseERVc BERr;
+  record BaseCurBlock bascur;
+  
+  from = blankval;
+  to1 = blankval;
+  to2 = blankval;
+  base1 = blankval;
+  base2 = blankval;
+  BlockLoad(bascur);
+  if (blank(curcode)) then begin
+    if (nonblank(bascur.StdBaseCur)) then begin
+      curcode = bascur.StdBaseCur;
+    end else begin
+      curcode = bascur.BaseCur1;
+    end;  
+  end;
+  if (blank(bascur.BaseCur2)) then begin goto L88; end;
+  if (curcode==bascur.BaseCur1) then begin goto L77; end;
+  if (curcode==bascur.BaseCur2) then begin goto L77; end;
+  GetCustomsForeignCurncyRate(curcode,from,to1,to2,dp);
+L77:;
+  base1 = 100;
+  base2 = 100;
+  BERr.Date = dp;
+  if (ReadLastMain(BERr,1,false)) then begin
+    base1 = BERr.Rate1;
+    base2 = BERr.Rate2;
+  end;
+  goto L99;
+L88:; // Old way of using Rate 
+  if (curcode==bascur.BaseCur1) then begin goto L99; end;
+  GetCustomsForeignCurncyRate(curcode,from,to1,to2,dp);
+L99:;
+  RETURN;
+END;
+
+global
+function val MulWithCustomsRateToBase1(string curncy,Date td,val v)
+BEGIN
+  val fr,to1,to2,br1,br2;
+  val res;
+
+  GetCustomsFullCurncyRate(curncy,td,fr,to1,to2,br1,br2);
+  res = MulRateToBase1(curncy,v,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+  MulWithCustomsRateToBase1 = res;
+  RETURN;
+END;
+
+procedure CalcCustomsTotVolume(record CustomsVc Customsr,var val res)
+BEGIN
+  record INVc INr;
+  row CustomsVc Customsrw;  
+  Integer i,rwcnt;
+
+  res = blankval;
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    if (Customsrw.stp==1) then begin
+      INr.Code = Customsrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+      end;
+      res = res + Customsrw.Quant*INr.Volume;
+    end;  
+  end;  
+  RETURN;        
+END;
+
+procedure CalcCustomsTotCharges(record CustomsVc Customsr,var val res)
+BEGIN
+  row CustomsVc Customsrw;
+  Integer i,rwcnt;
+
+  res = blankval;
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    if (Customsrw.stp==1) then begin
+      res = res + Customsrw.ChargesVal;
+    end;  
+  end;  
+  RETURN;        
+END;
+
+procedure CalcCustomsTotDuties(record CustomsVc Customsr,var val res)
+BEGIN
+  row CustomsVc Customsrw;
+  Integer i,rwcnt;
+
+  res = blankval;
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    if (Customsrw.stp==1) then begin
+      res = res + Customsrw.DutiesVal;
+    end;  
+  end;  
+  RETURN;        
+END;
+
+procedure CalcCustomsTotATax(record CustomsVc Customsr,var val res)
+BEGIN
+  row CustomsVc Customsrw;
+  Integer i,rwcnt;
+
+  res = blankval;
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    if (Customsrw.stp==1) then begin
+      res = res + Customsrw.ATaxVal;
+    end;  
+  end;  
+  RETURN;        
+END;
+
+procedure CalcCustomsTotWeight(record CustomsVc Customsr,var val res)
+BEGIN
+  record INVc INr;
+  row CustomsVc Customsrw;
+  Integer i,rwcnt;
+
+  res = blankval;
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    if (Customsrw.stp==1) then begin
+      INr.Code = Customsrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+      end;
+      res = res + Customsrw.Quant*INr.Weight;
+    end;  
+  end;  
+  RETURN;        
+END;
+
+procedure BulidChargeString(record SMVc VATr,Integer vatcnt,string dutiescodes,string chargescodes,var string res)
+BEGIN
+  row SMVc VATrw;
+  Integer pos,i;
+  string 255 tstr;
+  Boolean addf;
+  
+  res = "";
+  pos = 0;        
+  ExtractObj(dutiescodes,pos,tstr);
+  while (nonblank(tstr)) begin
+    addf = true;
+    for (i=0;i<vatcnt;i=i+1) begin
+      MatRowGet(VATr,i,VATrw);
+      if (VATrw.VATCode==tstr) then begin
+        addf = false;
+        goto LBulidChargeString1;
+      end;
+    end;
+    if (addf) then begin
+      if (nonblank(res)) then begin
+        res = res & ",";
+      end;
+      res = res & tstr;
+    end;
+LBulidChargeString1:;    
+    ExtractObj(dutiescodes,pos,tstr);    
+  end;
+  pos = 0;        
+  ExtractObj(chargescodes,pos,tstr);
+  while (nonblank(tstr)) begin
+    addf = true;
+    for (i=0;i<vatcnt;i=i+1) begin
+      MatRowGet(VATr,i,VATrw);
+      if (VATrw.VATCode==tstr) then begin
+        addf = false;
+        goto LBulidChargeString2;
+      end;
+    end;
+    if (addf) then begin
+      if (nonblank(res)) then begin
+        res = res & ",";
+      end;
+      res = res & tstr;
+    end;
+LBulidChargeString2:;    
+    ExtractObj(chargescodes,pos,tstr);    
+  end;  
+  RETURN;        
+END;
+/*
+procedure PrintVATRows(record SMVc VATr,Integer vatcnt)
+BEGIN
+  row SMVc VATrw;
+  Integer i;
+  val t,t1;
+
+  for (i=0;i<vatcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw);
+    if (VATrw.DebVal!=blankval) then begin    
+      OUTFORMFIELD("F_MOMSKOD",VATrw.VATCode);
+      OUTFORMFIELD("F_VATBASE",VATrw.DebVal); 
+      MulVATIV(VATrw.VATCode,VATrw.DebVal,t,t1,0,0);
+      t = Round(t,GetVATRoundModeRB);       
+      OUTFORMFIELD("F_VATVAL",t); 
+    end;  
+    EndFormRow;
+  end;  
+  RETURN;        
+END;
+*/
+procedure PrintVATRows(LongInt customsnr,record SMVc VATr,Integer vatcnt,var val vattot)
+BEGIN
+  row SMVc VATrw;
+  record CalcChargeVc CalcCharger;
+  row CalcChargeVc CalcChargerw;
+  Integer i;
+  Integer c,rwcnt;
+
+  vattot = blankval;
+  CalcCharger.SerNr = customsnr;
+  if (ReadFirstMain(CalcCharger,1,true)) then begin
+    rwcnt = MatRowCnt(CalcCharger);
+    for (i=0;i<vatcnt;i=i+1) begin
+      MatRowGet(VATr,i,VATrw);
+      for (c=0;c<rwcnt;c=c+1) begin
+        MatRowGet(CalcCharger,c,CalcChargerw);
+        if (VATrw.VATCode==CalcChargerw.Code) then begin
+          OUTFORMFIELD("F_MOMS",VATrw.VATCode);
+          OUTFORMFIELD("F_VATVAL",CalcChargerw.CalcVal);        
+          vattot = vattot + CalcChargerw.CalcVal;
+          goto LPrintVATRows;
+        end;
+      end;     
+LPrintVATRows:;      
+    end;  
+  end;
+  RETURN;        
+END;
+
+procedure PrintCustomsRows(record RcVc RepSpec,record CustomsVc Customsr,record CUVc VEr,
+                           record SysFormatBlock SysFormatRec,record SMVc VATr,Integer vatcnt,
+                           record LangNrVc LangNrr)
+BEGIN
+  Integer i,rwcnt;
+  row CustomsVc Customsrw;
+  string 255 tstr;
+  val t;
+  record INVc INr;
+  record PIVc PIr;
+  val vatprc,vatval,vatexclprc,vatinclprc;
+  
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    if (Customsrw.stp==1) then begin
+      INr.Code = Customsrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+      end;
+      if (FIELDINFORM("F_ENHET")) then begin
+        SelectUnitText(VEr.LangCode,INr.Unittext,tstr);
+        OUTFORMFIELD("F_ENHET",tstr);
+      end;  
+      if (FIELDINFORM("F_ENHETLEV")) then begin        
+        tstr = "";
+        if (GetPurchaseItem(Customsrw.ArtCode,Customsr.FromLocation,PIr)) then begin
+          SelectUnitText(VEr.LangCode,PIr.VEUnit,tstr);
+        end;  
+        OUTFORMFIELD("F_ENHETLEV",tstr);
+      end;  
+      OUTFORMFIELD("F_ORDNUMMER",Customsrw.PONr);
+      OUTFORMFIELD("F_ORDERNUMMER",Customsrw.PONr);
+      if (FIELDINFORM("F_ARTNRBC39")) then begin
+        ItemBC39(Customsrw.ArtCode,tstr);
+        OUTFORMFIELD("F_ARTNRBC39",tstr);
+      end;  
+      if (FIELDINFORM("F_ARTNRBCEAN")) then begin
+        ItemBCEAN(Customsrw.ArtCode,tstr);
+        OUTFORMFIELD("F_ARTNRBCEAN",tstr);
+      end;  
+      if (FIELDINFORM("F_ARTNRBCEAN13")) then begin
+        ItemBCEAN13(Customsrw.ArtCode,tstr);      
+        OUTFORMFIELD("F_ARTNRBCEAN13",tstr);
+      end;  
+      if (FIELDINFORM("F_LEVARTNRBC39")) then begin
+        BC39(Customsrw.VEArtCode,tstr);      
+        OUTFORMFIELD("F_LEVARTNRBC39",tstr);
+      end;  
+      if (FIELDINFORM("F_LEVARTNRBCEAN")) then begin
+        BCEAN(Customsrw.VEArtCode,tstr);      
+        OUTFORMFIELD("F_LEVARTNRBCEAN",tstr);
+      end;  
+      OUTFORMFIELD("F_SPECIFIKATION",Customsrw.ArtDesc);
+      OUTFORMFIELD("F_BELOPP",Customsrw.Sum);
+      OUTFORMFIELD("F_ANTAL",Customsrw.VEQuant);
+      tstr = ValToString(Customsrw.Quant,M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,LangNrr.CutDecimals);          
+      OUTFORMFIELD("F_VARTANTAL",tstr);
+      OUTFORMFIELD("F_APRIS",Customsrw.Price);     
+      OUTFORMFIELD("F_ARTNR",Customsrw.ArtCode);
+      OUTFORMFIELD("F_ARTNR2",Customsrw.ArtCode);
+      OUTFORMFIELD("F_LEVARTNR",Customsrw.VEArtCode);
+      OUTFORMFIELD("F_MOMSKOD",Customsrw.VATCode);
+      OUTFORMFIELD("F_ROWVOLUME",Customsrw.Volume);
+      OUTFORMFIELD("F_ROWWEIGHT",Customsrw.Weight);
+      OUTFORMFIELD("F_ROWOBJECT",Customsrw.Objects);
+      OUTFORMFIELD("F_ROWFOBVALFORR",Customsrw.FOBVal);
+      OUTFORMFIELD("F_CUSTOMSVAL",Customsrw.CustomsVal);
+      OUTFORMFIELD("F_ROWCOST",Customsrw.RowCost);
+      OUTFORMFIELD("F_DUTIESCODE",Customsrw.DutiesCodes);
+      OUTFORMFIELD("F_CHARGESCODE",Customsrw.ChargesCodes);
+      OUTFORMFIELD("F_DUTIESVAL",Customsrw.DutiesVal);
+      OUTFORMFIELD("F_CHARGESVAL",Customsrw.ChargesVal);
+      OUTFORMFIELD("F_COMMODITYCODE",Customsrw.CommodityCode);
+      OUTFORMFIELD("F_COMMODITYCODETEXT",Customsrw.CommodityDesc);
+      OUTFORMFIELD("F_ROWPRICE",Customsrw.Sum);
+      if (FIELDINFORM("F_CALCCHARGCODE")) then begin
+        BulidChargeString(VATr,vatcnt,Customsrw.DutiesCodes,Customsrw.ChargesCodes,tstr);
+        OUTFORMFIELD("F_CALCCHARGCODE",tstr);      
+      end;  
+      if ((Customsrw.DutiesVal!=0) or (Customsrw.ATaxVal!=0)) then begin
+      end else begin
+        OUTFORMFIELD("F_AMOUNT",Customsrw.ChargesVal);      
+      end;
+      OUTFORMFIELD("F_COEFFICIENT",0.00);
+      
+      /*
+      if (FIELDINFORM("F_CALCCHARGCODE")) then begin
+        GetCalcChargeCode(Customsr.SerNr,i,tstr);
+        OUTFORMFIELD("F_CALCCHARGCODE",tstr);
+      end;  
+      if (FIELDINFORM("F_CALCCHARGCOMM")) then begin
+        GetCalcChargeComment(Customsr.SerNr,i,tstr);
+        OUTFORMFIELD("F_CALCCHARGCOMM",tstr);
+      end;  
+      if (FIELDINFORM("F_CALCCHARGVAL")) then begin
+        GetCalcChargeCalcVal(Customsr.SerNr,i,tstr);
+        OUTFORMFIELD("F_CALCCHARGVAL",tstr);
+      end;  
+      */
+      EndFormRow;
+    end;
+  end;  
+  RETURN;
+END;
+
+global
+procedure DoCustomsForm(record RcVc RepSpec,record CustomsVc Customsr)
+BEGIN
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  record CUVc VEr;
+  val t,tot;
+  val from,to1,to2,base1,base2;
+  record SMVc VATr;
+  Integer vatcnt;
+  record SysFormatBlock SysFormatRec;
+  record LangNrVc LangNrr;
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+  string 255 curcode;
+  
+  GetLangNr("",LangNrr);
+  BlockLoad(SysFormatRec);
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoCustomsForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (FindFormcode(Customsr.OKFlag,FDrw.Typ)) then begin 
+        if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,Customsr.SerNr,FDrw.PrintGroupCode,
+                        "",intdocnr,"CustomsVc",formcode)) then
+        begin
+          goto LBREAK;
+        end;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin  
+          CommonDocumentFields(RepSpec);
+          NumberofDocumentPages(FDrw.FPCode,MatRowCnt(Customsr));
+          VEr.Code = Customsr.VECode;
+          if (ReadFirstMain(VEr,1,true)) then begin
+          end;        
+          OUTFORMFIELD("F_SERNR",Customsr.SerNr);        
+          OUTFORMFIELD("F_ADRESSNAMN",Customsr.Addr0);        
+          OUTFORMFIELD("F_ERREFERENS",Customsr.VEContact);        
+          OUTFORMFIELD("F_ADRESS",Customsr.Addr0);        
+          OUTFORMFIELD("F_ADRESS",Customsr.Addr1);        
+          OUTFORMFIELD("F_ADRESS",Customsr.Addr2);        
+          OUTFORMFIELD("F_ADRESS",Customsr.Addr3);        
+          OUTFORMFIELD("F_ADRESS",Customsr.InvAddr3);        
+          OUTFORMFIELD("F_ADRESS",Customsr.InvAddr4);        
+          OUTFORMFIELD("F_VOLUME",Customsr.Volume);        
+          OUTFORMFIELD("F_WEIGHT",Customsr.Weight);        
+          OUTFORMFIELD("F_COMMENT",Customsr.Comment);        
+          OUTFORMFIELD("F_TRANSDATE",Customsr.TransDate);        
+          OUTFORMFIELD("F_TRANSDATUM",Customsr.TransDate);        
+          OUTFORMFIELD("F_LEVSATT",Customsr.ShipMode);        
+          if (FIELDINFORM("F_LEVSATTTEXT")) then begin
+            GetShipModeText(Customsr.ShipMode,"",tstr);
+            OUTFORMFIELD("F_LEVSATTTEXT",tstr);
+          end;  
+          OUTFORMFIELD("F_SHIPTERM",Customsr.ShipDeal);        
+          if (FIELDINFORM("F_SHIPTERMTEXT")) then begin
+            GetShipDealText(Customsr.ShipDeal,"",tstr);
+            OUTFORMFIELD("F_SHIPTERMTEXT",tstr);
+          end;  
+          OUTFORMFIELD("F_LEVFAX",VEr.Fax);        
+          OUTFORMFIELD("F_EGETKUNDNR",VEr.VECustID);        
+          OUTFORMFIELD("F_LEVNR",Customsr.VECode);        
+          if (FIELDINFORM("F_RATE")) then begin
+            GetFullCurncyRateText(true,tstr,Customsr.FrRate,Customsr.ToRateB1,Customsr.ToRateB2,Customsr.BaseRate1,Customsr.BaseRate2);                    
+            OUTFORMFIELD("F_RATE",tstr);
+          end;  
+          if (FIELDINFORM("F_BASERATE")) then begin
+            GetFullCurncyRateText(false,tstr,Customsr.FrRate,Customsr.ToRateB1,Customsr.ToRateB2,Customsr.BaseRate1,Customsr.BaseRate2);                    
+            OUTFORMFIELD("F_BASERATE",tstr);
+          end;  
+          OUTFORMFIELD("F_INSURANCEVAL",Customsr.InsVal);        
+          OUTFORMFIELD("F_DIVCOST1",Customsr.Div1Val);        
+          OUTFORMFIELD("F_DIVCOST2",Customsr.Div2Val);        
+          OUTFORMFIELD("F_LOCALCOST1",Customsr.LocalTransVal);        
+          OUTFORMFIELD("F_LOCALCOST2",Customsr.LocalTrans2Val);        
+          OUTFORMFIELD("F_DECLARATIONKEY",Customsr.CusDecKey);        
+          OUTFORMFIELD("F_TRANSITNUMBER",Left(Customsr.TransitNumber,len(Customsr.TransitNumber)-1));
+          OUTFORMFIELD("F_TRANSITNUMBER1",Right(Customsr.TransitNumber,len(Customsr.TransitNumber)-1));        
+          OUTFORMFIELD("F_FIXEDNUMBER",Customsr.FixedNumber);        
+          OUTFORMFIELD("F_CARGONUMBER",Customsr.CargoNumber);        
+          OUTFORMFIELD("F_ARRIVALCODE",Left(Customsr.ArrivalCode,1));
+          OUTFORMFIELD("F_ARRIVALCODE1",Mid(Customsr.ArrivalCode,2,3));
+          OUTFORMFIELD("F_ARRIVALCODE2",Mid(Customsr.ArrivalCode,6,2));        
+          OUTFORMFIELD("F_ARRIVALCODE3",Mid(Customsr.ArrivalCode,9,2));        
+          OUTFORMFIELD("F_ARRIVALCODE4",Mid(Customsr.ArrivalCode,12,1));        
+          OUTFORMFIELD("F_ARRIVALCODE5",Mid(Customsr.ArrivalCode,14,2));        
+          OUTFORMFIELD("F_ARRIVALCODE6",Mid(Customsr.ArrivalCode,17,3));        
+          OUTFORMFIELD("F_ARRIVALCODE7",Mid(Customsr.ArrivalCode,21,4));        
+          OUTFORMFIELD("F_LETTOFFCONV",Customsr.LetOfConv);        
+          OUTFORMFIELD("F_NROFFINV",Customsr.NrOffInvP);        
+          OUTFORMFIELD("F_NROFFSHP",Customsr.NrOffShpP);        
+          OUTFORMFIELD("F_NROFFOTH",Customsr.NrOffOtherP);        
+          OUTFORMFIELD("F_OTHERTEXT",Customsr.OtherPapers);        
+          OUTFORMFIELD("F_FOBVALLOCAL",Customsr.TotFOBLocalVal);        
+          OUTFORMFIELD("F_FOBVALFORR",Customsr.TotFOBVal);        
+          OUTFORMFIELD("F_PRICERANGE",Customsr.PriceRange);        
+          OUTFORMFIELD("F_REFERENSNUMMER",Customsr.RefStr);
+          OUTFORMFIELD("F_VYKEY",Customsr.VYKey);
+          if (FIELDINFORM("F_PRICERANGETEXT")) then begin
+            GetPriceRangeText(Customsr.PriceRange,tstr);
+            OUTFORMFIELD("F_PRICERANGETEXT",tstr);
+          end;
+          OUTFORMFIELD("F_KOLLI",Customsr.NrOffPackages);        
+          OUTFORMFIELD("F_FROMLOCATION",Customsr.FromLocation);        
+          OUTFORMFIELD("F_TOLOCATION",Customsr.ToLocation);        
+          OUTFORMFIELD("F_TOTALCOST",Customsr.SumCostPrice);        
+          OUTFORMFIELD("F_COUNTRYCODE",Customsr.CountryCode);
+          OUTFORMFIELD("F_GRUNDBELOPP",Customsr.PurInvVal);
+          PrintCurrencyCode("F_VALUTA",Customsr.CurncyCode);
+          OUTFORMFIELD("F_TOTCUSTOM",Customsr.SumCustoms);
+          OUTFORMFIELD("F_TRANSPORTCOST",Customsr.ShpVal);
+          OUTFORMFIELD("F_ITEMUNIT",1);//this is some special 
+          tot = Customsr.TotFOBLocalVal;          
+          if (blank(Customsr.InsCurncy)) then begin
+            t = Customsr.InsVal;
+          end else begin
+            curcode = Customsr.InsCurncy;
+            GetCustomsFullCurncyRate(curcode,Customsr.TransDate,from,to1,to2,base1,base2);
+            t = MulRateToBase1(Customsr.InsCurncy,Customsr.InsVal,from,to1,to2,base1,base2,DefaultCurRoundOff);
+          end;
+          tot = tot + t;
+          if (blank(Customsr.ShpCurncy)) then begin
+            t = Customsr.ShpVal;
+          end else begin
+            curcode = Customsr.ShpCurncy;
+            GetCustomsFullCurncyRate(curcode,Customsr.TransDate,from,to1,to2,base1,base2);
+            t = MulRateToBase1(Customsr.ShpCurncy,Customsr.ShpVal,from,to1,to2,base1,base2,DefaultCurRoundOff);
+          end;
+          tot = tot + t;
+          if (blank(Customsr.Div1Curncy)) then begin
+            t = Customsr.Div1Val;
+          end else begin
+            curcode = Customsr.Div1Curncy;
+            GetCustomsFullCurncyRate(curcode,Customsr.TransDate,from,to1,to2,base1,base2);
+            t = MulRateToBase1(Customsr.Div1Curncy,Customsr.Div1Val,from,to1,to2,base1,base2,DefaultCurRoundOff);
+          end;
+          tot = tot + t;   
+          if (blank(Customsr.Div2Curncy)) then begin
+            t = Customsr.Div2Val;
+          end else begin
+            curcode = Customsr.Div2Curncy;
+            GetCustomsFullCurncyRate(curcode,Customsr.TransDate,from,to1,to2,base1,base2);
+            t = MulRateToBase1(Customsr.Div2Curncy,Customsr.Div2Val,from,to1,to2,base1,base2,DefaultCurRoundOff);
+          end;
+          tot = tot + t;
+          OUTFORMFIELD("F_BASE1BETALA",tot);
+          t = tot/Customsr.TotFOBVal;
+          tstr = ValToString(t,M45Val,SysFormatRec.thousSep,SysFormatRec.decimalPt,LangNrr.CutDecimals);
+          OUTFORMFIELD("F_CUSTOMCOST",tstr);
+          if (FIELDINFORM("F_TOTVOLUME")) then begin
+            CalcCustomsTotVolume(Customsr,t);
+            OUTFORMFIELD("F_TOTVOLUME",t);
+          end;
+          if (FIELDINFORM("F_TOTWEIGHT")) then begin
+            CalcCustomsTotWeight(Customsr,t);
+            OUTFORMFIELD("F_TOTWEIGHT",t);
+          end;
+          if (FIELDINFORM("F_SUMMCHARGES")) then begin
+            CalcCustomsTotCharges(Customsr,t);
+            OUTFORMFIELD("F_SUMMCHARGES",t);
+          end;
+          if (FIELDINFORM("F_SUMMDUTIES")) then begin
+            CalcCustomsTotDuties(Customsr,t);
+            OUTFORMFIELD("F_SUMMDUTIES",t);
+          end;
+          if (FIELDINFORM("F_SUMMATAXVAL")) then begin
+            CalcCustomsTotATax(Customsr,t);
+            OUTFORMFIELD("F_SUMMATAXVAL",t);
+          end;
+          RecordClear(VATr);
+          SetupVATBase(VATr,vatcnt);
+          PrintCustomsRows(RepSpec,Customsr,VEr,SysFormatRec,VATr,vatcnt,LangNrr);
+          PrintVATRows(Customsr.SerNr,VATr,vatcnt,t);
+          OUTFORMFIELD("F_VATTOT",t);
+/*//fixdoc
+    case F_VALUTA:
+      M4FromStr(&i,M4Int,20,fldarg);
+      switch(i) begin
+        case 2: M4ToStr(&ivrp->InsCurncy,M4Str,res); break;
+        case 3: M4ToStr(&ivrp->ShpCurncy,M4Str,res); break;
+        case 4: M4ToStr(&ivrp->Div1Curncy,M4Str,res); break;
+        case 5: M4ToStr(&ivrp->Div2Curncy,M4Str,res); break;
+        otherwise M4ToStr(&ivrp->CurncyCode,M4Str,res); break;
+      end;
+      break;
+    case F_IFNOEXTRACOST:
+      if (ivrp->NoChargesFlag) then M4ToStr(fldarg,M4Str,res);
+      break;
+      
+
+*/          
+          CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoCustomsForm:;  
+  RETURN;
+END;

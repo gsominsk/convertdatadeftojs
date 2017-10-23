@@ -1,0 +1,711 @@
+external procedure FindNLAccBal(string,string,string,Integer,Date,Date,Integer,Integer,Boolean,string,Integer,string,string,var val);
+external procedure ExtractObj(string,var Integer,var string);
+external function val AbsoluteVal(val);
+external function roundmode SetRoundModeD(Integer);
+external function LongInt DateDiff(Date,Date);
+external procedure In2Period(var string,var Date,var Date);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+
+global
+updating procedure DeletePlannedPayment(string filename,LongInt transnr,LongInt transrow)
+begin   
+  record PlannedPaymentVc PPr;
+  Boolean found;
+
+  PPr.FileName = filename;
+  PPr.TransNr = transnr;
+  PPr.TransRow = transrow;
+  switch (PPr.FileName) begin
+    case "SMVc":
+      found = true;
+      while (LoopKey("FileName",PPr,3,found)) begin//un oking ... ActFileName
+        if (PPr.FileName!=filename) then begin found = false; end;
+        if (PPr.TransNr!=transnr) then begin found = false; end;
+        if (transrow>=0) then begin
+          if (PPr.TransRow!=transrow) then begin found = false; end;
+        end;
+        if (found) then begin
+          RecordRemove(PPr);
+          StepBack(PPr);
+        end;
+      end;
+    otherwise
+      if (ReadFirstKey("FileName",PPr,3,true)) then begin//un oking ... ActFileName
+        RecordRemove(PPr);
+      end;
+  end;
+  return;
+end;
+
+global
+updating procedure InvalidatePlannedPayment(string filename,LongInt transnr)
+begin   
+  record PlannedPaymentVc PPr;
+  record PlannedPaymentVc oPPr;
+
+  PPr.FileName = filename;
+  PPr.TransNr = transnr;
+//  PPr.TransRow = transrow;
+  if (ReadFirstKey("ActFileName",PPr,2,true)) then begin
+    RecordCopy(oPPr,PPr);
+    PPr.Closed = 1;
+    RecordUpdate(oPPr,PPr,true);
+  end;
+  return;
+end;
+
+updating procedure UpdatePlannedPayment(Integer typ,string filename,LongInt transnr,LongInt transrow,val s,val bs)
+begin
+  record PlannedPaymentVc PPr;
+  record PlannedPaymentVc nPPr;
+  record PlannedPaymentVc oPPr;
+  Boolean updf,newf;
+  
+  PPr.FileName = filename;
+  PPr.TransNr = transnr;
+  PPr.TransRow = transrow;
+  if (ReadFirstKey("FileName",PPr,3,true)) then begin
+    RecordCopy(oPPr,PPr);
+    switch (typ) begin
+      case 0:
+        PPr.Sum = PPr.Sum - s;
+        PPr.BaseSum = PPr.BaseSum - bs;
+        if (PPr.Sum==0) then begin
+          PPr.Paid = 1;
+        end;
+      case 1:
+        if (PPr.Sum==s) then begin
+          PPr.Paid = 1;
+        end else begin
+          RecordCopy(nPPr,PPr);
+          nPPr.Sum = nPPr.Sum - s;
+          nPPr.BaseSum = nPPr.BaseSum - bs;
+          PPr.Paid = 1;
+          PPr.Sum = s;
+          PPr.BaseSum = bs;
+          newf = true;
+        end;
+    end;
+    RecordUpdate(oPPr,PPr,true);
+    if (newf) then begin
+      nPPr.TransDate = CurrentDate;
+      nPPr.SerNr = NextSerNr("PlannedPaymentVc",nPPr.TransDate,-1,false,"");
+      RecordStore(nPPr,false);
+    end;
+  end;
+  return;
+end;
+
+updating procedure CreatePlannedPayment(string filename,LongInt transnr,LongInt transrow,Date pd,string cmpcode,string cmpname,string com,
+                                     string curcode,val s,val bs)
+begin
+  record PlannedPaymentVc PPr;
+
+  RecordNew(PPr);
+  PPr.FileName = filename;
+  PPr.TransNr = transnr;
+  PPr.TransRow = transrow;
+  PPr.PayDate = pd;
+  PPr.PlanPayDate = pd;
+  PPr.CompCode = cmpcode;
+  PPr.CompName = cmpname;
+  PPr.Comment = com;
+  PPr.CurncyCode = curcode;
+  PPr.Sum = s;
+  PPr.BaseSum = bs;
+  if (PPr.SerNr<=0) then begin
+    PPr.SerNr = NextSerNr("PlannedPaymentVc",PPr.TransDate,-1,false,"");
+  end;
+  RecordStore(PPr,false);
+  return;
+end;
+
+global
+updating procedure IVCreatePlannedPayment(record IVVc IVr)
+begin   
+  val s,bs;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  record PlannedPaymentVc PPr;
+  record PlannedPaymentVc nPPr;
+  record PlannedPaymentVc oPPr;
+  Boolean treatedf,updateorgrecordf;
+  
+  if (IVr.InvType==kInvoiceTypeCredit) and (IVr.CredInv<0) then begin
+    goto LIVCreatePlannedPayment;
+  end;
+  switch (IVr.InvType) begin
+    case kInvoiceTypeCredit:
+      UpdatePlannedPayment(0,"IVVc",IVr.CredInv,-1,IVr.Sum4,IVr.BaseSum4);
+    case kInvoiceTypeDownpayment:
+//only receipt for downpayment invoice should be updating Plans for Order
+    otherwise
+      rwcnt = MatRowCnt(IVr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        switch (IVrw.stp) begin
+          case kInvoiceRowTypePrepayment:
+            s = s + IVrw.Sum;
+            bs = bs + IVrw.BasePrice;
+          case kInvoiceRowTypeDownpayment:
+            s = s + IVrw.Sum;
+            bs = bs + MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          case kInvoiceRowTypeCashPayment:
+            s = s + IVrw.Sum;
+            bs = bs + MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          case kInvoiceRowTypeCreditCardPayment:
+            s = s + IVrw.Sum;
+            bs = bs + MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          case kInvoiceRowTypeGiftVoucherPayment:
+            s = s + IVrw.Sum;
+            bs = bs + MulRateToBase1(IVr.CurncyCode,IVrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+        end;
+      end;
+      s = IVr.Sum4 - s;
+      bs = IVr.BaseSum4 - bs;
+      if (IVr.OrderNr>0) then begin
+        PPr.FileName = "ORVc";
+        PPr.TransNr = IVr.OrderNr;
+        updateorgrecordf = true;
+      end;
+      if (updateorgrecordf==false) then begin
+        if (IVr.QTNr>0) then begin
+          PPr.FileName = "QTVc";
+          PPr.TransNr = IVr.QTNr;
+          updateorgrecordf = true;
+        end;
+      end;
+      if (updateorgrecordf) then begin
+        if (ReadFirstKey("FileName",PPr,2,true)) then begin
+          RecordCopy(nPPr,PPr);
+          RecordCopy(oPPr,PPr);
+          PPr.FileName = "IVVc";
+          PPr.TransNr = IVr.SerNr;
+          RecordUpdate(oPPr,PPr,true);
+          s = s - PPr.Sum;
+          bs = bs - PPr.BaseSum;
+          if (s>0) then begin
+            CreatePlannedPayment("IVVc",IVr.SerNr,-1,IVr.PayDate,IVr.CustCode,IVr.Addr0,IVr.InvComment,IVr.CurncyCode,s,bs);
+          end else begin
+            nPPr.Sum = nPPr.Sum - s;
+            nPPr.BaseSum = nPPr.BaseSum - bs;
+            if (nPPr.Sum!=0) then begin
+              nPPr.SerNr = NextSerNr("PlannedPaymentVc",nPPr.TransDate,-1,false,"");
+              RecordStore(nPPr,false);
+            end;
+          end;
+          treatedf = true;
+        end;
+      end;
+      if (treatedf==false) then begin
+        CreatePlannedPayment("IVVc",IVr.SerNr,-1,IVr.PayDate,IVr.CustCode,IVr.Addr0,IVr.InvComment,IVr.CurncyCode,s,bs);
+      end;
+  end;
+LIVCreatePlannedPayment:;  
+  return;
+end;
+
+global
+updating procedure ORCreatePlannedPayment(record ORVc ORr)
+begin   
+  val s,bs;
+  record PlannedPaymentVc PPr;
+  record PlannedPaymentVc nPPr;
+  record PlannedPaymentVc oPPr;
+  Boolean treatedf,updateorgrecordf;
+
+  if (ORr.QuoteNr>0) then begin
+    PPr.FileName = "QTVc";
+    PPr.TransNr = ORr.QuoteNr;
+    updateorgrecordf = true;
+  end;
+  if (updateorgrecordf) then begin
+    if (ReadFirstKey("FileName",PPr,2,true)) then begin
+      RecordCopy(nPPr,PPr);
+      RecordCopy(oPPr,PPr);
+      PPr.FileName = "ORVc";
+      PPr.TransNr = ORr.SerNr;
+      RecordUpdate(oPPr,PPr,true);
+      s = s - PPr.Sum;
+      bs = bs - PPr.BaseSum;
+      if (s>0) then begin
+        CreatePlannedPayment("ORVc",ORr.SerNr,-1,ORr.OrdDate,ORr.CustCode,ORr.Addr0,ORr.Comment,ORr.CurncyCode,s,bs);
+      end else begin
+        nPPr.Sum = nPPr.Sum - s;
+        nPPr.BaseSum = nPPr.BaseSum - bs;
+        if (nPPr.Sum!=0) then begin
+          nPPr.SerNr = NextSerNr("PlannedPaymentVc",nPPr.TransDate,-1,false,"");
+          RecordStore(nPPr,false);
+        end;
+      end;
+      treatedf = true;
+    end;
+  end;
+  if (treatedf==false) then begin
+    CreatePlannedPayment("ORVc",ORr.SerNr,-1,ORr.OrdDate,ORr.CustCode,ORr.Addr0,ORr.Comment,ORr.CurncyCode,ORr.Sum4,ORr.BaseSum4);
+  end;
+  return;
+end;
+
+global
+updating procedure QTCreatePlannedPayment(record QTVc QTr)
+begin   
+  CreatePlannedPayment("QTVc",QTr.SerNr,-1,QTr.QTDate,QTr.CustCode,QTr.Addr0,QTr.Comment,QTr.CurncyCode,QTr.Sum4,QTr.BaseSum4);
+  return;
+end;
+
+global
+updating procedure VICreatePlannedPayment(record VIVc VIr)
+begin   
+  val s,bs;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  record PlannedPaymentVc PPr;
+  record PlannedPaymentVc nPPr;
+  record PlannedPaymentVc oPPr;
+  
+  if (VIr.InvType==kInvoiceTypeCredit) and (VIr.CredInv<0) then begin
+    goto LVICreatePlannedPayment;
+  end;
+  switch (VIr.InvType) begin
+    case kInvoiceTypeCredit:
+      bs = MulRateToBase1(VIr.CurncyCode,VIr.PayVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff) - bs;
+      UpdatePlannedPayment(0,"VIVc",VIr.CredInv,-1,VIr.PayVal,bs);
+    otherwise
+      rwcnt = MatRowCnt(VIr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(VIr,i,VIrw);
+        switch (VIrw.stp) begin
+          case kInvoiceRowTypePrepayment:
+            s = s + VIrw.PrepayAmount;
+            bs = bs + VIrw.Sum;
+        end;
+      end;
+      s = VIr.PayVal - s;
+      bs = MulRateToBase1(VIr.CurncyCode,VIr.PayVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff) - bs;
+
+      if (VIr.POSerNr>0) then begin
+        PPr.FileName = "POVc";
+        PPr.TransNr = VIr.POSerNr;
+        if (ReadFirstKey("FileName",PPr,2,true)) then begin
+          RecordCopy(nPPr,PPr);
+          RecordCopy(oPPr,PPr);
+          PPr.FileName = "VIVc";
+          PPr.TransNr = VIr.SerNr;
+          RecordUpdate(oPPr,PPr,true);
+          s = s - PPr.Sum;
+          bs = bs - PPr.BaseSum;
+          if (s>0) then begin
+            CreatePlannedPayment("VIVc",VIr.SerNr,-1,VIr.DueDate,VIr.VECode,VIr.VEName,VIr.Comment,VIr.CurncyCode,s,bs);
+          end else begin
+            nPPr.Sum = nPPr.Sum - s;
+            nPPr.BaseSum = nPPr.BaseSum - bs;
+            if (nPPr.Sum!=0) then begin
+              nPPr.SerNr = NextSerNr("PlannedPaymentVc",nPPr.TransDate,-1,false,"");
+              RecordStore(nPPr,false);
+            end;
+          end;
+        end else begin
+          CreatePlannedPayment("VIVc",VIr.SerNr,-1,VIr.DueDate,VIr.VECode,VIr.VEName,VIr.Comment,VIr.CurncyCode,s,bs);
+        end;
+      end else begin
+        CreatePlannedPayment("VIVc",VIr.SerNr,-1,VIr.DueDate,VIr.VECode,VIr.VEName,VIr.Comment,VIr.CurncyCode,s,bs);
+      end;
+  end;
+LVICreatePlannedPayment:;  
+  return;
+end;
+
+global
+updating procedure POCreatePlannedPayment(record POVc POr)
+begin   
+  val bs;
+  
+  bs = MulRateToBase1(POr.CurncyCode,POr.Sum4,POr.FrRate,POr.ToRateB1,POr.ToRateB2,POr.BaseRate1,POr.BaseRate2,DefaultCurRoundOff) - bs;
+  CreatePlannedPayment("POVc",POr.SerNr,-1,POr.TransDate,POr.VECode,POr.Addr0,POr.Comment,POr.CurncyCode,POr.Sum4,bs);
+  return;
+end;
+
+global
+updating procedure SMCreatePlannedPayment(record SMVc SMr)
+begin   
+  val s,bs;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Date td;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    switch (SMrw.RowSimStat) begin
+      case 1:
+      case 2:
+      otherwise
+        s = SMrw.CurDebVal - SMrw.CurCredVal;
+        bs = SMrw.DebVal - SMrw.CredVal;
+        if (s==0) then begin s = bs; end;
+        td = SMrw.TransDate;
+        if (blankdate(td)) then begin td = SMr.TransDate; end;
+        CreatePlannedPayment("SMVc",SMr.SerNr,i,td,"","",SMrw.Comment,SMrw.CurncyCode,s,bs);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure SMUpdatePlannedPayment(record SMVc SMr,record SMVc oldSMr)
+begin   
+  val s,bs;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Date td;
+  
+  rwcnt = MatRowCnt(oldSMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldSMr,i,SMrw);
+    switch (SMrw.RowSimStat) begin
+      case 1:
+      case 2:
+      otherwise
+        DeletePlannedPayment("SMVc",SMr.SerNr,i);
+    end;
+  end;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    switch (SMrw.RowSimStat) begin
+      case 1:
+      case 2:
+      otherwise
+        s = SMrw.CurDebVal - SMrw.CurCredVal;
+        bs = SMrw.DebVal - SMrw.CredVal;
+        if (s==0) then begin s = bs; end;
+        td = SMrw.TransDate;
+        if (blankdate(td)) then begin td = SMr.TransDate; end;
+        CreatePlannedPayment("SMVc",SMr.SerNr,i,td,"","","",SMrw.CurncyCode,s,bs);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure IPUpdatePlannedPayments(record IPVc IPr)
+begin
+  row IPVc IPrw;
+  Integer i,rwcnt;  
+  val bs;
+  record IVVc IVr;
+
+  rwcnt = MatRowCnt(IPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IPr,i,IPrw);
+    if (IPrw.InvoiceNr>0) then begin
+      bs = MulWithRateToBase1(IPrw.InvCurncy,IPr.TransDate,IPrw.InvVal,DefaultCurRoundOff);
+      IVr.SerNr = IPrw.InvoiceNr;
+      ReadFirstMain(IVr,1,true);
+      if (IVr.InvType==kInvoiceTypeDownpayment) then begin
+        UpdatePlannedPayment(0,"ORVc",IVr.OrderNr,-1,IPrw.InvVal,bs);
+      end else begin
+        UpdatePlannedPayment(1,"IVVc",IPrw.InvoiceNr,-1,IPrw.InvVal,bs);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure OPUpdatePlannedPayments(record OPVc OPr)
+begin
+  row OPVc OPrw;
+  Integer i,rwcnt;  
+  val bs;
+
+  rwcnt = MatRowCnt(OPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPr,i,OPrw);
+    if (OPrw.VISerNr>0) then begin
+      bs = MulWithRateToBase1(OPrw.PInvCurncy,OPr.TransDate,OPrw.PInvVal,DefaultCurRoundOff);
+      UpdatePlannedPayment(1,"VIVc",OPrw.VISerNr,-1,OPrw.PInvVal,bs);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CLInUpdatePlannedPayments(record CLInVc CLInr)
+begin
+  row CLInVc CLInrw;
+  Integer i,rwcnt;  
+  val bs;
+
+  rwcnt = MatRowCnt(CLInr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CLInr,i,CLInrw);
+    switch (CLInrw.Type) begin
+      case kCashInRowTypeInvoice:
+        if (CLInrw.TransNr>0) then begin
+          bs = MulRateToBase1(CLInr.CurncyCode,CLInrw.Sum,CLInr.FrRate,CLInr.ToRateB1,CLInr.ToRateB2,CLInr.BaseRate1,CLInr.BaseRate2,DefaultCurRoundOff) - bs;
+          UpdatePlannedPayment(1,"IVVc",CLInrw.TransNr,-1,CLInrw.Sum,bs);
+        end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure CLOutUpdatePlannedPayments(record CLOutVc CLOutr)
+begin
+  row CLOutVc CLOutrw;
+  Integer i,rwcnt;  
+  val bs;
+
+  rwcnt = MatRowCnt(CLOutr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CLOutr,i,CLOutrw);
+    switch (CLOutrw.Type) begin
+      case kCashOutRowTypeInvoice:
+        if (CLOutrw.TransNr>0) then begin
+          bs = MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff) - bs;
+          UpdatePlannedPayment(1,"VIVc",CLOutrw.TransNr,-1,CLOutrw.Sum,bs);
+        end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure TRUpdatePlannedPayments(record TRVc TRr,row TRVc TRrw)
+begin
+  val bs;
+
+  if (TRrw.SerNr>0) then begin
+    switch (TRrw.Typ) begin
+      case kTransactionRowTypeCustomer:
+        bs = TRrw.DebVal - TRrw.CredVal;
+        UpdatePlannedPayment(1,"IVVc",TRrw.SerNr,-1,TRrw.CurDebVal-TRrw.CurCredVal,bs);
+      case kTransactionRowTypeSupplier:
+        bs = TRrw.CredVal - TRrw.DebVal;
+        UpdatePlannedPayment(1,"VIVc",TRrw.SerNr,-1,TRrw.CurCredVal-TRrw.CurDebVal,bs);
+    end;
+  end;
+  return;
+end;
+
+
+function string 255 PlannedPaymentReference(string FileName,LongInt TransNr)
+begin
+  string 255 res;
+  
+  switch (FileName) begin
+    case "IVVc": res = USetStr(1150) & "." & TransNr;
+    case "ORVc": res = USetStr(36100) & "." & TransNr;
+    case "POVc": res = USetStr(36101) & "." & TransNr;
+    case "PlannedPaymentVc": res = USetStr(36102) & "." & TransNr;
+    case "SMVc": res = USetStr(1154) & "." & TransNr;
+    case "VIVc": res = USetStr(1152) & "." & TransNr;
+  end;
+  PlannedPaymentReference = res;
+  return;
+end;
+
+procedure AddPlannedPaymentsWClassRow(var record PlannedPaymentsVc PPsr,record PlannedPaymentVc PPr,var val bal)
+begin
+  row PlannedPaymentsVc PPsrw;
+  
+  ClearRow(PPsr,PPsrw,1);
+  PPsrw.Reference = PlannedPaymentReference(PPr.FileName,PPr.TransNr);
+  PPsrw.PayDate = PPr.PayDate;
+  PPsrw.PlanPayDate = PPr.PlanPayDate;
+  PPsrw.AgreedPayDate = PPr.AgreedPayDate;
+  PPsrw.LateDays = DateDiff(CurrentDate,PPr.PayDate);
+  if (PPsrw.LateDays<0) then begin PPsrw.LateDays = blankval; end;
+  PPsrw.Priority = PPr.Priority;
+  PPsrw.Approved = PPr.Approved;
+  PPsrw.Paid = PPr.Paid;
+  PPsrw.Comment = PPr.Comment;
+  if (blank(PPsrw.Comment)) then begin
+    PPsrw.Comment = PPr.CompName;
+  end;
+  switch (PPr.FileName) begin
+    case "IVVc":
+      PPsrw.Sum = PPr.Sum;
+      PPsrw.BaseSum = PPr.BaseSum;
+    case "ORVc":
+      PPsrw.Sum = PPr.Sum;
+      PPsrw.BaseSum = PPr.BaseSum;
+    case "POVc":
+      PPsrw.Sum = -PPr.Sum;
+      PPsrw.BaseSum = -PPr.BaseSum;
+    case "VIVc":
+      PPsrw.Sum = -PPr.Sum;
+      PPsrw.BaseSum = -PPr.BaseSum;
+    case "SMVc":
+      PPsrw.Sum = PPr.Sum;
+      PPsrw.BaseSum = PPr.BaseSum;
+  end;
+  bal = bal + PPsrw.BaseSum;
+  PPsrw.Balance = bal;
+  PPsrw.PlanPaymentNr = PPr.SerNr;
+  PPsrw.PlanPaymentFileName = PPr.FileName;
+  MatRowPut(PPsr,MatRowCnt(PPsr),PPsrw);
+  return;
+end;
+
+function val FindForwardBalance(string accs,Date bd,string compcode)
+begin
+  val res,v;
+  record AccVc Accr;
+  string 255 acc;
+  Integer pos;
+
+  pos = 0;
+  ExtractObj(accs,pos,acc);
+  while (nonblank(acc)) begin
+    Accr.AccNumber = acc;
+    ReadFirstMain(Accr,1,true);
+    FindNLAccBal(Accr.AccNumber,"","",0,bd,bd,0,0,false,Accr.Curncy,0,"",compcode,v);
+    res = res + v;
+    ExtractObj(accs,pos,acc);
+  end;
+  FindForwardBalance = res;
+  return;
+end;
+
+global
+procedure PlannedPaymentsWClassPeriod2StrRemote(var record PlannedPaymentsVc PPsr)
+begin
+  record PlannedPaymentVc PPr;
+  Boolean found,testf;
+  Date sd,ed;
+  vector Boolean vppf;
+  val bal;
+  
+  In2Period(PPsr.Period2Str,sd,ed);
+  while (MatRowCnt(PPsr)>0) begin
+    MatRowDelete(PPsr,0);
+  end;
+  if (blankdate(PPsr.BankBalDate)) then begin
+    PPsr.BankBalDate = sd;
+  end;
+  PPsr.StartBal = FindForwardBalance(PPsr.BankAcc,PPsr.BankBalDate,PPsr.CompCode);
+  found = true;
+  PPr.PlanPayDate = sd;
+  while (LoopKey("ActPlanPayDate",PPr,1,found)) begin
+    if (DateInRange(PPr.PlanPayDate,sd,ed)==false) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (nonblank(PPsr.CompCode)) then begin
+        if (PPr.CompCode!=PPsr.CompCode) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        vppf[PPr.SerNr] = true;
+        AddPlannedPaymentsWClassRow(PPsr,PPr,bal);
+         if (MatRowCnt(PPsr)>=300) then begin
+          PPsr.Incompletef = 1;
+          found = false;
+        end;
+      end;
+    end;
+  end;
+  found = PPsr.Incompletef==0;
+  ResetLoop(PPr);
+  PPr.PlanPayDate = sd;
+  while (LoopKey("ActAgreedPayDate",PPr,1,found)) begin
+    if (DateInRange(PPr.AgreedPayDate,sd,ed)==false) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (vppf[PPr.SerNr]==true) then begin testf = false; end;
+      if (nonblank(PPsr.CompCode)) then begin
+        if (PPr.CompCode!=PPsr.CompCode) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        vppf[PPr.SerNr] = true;
+        AddPlannedPaymentsWClassRow(PPsr,PPr,bal);
+        if (MatRowCnt(PPsr)>=300) then begin
+          PPsr.Incompletef = 1;
+          found = false;
+        end;
+      end;
+    end;
+  end;
+  PPsr.EndBal = PPsr.StartBal + bal;
+  return;
+end;
+
+global
+procedure PlannedPaymentsWClassBankAccRemote(var record PlannedPaymentsVc PPsr)
+begin
+    
+  PPsr.EndBal = PPsr.EndBal - PPsr.StartBal;
+  PPsr.StartBal = FindForwardBalance(PPsr.BankAcc,PPsr.BankBalDate,PPsr.CompCode);
+  PPsr.EndBal = PPsr.EndBal + PPsr.StartBal;
+  return;
+end;
+
+updating procedure UpdatePlannedPaymentRow(row PlannedPaymentsVc PPsrw)
+begin
+  record PlannedPaymentVc PPr;
+  record PlannedPaymentVc nPPr;
+  record PlannedPaymentVc oPPr;
+  Boolean updf,newf;
+  
+  PPr.SerNr = PPsrw.PlanPaymentNr;
+  if (ReadFirstMain(PPr,1,true)) then begin
+    RecordCopy(oPPr,PPr);
+    if (PPr.PlanPayDate!=PPsrw.PlanPayDate) then begin
+      PPr.PlanPayDate = PPsrw.PlanPayDate;
+      updf = true;
+    end;
+    if (PPr.AgreedPayDate!=PPsrw.AgreedPayDate) then begin
+      PPr.AgreedPayDate = PPsrw.AgreedPayDate;
+      updf = true;
+    end;
+    if (PPr.Priority!=PPsrw.Priority) then begin
+      PPr.Priority = PPsrw.Priority;
+      updf = true;
+    end;
+    if (PPr.Approved!=PPsrw.Approved) then begin
+      PPr.Approved = PPsrw.Approved;
+      updf = true;
+    end;
+    if (PPr.Comment!=PPsrw.Comment and PPr.CompName!=PPsrw.Comment) then begin
+      PPr.Comment = PPsrw.Comment;
+      updf = true;
+    end;
+    if (AbsoluteVal(PPr.BaseSum)!=AbsoluteVal(PPsrw.BaseSum)) then begin
+      RecordCopy(nPPr,PPr);
+      PPsrw.BaseSum = AbsoluteVal(PPsrw.BaseSum);
+      PPr.Sum = Round((PPr.Sum*PPsrw.BaseSum)/PPr.BaseSum,SetRoundModeD(2));
+      PPr.BaseSum = PPsrw.BaseSum;
+      updf = true;
+      nPPr.Sum = nPPr.Sum - PPr.Sum;
+      nPPr.BaseSum = nPPr.BaseSum - PPr.BaseSum;
+      newf = true;
+    end;
+    if (updf) then begin
+      RecordUpdate(oPPr,PPr,true);
+    end;
+    if (newf) then begin
+      nPPr.TransDate = CurrentDate;
+      nPPr.SerNr = NextSerNr("PlannedPaymentVc",nPPr.TransDate,-1,false,"");
+      RecordStore(nPPr,false);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ConfirmPlannedPaymentsChangesWClassRemote(var record PlannedPaymentsVc PPsr)
+begin
+  row PlannedPaymentsVc PPsrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(PPsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PPsr,i,PPsrw);
+    UpdatePlannedPaymentRow(PPsrw);
+  end;
+  return;
+end;

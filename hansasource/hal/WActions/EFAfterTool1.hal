@@ -1,0 +1,232 @@
+external function val CalculateTotalVATFromTaxMatrix(record TaxMatrixVc,Integer);
+external procedure AddRowTaxMatrixToSumTaxMatrix(record TaxMatrixVc,var record TaxMatrixVc,Integer);
+external function Boolean UseTaxTemplatesforTaxCalc();
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure MulM4ProcVal(val,val,var val);
+external procedure PUCalcPerc(val,string,var val);
+
+
+global
+procedure GetDatePriceBasedOn(string custcode,Date orddatep,Date despatchdatep,string planship,var Date resp)
+BEGIN
+  record CUVc CUr;
+
+  CUr.Code = custcode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (CUr.PriceBasedOn==2) then begin
+      resp = despatchdatep;
+    end;  
+    if (CUr.PriceBasedOn==1) then begin
+      resp = StringToDate(planship);
+    end;
+    if ((CUr.PriceBasedOn!=1) and (CUr.PriceBasedOn!=2)) then begin      
+      resp = orddatep;
+    end;
+  end else begin
+    resp = orddatep;
+  end;
+  RETURN;
+END;
+
+global
+procedure StockMovSumUp(var record StockMovVc SMp)
+BEGIN
+  record INVc INr;
+  row StockMovVc SMrw;
+  Integer i,rwcnt;
+  val totqty,t,totsentqty;
+
+  SMp.TotQty = 0;
+  SMp.TotWeight = 0;
+  SMp.TotVolume = 0;    
+  rwcnt = MatRowCnt(SMp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMp,i,SMrw);
+    totqty = totqty + SMrw.Quant;
+    totsentqty = totsentqty + SMrw.SentQuant;
+    INr.Code = SMrw.ArtCode;
+    if  (ReadFirstMain(INr,1,true)) then begin
+      t = SMrw.Quant*INr.Volume;
+      SMp.TotVolume = SMp.TotVolume + t;
+      t = SMrw.Quant*INr.Weight;
+      SMp.TotWeight = SMp.TotWeight + t;
+    end;              
+  end;
+  SMp.TotQty = Round(totqty,SetRoundModeD(2));
+  SMp.TotSentQty = Round(totsentqty,SetRoundModeD(2));
+  if (SMp.TotVolume==0) then begin SMp.TotVolume = blankval; end;
+  if (SMp.TotWeight==0) then begin SMp.TotWeight = blankval; end;
+  RETURN;
+END;
+
+global
+procedure SHSumUp(var record SHVc SHr)
+begin
+  record ORVc ORr;
+  row ORVc ORrw;
+  row SHVc SHrw;
+  Integer i,rwcnt;
+  Integer orrwcnt;
+  val totqty,taxsum,sum,t,t1;
+  val totv,totw;
+  record INVc INr;
+  
+  ORr.SerNr = SHr.OrderNr;
+  if (ReadFirstMain(ORr,1,true)) then begin
+  end;
+  orrwcnt = MatRowCnt(ORr);
+  totqty = blankval;
+  taxsum = blankval;
+  SHr.TotQty = BlankVal;
+  rwcnt = MatRowCnt(SHr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SHr,i,SHrw);
+    totqty = totqty + SHrw.Ship;
+    if ((SHrw.OrdRow<orrwcnt) and (SHrw.OrdRow>-1)) then begin
+      MatRowGet(ORr,SHrw.OrdRow,ORrw); 
+      sum = ORrw.Sum/ORrw.Quant;
+      sum = sum*SHrw.Ship;
+      MulVATIV(ORrw.VATCode,sum,t,t1,ORr.InclVAT,ORr.NoTAXonVAT);
+      taxsum = taxsum + t1;
+      if (ReadFirstItem(SHrw.ArtCode,INr,true,true)) then begin end;
+      totw = totw + SHrw.Ship*INr.Weight;
+      totv = totv + SHrw.Ship*INr.Volume;      
+    end;
+  end;
+  SHr.TotQty = Round(totqty,SetRoundModeD(2));
+  SHr.TAX1Sum = Round(taxsum,DefaultRoundMode);
+  SHr.TotVolume = Round(totv,SetRoundModeD(2));
+  SHr.TotWeight = Round(totw,SetRoundModeD(2));  
+  return;
+end;
+
+global
+procedure DropSHSumUp(var record DropSHVc DropSHr)
+begin
+  row DropSHVc DropSHrw;
+  Integer i,rwcnt;
+  val totqty,totv,totw;
+  record INVc INr;
+  
+  DropSHr.TotQty = BlankVal;
+  rwcnt = MatRowCnt(DropSHr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(DropSHr,i,DropSHrw);
+    totqty = totqty + DropSHrw.Ship;
+  end;
+  DropSHr.TotQty = Round(totqty,SetRoundModeD(2));
+  DropSHr.TotVolume = Round(totv,SetRoundModeD(2));
+  DropSHr.TotWeight = Round(totw,SetRoundModeD(2));  
+  if (DropSHr.TotVolume==0) then begin DropSHr.TotVolume = blankval; end;
+  if (DropSHr.TotWeight==0) then begin DropSHr.TotWeight = blankval; end;
+  return;
+end;
+
+procedure WSSumup_TaxTemplate(var record WSVc WSp)
+begin
+  Integer i,rwcnt;
+  row WSVc WSrw;
+  record TaxMatrixVc TMr;
+  record TaxMatrixVc sumTMr;
+  roundmode roundlines,rndtotal,rndvat;
+  val t;
+
+  WSp.Sum1 = blankval; //Subtotal
+  WSp.Sum3 = blankval; //VAT
+  WSp.Sum4 = blankval; //Total
+//  WSp.TotGP = blankval;
+  UnpackFieldMatrix(WSp,"TaxMatrix",sumTMr);
+  RecordClear(sumTMr);
+  rwcnt = MatRowCnt(WSp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(WSp,i,WSrw);
+    switch (WSrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;
+        if ((WSp.ExportFlag==0) or (WSp.ExportFlag==3) or (WSp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(WSrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,WSp.InclVAT);
+        end;
+        WSp.Sum1 = WSp.Sum1 + WSrw.Sum;
+//        WSp.TotGP = WSp.TotGP + WSrw.rowGP;
+    end;
+  end;
+
+  if ((WSp.ExportFlag==0) or (WSp.ExportFlag==3) or (WSp.ExportFlag==4)) then begin
+    WSp.Sum3 = CalculateTotalVATFromTaxMatrix(sumTMr,WSp.InclVAT);
+  end;
+  PackFieldMatrix(WSp,"TaxMatrix",sumTMr);
+  GetCurncyRoundoff(WSp.CurncyCode,"","QTVc",rndtotal,roundlines,rndvat);
+  WSp.Sum3 = Round(WSp.Sum3,rndvat);
+  WSp.Sum1 = Round(WSp.Sum1,rndtotal);
+  switch (WSp.InclVAT) begin
+    case kBasePriceNotInclVAT:
+      WSp.Sum4 = WSp.Sum1 + WSp.Sum3;
+    case kBasePriceInclVATandTAX:
+      WSp.Sum4 = WSp.Sum1;
+    case kBasePriceInclVAT:
+      WSp.Sum4 = WSp.Sum1;
+  end;  
+  WSp.Sum3 = Round(WSp.Sum3,rndvat);
+  WSp.Sum4 = Round(WSp.Sum4,rndtotal);
+//  WSp.BaseSum4 = MulRateToBase1(WSp.CurncyCode,WSp.Sum4,WSp.FrRate,WSp.ToRateB1,WSp.ToRateB2,WSp.BaseRate1,WSp.BaseRate2,DefaultCurRoundOff);
+//  WSp.TotGP = Round(WSp.TotGP,rndtotal);
+  return;
+end;
+
+global
+procedure WSSumup(record WSVc WSp)
+BEGIN
+  row WSVc WSrw;
+  val s,ms,ms2,temp;
+  Integer i,rwcnt;
+  record SMVc VATr;/*VATBaseRowType*/
+  Integer vatcnt;  
+  roundmode roundlines,rndtotal,rndvat;
+
+  if (UseTaxTemplatesforTaxCalc) then begin
+    WSSumup_TaxTemplate(WSp);
+    goto LWSSumup;
+  end;
+  SetupVATBase(VATr,vatcnt);
+  rwcnt = MatRowCnt(WSp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(WSp,i,WSrw);
+    s = s + WSrw.Sum;
+    AddVATBase(VATr,WSrw.VATCode,WSrw.Sum,blankval,vatcnt,WSp.InclVAT,0); // Why 0?
+    MatRowPut(WSp,i,WSrw);
+  end;
+  CalcVATBaseVAT(VATr,WSp.InclVAT,0,vatcnt,ms,temp);
+  GetCurncyRoundoff(WSp.CurncyCode,"","WSVc",rndtotal,roundlines,rndvat);
+  ms = Round(ms,rndvat);
+  if ((WSp.ExportFlag==1) or (WSp.ExportFlag==2)) then begin
+    if (WSp.InclVAT>0) then begin
+      ms2 = s - ms;
+    end else begin
+      ms2 = s;
+    end;  
+    ms = blankval;
+  end else begin
+    if (WSp.InclVAT>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + ms;
+    end;  
+  end;
+  ms2 = Round(ms2,rndtotal);
+  WSp.Sum1 = s;
+  WSp.Sum3 = ms;
+  WSp.Sum4 = ms2;
+LWSSumup:;
+  RETURN;
+END;

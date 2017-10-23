@@ -1,0 +1,195 @@
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure HTEmployees(string,string,var string);
+external procedure HT2Per(Date, Date , var string);
+
+procedure FindPMComment(string pmcode,var string name)
+BEGIN
+  record PMBlock PMr;
+  row PMBlock PMrw;
+  record PDVc PDr;
+  Integer i,rwcnt;
+
+  name = USetStr(9588);
+  PDr.Code = pmcode;
+  if (ReadFirstMain(PDr,1,true)) then begin
+    name = PDr.pdComment;
+    goto L19;
+  end;
+  BlockLoad(PMr);
+  rwcnt = MatRowCnt(PMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PMr,i,PMrw);  
+    if (PMrw.Code==pmcode) then begin
+      name = PMrw.Comment;
+      goto L19;
+    end;
+  end;
+L19:;  
+  RETURN;  
+END;
+
+procedure PrintCashBalPayModeTots(record SMVc SMr)
+BEGIN
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);  
+    StartFormat(15);
+     OutString(100,0,SMrw.VATCode,false);
+     FindPMComment(SMrw.VATCode,tstr);
+     OutString(200,0,tstr,false);
+     OutVal(480,0,SMrw.DebVal,M4Val,true);
+    EndFormat;      
+  end;  
+  RETURN;
+END;
+
+procedure AddPayModeRow(record SMVc SMr,string pmcode,val recval)
+BEGIN
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);    
+    if (SMrw.VATCode==pmcode) then begin
+      SMrw.DebVal = SMrw.DebVal + recval;
+      MatRowPut(SMr,i,SMrw);    
+      goto L29;
+    end;
+  end;
+  SMrw.VATCode = pmcode;
+  SMrw.DebVal = recval;
+  MatRowPut(SMr,rwcnt,SMrw);    
+L29:;  
+  RETURN;
+END;
+
+global
+procedure DayBalRn(record RcVc RepSpec)
+BEGIN
+  record IVCashVc IVCashr;
+  record CashierBalVc CashierBalr;
+  record SMVc SMr;
+  Boolean TrHs,testf; 
+  string 255 tstr,keystr;
+  Integer rw;
+  val totbal,totvat,totcash,totcashback;
+  LongInt TransCnt;
+  record AccBlock ARAccRec;
+  record AccVc Accr;
+  val lastbal;
+
+  BlockLoad(ARAccRec);
+  RecordNew(SMr);
+  StartReportJob(USetStr(9580));
+   rw = 1;
+   HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;   
+   HTEmployees(RepSpec.AccStr,RepSpec.AccStr,tstr);
+   Header(rw,tstr,1);
+   rw = rw + 1;   
+  EndHeader;
+
+  TransCnt = 0;
+  if (nonblank(RepSpec.AccStr)) then begin
+    keystr = "SalesMan";
+    IVCashr.SalesMan = RepSpec.AccStr;
+  end else begin
+    keystr = "SerNr";
+  end;  
+  TrHs = true;
+  while (LoopKey(keystr,IVCashr,1,TrHs)) begin
+    if (nonblank(RepSpec.AccStr)) then begin
+      if (IVCashr.SalesMan<>RepSpec.AccStr) then begin TrHs = false; end;
+    end; 
+    if (TrHs) then begin
+      testf = true;
+      if ((IVCashr.OKFlag==0) and (RepSpec.flags[1]==0)) then begin testf = false; end;
+      if ((IVCashr.OKFlag<>0) and (RepSpec.flags[0]==0)) then begin testf = false; end;
+      if (IVCashr.Invalid!=0) then begin testf = false; end;
+      if (DateInRange(IVCashr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+      if (nonblank(RepSpec.FirstAcc)) then begin
+        if (IVCashr.LocalMachineCode<>RepSpec.FirstAcc)then begin testf = false; end;
+      end;
+      if (testf) then begin
+        totbal = totbal + IVCashr.Sum4;
+        totvat = totvat + IVCashr.Sum3;
+        totcash = totcash + IVCashr.CashValue;
+        totcashback = totcashback + IVCashr.RetValue;
+        totcash = totcash + MulWithRateToBase1(IVCashr.POSCurncyCode,IVCashr.TransDate,IVCashr.CashValueCur,DefaultCurRoundOff);                
+        if (IVCashr.RecValue!=0) then begin
+          AddPayModeRow(SMr,IVCashr.PayDeal,IVCashr.RecValue);
+        end;
+        if (IVCashr.RecValue2!=0) then begin
+          AddPayModeRow(SMr,IVCashr.PayDeal2,IVCashr.RecValue2);
+        end;
+        TransCnt = TransCnt + 1;
+      end;  
+    end;
+  end;
+  StartFormat(15);
+   OutString(100,0,USetStr(9581),false);
+   Accr.AccNumber = ARAccRec.CashAcc;
+   if (ReadFirstMain(Accr,1,true)) then begin end;   
+   OutString(200,0,Accr.Comment,false);
+   OutVal(480,0,totcash,M4Val,true);
+  EndFormat;
+  PrintCashBalPayModeTots(SMr);
+  StartFormat(15);
+   OutString(100,0,USetStr(9584),false);
+   OutVal(480,0,totcashback,M4Val,true);
+  EndFormat;
+  StartFormat(10);
+  EndFormat;
+  Gray_Divider(400,480);
+  StartFormat(10);
+  EndFormat;
+  StartFormat(15);
+   OutString(100,0,USetStr(9582),false);
+   OutVal(480,"DblCashBal",totbal,M4Val,true);
+  EndFormat;
+  StartFormat(15);
+   OutString(100,0,USetStr(9583),false);
+   OutVal(480,0,totvat,M4Val,true);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  CashierBalr.UserCode = CurrentUser;
+  CashierBalr.TransDate = RepSpec.sStartDate;
+  if (ReadLastMain(CashierBalr,2,true)) then begin
+    StartFormat(15);
+     OutString(100,0,USetStr(9586),false);
+     OutVal(480,0,CashierBalr.EndBal,M4Val,true);
+    EndFormat;
+/*    
+    StartFormat(15);
+     OutString(100,0,USetStr(9585),false);
+     OutVal(480,0,CashierBalr.StartBal,M4Val,true);
+    EndFormat;
+*/    
+    StartFormat(15);
+     OutString(100,0,USetStr(9587),false);
+     OutVal(480,0,CashierBalr.StartBal+totbal,M4Val,true);
+    EndFormat;
+    StartFormat(10);
+    EndFormat;
+    Gray_Divider(400,480);
+    StartFormat(10);
+    EndFormat;
+    StartFormat(15);
+     OutString(100,0,USetStr(9590),false);
+     OutVal(480,0,CashierBalr.EndBal-(CashierBalr.StartBal+totbal),M4Val,true);
+    EndFormat;
+  end;   
+  StartFormat(15);
+   OutString(100,0,USetStr(9554),false);
+   OutLongInt(480,0,TransCnt,true);
+  EndFormat;
+  EndJob;
+  RETURN;
+END;  

@@ -1,0 +1,312 @@
+external procedure ParseT1Data(string,var string,var string,var string,var string,var string);
+external procedure ParseT2Data(string,var string,var string,var string,var string);
+remote function Boolean SerialNrForOneItem(string,var record SerBalVc);
+//external procedure IVCashVc_PasteItem(record IVCashVc,Integer,Integer);//No Code
+remote function Boolean IVCashVc_PasteArtCode(var record IVCashVc,Integer,Boolean,var string,var Integer);
+remote function Boolean IVCashVc_PasteQuant(var record IVCashVc,Integer);
+//external function Boolean IVCashDClassCustCodeEFAfter(Integer,Integer,Integer);  //No code
+external function Boolean GetFirstItem(var string,var record INVc);
+remote procedure GetFullCurncyRate(var string,Date,var val,var val,var val,var val,var val);
+external updating function Boolean CCPayIVCashDWithCardData(record RcVc,Boolean,Integer,string);
+external function Integer MerchantIDCardHolderType(string);
+
+
+global
+updating procedure IVCashDClassCardData(Integer wn,string sdata)
+begin
+  record RcVc RepSpec;
+  
+  DeselectWindow(wn,false);
+  RecordClear(RepSpec);
+  CCPayIVCashDWithCardData(RepSpec,true,wn,sdata);
+  return;
+end;
+
+global
+updating procedure IPDClassCardData(Integer wn,string sdata)
+begin
+  record RcVc RepSpec;
+  
+  DeselectWindow(wn,false);
+  RecordClear(RepSpec);
+  CCPayIVCashDWithCardData(RepSpec,true,wn,sdata);
+  return;
+end;
+
+global
+function string 255 VerifySwipedCreditCardData(string priacc,string paymode)
+begin
+  string 255 res;
+  record LocalMachineBlock LMb;
+  record RestPMBlock RestPMb;
+  row RestPMBlock RestPMbrw;
+  Integer i,rwcnt;
+  string 1 cctype;
+  
+  BlockLoad(RestPMb);
+  BlockLoad(LMb);
+  cctype = Left(priacc,1);
+  rwcnt = MatRowCnt(RestPMb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(RestPMb,i,RestPMbrw);
+    if (RestPMbrw.MachineName==LMb.LocalMachineCode) then begin
+//LogText(0,"RestPMbrw.PMCode " & RestPMbrw.PMCode & " paymode " & paymode & " cctype " & cctype & " RestPMbrw.CardType " & RestPMbrw.CardType);
+      if (RestPMbrw.PMCode==paymode) then begin
+        res = "";
+        switch (cctype) begin
+          case "3":
+            if (RestPMbrw.CardType!=3) then begin
+              res = USetStr(20437) & ". " & USetStr(20441) & ": " & StringFromSet(37,3);
+            end else begin
+              res = "";
+              goto LVerifySwipedCreditCardData;
+            end;
+          case "4":
+            if (RestPMbrw.CardType!=1) then begin
+              res = USetStr(20437) & ". " & USetStr(20441) & ": " & StringFromSet(37,1);
+            end else begin
+              res = "";
+              goto LVerifySwipedCreditCardData;
+            end;
+          case "5":
+            if (RestPMbrw.CardType!=2) then begin
+              res = USetStr(20437) & ". " & USetStr(20441) & ": " & StringFromSet(37,2);
+            end else begin
+              res = "";
+              goto LVerifySwipedCreditCardData;
+            end;
+          case "6":
+            if (RestPMbrw.CardType!=7) then begin
+              res = USetStr(20437) & ". " & USetStr(20441) & ": " & StringFromSet(37,7);
+            end else begin
+              res = "";
+              goto LVerifySwipedCreditCardData;
+            end;
+        end;
+      end;
+    end;
+  end;
+LVerifySwipedCreditCardData:;  
+  VerifySwipedCreditCardData = res;
+  return;
+end;
+
+global
+updating procedure IVCashDClassCardDataExecute(record RcVc aRepSpec,Integer wn,string asdata)
+begin
+  record RcVc RepSpec;
+  record IVCashVc IVCashr;
+  integer nwn;
+  string 255 t1,t2,t3;
+  string 255 priacc,name,expdate,scode,exdata,sdata,protacc;
+  xml xdata;
+  val outstanding;
+  Integer i;
+  string 255 errstr;
+  
+  GetWindowRecord(wn,IVCashr);
+
+  sdata = asdata;
+
+//  sdata = "%B" & sdata & "?";
+//  sdata = "<HAL1><T1>" & sdata & "</T1></HAL1>";
+  
+  xdata = ParseXmlString(sdata);
+  
+  t1 = XmlGet(xdata,"HAL1/T1");
+  t2 = XmlGet(xdata,"HAL1/T2");
+  t3 = XmlGet(xdata,"HAL1/T3");
+  
+  ParseT1Data(t1,priacc,name,expdate,scode,exdata);
+  //ParseT2Data(t2,priacc,expdate,scode,exdata);
+  errstr = VerifySwipedCreditCardData(priacc,aRepSpec.AccStr);
+  if (nonblank(errstr)) then begin 
+    Trace("Error","");
+    MessageBox(0,errstr);
+    goto LIVCashDClassCardDataExecute;
+  end;
+  
+  RepSpec.AccStr = aRepSpec.AccStr;
+  for (i = 0; i<(len(priacc) - 4); i = i + 1) begin
+    protacc = protacc & "*";
+  end;
+  protacc = protacc & right(priacc,4);
+  RepSpec.f1 = protacc;
+  RepSpec.f2 = trim(name);
+  RepSpec.f3 = expdate;
+  RepSpec.f12 = priacc;
+  
+  outstanding = aRepSpec.vals0;
+  if (outstanding==0) then begin
+    outstanding = -IVCashr.RetValue;
+  end;
+    
+  RepSpec.vals0 = outstanding;
+  RepSpec.vals1 = outstanding;
+  
+  RepSpec.f4 = sdata;
+  
+  if (outstanding>0) then begin
+    nwn = OpenWindow("AddCCChargeVClass",0,wn,"","",RepSpec);
+  end else begin
+    if (outstanding<0) then begin
+      nwn = OpenWindow("CCRefundVClass",0,wn,"","",RepSpec);
+    end else begin
+      beep;
+      Trace("Invoice is already fully paid","");
+    end;
+  end;
+  
+LIVCashDClassCardDataExecute:;
+  return;
+end;
+
+global
+updating procedure IPDClassCardDataExecute(record RcVc aRepSpec,Integer wn,string asdata)
+begin
+  record RcVc RepSpec;
+  record IPVc IPr;
+  integer nwn;
+  string 255 t1,t2,t3;
+  string 255 priacc,name,expdate,scode,exdata,sdata,protacc;
+  xml xdata;
+  val outstanding;
+  Integer i;
+  string 255 errstr;
+  
+  GetWindowRecord(wn,IPr);
+
+  sdata = asdata;
+
+//  sdata = "%B" & sdata & "?";
+//  sdata = "<HAL1><T1>" & sdata & "</T1></HAL1>";
+  
+  xdata = ParseXmlString(sdata);
+  
+  t1 = XmlGet(xdata,"HAL1/T1");
+  t2 = XmlGet(xdata,"HAL1/T2");
+  t3 = XmlGet(xdata,"HAL1/T3");
+  
+  ParseT1Data(t1,priacc,name,expdate,scode,exdata);
+  //ParseT2Data(t2,priacc,expdate,scode,exdata);
+  errstr = VerifySwipedCreditCardData(priacc,aRepSpec.AccStr);
+  if (nonblank(errstr)) then begin 
+    Trace("Error","");
+    MessageBox(0,errstr);
+    goto LIPDClassCardDataExecute;
+  end;
+  
+  RepSpec.AccStr = aRepSpec.AccStr;
+  for (i = 0; i<(len(priacc) - 4); i = i + 1) begin
+    protacc = protacc & "*";
+  end;
+  protacc = protacc & right(priacc,4);
+  RepSpec.f1 = protacc;
+  RepSpec.f2 = trim(name);
+  RepSpec.f3 = expdate;
+  RepSpec.f12 = priacc;
+  
+  outstanding = aRepSpec.vals0;
+  if (outstanding==0) then begin
+    outstanding = -IPr.CurPayVal;
+  end;
+    
+  RepSpec.vals0 = outstanding;
+  RepSpec.vals1 = outstanding;
+  
+  RepSpec.f4 = sdata;
+  
+  if (outstanding>0) then begin
+    nwn = OpenWindow("AddCCChargeVClass",0,wn,"","",RepSpec);
+  end else begin
+    beep;
+    Trace("Invoice is already fully paid","");
+  end;
+  
+LIPDClassCardDataExecute:;
+  return;
+end;
+
+
+global
+procedure IVCashDClassBarcodeData(Integer wn,string bcdata)
+begin
+  record INVc INr;
+  record IVCashVc IVCashr;
+  row IVCashVc IVCashrw;
+  LongInt i,rows;
+  string 255 artcode,inwarning;
+  record SerBalVc SerBalr;
+  Boolean serialfound,ReturnModef;
+  Integer sernrf;
+  
+  if (SerialNrForOneItem(bcdata,SerBalr)) then begin
+    serialfound = true;
+    artcode = SerBalr.Item;
+  end else begin
+    artcode = bcdata;
+  end;
+  if (GetFirstItem(artcode,INr)==false) then begin
+    StopAlert("Unknown barcode: " & bcdata);
+    goto LIVCashDClassBarcodeData;  
+  end;
+  ReturnModef = GetWindowString(wn,"ReturnMode")=="true";
+  
+  GetWindowRecord(wn,IVCashr);
+  rows = MatRowCnt(IVCashr);
+  
+  if (serialfound==false) then begin
+    for (i = 0; i<rows; i = i + 1) begin
+      MatRowGet(IVCashr,i,IVCashrw);
+      if (IVCashrw.ArtCode==INr.Code) then begin
+        IVCashrw.Quant = IVCashrw.Quant + 1;
+        MatRowPut(IVCashr,i,IVCashrw);
+        IVCashVc_PasteQuant(IVCashr,i);
+        PutWindowRecord(wn,IVCashr);
+        goto LIVCashDClassBarcodeData;
+      end;
+    end;
+  end;
+  
+  if (i<0) then begin
+    i = rows;
+  end;
+  
+  ClearRow(IVCashr,IVCashrw,1);
+  IVCashrw.ArtCode = INr.Code;
+  MatRowPut(IVCashr,rows,IVCashrw);
+  IVCashVc_PasteArtCode(IVCashr,i,ReturnModef,inwarning,sernrf);
+  MatRowGet(IVCashr,rows,IVCashrw);
+  if (serialfound) then begin
+    IVCashrw.SerialNr = bcdata;
+  end;
+  if (ReturnModef) then begin
+    IVCashrw.Quant = -1;
+  end else begin
+    IVCashrw.Quant = 1;
+  end;
+  MatRowPut(IVCashr,rows,IVCashrw);
+  IVCashVc_PasteQuant(IVCashr,i);
+  PutWindowRecord(wn,IVCashr);
+  
+LIVCashDClassBarcodeData:;
+  return;
+end;
+
+global
+updating procedure TestIVCashDClassCardData()
+begin
+  Integer wn;
+  string 255 sdata;
+  
+  StopAlert("Put the test data here to test");
+  wn = CurWindow;
+  sdata = "";
+  sdata = sdata & "<HAL1>";
+  sdata = sdata & "<T1></T1>";
+  sdata = sdata & "<T2></T2>";
+  sdata = sdata & "</HAL1>";
+  IVCashDClassCardData(wn,sdata);
+  
+  return;
+end;

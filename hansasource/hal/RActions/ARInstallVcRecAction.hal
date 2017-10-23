@@ -1,0 +1,126 @@
+external updating procedure ARInstallmentHistAdd(record ARInstallVc,record ARInstallVc,Integer);
+external function Integer ARIInstallNr(LongInt,Date);
+external function roundmode SetRoundModeD(Integer);
+
+function val CountInstallments(LongInt invnr,Date frdat,Boolean allf,var val sum)
+begin
+  record ARInstallVc ARInstallr;
+  val cnt;
+  Boolean foundf,testf;
+  Integer keys;
+
+  cnt = 0;
+  sum = 0;
+  foundf = true;
+  ARInstallr.InvoiceNr = invnr;
+  ARInstallr.DueDate = frdat;
+  if (allf) then begin
+    keys = 1;
+  end else begin
+    keys = 2;
+  end;
+  while (LoopMain(ARInstallr,keys,foundf)) begin
+    if (ARInstallr.InvoiceNr!=invnr) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (ARInstallr.DueDate==frdat) then begin
+      testf = false;
+    end;
+    If (testf) then begin
+      sum = sum + ARInstallr.RVal;
+      if (ARInstallr.DueDate>frdat) then begin
+        cnt = cnt + 1;
+      end;
+    end;
+  end;
+  CountInstallments = cnt;
+  return;
+end;
+
+global
+updating function LongInt ARInstallVcRecordUpdateAfter(var record ARInstallVc ARInstallr,record ARInstallVc ARInstall2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record ARInstallVc locARInstallr;
+  record ARInstallVc oldlocARInstallr;
+  val cnt,i,sumtospread,sumdone,b1sumtospread,b1sumdone,temp;
+  Boolean foundf,testf;
+  Date bd;
+  
+  cnt = CountInstallments(ARInstallr.InvoiceNr,ARInstall2r.DueDate,true,temp);
+
+  i = 1;
+  sumdone = 0;
+  b1sumdone = 0;
+  sumtospread = ARInstall2r.RVal - ARInstallr.RVal;
+  b1sumtospread = ARInstall2r.BookRVal - ARInstallr.BookRVal;
+  foundf = true;
+  locARInstallr.InvoiceNr = ARInstallr.InvoiceNr;
+//  locARInstallr.DueDate = ARInstallr.DueDate;
+  while (LoopMain(locARInstallr,1,foundf)) begin
+    if (locARInstallr.InvoiceNr!=ARInstallr.InvoiceNr) then begin
+      foundf = false;
+    end;
+    testf = foundf;
+    if (locARInstallr.DueDate<=ARInstall2r.DueDate) then begin testf = false; end;
+    If (testf) then begin
+      RecordCopy(oldlocARInstallr,locARInstallr);
+      if (i==cnt) then begin
+        locARInstallr.RVal = locARInstallr.RVal + (sumtospread - sumdone);
+        locARInstallr.BookRVal = locARInstallr.BookRVal + (b1sumtospread - b1sumdone);
+
+      end else begin
+        temp = Round(sumtospread/cnt,SetRoundModeD(2));
+        locARInstallr.RVal = locARInstallr.RVal + temp;
+        sumdone = sumdone + temp;
+
+        temp = Round(b1sumtospread/cnt,SetRoundModeD(2));
+        locARInstallr.BookRVal = locARInstallr.BookRVal + temp;
+        b1sumdone = b1sumdone + temp;
+      end;
+      i = i + 1;
+      if (RecordUpdate(oldlocARInstallr,locARInstallr,false)==0) then begin
+      end;
+      ARInstallmentHistAdd(oldlocARInstallr,locARInstallr,Rs_update);            
+    end;
+  end;
+  ARInstallVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+function LongInt ARInstallVcRecordCheck(var record ARInstallVc ARInstallr,record ARInstallVc ARInstall2r,LongInt stat,LongInt long4)
+BEGIN
+  record IVVc IVr;
+  LongInt res;
+  val rsum,cnt;
+
+  res = 0;
+  cnt = CountInstallments(ARInstall2r.InvoiceNr,ARInstall2r.DueDate,true,rsum);
+  if (cnt==0) then begin
+    IVr.SerNr = ARInstallr.InvoiceNr;
+    if (ReadFirstMain(IVr,1,true)) then begin
+      if (IVr.Sum4>rsum+ARInstallr.RVal) then begin
+        RecordCheckError(20265," " & IVr.Sum4-rsum,-1,"RVal");      
+        res = -1; 
+        goto LARInstallVcRecordCheck;
+      end;
+    end;
+  end;
+LARInstallVcRecordCheck:; 
+  ARInstallVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+updating function LongInt ARInstallVcRecordImport(var record ARInstallVc ARIr,record ARInstallVc ARI2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  if (ARIr.InstallNr<=0) then begin
+    ARIr.InstallNr = ARIInstallNr(ARIr.InvoiceNr,ARIr.DueDate);
+  end;
+  ARInstallVcRecordImport = res;
+  return;
+end;

@@ -1,0 +1,322 @@
+external function roundmode DefaultRoundMode();
+external function string 255 FindINObjects(string,string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure MulM4ProcVal(val,val,var val);
+external procedure StripEndingSpaces(var string);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure GetDateString(var string);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure CalcRowGP(record EDIORVc,string,string,val,val,val,val,val,var val);
+
+global
+updating procedure EDIORDeltaIn()
+BEGIN
+  record EDIORVc ORr;
+  record EDIORVc OR2r;
+  record CUVc CUr;  
+  record PLDefVc PLDr;  
+  record INVc INr;
+  record PLVc PLr;
+  record SMVc SMr;  
+  row EDIORVc ORrw;
+  record PlanDeliveryBlock PDbl;
+  string 255 tstr,lstr,rstr,mstr,plcode,cuvatcode,barcode,invoicetocode;
+  string 20 CustCode;
+  string 60 CustName;
+  string 20 ANACode;
+  string 2 PayDeal;
+  string 10 ShipDeal,ShipMode;  
+  Integer orcnt,i,PriceBasedOn;
+  Boolean testf,rowf,pricef,pldeffound;
+  Boolean itemexistf,tesf;
+  Integer rwcnt,vatcnt;
+  roundmode rndline,rndtotal,rndvat;
+  Date deldate,orddate,testd;
+  val t,s,vats,ms2,temp,t1;
+  string 20 tplcode,keystr;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);  
+  RecordNew(ORr);
+  BlockLoad(PDbl);
+  testf = true;  
+  while (testf) begin  
+    tstr = ImportField();
+    testf = NextImportLine(false);
+    if (len(tstr)==0) then begin testf = false; end;
+    if (testf) then begin
+      rowf = false;
+      lstr = Left(tstr,4);     
+      if (lstr=="OTR ") then begin
+       if (CharacterMatch(ORr.CustOrdNr,"A",1)) then begin
+         ORr.VersionNr = 2;         
+         OR2r.CustOrdNr = Right(ORr.CustOrdNr,len(ORr.CustOrdNr)-1);
+         if (ReadFirstKey("CustOrdNr",OR2r,1,true)) then begin
+           ORr.SerNr = OR2r.SerNr;
+         end;
+       end else begin
+         OR2r.CustOrdNr = ORr.CustOrdNr;
+         if (ReadFirstKey("CustOrdNr",OR2r,1,true)) then begin
+           ORr.SerNr = OR2r.SerNr;
+         end;
+         ORr.VersionNr = 1;       
+       end;
+//begin orsumup
+  RecordNew(SMr);
+  SetupVATBase(SMr,vatcnt);
+  ORr.TotGP = 0;
+  rwcnt = MatRowCnt(ORr);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(ORr,i,ORrw);
+    if (nonblank(ORrw.ArtCode)) then begin
+      ORr.TotGP = ORr.TotGP + ORrw.rowGP;
+      s = s + ORrw.Sum;
+      AddVATBase(SMr,ORrw.VATCode,ORrw.Sum,blankval,vatcnt,ORr.InclVAT,ORr.NoTAXonVAT);
+    end;
+  end;
+  temp = ORr.TotGP / s;
+  ORr.GPProc = temp/100;
+  CalcVATBaseVAT(SMr,ORr.InclVAT,ORr.NoTAXonVAT,vatcnt,vats,t1);
+  GetCurncyRoundoff(ORr.CurncyCode,ORr.PayDeal,"ORVc",rndtotal,rndline,rndvat);
+  vats = Round(vats,rndvat);
+  if ((ORr.ExportFlag==1) or (ORr.ExportFlag==2)) then begin
+    if (ORr.InclVAT<>0) then begin
+      ms2 = s - vats;
+    end else begin
+      ms2 = s;
+    end;  
+    vats = 0;
+  end else begin
+    if (ORr.InclVAT<>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + vats;
+    end;  
+  end;
+  ms2 = Round(ms2,rndtotal);
+  if (ORr.DiscPerc<>0) then begin
+    MulM4ProcVal(ORr.DiscPerc,s,t);
+    ORr.DiscSum = t;
+  end;  
+  ORr.DiscSum = Round(ORr.DiscSum,DefaultRoundMode);
+  ORr.Sum1 = s;
+  ORr.Sum3 = vats;
+  ORr.Sum4 = ms2;
+  if (nonblank(ORr.CurncyCode)) then begin
+    ORr.BaseSum4 = MulRateToBase1(ORr.CurncyCode,ORr.Sum4,ORr.FrRate,ORr.ToRateB1,ORr.ToRateB2,ORr.BaseRate1,ORr.BaseRate2,DefaultCurRoundOff);
+  end;  
+// orsumup end       
+       ORr.CreateDate = CurrentDate;
+       ORr.CreateTime = CurrentTime;
+        ORr.CustCode = CustCode;
+        ORr.Addr0 = CustName;
+        ORr.PayDeal = PayDeal;
+        ORr.ShipDeal = ShipDeal;
+        ORr.ShipMode = ShipMode;  
+        ORr.ANACode = ANACode;
+        if (ORr.SerNr==-1) then begin
+          ORr.SerNr = NextSerNr("EDIORVc",ORr.OrdDate,-1,false,"");            
+        end;
+        OR2r.SerNr = ORr.SerNr;
+        OR2r.VersionNr = ORr.VersionNr;
+        ORr.PriceList = plcode;                  
+        ORr.InvoiceToCode = invoicetocode;
+        if (ReadFirstMain(OR2r,2,true)==false) then begin
+          testf = RecordInsert(ORr,true);      
+        end;  
+        orcnt = 0;
+        RecordNew(ORr);
+        goto L77;        
+      end;
+      if (lstr=="CDT ") then begin
+        cuvatcode = "";
+        plcode = "";
+        rstr = Right(tstr,len(tstr) - 36);
+        StripEndingSpaces(rstr);        
+//        CustName = rstr;
+        mstr = MID(tstr,4,17);        
+        StripEndingSpaces(mstr);
+        CUr.ANACode = mstr;
+        keystr = "ANACode";
+        if (blank(CUr.ANACode)) then begin
+          mstr = MID(tstr,46,40);        
+          StripEndingSpaces(mstr); 
+          CUr.Name = mstr;         
+          keystr = "Name";
+        end;        
+        if (ReadFirstKey(keystr,CUr,1,true)) then begin
+          cuvatcode = CUr.VATCode;       
+          invoicetocode = CUr.Code;
+        end;
+      end;
+      if (lstr=="CLO ") then begin
+        mstr = MID(tstr,17,13);
+        StripEndingSpaces(mstr);
+        CUr.ANACode = mstr;
+        keystr = "ANACode";
+        if (blank(CUr.ANACode)) then begin
+          mstr = MID(tstr,31,6);
+          StripEndingSpaces(mstr);
+          CUr.ANACode = mstr;
+          keystr = "ANACode";
+        end;
+        if (ReadFirstKey(keystr,CUr,1,true)) then begin
+          CustCode = CUr.Code;
+          CustName = CUr.Name;
+          PayDeal = CUr.PayDeal;
+          ShipDeal = CUr.ShipDeal;
+          ShipMode = CUr.ShipMode;
+          ANACode = CUr.ANACode;   
+          ORr.Addr1 = CUr.InvAddr0;
+          ORr.Addr2 = CUr.InvAddr1;
+          ORr.Addr3 = CUr.InvAddr2;                 
+          ORr.ShipAddr0 = CUr.DelAddr0;                 
+          ORr.ShipAddr1 = CUr.DelAddr1;                 
+          ORr.ShipAddr2 = CUr.DelAddr2;  
+          PriceBasedOn = CUr.PriceBasedOn;     
+          plcode = CUr.PLCode;                              
+        end;
+      end;
+      if (lstr=="CLOB") then begin
+        rstr = Right(tstr,len(tstr) - 4);
+//        ORr.ShipAddr1 = rstr;
+      end;            
+      if (lstr=="ORD ") then begin
+        i = 40;
+        mstr = MID(tstr,4,18);
+        StripEndingSpaces(mstr);
+        ORr.CustOrdNr = mstr;
+        mstr = Left(ORr.CustOrdNr,1);             
+        if (mstr=="A") then begin
+          i = i + 1;
+        end;
+        mstr = MID(tstr,i,6);
+        GetDateString(mstr);
+        orddate = StringToDate(mstr);
+        ORr.OrdDate = orddate;
+      end;      
+      if (lstr=="DIN ") then begin
+        mstr  = MID(tstr,4,6);
+        GetDateString(mstr);
+        deldate = StringToDate(mstr);
+        ORr.PlanShip = deldate;
+        ORr.PlanShipDate = deldate;
+      end;                  
+      if (lstr=="DINA") then begin
+        mstr  = MID(tstr,4,40);
+        ORr.ShipAddr0 = mstr;
+      end;                  
+      if (lstr=="DINB") then begin
+        mstr  = MID(tstr,4,40);
+        ORr.ShipAddr1 = mstr;
+      end;                  
+      if (lstr=="DINC") then begin
+        mstr  = MID(tstr,4,40);
+        ORr.ShipAddr2 = mstr;
+      end;                  
+      if (lstr=="DIND") then begin
+        mstr  = MID(tstr,4,40);
+        ORr.ShipAddr3 = mstr;
+      end;                  
+      if (lstr=="OLD ") then begin
+        mstr  = MID(tstr,4,13);
+        StripEndingSpaces(mstr); 
+        barcode = mstr;
+      end;                  
+      if (lstr=="OLDA") then begin
+        mstr  = MID(tstr,20,20);
+        StripEndingSpaces(mstr); 
+        itemexistf = false;
+        INr.Code = "";               
+        INr.AlternativeCode = mstr;
+        itemexistf = ReadFirstKey("AlternativeCode",INr,1,true);
+        if (itemexistf==false) then begin
+          INr.Code = "";               
+          INr.BarCode = barcode;
+          itemexistf = ReadFirstKey("BarCode",INr,1,true);
+        end;
+        if (itemexistf) then begin                       
+          ORrw.ArtCode = INr.Code;
+          pricef = false;
+          pldeffound = false;
+          PLDr.PLReplCode = plcode;
+          if ((PriceBasedOn==0) or (PriceBasedOn==2)) then begin
+            PLDr.StartDate = orddate;   
+            testd = orddate;
+          end;
+          if (PriceBasedOn==1) then begin
+            if (PDbl.FieldType==1) then begin
+              PLDr.StartDate = deldate;        
+              testd = deldate;
+            end else begin
+              PLDr.StartDate = orddate;                    
+              testd = orddate;
+            end;
+          end;
+          if (ReadLastKey("PLReplCode",PLDr,2,false)) then begin 
+            if (DateInRange(testd,PLDr.StartDate,PLDr.EndDate)) then begin
+              tplcode = PLDr.Code;
+              pldeffound = true;
+            end;
+          end;
+          if (pldeffound==false) then begin
+            PLDr.Code = plcode;
+            if (ReadFirstMain(PLDr,1,true)) then begin             
+            end;          
+          end;        
+          PLr.ArtCode = ORrw.ArtCode;
+          PLr.PLCode = tplcode;                    
+          if (ReadFirstMain(PLr,2,true)) then begin          
+            ORrw.Price = PLr.ExVatPrice; 
+            pricef = true;
+          end;                            
+          if (pricef==false) then begin                
+            ORrw.Price = INr.UPrice1; 
+          end;
+          ORrw.BasePrice = INr.InPrice;
+          ORrw.PriceFactor = INr.PriceFactor;
+          ORrw.SalesAcc = INr.SalesAcc;
+          ORrw.Objects = FindINObjects(INr.Objects,INr.Group);
+          ORrw.Spec = INr.Name;
+          if (nonblank(cuvatcode)) then begin
+            ORrw.VATCode = cuvatcode;
+          end else begin
+            ORrw.VATCode = INr.VATCode;
+          end;  
+          rowf = true;          
+        end;                                            
+        tstr = ImportField();
+        testf = NextImportLine(false);        
+        lstr = Left(tstr,4);             
+        if (lstr=="OLDB") then begin
+          mstr  = MID(tstr,4,15);
+          ORrw.Quant = StringToVal(mstr,M4Val);
+          tstr = ImportField();
+          testf = NextImportLine(false);          
+          lstr = Left(tstr,4); 
+          /*            
+          if (lstr=="OLDC") then begin
+            mstr  = MID(tstr,4,40);
+            StripEndingSpaces(mstr);        
+            ORrw.Spec = mstr;
+          end; 
+          */                         
+        end;                  
+      end;                  
+    end;  
+    if (rowf) then begin
+      ORrw.stp = 1;
+      CalcSum(ORrw.Quant,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,t,GenOptRec.UseDiscount);  
+      ORrw.Sum = t;
+      CalcRowGP(ORr,ORrw.VATCode,ORrw.ArtCode,ORrw.Quant,ORrw.BasePrice,ORrw.PriceFactor,ORrw.Sum,ORrw.Price,t);  
+      ORrw.rowGP = t;          
+      MatRowPut(ORr,orcnt,ORrw);
+      orcnt = orcnt + 1;
+    end;  
+L77:;    
+  end;  
+  RETURN;
+END;

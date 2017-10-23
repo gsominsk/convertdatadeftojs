@@ -1,0 +1,187 @@
+external function Integer IVTestApprovalStatus(record IVVc);
+external updating function Integer CreateMailFromIVD(record IVVc,var record MailVc,var string,Boolean,string);
+external updating function Integer CreateMailFromIVArray(array LongInt,var record MailVc,var string,Boolean,string);
+external updating procedure IVCreateHtmlFile(record IVVc,record MailVc,Boolean);
+
+procedure AddInvoiceToArea(record IVVc IVr,var array string custcodes,var vector LongInt custindexes,var vector LongInt custinvcnt,var area invoices)
+begin
+  LongInt i,pos;
+  area a1,a2;
+  
+  if (custindexes[IVr.CustCode]==-1) then begin
+    custcodes[custcodes.length] = IVr.CustCode;
+    custindexes[IVr.CustCode] = GetAreaLength(invoices);
+    custinvcnt[IVr.CustCode] = 1;
+    AddLongToArea(IVr.SerNr,invoices);
+  end else begin
+    pos = custindexes[IVr.CustCode] + custinvcnt[IVr.CustCode] * 4;
+    if (pos<GetAreaLength(invoices)) then begin
+      GetAreaFromArea(invoices,0,pos,a1);
+      GetAreaFromArea(invoices,pos,GetAreaLength(invoices) - pos,a2);
+      SetAreaZeroSize(invoices);
+      AddAreaToArea(a1,invoices);
+      AddLongToArea(IVr.SerNr,invoices);
+      AddAreaToArea(a2,invoices);
+    end else begin
+      AddLongToArea(IVr.SerNr,invoices);
+    end;
+    custinvcnt[IVr.CustCode] = custinvcnt[IVr.CustCode] + 1;
+    
+    pos = -1;
+    for (i = 0; i<custcodes.length; i = i + 1) begin
+      if (custcodes[i]==IVr.CustCode) then begin
+        pos = i;
+        i = custcodes.length;
+      end;
+    end;
+    
+    if (pos>=0) then begin
+      for (i = pos + 1; i<custcodes.length; i = i + 1) begin
+        custindexes[custcodes[i]] = custindexes[custcodes[i]] + 4;
+      end;
+    end;
+  end;
+end;
+
+updating procedure CreateMailsFromInvoiceArea(array string custcodes,vector LongInt custindexes,vector LongInt custinvcnt,area invoices,Boolean sendf)
+begin
+  record IVVc IVr;
+  record IVVc oldIVr;
+  record MailVc Mailr,OldMailr;
+  LongInt i,i2;
+  string 255 tstr;
+  array LongInt IVSerNrs;
+  
+  for (i = 0; i<custcodes.length; i = i + 1) begin
+    ClearArray(IVSerNrs);
+    for (i2 = 0; i2<custinvcnt[custcodes[i]]; i2 = i2 + 1) begin
+      IVSerNrs[IVSerNrs.length] = GetLongFromArea(invoices,custindexes[custcodes[i]] + i2 * 4);
+    end;
+    
+    RecordNew(Mailr);
+    if (CreateMailFromIVArray(IVSerNrs,Mailr,tstr,false,"")==0) then begin
+      for (i2 = 0; i2<IVSerNrs.length; i2 = i2 + 1) begin
+        IVr.SerNr = IVSerNrs[i2];
+        if (ReadFirstMain(IVr,1,true)) then begin
+          RecordCopy(oldIVr,IVr);
+          IVr.Prntdf = 1;
+          RecordUpdate(oldIVr,IVr,false);
+        end;
+      end;
+      if (sendf) then begin
+        RecordCopy(OldMailr,Mailr);
+        Mailr.SendFlag = 1;
+        RecordUpdate(OldMailr,Mailr,true);
+      end;
+    end;
+  end;
+end;
+
+global
+updating procedure IVToMailMn(record RcVc RepSpec)
+begin
+  record IVVc IVr;
+  record IVVc oldIVr;
+  Boolean found,testf;
+  LongInt friv,toiv;
+  string 255 frcu,tocu;
+  record CUVc CUr;
+  string 255 ckey,tstr;
+  record MailVc Mailr,OldMailr;
+  record ARVc ARr;
+  string 255 fname,docname;
+  array string 255 custcodes;
+  vector LongInt custindexes;
+  vector LongInt custinvcnt;
+  area invoices;
+  
+  friv = FirstInRange(RepSpec.f2,10);
+  toiv = LastInRange(RepSpec.f2,10);
+  frcu = FirstInRange(RepSpec.f1,10);
+  tocu = LastInRange(RepSpec.f1,10);
+  if (nonblank(RepSpec.f2)) then begin
+    ckey = "SerNr";
+    IVr.SerNr = friv;
+  end else begin
+    ckey = "TransDate";
+    IVr.TransDate = RepSpec.sStartDate;
+  end;
+  found = true;
+  while (LoopKey(ckey,IVr,1,found)) begin
+    if (nonblank(RepSpec.f2)) then begin
+      if (IVr.SerNr>toiv) then begin found = false; end;
+    end else begin
+      if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin found = false; end;
+    end;
+    if (found) then begin
+      testf = true;
+      if (DateInRange(IVr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin testf = false; end;
+      if (nonblank(RepSpec.f1)) then begin
+        if (IVr.CustCode<frcu) then begin testf = false; end;
+        if (IVr.CustCode>tocu) then begin testf = false; end;
+      end;
+      if (RepSpec.flags[8]==0 and IVr.OKFlag==0) then begin testf = false; end;
+      if (IVr.Invalid!=0) then begin testf = false; end;
+      if (testf and RepSpec.flags[0]!=0) then begin
+        ARr.InvoiceNr = IVr.SerNr;
+        testf = ReadFirstMain(ARr,1,true);
+      end;
+      if (testf) then begin
+        CUr.Code = IVr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin
+        end;
+        if (nonblank(RepSpec.f3)) then begin
+          if (CUr.JobDesc!=RepSpec.f3) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.FirstAcc) and (RepSpec.FirstAcc!=CUr.CustCat)) then begin testf = false; end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (SetInSet(RepSpec.f4,CUr.Classification)==false) then begin testf = false; end;
+        end;  
+      end;
+      if (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+        if (RepSpec.flags[4]==0) then begin
+          testf = false;
+        end;
+      end;
+      if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        if (RepSpec.flags[5]==0) then begin
+          testf = false;
+        end;
+      end;
+      if (IVr.InvType==kInvoiceTypeInterest) then begin
+        if (RepSpec.flags[6]==0) then begin
+          testf = false;
+        end;
+      end;
+      if ((IVr.InvType!=kInvoiceTypeCash and IVr.InvType!=kInvoiceTypeCashInvoiceReceiptPRT) and (IVr.InvType!=kInvoiceTypeCredit and IVr.InvType!=kInvoiceTypeCreditSpecialSales) and (IVr.InvType!=kInvoiceTypeInterest)) then begin
+        if (RepSpec.flags[3]==0) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        testf = IVTestApprovalStatus(IVr)==0;
+      end;
+      if (testf) then begin
+        if (RepSpec.flags[7]!=0) then begin
+          AddInvoiceToArea(IVr,custcodes,custindexes,custinvcnt,invoices);
+        end else begin
+          RecordNew(Mailr);
+          if (CreateMailFromIVD(IVr,Mailr,tstr,false,"")==0) then begin
+            RecordCopy(oldIVr,IVr);
+            IVr.Prntdf = 1;
+            RecordUpdate(oldIVr,IVr,false);
+            if (RepSpec.flags[1] != 0) then begin
+              RecordCopy(OldMailr,Mailr);
+              Mailr.SendFlag = 1;
+              RecordUpdate(OldMailr,Mailr,true);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if (RepSpec.flags[7]!=0) then begin
+    CreateMailsFromInvoiceArea(custcodes,custindexes,custinvcnt,invoices,RepSpec.flags[1]!=0);
+  end;
+  return;
+end;

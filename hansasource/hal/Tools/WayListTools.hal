@@ -1,0 +1,138 @@
+external function Integer CountObjects(string);
+external procedure WayListVc_PasteCarCode(var record WayListVc);
+
+global
+function string 100 GetWayListDistUnit()
+begin
+  string 100 res;
+  record WLSettingsBlock WLSettingsRec;
+  
+  BlockLoad(WLSettingsRec);
+  res = StringFromSet(451,WLSettingsRec.DistUnit);
+  
+  GetWayListDistUnit = res;
+  return;
+end;
+
+global
+function Boolean WayListVc_FindLastUnfinished(var record WayListVc WayListr)
+begin
+  Boolean res,TrHs;
+  Date d;
+  row WayListVc WayListrw;
+  
+  d.day = 99;
+  d.month = 99;
+  d.year = 9999;
+  ResetLoop(WayListr);
+  WayListr.TransDate = d;
+  TrHs = true;
+  
+  while (LoopBackKey("TransDate",WayListr,1,TrHs)) begin
+    if (MatRowCnt(WayListr)>0) then begin
+      MatRowGet(WayListr,0,WayListrw);
+      if (WayListrw.Endkm==blankval) then begin
+        res = true;
+        TrHs = false;
+      end;
+    end;
+  end;
+  
+  WayListVc_FindLastUnfinished = res;
+  return;
+end;
+
+global
+updating procedure WayListVc_DeleteRecords()
+begin
+  record WLSettingsBlock WLSettingsRec;
+  LongInt RecCnt;
+  record WayListVc WayListr;
+  
+  BlockLoad(WLSettingsRec);
+  if (WLSettingsRec.MaxRecCnt>0) then begin
+    RecCnt = CountRecords("WayListVc");
+    while (RecCnt>WLSettingsRec.MaxRecCnt) begin
+      WayListr.SerNr = 0;
+      ReadFirstMain(WayListr,1,false);
+      RecordDelete(WayListr);
+      RecCnt = RecCnt - 1;
+    end;
+  end;
+  
+  return;
+end;
+
+global
+procedure WayListVc_PastePRCode(var record WayListVc WLr,Integer rownr)
+begin
+  record PRVc PRr;
+  row WayListVc WLrw;
+  
+  if (rownr<0) then begin
+    PRr.Code = WLr.PRCode;
+    if (ReadFirstMain(PRr,1,true)) then begin
+      WLr.Objects = PRr.Objects;
+    end;  
+  end else begin
+    MatRowGet(WLr,rownr,WLrw);
+    PRr.Code = WLrw.PRCode;
+    if (ReadFirstMain(PRr,1,true)) then begin
+      WLrw.CUCode = PRr.CustCode;
+      WLrw.CUName = PRr.Name;
+      WLrw.Objects = PRr.Objects;
+      MatRowPut(WLr,rownr,WLrw);
+    end;  
+  end;
+  return;
+end;
+
+global
+updating function Integer RecordAction_raPasteActInWayList(var record WayListVc WayListr,var record ActVc Actr)
+begin
+  record WLCarVc WLCarr;
+  row WayListVc WayListrw;
+  Integer res;
+  LongInt newnr;
+  string 200 errstr,warning;
+  
+  res = -1;
+  if (ReadFirstMain(Actr,0,true)) then begin end;  
+  RecordNew(WayListr);
+  WayListr.PRCode = Actr.PRCode;
+  if (CountObjects(Actr.MainPersons)==1) then begin 
+    WLCarr.UsedBy   = Actr.MainPersons;
+    if ReadFirstKey("UsedBy",WLCarr,1,true) then begin 
+      WayListr.CarCode = WLCarr.CarCode;
+      WayListVc_PasteCarCode(WayListr);
+    end;
+  end;  
+  WayListr.SDate = AddDay(CurrentDate,-GetDay(CurrentDate)+1);
+  WayListr.EDate = AddDay(AddMonth(WayListr.SDate,1),-1);
+  
+  WayListrw.WDate = Actr.TransDate;
+  WayListrw.CUCode = Actr.CUCode;
+  WayListrw.CUName = Actr.CUName;
+  MatRowPut(WayListr,0,WayListrw);
+  
+  WayListrw.WDate = Actr.EndDate;
+  WayListrw.CUCode = Actr.CUCode;
+  WayListrw.CUName = Actr.CUName;
+  MatRowPut(WayListr,1,WayListrw);
+
+  if (WayListr.SerNr==-1) then begin
+    WayListr.SerNr = NextSerNr("WayListVc",CurrentDate,newnr,false,"");
+    
+    if (WayListr.SerNr==-1) then begin 
+      goto LRecordAction_raPasteActInWayList; 
+    end;
+  end;  
+  if (RecordStore(WayListr,false)) then begin end;
+  res = 1;
+  CreateRecordLink(WayListr,CurrentCompany,Actr,CurrentCompany);
+  CreateRecordLink(Actr,CurrentCompany,WayListr,CurrentCompany);
+  
+LRecordAction_raPasteActInWayList:;
+  RecordAction_raPasteActInWayList = res;
+  return;
+end;

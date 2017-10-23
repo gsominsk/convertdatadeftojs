@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fUserCode: { public: true, type: 'TEXT' },
+     fTransDate: { public: true, type: 'DATE' },
+     fTransTime: { public: true, type: 'TIME' },
+     fOperation: { public: true, type: 'TEXT' },
+     fProduct: { public: true, type: 'TEXT' },
+     fReleaseType: { public: true, type: 'TEXT' },
+     fDistribution: { public: true, type: 'TEXT' },
+     fPlatform: { public: true, type: 'TEXT' },
+     fCountries: { public: true, type: 'TEXT' },
+     fLanguages: { public: true, type: 'TEXT' },
+     fResult1: { public: true, type: 'TEXT' },
+     fResult2: { public: true, type: 'TEXT' },
+     fResult3: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex796: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

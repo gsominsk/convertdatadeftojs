@@ -1,0 +1,309 @@
+external function LongInt DateDiff(Date,Date);
+external function val HoursDiff(Date,Time,Date,Time);
+external procedure HT2Per(Date, Date , var string);
+external function Boolean IsCancelState(String);
+external function val TimeToVal2(Time);
+external function LongInt TimeToMinutes(Time);
+external procedure SplitEclass(string,var Array string);
+
+global
+procedure AddToCleanArray(record RcVc RepSpec,LongInt maxdays,string rescode,string restype,var Array Integer Dirty,var Array Integer Checkins,var Array Integer Checkouts)
+begin
+  record JobVc Jobr;
+  Date dt;
+  Boolean foundf,testf;
+  Integer rw,i,rwcnt;
+  string 255 tstr;
+  Integer lenclass;
+  Date blankd;
+
+  lenclass = 4;
+LAddToCleanArray:;
+  ResetLoop(Jobr);
+  Jobr.ResCode = rescode;
+  Jobr.LengthClass = lenclass;
+  Jobr.TransDate = RepSpec.sStartDate;
+  switch (lenclass) begin
+    case 4: Jobr.TransDate = blankd;
+    case 3: Jobr.TransDate = AddDay(Jobr.TransDate,-366);
+    case 2: Jobr.TransDate = AddDay(Jobr.TransDate,-31);
+    case 1: Jobr.TransDate = AddDay(Jobr.TransDate,-7);
+    case 0: ;
+  end;
+  foundf = true;
+  while (LoopKey("CalResStartTime",Jobr,3,foundf)) begin
+    if (Jobr.TransDate>RepSpec.sEndDate) then begin foundf = false; end;
+    if (Jobr.ResCode!=rescode) then begin foundf = false; end;
+    if (Jobr.LengthClass!=lenclass) then begin foundf = false; end;
+    testf = true;
+    if (foundf==false) then begin
+      testf = false;
+    end;
+    if (Jobr.Type!=restype) then begin testf = false; end;
+    if (IsCancelState(Jobr.ResStatus)) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      dt = RepSpec.sStartDate;
+      for (i=1;i<=maxdays;i=i+1) begin
+        if ((dt>Jobr.TransDate) and (dt<Jobr.EndDate)) then begin
+          Dirty[i] = Dirty[i] + 1;
+        end;
+        if (dt==Jobr.TransDate) then begin
+          Checkins[i] = Checkins[i] + 1;
+        end;
+        if (dt==Jobr.EndDate) then begin
+          Checkouts[i] = Checkouts[i] + 1;
+        end;
+        dt = AddDay(dt,1);
+      end;
+    end;
+  end;
+  lenclass = lenclass - 1;
+  if (lenclass>=0) then begin goto LAddToCleanArray;end;
+  return;
+end;
+
+procedure AddToCleanTimeArray(Time TimeToClean,Time TimeToCleanChOut,LongInt maxdays,var Array LongInt Level1,var Array LongInt Level2,var Array LongInt Level3,
+                              Array Integer Dirty,Array Integer Checkins,Array Integer Checkouts)
+begin
+  LongInt t,t2;
+  Integer i;
+  LongInt tcout,tc;
+  
+  tc = TimeToMinutes(TimeToClean);
+  tcout = TimeToMinutes(TimeToCleanChOut);
+  for (i=1;i<=maxdays;i=i+1) begin
+    if (tcout>0) then begin
+      if (Checkouts[i]>0) then begin
+        t2 = Checkouts[i];
+        t = t2 - Checkins[i];
+        if (t<0) then begin
+          t = 0;
+        end;
+        Level1[i] = Level1[i] + (tcout * (t2 - t));
+        Level3[i] = Level3[i] + (tcout * t);
+      end;
+    end;
+    if (tc>0) then begin
+      if (Dirty[i]>0) then begin
+        t2 = Dirty[i];
+        Level2[i] = Level2[i] + (tc * t2);
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure AddCleanersToArray(record RcVc RepSpec,LongInt maxdays,array string ac,var Array LongInt Cleaners,var Array LongInt Userhours)
+begin
+  Integer i,j;
+  record ActVc Actr;
+  string 200 ckey;
+  Boolean TrHs,testf;
+  Date dt;
+  
+  j = 0;
+  while (nonblank(ac[j])) begin
+    ResetLoop(Actr);
+    ckey = "UserMain:" & ac[j];
+    Actr.TodoFlag = 0;
+    Actr.TransDate = RepSpec.sStartDate;
+    Actr.OKFlag = 0;
+    TrHs = true;
+    while (LoopKey(ckey,Actr,2,TrHs)) begin
+      if (TrHs) then begin
+        if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin TrHs = false; end;
+      end;
+      testf = true;
+      if (TrHs==false) then begin testf = false; end;
+      if (Actr.TodoFlag!=0) then begin testf = false; end;
+      if (Actr.CalTimeFlag==0) then begin testf = false; end;
+      if (Actr.OKFlag!=0) then begin testf = false; end;
+      if (testf) then begin
+        dt = RepSpec.sStartDate;
+        for (i=1;i<=maxdays;i=i+1) begin
+          if (dt==Actr.TransDate) then begin
+            Cleaners[i] = Cleaners[i] + TimeToMinutes(Actr.CostTime);
+          end;
+          dt = AddDay(dt,1);
+        end;
+        Userhours[j] = Userhours[j] + TimeToMinutes(Actr.CostTime);
+      end;
+    end;
+    j = j + 1;
+  end;
+  return;
+end;
+
+procedure OutLongAsTime(Integer pos,LongInt mins)
+begin
+  LongInt hours,themin;
+  string 20 minstr;
+  
+  hours = mins / 60;
+  themin = mins - (hours * 60);
+  if (themin<10) then begin
+    minstr = "0" & themin;
+  end else begin
+    minstr = "" & themin;
+  end;
+  OutString(pos,0,"" & hours & ":" & minstr,true);
+  return;
+end;
+
+global
+procedure HousePlanningRn(record RcVc RepSpec)
+begin
+  record ResVc Resr;
+  record ResTypeVc ResTyper;
+  record UserVc USr;
+  record HouseKeepingBlock HKr;
+  record CalDispGroupBlock DGr;
+  row CalDispGroupBlock DGrw;
+  Date dt;
+  Boolean foundf,found2f;
+  Integer rw,i,rwcnt;
+  string 255 tstr;
+  Array Integer Dirty;
+  Array Integer Checkins;
+  Array Integer Checkouts;
+  LongInt maxdays;
+  Integer lenclass;
+  Array LongInt Level1;
+  Array LongInt Level2;
+  Array LongInt Level3;
+  Array LongInt Cleaners;
+  LongInt tot1,tot2,tot3,totclean;
+  Array string 20 ac;
+  Array LongInt Userhours;
+
+  rw = 1;
+  BlockLoad(HKr);
+  BlockLoad(DGr);
+  StartReportJob(USetStr(12140));
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw=rw+1;
+  EndHeader;
+  maxdays = DateDiff(RepSpec.sEndDate,RepSpec.sStartDate) + 1;
+  SetRepCol(2,120);
+  SetRepCol(3,210);
+  SetRepCol(4,300);
+  SetRepCol(5,390);
+  tot1 = 0;
+  tot2 = 0;
+  tot3 = 0;
+  totclean = 0;
+  rwcnt = MatRowCnt(DGr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(DGr,i,DGrw);
+    if (DGrw.Code==HKr.CleanerDispGr) then begin
+      SplitEclass(DGrw.DefStr,ac);
+      i = rwcnt;
+    end;
+  end;
+  i = 0;
+  while (nonblank(ac[i])) begin
+    Userhours[i] = 0;
+    i = i + 1;
+  end;
+  for (i=1;i<=maxdays;i=i+1) begin
+    Dirty[i] = 0;
+    Checkins[i] = 0;
+    Checkouts[i] = 0;
+    Level1[i] = 0;
+    Level2[i] = 0;
+    Level3[i] = 0;
+    Cleaners[i] = 0;
+  end;
+  ResTyper.Code = "";
+  foundf = true;
+  while (LoopMain(ResTyper,1,foundf)) begin
+    AddToCleanArray(RepSpec,maxdays,"",ResTyper.Code,Dirty,Checkins,Checkouts);
+    found2f = true;
+    Resr.Code = "";
+    Resr.Type = ResTyper.Code;
+    while (LoopKey("Type",Resr,1,found2f)) begin
+      if (Resr.Type!=ResTyper.Code) then begin found2f = false; end;
+      if (found2f) then begin
+        AddToCleanArray(RepSpec,maxdays,Resr.Code,ResTyper.Code,Dirty,Checkins,Checkouts);
+      end;
+    end;
+    AddToCleanTimeArray(ResTyper.TimeToClean,ResTyper.TimeToCleanChOut,maxdays,Level1,Level2,Level3,Dirty,Checkins,Checkouts);
+/* Debugging
+    StartFormat(15);
+    OutString(0,0,ResTyper.Code,false);
+    for (i=1;i<=maxdays;i=i+1) begin
+      OutString(20+(i*30),0,"" & Checkins[i] & " " & Dirty[i] & " " & Checkouts[i],false);
+    end;
+    EndFormat;
+*/
+    for (i=1;i<=maxdays;i=i+1) begin
+      Dirty[i] = 0;
+      Checkins[i] = 0;
+      Checkouts[i] = 0;
+    end;
+  end;
+  AddCleanersToArray(RepSpec,maxdays,ac,Cleaners,Userhours);
+  StartFormat(15);
+  OutString(0,0,USetStr(12146),false);
+  OutString(2,0,USetStr(12141),true);
+  OutString(3,0,USetStr(12142),true);
+  OutString(4,0,USetStr(12143),true);
+  OutString(5,0,USetStr(12144),true);
+  OutString(1,0,USetStr(12145),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  dt = RepSpec.sStartDate;
+  for (i=1;i<=maxdays;i=i+1) begin
+    StartFormat(15);
+    OutDate(0,"DblAssignCleanRn",dt,false);
+    OutLongAsTime(2,Level2[i]);
+    OutLongAsTime(3,Level1[i]);
+    OutLongAsTime(4,Level3[i]);
+    OutLongAsTime(5,Level1[i] + Level2[i] + Level3[i]);
+    OutLongAsTime(1,Cleaners[i]);
+    EndFormat;
+    tot1 = tot1 + Level1[i];
+    tot2 = tot2 + Level2[i];
+    tot3 = tot3 + Level3[i];
+    totclean = totclean + Cleaners[i];
+    dt = AddDay(dt,1);
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  OutLongAsTime(2,tot2);
+  OutLongAsTime(3,tot1);
+  OutLongAsTime(4,tot3);
+  OutLongAsTime(5,tot1 + tot2 + tot3);
+  OutLongAsTime(1,totclean);
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  EndFormat;
+
+  StartFormat(15);
+  OutString(0,0,USetStr(12147),false);
+  OutString(80,0,USetStr(12148),false);
+  OutString(1,0,USetStr(12149),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  
+  i = 0;
+  while (nonblank(ac[i])) begin
+    USr.Code = ac[i];
+    if (ReadFirstMain(USr,1,true)) then begin
+      StartFormat(15);
+      OutStringID(0,"DblNewCleanActVc",USr.Code,false,RepSpec.sStartDate);
+      OutString(80,0,USr.Name,false);
+      OutLongAsTime(1,Userhours[i]);
+      EndFormat;
+    end;
+    i = i + 1;
+  end;
+  Gray_Divider(0,1);
+  EndJob;
+  return;
+end;
+

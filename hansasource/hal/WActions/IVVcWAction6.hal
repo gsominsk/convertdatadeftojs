@@ -1,0 +1,584 @@
+external procedure IVDClass_RefreshStringList(Integer,record IVVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function roundmode SetRoundModeD(Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+remote function Integer IVTestApprovalStatus(record IVVc);
+external function Boolean IVApprovalStarted(record IVVc);
+external procedure DisplayIVThankYouAction();
+external procedure Base1ToOther(var string,val,val,val,val,val,val,var val,roundmode);
+//moved from IVVcWAction2.hal as it became to huge to be compiled
+remote procedure IVSumup(var record IVVc,Boolean);
+external procedure IVVc_PasteItem(record IVVc,Integer,Integer);
+external function Boolean IVVc_PasteQuantity(var record IVVc,Integer);
+external procedure DisplayIVItem(record IVVc,Integer);
+external procedure IVPasteItem(string,Integer,LongInt);
+external function Integer ArgEInvLock(record IVVc,integer);
+
+global
+function Boolean IVDClassExportFlagButtonAfter(Integer wn,Boolean changedf)
+begin        
+  record IVVc IVr;  
+  Boolean res;
+
+  GetWindowRecord(wn,IVr);
+  DeselectWindow(wn,false);
+  IVSumup(IVr,true); // This code can never be called anyway....
+  PutWindowRecord(wn,IVr);
+  IVDClassExportFlagButtonAfter = res;  
+  return;
+end;
+
+global 
+function Boolean IVDClassInsertRowTest(Integer wn, Integer rownr)
+BEGIN
+  Boolean res;
+  record IVVc IVr;
+  row IVVc IVrw;
+
+  res = true;
+  switch (WindowState(wn)) begin
+    case 0://Rs_normal
+      GetWindowRecord(wn,IVr);
+      if (IVApprovalStarted(IVr) and UserCanAction("ChangeRecordMatrixWhenPending",false)==false) then begin res = false; end;
+      if (IVr.OKFlag!=0) then begin res = false; end;
+      if (HasLocalization("ARG")) then begin
+        if (ArgEInvLock(IVr,wn)!=kArgentinianInvoiceLockNone) then begin res = false; end;
+      end;
+      
+//      if (IVr.COCUSerNr>0) then begin res = false; end;
+    case 1://Rs_insert
+      res = true;
+    case 2://Rs_update
+      GetPrevWindowRecord(wn,IVr);
+      if (IVApprovalStarted(IVr) and UserCanAction("ChangeRecordMatrixWhenPending",false)==false) then begin res = false; end;
+      if (IVr.OKFlag!=0) then begin res = false; end;
+      if (HasLocalization("ARG")) then begin
+        if (ArgEInvLock(IVr,wn)!=kArgentinianInvoiceLockNone) then begin res = false; end;
+      end;
+
+//      if (IVr.COCUSerNr>0) then begin res = false; end;
+    otherwise
+      res = false;
+  end;
+  if (res) then begin
+    MatRowGet(IVr,rownr,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        res = false;
+      case kInvoiceRowTypeDebtorsTransfer:
+        res = false;
+    end;
+  end;
+  IVDClassInsertRowTest = res;
+  RETURN;
+END;
+
+global 
+function Boolean IVDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  Boolean res,puf;
+  record RahaxiBlock Rahaxib; 
+  record LocalMachineBlock LMb;
+  record INVc INr;
+  Integer i,rwcnt;
+
+  res = true;
+
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,IVr);    
+    if (IVr.OKFlag!=0) then begin res = false; end;
+    if (HasLocalization("ARG")) then begin
+      if (ArgEInvLock(IVr,wn)!=kArgentinianInvoiceLockNone) then begin res = false; end;
+    end;  
+    if (IVApprovalStarted(IVr) and UserCanAction("ChangeRecordMatrixWhenPending",false)==false) then begin res = false; end;
+    if (res==false) then begin goto LIVDClassDeleteRowTest; end;
+    if (rownr!=-1) then begin
+      GetWindowRecord(wn,IVr); // IVr is now Current record, not prev...
+      MatRowGet(IVr,rownr,IVrw);
+      if (nonblank(IVrw.ArtCode)) then begin
+        if (IVr.InvType!=kInvoiceTypeCredit and IVr.InvType!=kInvoiceTypeCreditSpecialSales and IVr.COCUSerNr>0) then begin res = false; end;
+        if (IVr.RoyaltyIVFlag!=0) then begin res = false; end;
+      end;
+      if (IVrw.stp==kInvoiceRowTypeWithholdingTax) then begin
+        res = false;
+      end;
+      if (nonblank(IVrw.RvrsVATCode)) then begin
+        if (IVrw.OrdRow>=0) then begin res = false; end;
+      end;
+      if (res==false) then begin goto LIVDClassDeleteRowTest; end;
+      if (res) then begin
+        if (IVrw.stp==kInvoiceRowTypeCreditCardPayment) then begin
+          //BlockLoad(Rahaxib);
+          //res = (Rahaxib.TerminalType==kLocalCCTerminalNone) or blank(IVrw.AuthorizationCode);
+          res = blank(IVrw.AuthorizationCode);
+        end;
+        if (IVrw.stp==kInvoiceRowTypeRetention) then begin
+          res = false;
+          goto LIVDClassDeleteRowTest;
+        end;
+      end;
+    end;
+    if (res) then begin    
+      if (TouchScreenInterface) then begin
+        if (UserCanAction("AllowIVTSRowsDelete",true)==false) then begin
+          MatRowGet(IVr,rownr,IVrw);
+          if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+            res = false;
+          end;
+        end;
+        if (UserCanAction("AllowIVTSRowsVoid",false)) then begin
+          MatRowGet(IVr,rownr,IVrw);
+          if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+            BlockLoad(LMb);
+            IVrw.ovst = 1;
+            MatRowPut(IVr,rownr,IVrw);            
+            if (LMb.IncrementalReceiptPrinting!=0) then begin
+              IVrw.ovst = 0;
+              IVrw.stp = kInvoiceRowTypeVoid;
+              IVrw.VoidedRowNr = rownr;
+              IVrw.VoidedSign = CurrentUser;
+              MatRowInsert(IVr,rownr+1,IVrw);
+            end else begin
+              IVrw.ovst = 0;
+              IVrw.stp = kInvoiceRowTypeUpdateMark;
+              IVrw.VoidedRowNr = rownr;
+              IVrw.VoidedSign = CurrentUser;
+              MatRowInsert(IVr,rownr+1,IVrw);
+            end;
+            IVSumup(IVr,true);
+            PutWindowRecord(wn,IVr);    
+            res = false;
+          end;
+        end; 
+        
+      end;
+    end;    
+  end else begin
+    if (rownr!=-1) then begin 
+      GetWindowRecord(wn,IVr);     
+      if (IVr.OKFlag!=0) then begin res = false; end;
+      if (HasLocalization("ARG")) then begin
+        if (WindowState(wn)==Rs_normal) then begin   //to skip problems with multiple line deleting in case of new record
+          if (ArgEInvLock(IVr,wn)!=kArgentinianInvoiceLockNone) then begin res = false; end;
+        end;  
+      end;
+      if (IVApprovalStarted(IVr) and UserCanAction("ChangeRecordMatrixWhenPending",false)==false) then begin res = false; end;
+      MatRowGet(IVr,rownr,IVrw);
+      if (IVrw.stp==5) then begin//otherwise one cannot raise downpay invoice from an order
+        res = false;
+      end;
+      if (IVrw.stp==kInvoiceRowTypeWithholdingTax) then begin
+        res = false;
+      end;
+      if (res==false) then begin goto LIVDClassDeleteRowTest; end;
+      if (res) then begin
+        if (IVrw.stp==kInvoiceRowTypeCreditCardPayment) then begin
+          //BlockLoad(Rahaxib);          
+          //res = (Rahaxib.TerminalType==kLocalCCTerminalNone) or blank(IVrw.AuthorizationCode);
+          res = blank(IVrw.AuthorizationCode);
+        end;
+        if (IVrw.stp==kInvoiceRowTypeRetention) then begin
+          res = false;
+          goto LIVDClassDeleteRowTest;
+        end;
+      end;      
+      if (res) then begin    
+        if (TouchScreenInterface) then begin
+          if (UserCanAction("AllowIVTSRowsDelete",true)==false) then begin
+            MatRowGet(IVr,rownr,IVrw);
+            if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+              res = false;
+            end;
+          end;
+          if (UserCanAction("AllowIVTSRowsVoid",false)) then begin
+            MatRowGet(IVr,rownr,IVrw);
+            if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+              BlockLoad(LMb);
+              IVrw.ovst = 1;
+              MatRowPut(IVr,rownr,IVrw);
+            
+              if (LMb.IncrementalReceiptPrinting!=0) then begin
+                ClearRow(IVr,IVrw,kInvoiceRowTypeVoid);
+                IVrw.ovst = 0;
+                IVrw.stp = kInvoiceRowTypeVoid;
+                IVrw.VoidedRowNr = rownr;
+                IVrw.VoidedSign = CurrentUser;
+                MatRowInsert(IVr,rownr+1,IVrw);
+              end else begin
+                ClearRow(IVr,IVrw,kInvoiceRowTypeUpdateMark);
+                IVrw.ovst = 0;
+                IVrw.stp = kInvoiceRowTypeUpdateMark;
+                IVrw.VoidedRowNr = rownr;
+                IVrw.VoidedSign = CurrentUser;
+                MatRowInsert(IVr,rownr+1,IVrw);
+              end;
+              IVSumup(IVr,true);
+              PutWindowRecord(wn,IVr);    
+              IVDClass_RefreshStringList(wn,IVr);
+              res = false;
+            end;
+          end; 
+        end;
+      end;    
+    end;    
+  end;
+  if (res) then begin
+    MatRowGet(IVr,rownr,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        res = false;
+      case kInvoiceRowTypeDebtorsTransfer:
+        res = false;
+    end;
+  end;
+  if (res) then begin
+    MatRowGet(IVr,rownr,IVrw);
+    if (IVrw.Quant!=0) then begin
+      if (ReadFirstItem(IVrw.ArtCode,INr,false,false)) then begin
+        if (INr.ItemType==kItemTypeStructured) then begin
+          if (INr.ExplodeRec!=0) then begin
+            rwcnt = MatRowCnt(IVr);
+            i = rownr + 1;
+            while (i<rwcnt) begin
+              MatRowGet(IVr,i,IVrw); 
+              if (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) then begin
+                MatRowDelete(IVr,i);
+                puf = true;
+              end else begin
+                i = rwcnt;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (puf) then begin
+      PutWindowRecord(wn,IVr);    
+    end;
+  end;
+LIVDClassDeleteRowTest:;  
+  IVDClassDeleteRowTest = res;
+  return;
+end;
+
+global 
+function Boolean IVDClassOverStrikeTest(Integer wn,Integer rownr)
+begin
+  IVDClassOverStrikeTest = IVDClassDeleteRowTest(wn,rownr);
+  return;
+end;
+
+
+global
+procedure IVDClassAddItemRow(string incode)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  LongInt wn,rwn;
+  
+  wn = CurWindow;
+  IVPasteItem(incode,wn,1);
+  
+  return;
+end;
+
+global
+procedure iPhoneINSClassAddItem()
+begin
+  longint wn;
+  longint mwn;
+  string 255 itemid;
+  record INVc INr;
+  boolean foundf;
+  
+  wn = CurWindow;
+  mwn = MotherWindow(wn);
+  itemid = GetWindowString(wn,"AddItemID");
+  
+  foundf = false;
+  
+  if (itemid=="") then begin
+    goto out;
+  end;
+  
+  INr.AlternativeCode = itemid;
+  
+  if (ReadFirstKey("AlternativeCode",INr,1,true)) then begin
+    if (INr.AlternativeCode==itemid) then  begin
+      foundf = true;
+      goto out;
+    end;
+  end;
+  
+  INr.Code = itemid;
+  
+  if (ReadFirstMain(INr,1,true)) then begin
+    if (INr.Code==itemid) then  begin
+      foundf = true;
+      goto out;
+    end;
+  end;
+  
+out:;
+  if (foundf) then begin
+    IVPasteItem(INr.Code,mwn,1);
+    CloseWindow(wn);
+  end;
+end;
+
+global
+procedure InvoiceCalculateFreightWeight(record IVVc IVp,var val FrBase,var val FrGP,var val FrPrice)
+BEGIN
+  record FreightWeightBlock FreightWeightRec;
+  row FreightWeightBlock FreightWeightrw;
+  row IVVc IVrw;
+  record INVc INr;
+  Integer i,rwcnt;
+  val totwt,t;
+  
+  BlockLoad(FreightWeightRec);
+  rwcnt = MatRowCnt(IVp);
+  for (i = 0 ; i<rwcnt ; i=i+1) begin
+    MatRowGet(IVp,i,IVrw);
+    INr.Code = IVrw.ArtCode;
+    if (ReadFirstMain(INr,1,true)) then begin// if (GetFirstItem(IVrw.ArtCode,&INr)) then begin
+      t = IVrw.Quant * INr.Weight;
+      totwt = totwt + t;
+    end;
+  end;
+  FrBase = blankval;
+  FrGP = blankval;
+  FrPrice = blankval;
+  if (totwt!=0) then begin
+    rwcnt = MatRowCnt(FreightWeightRec);
+    for (i=0; i<rwcnt; i=i+1) begin
+      MatRowGet(FreightWeightRec,i,FreightWeightrw);
+      if (FreightWeightrw.TotWeight<=totwt) then begin
+        FrBase = FreightWeightrw.TotFreight;
+        FrGP = FreightWeightrw.TotFreight;
+        Base1ToOther(IVp.CurncyCode,FrBase,IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,FrPrice,DefaultCurRoundOff);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Integer IVLClassRowColor(record IVVc IVr)
+begin
+  Integer res;
+  record ARVc ARr;
+  
+  res = kRowColorNone;
+  
+  ARr.InvoiceNr = IVr.SerNr;
+  
+  if (ReadFirstMain(ARr,1,true)) then begin
+    if (ARr.DueDate<CurrentDate) then begin
+      res = kRowcolorRed;
+    end else begin
+      //res = kRowcolorYellow;
+    end;
+  end else begin
+    if (IVr.OKFlag) then begin
+      res = kRowcolorGreen;
+    end;
+  end;
+  
+  IVLClassRowColor = res;
+  return;
+end;
+
+
+global
+function Boolean IVDClassOKFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record IVVc IVr;
+  Integer err;
+  record EInvoiceQueVc EIQuer;
+  
+  res = true;
+  GetWindowRecord(wn,IVr);
+  err = IVTestApprovalStatus(IVr);
+  if (err!=0) then begin
+    MessageBox(err,"");
+    res = false;
+    goto LIVDClassOKFlagButtonAction;
+  end;
+  if (WindowState(wn)==Rs_normal) then begin
+    if (IVr.OKFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==Rs_update) then begin
+    GetPrevWindowRecord(wn,IVr);
+    if (IVr.OKFlag!=0 or (nonblank(IVr.CAE) and IVr.CAEAFlag==0)) then begin
+      res = false;
+    end;
+    if (HasLocalization("MEX")) then begin
+      if (IVr.OKFlag!=0) then begin
+        EIQuer.FileName = "MexIVVc";
+        EIQuer.RecSerNr = IVr.SerNr;
+        if (ReadLastKey("RecVersionNr",EIQuer,2,true)) then begin
+          res = false;
+        end;
+      end;
+    end;
+  end;
+  if (res) then begin
+    DisplayIVThankYouAction;
+  end;
+LIVDClassOKFlagButtonAction:;  
+  IVDClassOKFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+procedure CalculateIVVcPoints(var record IVVc IVr)
+begin 
+  record LoyaltyPointsVc LPr;
+  row LoyaltyPointsVc LPrw;
+  Integer li,lrwcnt;
+  val t,sum;
+  record LocLoyaltyPointsVc LLPr;
+  row LocLoyaltyPointsVc LLPrw;
+  Boolean found,testf,calculatedf;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  record INVc INr;
+  roundmode rnd;
+
+  IVr.Points = blankval;
+  if (nonblank(IVr.LoyaltyCardNr)) then begin
+    rnd = DefaultValRoundoff;
+    rnd.decimals = 0;
+    rnd.mode = kRoundingModeTruncate;
+    
+    LLPr.Location = IVr.Location;
+    LLPr.LCMLevel = IVr.LCMLevel;
+    found = ReadFirstMain(LLPr,2,true);
+    if (found==false) then begin
+      LLPr.Location = IVr.Location;
+      found = ReadFirstMain(LLPr,1,true);
+    end;
+    rwcnt = MatRowCnt(IVr);
+    t = MulRateToBase1(IVr.CurncyCode,IVr.Sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+    if (found) then begin
+      if (LLPr.MinAmount>0) then begin
+        if (t<LLPr.MinAmount) then begin
+          goto LCalculateIVVcPoints;
+        end;
+      end;
+      lrwcnt = MatRowCnt(LLPr);
+      if (lrwcnt==0) then begin
+        IVr.Points = (LLPr.Points/LLPr.Amount) * Round(t,rnd);
+      end else begin
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) or (IVrw.stp==kInvoiceRowTypeVoid) then begin
+            sum = IVrw.Sum;
+            if (IVrw.stp==kInvoiceRowTypeVoid) then begin
+              sum = -sum;
+            end;
+            calculatedf = false;
+            for (li=0;li<lrwcnt;li=li+1) begin
+              MatRowGet(LLPr,li,LLPrw);
+              rnd = DefaultValRoundoff;
+              rnd.decimals = LLPrw.RndTo;
+              rnd.mode = kRoundingModeTruncate;
+              testf = false;
+              switch (LLPrw.CodeType) begin
+                case 0:
+                  if (ReadFirstItem(IVrw.ArtCode,INr,true,true)) then begin 
+                    if (INr.Group==LLPrw.ITCode) then begin
+                      testf = true;
+                    end;  
+                  end;
+                case 1:
+                  if (IVrw.ArtCode==LLPrw.ITCode) then begin
+                    testf = true;
+                  end;  
+              end;
+              if (testf) then begin
+                t = MulRateToBase1(IVr.CurncyCode,sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                IVr.Points = IVr.Points + (LLPrw.Points/LLPrw.Amount) * Round(t,rnd);
+                li = lrwcnt;
+                calculatedf = true;
+              end;
+            end;
+            if (calculatedf==false) then begin
+              t = MulRateToBase1(IVr.CurncyCode,sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+              IVr.Points = IVr.Points + (LLPr.Points/LLPr.Amount) * Round(t,rnd);
+            end;
+          end;
+        end;
+      end;
+    end else begin
+      LPr.LCMLevel = IVr.LCMLevel;
+      found = ReadFirstMain(LPr,1,true);
+      if (found==false) then begin
+        LPr.LCMLevel = "";
+        found = ReadFirstMain(LPr,1,true);
+      end;
+      if (found) then begin
+        if (LPr.MinAmount>0) then begin
+          if (t<LPr.MinAmount) then begin
+            goto LCalculateIVVcPoints;
+          end;
+        end;
+        lrwcnt = MatRowCnt(LPr);
+        if (lrwcnt==0) then begin    
+          IVr.Points = (LPr.Points/LPr.Amount) * Round(t,rnd);
+        end else begin
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(IVr,i,IVrw);
+            if (IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) or (IVrw.stp==kInvoiceRowTypeVoid) then begin
+              sum = IVrw.Sum;
+              if (IVrw.stp==kInvoiceRowTypeVoid) then begin
+                sum = -sum;
+              end;
+              calculatedf = false;
+              for (li=0;li<lrwcnt;li=li+1) begin
+                MatRowGet(LPr,li,LPrw);
+                rnd = DefaultValRoundoff;
+                rnd.decimals = LLPrw.RndTo;
+                rnd.mode = kRoundingModeTruncate;
+                testf = false;
+                switch (LPrw.CodeType) begin
+                  case 0:
+                    if (ReadFirstItem(IVrw.ArtCode,INr,true,true)) then begin 
+                      if (INr.Group==LPrw.ITCode) then begin
+                        testf = true;
+                      end;  
+                    end;
+                  case 1:
+                    if (IVrw.ArtCode==LPrw.ITCode) then begin
+                      testf = true;
+                    end;  
+                end;
+                if (testf) then begin
+                  t = MulRateToBase1(IVr.CurncyCode,sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                  IVr.Points = IVr.Points + (LPrw.Points/LPrw.Amount) * Round(t,rnd);
+                  calculatedf = true;
+                  li = lrwcnt;
+                end;
+              end;
+              if (calculatedf==false) then begin
+                t = MulRateToBase1(IVr.CurncyCode,sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                IVr.Points = IVr.Points + (LPr.Points/LPr.Amount) * Round(t,rnd);
+              end;
+            end;
+          end;        
+        end;
+      end;
+    end;
+  end;  
+LCalculateIVVcPoints:;  
+  return;
+end; 

@@ -1,0 +1,576 @@
+remote updating procedure SMCreatePlannedPayment(record SMVc);
+external procedure RecordActionSM_Print(var record SMVc,string,Boolean);
+external procedure SMSumup(var record SMVc);
+remote procedure SMAccName(var record SMVc,Integer,Boolean);
+remote procedure PasteAccObj(string,var string);
+remote function Boolean AutoTransSM(var record SMVc,Integer);
+remote updating function Boolean StoreSMOnEnterKey(var record SMVc);
+remote function Boolean SMVc_PasteAccNumber(var record SMVc,Integer,Integer,Boolean);
+remote procedure SMVc_PasteCurncyCode(var record SMVc,Integer);
+remote procedure SMVc_PasteCurCredVal(var record SMVc,Integer);
+remote procedure SMVc_PasteCurDebVal(var record SMVc,Integer);
+remote procedure SMVc_PasteCredVal2(var record SMVc,Integer);
+remote procedure SMVc_PasteCredVal(var record SMVc,Integer);
+remote procedure SMVc_PasteDebVal2(var record SMVc,Integer);
+remote procedure SMVc_PasteDebVal(var record SMVc,Integer);
+remote function Boolean SMVc_PasteObjects(var record SMVc,Integer);
+external function Boolean DateTest(Date);
+external function Boolean WarnOldRecords(Date,string,LongInt);
+external function Boolean DateLocked(Date,string);
+external function Boolean DateWarned(Date,string);
+remote updating function Integer RecordAction_rlSMLBook(var record SMVc);
+
+global
+procedure SMBal(record SMVc SMp,var val rp,Integer skiprow)
+BEGIN
+  Integer i,rwcnt;
+  val Bal;
+  row SMVc SMrw;
+
+  rwcnt = MatRowCnt(SMp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    if (i!=skiprow) then begin
+      MatRowGet(SMp,i,SMrw);
+      Bal = Bal + SMrw.DebVal;
+      Bal = Bal - SMrw.CredVal;
+    end;
+  end;
+  rp = Bal; 
+  RETURN;
+END;
+
+procedure SMDDefault(var record SMVc SMp,Integer rownr)
+BEGIN
+  Integer rwcnt;
+  val ct;
+  row SMVc SMrw;
+
+  rwcnt = MatRowCnt(SMp);
+  if ((rownr!=-1) and (rownr<rwcnt)) then begin
+    MatRowGet(SMp,rownr,SMrw);
+    ct = 0;
+    SMrw.DebVal = ct;
+    SMrw.CredVal = ct;
+    SMBal(SMp,ct,rownr);
+    ct = -ct;
+    if (ct>=0) then begin
+      SMrw.DebVal = ct;
+      SMrw.CredVal = blankval;
+    end else begin
+      SMrw.DebVal = blankval;
+      SMrw.CredVal = -ct;
+    end;
+//    fn = sf+row*nfr+3;
+//    if (TestNegVal(&ct)) then fn = fn+1;
+    MatRowPut(SMp,rownr,SMrw);
+    SMSumup(SMp);
+  end;
+  RETURN;
+END;
+
+function LongInt SMDEnterSpec(var record SMVc SMp,Integer wnst,Integer rownr,string fieldname,var Integer whattodoafter,var string gotofieldname,var Integer gotorownr)
+BEGIN
+  LongInt res;
+  record CYBlock CompYear;
+  row SMVc SMrw;
+  Integer acccol,debcol,textcol;
+
+  res = -1;
+  if (rownr<0) then begin
+    goto LSMDEnterSpec;
+  end;
+  BlockLoad(CompYear);
+  res = -1;
+//  if (TrDNewEF!=0) then begin
+//    newf = TrDNewEF;
+//    goto L99;
+//  end;  
+    MatRowGet(SMp,rownr,SMrw);
+      switch (fieldname) begin
+        case "AccNumber":
+            if (blank(SMrw.AccNumber)) then begin
+               if (wnst==1) then begin
+                 whattodoafter = 1;
+                 gotofieldname = "TransDate";
+                 gotorownr = -1;
+               end else begin
+                 whattodoafter = 2;
+               end;
+            end else begin
+              if ((blank(SMrw.DebVal)) and (nonblank(SMrw.CredVal))) then begin
+                gotorownr = rownr;
+                gotofieldname = "CredVal";
+              end else begin
+                gotorownr = rownr;
+                gotofieldname = "DebVal";
+              end;
+              if (CompYear.trSkipCom==0) then begin 
+                gotorownr = rownr;
+                gotofieldname = "Comment";
+              end;
+              if (CompYear.trSkipObj==0) then begin
+                gotorownr = rownr;
+                gotofieldname = "Objects";
+              end;
+            end;     
+            res = 0;                  
+          case "Objects":
+            if ((blank(SMrw.DebVal)) and
+                (nonblank(SMrw.CredVal))) then begin
+              gotorownr = rownr;
+              gotofieldname = "CredVal";
+            end else begin
+              gotorownr = rownr;
+              gotofieldname = "DebVal";
+            end;
+            if (CompYear.trSkipCom==0) then begin 
+              gotorownr = rownr;
+              gotofieldname = "Comment";
+            end;
+            res = 0;
+          case "DebVal":
+            if (nonblank(SMrw.DebVal)) then begin
+//              newf = sf+((row+1)*nfr);
+            end;
+          case "CredVal":
+            if ((blank(SMrw.CredVal)) and (blank(SMrw.DebVal))) then begin
+              SMDDefault(SMp,rownr);
+            end;
+            res = 0;
+            gotorownr = rownr+1;
+            gotofieldname = "AccNumber";
+//            res = sf+((row+1)*nfr);
+            
+      end;    
+LSMDEnterSpec:;
+  switch (fieldname) begin
+    case "Number":
+      whattodoafter = 0;
+      gotofieldname = "TransDate";
+      gotorownr = -1;
+      res = -2;
+    case "TransDate":
+      whattodoafter = 0;
+      gotofieldname = "RefStr";
+      gotorownr = -1;
+      res = -2;
+    case "RefStr":
+      whattodoafter = 0;
+      gotofieldname = "Comment";
+      gotorownr = -1;
+      res = -2;
+    case "Comment":
+//      whattodoafter = 0;
+//      gotofieldname = "AccNumber";
+      gotorownr = 0;
+//      res = -2;
+  end;
+  SMDEnterSpec = res;
+  RETURN;
+END;
+
+global
+procedure PrintSMD(Integer wn,Boolean previewf)
+BEGIN
+  record SMVc SMr;
+  record RcVc RepSpec;
+  record FormDefVc FDr;
+  
+  GetWindowRecord(wn,SMr);
+  FDr.repname = "SMForm";
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    RepSpec.repname = "Sim2Rn";
+    if (previewf) then begin
+      RepSpec.Media = mtScreen;
+    end else begin
+      RepSpec.Media = mtPrinter;
+    end;
+    RepSpec.JobDf = 0;
+    RepSpec.f1 = SMr.SerNr;
+    RepSpec.sStartDate = SMr.TransDate;
+    RepSpec.sEndDate = SMr.TransDate;
+    RunReport(RepSpec,0);
+  end else begin
+    RecordActionSM_Print(SMr,previewf,true);
+  end;
+  RETURN;
+END;
+
+global
+procedure PrintSML(Integer wn,Boolean previewf)
+BEGIN
+  record SMVc SMr;
+  record RcVc RepSpec;  
+  Integer i;
+  
+  i = 1;
+  while (GetRecordFromBrowse(SMr,wn,i)) begin
+    if (i==1) then begin
+      RepSpec.f1 = SMr.SerNr;
+    end;
+    i = i + 1;
+  end;
+  RepSpec.repname = "Sim2Rn";
+  RepSpec.Media = mtPrinter;
+  RepSpec.JobDf = 0;
+  if (nonblank(RepSpec.f1)) then begin
+    RepSpec.f1 = RepSpec.f1 & ":";
+  end;  
+  RepSpec.f1 = RepSpec.f1 & SMr.SerNr;
+  RunReport(RepSpec,0);
+  RETURN;
+END;
+
+global
+updating procedure TRFromSMLsm()
+BEGIN
+  Integer wn,nwn,res,i;
+  record SMVc SMr;
+
+  wn = CurWindow;
+  if (UserCanAction("SMToTrans",true)) then begin
+    i = 1;
+    while (GetRecordFromBrowse(SMr,wn,i)) begin
+      res = RecordAction_rlSMLBook(SMr);
+      if (res!=0) then begin
+        MessageBox(res," " & USetStr(21099) & " " & SMr.SerNr);
+      end;
+      i = i + 1;
+    end;
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"SMToTrans"));
+  end;
+  RETURN;
+END;
+
+function Boolean SMDClassTransDateEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    if (DateTest(SMr.TransDate)==false) then begin
+      MessageBox(1047,"");
+    end else begin
+      if (DateLocked(SMr.TransDate,"SMVc")) then begin
+        MessageBox(1046,"");
+      end else begin
+        if (DateWarned(SMr.TransDate,"SMVc")) then begin
+          MessageBox(1045,"");
+        end;
+        if (WarnOldRecords(SMr.TransDate,"SMVc",SMr.SerNr)) then begin
+          MessageBox(2020,"");
+        end;
+      end;
+    end;
+  end; 
+  SMDClassTransDateEFAfter = true;
+  return;
+end;
+
+function Boolean SMDClassObjectsEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    if (SMVc_PasteObjects(SMr,rownr)) then begin
+      PutWindowRecord(wn,SMr);
+    end else begin
+      Beep;
+    end;  
+  end;
+  SMDClassObjectsEFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassDebValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteDebVal(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassDebValEFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassDebVal2EFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteDebVal2(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassDebVal2EFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassCredValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteCredVal(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassCredValEFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassCredVal2EFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteCredVal2(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassCredVal2EFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassCurDebValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteCurDebVal(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassCurDebValEFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassCurCredValEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteCurCredVal(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassCurCredValEFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassCurncyCodeEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMr;
+  
+  if (changedf) then begin
+    GetWindowRecord(wn,SMr);
+    SMVc_PasteCurncyCode(SMr,rownr);
+    PutWindowRecord(wn,SMr);
+  end;
+  SMDClassCurncyCodeEFAfter = true;
+  RETURN;
+END;
+
+function Boolean SMDClassAccNumberEFAfter(Integer wn,Integer rownr,Boolean changedf)
+BEGIN
+  record SMVc SMp;
+  row SMVc SMrw;
+  string 255 tstr,t2;
+  Boolean res,autof;
+  
+  GetWindowRecord(wn,SMp);
+  MatRowGet(SMp,rownr,SMrw);
+  if (WindowState(wn)!=0) then begin//Rs_normal
+    if ((changedf) or (blank(SMrw.Comment))) then begin
+      if (AutoTransSM(SMp,rownr)) then begin 
+        autof = true; 
+      end;
+      MatRowGet(SMp,rownr,SMrw);   
+      res = true;
+    end;
+    if (changedf) then begin
+      if (blank(SMrw.Objects)) then begin
+        PasteAccObj(SMrw.AccNumber,tstr);
+        SMrw.Objects = tstr;
+        res = true;
+      end;
+    end;
+    tstr = USetStr(1023);
+    if ((changedf) or (SMrw.Comment==tstr) or (blank(SMrw.Comment))) then begin
+      MatRowPut(SMp,rownr,SMrw);
+      SMAccName(SMp,rownr,autof==false);
+      MatRowGet(SMp,rownr,SMrw);
+      res = true;
+    end;
+    t2 = USetStr(1023);
+    if (t2!=tstr) then begin
+      res = false;
+    end;  
+  end;
+  if (res) then begin
+    MatRowPut(SMp,rownr,SMrw);
+    PutWindowRecord(wn,SMp);
+  end;  
+  SMDClassAccNumberEFAfter = true;
+  RETURN;
+END;
+
+global
+function Boolean SMDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "TransDate": res = SMDClassTransDateEFAfter(wn,changed!=0);
+    case "Objects": res = SMDClassObjectsEFAfter(wn,rownr,changed!=0);
+    case "DebVal": res = SMDClassDebValEFAfter(wn,rownr,changed!=0);
+    case "DebVal2": res = SMDClassDebVal2EFAfter(wn,rownr,changed!=0);
+    case "CredVal": res = SMDClassCredValEFAfter(wn,rownr,changed!=0);
+    case "CredVal2": res = SMDClassCredVal2EFAfter(wn,rownr,changed!=0);
+    case "CurDebVal": res = SMDClassCurDebValEFAfter(wn,rownr,changed!=0);
+    case "CurCredVal": res = SMDClassCurCredValEFAfter(wn,rownr,changed!=0);
+    case "CurncyCode": res = SMDClassCurncyCodeEFAfter(wn,rownr,changed!=0);
+    case "AccNumber": res = SMDClassAccNumberEFAfter(wn,rownr,changed!=0);
+  end;
+  SMDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+updating function Boolean SMDClassOnEnterKey(var Integer wn,string fieldname,Integer fn,Integer rownr)
+BEGIN
+  Boolean res;
+  record SMVc SMr;
+  record SMVc newSMr;
+  LongInt newf;
+  Integer whattodoafter;
+  Integer nwn;
+  string 255 gotofieldname;
+  Integer gotorownr;
+  
+  res = false;
+  if ((WindowState(wn)==2) or (WindowState(wn)==1)) then begin//Rs_update,Rs_insert
+    GetWindowRecord(wn,SMr);
+    newf = SMDEnterSpec(SMr,WindowState(wn),rownr,fieldname,whattodoafter,gotofieldname,gotorownr);
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,newSMr);
+    if (MatRowCnt(newSMr)<=0) and (newf!=-2) then begin
+      goto LSMDClassOnEnterKey;
+    end;
+    switch (whattodoafter) begin
+      case 1:
+        if (StoreSMOnEnterKey(SMr)) then begin
+          CloseWindow(wn);
+          wn = OpenWindow("SMDClass",1,0,"","",SMr);          
+        end;
+      case 2:
+//                 DoOK(wn,false);      
+    end;
+    res = true;
+    if (newf!=-1) then begin
+      PutWindowRecord(wn,SMr);
+      WindowFieldGoto(wn,SMr,gotorownr,gotofieldname,true);
+      UpdateBrowses("SMVc");
+      res = false;
+    end;
+  end;
+LSMDClassOnEnterKey:;  
+  SMDClassOnEnterKey = res;
+  RETURN;
+END;
+
+global
+procedure BalanceSMDsm()
+BEGIN
+  Integer wn;
+  record SMVc SMr;
+  
+  wn = CurWindow; 
+  if (WindowState(wn)==1) then begin
+    GetWindowRecord(wn,SMr); 
+    DeselectWindow(wn,false);
+    SMDDefault(SMr,WindowActiveRow(wn));
+    PutWindowRecord(wn,SMr); 
+    WindowFieldGoto(wn,SMr,WindowActiveRow(wn),WindowActiveField(wn),true);
+  end;
+  RETURN;
+END;
+
+global
+function Boolean SMDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record SMVc SMr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,SMr);    
+    SMSumup(SMr);    
+    PutWindowRecord(wn,SMr);    
+  end;
+  SMDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global 
+function Boolean SMDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record SMVc SMr;
+  row SMVc SMrw;
+  Boolean res;
+  Integer insertmode;
+
+  res = true;
+  insertmode = 1;//Rs_insert
+  GetWindowRecord(wn,SMr);
+  if (WindowState(wn)!=insertmode) then begin
+    MatRowGet(SMr,rownr,SMrw);
+    if (SMrw.RowSimStat!=0) then begin
+      res = false;
+    end;
+    goto LSMDClassDeleteRowTest;
+  end;
+LSMDClassDeleteRowTest:;  
+  SMDClassDeleteRowTest = res;
+  return;
+end;
+/*
+global
+updating procedure PlannedPaymentSMDsm()
+begin
+  Integer wn;
+  record SMVc SMr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,SMr);
+  SMCreatePlannedPayment(SMr);
+  return;
+end;
+*/
+
+global
+function Boolean SMDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+begin
+  Boolean res;
+  record SMVc SMr;
+  row SMVC SMrw;
+  
+  res = true;
+  
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,SMr);
+    MatRowGet(SMr,rownr,SMrw);
+    if (SMrw.RowSimStat==1 or SMrw.RowSimStat==2) then begin //transferred or invalid
+      switch (fieldname) begin
+        case "RowSimStat":
+        otherwise
+          res = false;
+      end;
+    end;
+  end;
+  
+  SMDClassActiveEditField = res;
+  return;
+end;

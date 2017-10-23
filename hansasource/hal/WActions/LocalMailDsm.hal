@@ -1,0 +1,174 @@
+external procedure StripNonChars(var string,string);
+remote updating function Boolean RecListAction_rlLocalMailUnread(var record LocalMailVc);
+remote updating function Boolean RecordAction_raEMailQueLocalMail(var record LocalMailVc);
+
+global
+procedure MailHistoryLocalMailLsm()
+BEGIN
+  Integer wn;
+  record LocalMailVc LocalMailr;
+  record RcVc RepSpec;
+
+  wn = CurWindow;
+  if (ReadMarkedRecord(wn,LocalMailr)) begin  
+    RepSpec.long1 = LocalMailr.SerNr;
+    RepSpec.Media = mtScreen;
+    RepSpec.repname = "MailReadRn";
+    RunReport(RepSpec,0);
+  end;
+  RETURN;
+END;
+
+global
+procedure MailHistoryLocalMailDsm()
+BEGIN
+  Integer wn;
+  record LocalMailVc LocalMailr;
+  record RcVc RepSpec;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,LocalMailr);
+  RepSpec.long1 = LocalMailr.SerNr;
+  RepSpec.Media = mtScreen;
+  RepSpec.repname = "MailReadRn";
+  RunReport(RepSpec,0);
+  RETURN;
+END;
+
+global
+updating procedure EMailQueFromLocalMailDsm()
+BEGIN
+  record LocalMailVc LocalMailr;
+  Integer wn;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,LocalMailr);
+  if (WindowState(wn)==0) then begin//Rs_normal
+    if (RecordAction_raEMailQueLocalMail(LocalMailr)) then begin
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure LocalMailReplyDsm()
+BEGIN
+  Integer wn,nwn;
+  record LocalMailVc oldLocalMailr;
+  record LocalMailVc newLocalMailr;
+  row LocalMailVc marw1;
+  row LocalMailVc marw2;
+  string 255 tstr;
+  Integer i,rwcnt,j;
+  string 60 curmailbox;
+  
+  curmailbox = CurMailboxName;
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,oldLocalMailr);
+  rwcnt = MatRowCnt(oldLocalMailr);
+  if (rwcnt<2) then begin
+    MessageBox(1358,"");
+    goto LLocalMailReplyDsm;
+  end;
+  RecordNew(newLocalMailr);
+  newLocalMailr.SerNr = -1;
+  newLocalMailr.TransDate = CurrentDate;
+  newLocalMailr.TransTime = CurrentTime;
+
+  if (Left(oldLocalMailr.Header,4)=="Re: ") then begin
+    newLocalMailr.Header = oldLocalMailr.Header;  
+  end else begin
+    newLocalMailr.Header = "Re: " & oldLocalMailr.Header;
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldLocalMailr,i,marw1);
+    if (marw1.AddrCode==curmailbox) then begin
+      marw1.RowTyp = 1;
+      MatRowInsert(newLocalMailr,0,marw1);
+      i = rwcnt;
+    end;    
+  end;
+  j = 1;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(oldLocalMailr,i,marw1);
+    if (marw1.AddrCode!=curmailbox) then begin
+      marw1.RowTyp = 0;
+      MatRowPut(newLocalMailr,j,marw1);
+    end else begin
+      j = j - 1;
+    end;
+    j = j + 1;    
+  end;  
+  newLocalMailr.SendFlag = 0;
+  newLocalMailr.LockedFlag = 0;
+  nwn = OpenWindow("LocalMailDClass",1,0,"","",newLocalMailr);
+LLocalMailReplyDsm:;  
+  RETURN;
+END;
+
+global
+updating procedure MarknotReadLocalMailLsm()
+BEGIN
+  Integer wn,i;
+  record LocalMailVc LocalMailr;
+
+  wn = CurWindow;
+  i = 1;
+  while (GetRecordFromBrowse(LocalMailr,wn,i)) begin  
+    if (RecListAction_rlLocalMailUnread(LocalMailr)) then begin end;
+    i = i + 1;
+  end;
+  UpdateBrowses("LocalMailVc");
+  RETURN;
+END;
+
+global
+updating procedure MarknotReadLocalMailDsm()
+BEGIN
+  Integer wn,i;
+  record LocalMailVc LocalMailr;
+
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,LocalMailr);
+  if (RecListAction_rlLocalMailUnread(LocalMailr)) then begin end;
+  UpdateBrowses("LocalMailVc");
+  RETURN;
+END;
+
+global
+procedure SaveAsFileLocalMailDsm()
+BEGIN
+  Integer wn;
+  record LocalMailVc LocalMailr;
+  string 255 fName,tstr,nextchar;
+  Boolean res;
+  LongInt i,sz;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  GetWindowRecord(wn,LocalMailr);
+  StripNonChars(fName,LocalMailr.Header);
+  fName = SaveFileDialog(fName,"","TXT");
+  if (blank(fName)) then begin goto LSaveAsFileLocalMailDsm; end;
+  if (res==false) then begin
+//    Delete_File(fName);
+  end;
+  CreateFile(fName);
+  ExportPadString(LocalMailr.Header,len(LocalMailr.Header)," ",false);
+  ExportPadString(chr(13) & chr(10),2," ",false);  
+  sz = SizeTextCnt(LocalMailr);
+  for (i=0;i<=sz;i=i+1) begin
+    tstr = StringFromText(LocalMailr,i,1);
+    nextchar = StringFromText(LocalMailr,i+1,1);
+    ExportPadString(tstr,len(tstr)," ",false);
+ 
+    if (WindowsMode != 0 and LEFT(tstr,1) == chr(13) and LEFT(nextchar,1) != chr(10)) then begin 
+      ExportPadString(chr(10),1," ",false); 
+    end;
+  end;
+  CloseFile;
+LSaveAsFileLocalMailDsm:;  
+  RETURN; 
+END;

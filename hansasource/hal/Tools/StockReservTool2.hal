@@ -1,0 +1,988 @@
+external updating function Boolean DoAutoReserveIntORAll(record IntORVc,Integer);
+external updating function Boolean DoAutoReserveAll(record ORVc,Integer);
+external updating procedure SetStockReserveQty(string,string,string,val,Boolean);
+external updating function Integer CheckStockMovRecord(var record StockMovVc,record StockMovVc,LongInt,LongInt,Boolean,
+                                                      var LongInt,var string,var integer,var string,boolean);
+updating procedure SumupReservations(string artcode,string location)
+begin
+  record StockReservVc StockReservr;
+  record StockReservVc prevStockReservr;
+  record StockReservVc oldStockReservr;
+  Boolean foundf,testf,firstf;
+  
+  StockReservr.Donef = 0;
+  StockReservr.ArtCode = artcode;
+  firstf = true;
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,2,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=artcode) then begin foundf = false; end;
+    testf = foundf;
+    if (StockReservr.FromLocation!=location) then begin
+      testf = false;
+    end;
+    if (StockReservr.Quant - StockReservr.QuantDone<=0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      if (firstf) then begin
+        RecordCopy(prevStockReservr,StockReservr);
+        firstf = false;
+      end else begin
+        if ((prevStockReservr.ArtCode==StockReservr.ArtCode) and (prevStockReservr.IntoLocation==StockReservr.IntoLocation) and
+            (prevStockReservr.FromFileName==StockReservr.FromFileName) and (prevStockReservr.FromSerNr==StockReservr.FromSerNr) and
+            (prevStockReservr.ToFileName==StockReservr.ToFileName) and (prevStockReservr.ToSerNr==StockReservr.ToSerNr) and
+            (prevStockReservr.TransDate==StockReservr.TransDate) and (prevStockReservr.FromLocation==StockReservr.FromLocation) and
+            (prevStockReservr.SerialNr==StockReservr.SerialNr) and (prevStockReservr.PrioLevel==StockReservr.PrioLevel)) then begin
+          RecordCopy(oldStockReservr,prevStockReservr);
+          prevStockReservr.Quant = prevStockReservr.Quant + StockReservr.Quant;
+          prevStockReservr.QuantDone = prevStockReservr.QuantDone + StockReservr.QuantDone;
+          if (RecordUpdate(oldStockReservr,prevStockReservr,false)==0) then begin
+          end;
+          RecordDelete(StockReservr);
+          StepBack(StockReservr);
+        end else begin
+          RecordCopy(prevStockReservr,StockReservr);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure UpdateDeficiencyStock(LongInt oldnr,LongInt newnr)
+begin
+  record DfncyStockVc DfncyStockr;
+  record DfncyStockVc oldDfncyStockr;
+  
+  DfncyStockr.StockReservNr = oldnr;
+  if (ReadFirstKey("StockReservNr",DfncyStockr,1,true)) begin
+    RecordCopy(oldDfncyStockr,DfncyStockr);
+    DfncyStockr.StockReservNr = newnr;
+    if (RecordUpdate(oldDfncyStockr,DfncyStockr,false)==0) then begin
+    end;
+  end;
+  return;
+end;
+
+updating procedure DeleteDeficiencyStock(LongInt delnr)
+begin
+  record DfncyStockVc DfncyStockr;
+  
+  DfncyStockr.StockReservNr = delnr;
+  if (ReadFirstKey("StockReservNr",DfncyStockr,1,true)) begin
+    RecordDelete(DfncyStockr);
+  end;
+  return;
+end;
+
+updating procedure DoReleaseReservation(record StockReservVc delStockReservr)
+begin
+  record StockReservVc StockReservr;
+  record StockReservVc newStockReservr;
+  record StockReservVc oldStockReservr;
+  Boolean res,foundf,testf,afoundf;
+  LongInt firstnewser;
+  string 40 location;
+  array Integer afnam;
+  array LongInt aser;
+  array val arem;
+  Integer acnt,i;
+  val t,blval;
+  
+  if (StockReservr.ToFileName!=kResTypeMakeNewPO) then begin
+    RecordCopy(StockReservr,delStockReservr);
+    acnt = 0;
+    afnam[acnt] = StockReservr.ToFileName;
+    aser[acnt] = StockReservr.ToSerNr;
+    arem[acnt] = StockReservr.Quant - StockReservr.QuantDone;
+    acnt = acnt + 1;
+    foundf = true;
+
+    while (LoopKey("ArtCode",StockReservr,2,foundf)) begin//5
+      if (StockReservr.Donef!=0) then begin foundf = false; end;
+      if (StockReservr.ArtCode!=delStockReservr.ArtCode) then begin foundf = false; end;
+      if (StockReservr.SerNr==firstnewser) then begin foundf = false; end;
+      testf = foundf;
+      if (StockReservr.SerNr==delStockReservr.SerNr) then begin
+        testf = false;
+      end;
+      if (StockReservr.FromLocation!=delStockReservr.FromLocation) then begin
+        testf = false;
+      end;
+      if (StockReservr.Quant - StockReservr.QuantDone<=0) then begin
+        testf = false;
+      end;
+      if (StockReservr.ToFileName==kResTypeMakeNewPO) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        RecordCopy(oldStockReservr,StockReservr);
+        t = StockReservr.Quant - StockReservr.QuantDone;
+        afoundf = false;
+        for (i=0;i<acnt;i=i+1) begin
+          if (afnam[i]==StockReservr.ToFileName and aser[i]==StockReservr.ToSerNr) then begin
+            arem[i] = arem[i] + t;
+            afoundf = true;
+          end;
+        end;
+        if (afoundf==false) then begin
+          afnam[acnt] = StockReservr.ToFileName;
+          aser[acnt] = StockReservr.ToSerNr;
+          arem[acnt] = t;
+          acnt = acnt + 1;
+        end;
+        for (i=0;i<acnt;i=i+1) begin
+          t = StockReservr.Quant - StockReservr.QuantDone;
+          if (arem[i]>0) then begin
+            if (arem[i]>=t) then begin
+              StockReservr.ToFileName = afnam[i];
+              StockReservr.ToSerNr = aser[i];
+              arem[i] = arem[i] - t;
+              StockReservr.SerNr = NextSerNr("StockReservVc",StockReservr.TransDate,-1,false,""); // Yep, new numbers to make room for new available numbers, to keep order
+              if (RecordUpdate(oldStockReservr,StockReservr,false)==0) then begin
+              end;
+              UpdateDeficiencyStock(oldStockReservr.SerNr,StockReservr.SerNr);
+              if (firstnewser<=0) then begin
+                firstnewser = StockReservr.SerNr;
+              end;
+              StepBack(StockReservr);
+              i = acnt;
+            end else begin
+              RecordCopy(newStockReservr,StockReservr);
+              newStockReservr.ToFileName = afnam[i];
+              newStockReservr.ToSerNr = aser[i];
+              newStockReservr.Quant = arem[i] + newStockReservr.QuantDone;
+              arem[i] = 0;
+              newStockReservr.SerNr = NextSerNr("StockReservVc",newStockReservr.TransDate,-1,false,"");
+              if (RecordStore(newStockReservr,false)) then begin
+              end;
+              SetStockReserveQty(newStockReservr.ArtCode,newStockReservr.SerialNr,newStockReservr.FromLocation,newStockReservr.Quant-newStockReservr.QuantDone,false);
+              if (firstnewser<=0) then begin
+                firstnewser = newStockReservr.SerNr;
+              end;
+              StockReservr.Quant = StockReservr.Quant - newStockReservr.Quant;
+              StockReservr.QuantDone = blval;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  SetStockReserveQty(delStockReservr.ArtCode,delStockReservr.SerialNr,delStockReservr.FromLocation,delStockReservr.Quant-delStockReservr.QuantDone,false);
+  RecordDelete(delStockReservr);
+  DeleteDeficiencyStock(delStockReservr.SerNr);
+  if (StockReservr.ToFileName!=kResTypeMakeNewPO) then begin
+    SumupReservations(delStockReservr.ArtCode,delStockReservr.FromLocation);
+  end;
+  return;
+end;
+
+updating procedure DoMoveReservationUp(var record StockReservVc theStockReservr)
+begin
+  record StockReservVc StockReservr;
+  record StockReservVc newStockReservr;
+  record StockReservVc oldStockReservr;
+  record StockReservVc oldtheStockReservr;
+  Boolean res,foundf,testf,treatedf;
+  LongInt firstnewser;
+  string 40 location;
+  array Integer afnam;
+  array LongInt aser;
+  array val arem;
+  Integer acnt,i;
+  val t,blval;
+  
+  RecordCopy(oldtheStockReservr,theStockReservr);
+  theStockReservr.PrioLevel = theStockReservr.PrioLevel - 1;
+  RecordCopy(StockReservr,theStockReservr);
+  acnt = 0;
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,5,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=theStockReservr.ArtCode) then begin foundf = false; end;
+    testf = foundf;
+    if (StockReservr.FromLocation!=theStockReservr.FromLocation) then begin
+      testf = false;
+    end;
+    if (StockReservr.ToFileName==kResTypeMakeNewPO) then begin
+      testf = false;
+    end;
+    if (StockReservr.Quant - StockReservr.QuantDone<=0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      afnam[acnt] = StockReservr.ToFileName;
+      aser[acnt] = StockReservr.ToSerNr;
+      arem[acnt] = StockReservr.Quant - StockReservr.QuantDone;
+      acnt = acnt + 1;
+    end;
+    if (StockReservr.SerNr==theStockReservr.SerNr) then begin foundf = false; end; // If I have read myself, no more reads are neccesary...
+  end;
+  if (RecordUpdate(oldtheStockReservr,theStockReservr,false)==0) then begin
+  end;
+  ResetLoop(StockReservr);
+  RecordCopy(StockReservr,theStockReservr);
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,5,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=theStockReservr.ArtCode) then begin foundf = false; end;
+    testf = foundf;
+    if (StockReservr.FromLocation!=theStockReservr.FromLocation) then begin
+      testf = false;
+    end;
+    if (StockReservr.Quant - StockReservr.QuantDone<=0) then begin
+      testf = false;
+    end;
+    if (firstnewser>0) then begin
+      if (StockReservr.SerNr>=firstnewser) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      treatedf = false;
+      RecordCopy(oldStockReservr,StockReservr);
+      for (i=0;i<acnt;i=i+1) begin
+        t = StockReservr.Quant - StockReservr.QuantDone;
+        if (arem[i]>0) then begin
+          if (arem[i]>=t) then begin
+            StockReservr.ToFileName = afnam[i];
+            StockReservr.ToSerNr = aser[i];
+            arem[i] = arem[i] - t;
+            StockReservr.SerNr = NextSerNr("StockReservVc",StockReservr.TransDate,-1,false,""); // Yep, new numbers to make room for new available numbers, to keep order
+            if (RecordUpdate(oldStockReservr,StockReservr,false)==0) then begin
+            end;
+            if (firstnewser<=0) then begin
+              firstnewser = StockReservr.SerNr;
+            end;
+            StepBack(StockReservr);
+            i = acnt;
+          end else begin
+            RecordCopy(newStockReservr,StockReservr);
+            newStockReservr.ToFileName = afnam[i];
+            newStockReservr.ToSerNr = aser[i];
+            newStockReservr.Quant = arem[i] + newStockReservr.QuantDone;
+            arem[i] = 0;
+            newStockReservr.SerNr = NextSerNr("StockReservVc",newStockReservr.TransDate,-1,false,"");
+            if (RecordStore(newStockReservr,false)) then begin
+            end;
+            SetStockReserveQty(newStockReservr.ArtCode,newStockReservr.SerialNr,newStockReservr.FromLocation,newStockReservr.Quant-newStockReservr.QuantDone,false);
+            if (firstnewser<=0) then begin
+              firstnewser = newStockReservr.SerNr;
+            end;
+            StockReservr.Quant = StockReservr.Quant - newStockReservr.Quant;
+            StockReservr.QuantDone = blval;
+          end;
+          treatedf = true;
+        end;
+      end;
+      if (treatedf==false) then begin // To give all records After the ones that were effected by the move, new serial numbers to keep order...
+        StockReservr.SerNr = NextSerNr("StockReservVc",StockReservr.TransDate,-1,false,""); // Yep, new numbers to make room for new available numbers, to keep order
+        if (RecordUpdate(oldStockReservr,StockReservr,false)==0) then begin
+        end;
+        if (firstnewser<=0) then begin
+          firstnewser = StockReservr.SerNr;
+        end;
+        StepBack(StockReservr);
+      end;
+    end;
+  end;
+  SumupReservations(theStockReservr.ArtCode,theStockReservr.FromLocation);
+  return;
+end;
+
+updating procedure DoMoveReservationDown(record StockReservVc theStockReservr)
+begin
+  record StockReservVc StockReservr;
+  record StockReservVc newStockReservr;
+  record StockReservVc oldStockReservr;
+  record StockReservVc oldtheStockReservr;
+  Boolean res,foundf,testf,treatedf;
+  LongInt firstnewser;
+  string 40 location;
+  array Integer afnam;
+  array LongInt aser;
+  array val arem;
+  Integer acnt,i;
+  val t,blval;
+  
+  RecordCopy(StockReservr,theStockReservr);
+  acnt = 0;
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,5,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=theStockReservr.ArtCode) then begin foundf = false; end;
+    testf = foundf;
+    if (StockReservr.FromLocation!=theStockReservr.FromLocation) then begin
+      testf = false;
+    end;
+    if (StockReservr.Quant - StockReservr.QuantDone<=0) then begin
+      testf = false;
+    end;
+    if (StockReservr.ToFileName==kResTypeMakeNewPO) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      afnam[acnt] = StockReservr.ToFileName;
+      aser[acnt] = StockReservr.ToSerNr;
+      arem[acnt] = StockReservr.Quant - StockReservr.QuantDone;
+      acnt = acnt + 1;
+    end;
+  end;
+  ResetLoop(StockReservr);
+  RecordCopy(StockReservr,theStockReservr);
+  RecordCopy(oldtheStockReservr,theStockReservr);
+  theStockReservr.PrioLevel = theStockReservr.PrioLevel + 1;
+  if (RecordUpdate(oldtheStockReservr,theStockReservr,false)==0) then begin
+  end;
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,5,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=theStockReservr.ArtCode) then begin foundf = false; end;
+    testf = foundf;
+    if (StockReservr.FromLocation!=theStockReservr.FromLocation) then begin
+      testf = false;
+    end;
+    if (StockReservr.Quant - StockReservr.QuantDone<=0) then begin
+      testf = false;
+    end;
+    if (firstnewser>0) then begin
+      if (StockReservr.SerNr>=firstnewser) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      treatedf = false;
+      RecordCopy(oldStockReservr,StockReservr);
+      for (i=0;i<acnt;i=i+1) begin
+        t = StockReservr.Quant - StockReservr.QuantDone;
+        if (arem[i]>0) then begin
+          if (arem[i]>=t) then begin
+            StockReservr.ToFileName = afnam[i];
+            StockReservr.ToSerNr = aser[i];
+            arem[i] = arem[i] - t;
+            StockReservr.SerNr = NextSerNr("StockReservVc",StockReservr.TransDate,-1,false,""); // Yep, new numbers to make room for new available numbers, to keep order
+            if (RecordUpdate(oldStockReservr,StockReservr,false)==0) then begin
+            end;
+            if (firstnewser<=0) then begin
+              firstnewser = StockReservr.SerNr;
+            end;
+            StepBack(StockReservr);
+            i = acnt;
+          end else begin
+            RecordCopy(newStockReservr,StockReservr);
+            newStockReservr.ToFileName = afnam[i];
+            newStockReservr.ToSerNr = aser[i];
+            newStockReservr.Quant = arem[i] + newStockReservr.QuantDone;
+            arem[i] = 0;
+            newStockReservr.SerNr = NextSerNr("StockReservVc",newStockReservr.TransDate,-1,false,"");
+            if (RecordStore(newStockReservr,false)) then begin
+            end;
+            SetStockReserveQty(newStockReservr.ArtCode,newStockReservr.SerialNr,newStockReservr.FromLocation,newStockReservr.Quant-newStockReservr.QuantDone,false);
+            if (firstnewser<=0) then begin
+              firstnewser = newStockReservr.SerNr;
+            end;
+            StockReservr.Quant = StockReservr.Quant - newStockReservr.Quant;
+            StockReservr.QuantDone = blval;
+          end;
+          treatedf = true;
+        end;
+      end;
+      if (treatedf==false) then begin // To give all records After the ones that were effected by the move, new serial numbers to keep order...
+        StockReservr.SerNr = NextSerNr("StockReservVc",StockReservr.TransDate,-1,false,""); // Yep, new numbers to make room for new available numbers, to keep order
+        if (RecordUpdate(oldStockReservr,StockReservr,false)==0) then begin
+        end;
+        if (firstnewser<=0) then begin
+          firstnewser = StockReservr.SerNr;
+        end;
+        StepBack(StockReservr);
+      end;
+    end;
+  end;
+  SumupReservations(theStockReservr.ArtCode,theStockReservr.FromLocation);
+  return;
+end;
+
+global
+updating function Integer UnReserveStockRes(record StockReservVc StockReservr)
+begin
+  Integer res;
+  record StockMovVc StockMovr;
+  record StockMovVc oldStockMovr;
+  record StockReservBlock SRb;
+  string 200 tstr;
+  LongInt smnr,error;
+  Integer updatemode,rownr;
+  string 255 errorstr,fieldstr;
+  Boolean UnOKedCheckSerialf;
+    
+  updatemode = 2;
+  res = 0;
+  if (StockReservr.Donef==0) then begin
+    switch (StockReservr.ToFileName) begin
+      case kResTypeExistingPO:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoReleaseReservation(StockReservr);
+        end;
+      case kResTypeNextStockIn:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoReleaseReservation(StockReservr);
+        end;
+      case kResTypeMakeNewPO:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoReleaseReservation(StockReservr);
+        end;
+      case kResTypeStock:
+        if (StockReservr.ToSerNr==-1) then begin
+//          DoReleaseReservation(StockReservr);//talk to Kjell
+          RecordDelete(StockReservr);
+          res = 1;
+        end else begin
+          StockMovr.SerNr = StockReservr.ToSerNr;
+          if (ReadFirstMain(StockMovr,1,true)) then begin
+            res = 1;
+            smnr = -1;
+            if (StockMovr.OKFlag==0) then begin
+              RecordDelete(StockMovr);
+              DoReleaseReservation(StockReservr);
+            end else begin
+              BlockLoad(SRb);
+              StockMovr.SerNr = NextSerNr("StockMovVc",StockMovr.TransDate,-1,false,"");
+              tstr = StockMovr.FrLocation;
+              StockMovr.FrLocation = StockMovr.ToLocation;
+              StockMovr.ToLocation = tstr;
+              if (RecordStore(StockMovr,false)) then begin
+              end;
+              smnr = StockMovr.SerNr;
+              res = 2;
+              if (SRb.AutoLevel==1) then begin
+                RecordCopy(oldStockMovr,StockMovr);
+                StockMovr.OKFlag = 1;
+                UnOKedCheckSerialf = false;
+                if (CheckStockMovRecord(StockMovr,oldStockMovr,updatemode,1,false,error,errorstr,rownr,fieldstr,UnOKedCheckSerialf)==0) then begin
+                  if (RecordUpdate(oldStockMovr,StockMovr,true)==0) then begin end;
+                  res = 1;
+                end;
+              end;
+              DoReleaseReservation(StockReservr);
+              StockReservr.ToSerNr = smnr;
+            end;
+          end;
+        end;
+    end;
+  end;
+  UnReserveStockRes = res;
+  return;
+end;
+
+global
+updating function Integer MoveReserveUp(record StockReservVc StockReservr)
+begin
+  Integer res;
+  record StockMovVc StockMovr;
+  record StockMovVc oldStockMovr;
+  record StockReservBlock SRb;
+  string 200 tstr;
+  LongInt smnr;
+  Integer updatemode;
+  
+  updatemode = 2;
+  res = 0;
+  if (StockReservr.Donef==0) then begin
+    switch (StockReservr.ToFileName) begin
+      case kResTypeExistingPO:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoMoveReservationUp(StockReservr);
+        end;
+      case kResTypeNextStockIn:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoMoveReservationUp(StockReservr);
+        end;
+      case kResTypeStock:
+        if (StockReservr.ToSerNr==-1) then begin
+          DoMoveReservationUp(StockReservr);
+          res = 1;
+        end else begin
+          res = 2;
+        end;
+    end;
+  end;
+  MoveReserveUp = res;
+  return;
+end;
+
+global
+updating function Integer MoveReserveDown(record StockReservVc StockReservr)
+begin
+  Integer res;
+  record StockMovVc StockMovr;
+  record StockMovVc oldStockMovr;
+  record StockReservBlock SRb;
+  string 200 tstr;
+  LongInt smnr;
+  Integer updatemode;
+  
+  updatemode = 2;
+  res = 0;
+  if (StockReservr.Donef==0) then begin
+    switch (StockReservr.ToFileName) begin
+      case kResTypeExistingPO:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoMoveReservationDown(StockReservr);
+        end;
+      case kResTypeNextStockIn:
+        if (StockReservr.QuantDone==0) then begin
+          res = 1;
+          DoMoveReservationDown(StockReservr);
+        end;
+      case kResTypeStock:
+        if (StockReservr.ToSerNr==-1) then begin
+          DoMoveReservationDown(StockReservr);
+          res = 1;
+        end else begin
+           res = 2;
+        end;
+    end;
+  end;
+  MoveReserveDown = res;
+  return;
+end;
+
+global
+updating function Boolean DoReleaseAll(record ORVc ORr,Integer ln)
+begin
+  record StockReservVc StockReservr;
+  row ORVc ORrw;
+  Boolean res,foundf,testf;
+  string 40 location;
+  
+  res = false;
+  if (ln>=0) then begin
+    MatRowGet(ORr,ln,ORrw);
+  end;
+  StockReservr.Donef = 0;
+  StockReservr.FromFileName = kResTypeSalesOrder;
+  StockReservr.FromSerNr = ORr.SerNr;
+  foundf = true;
+  while (LoopKey("FromItem",StockReservr,3,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.FromFileName!=kResTypeSalesOrder) then begin foundf = false; end;
+    if (StockReservr.FromSerNr!=ORr.SerNr) then begin foundf = false; end;
+    testf = foundf;
+    if (ln>=0) then begin
+      if (StockReservr.ArtCode!=ORrw.ArtCode or StockReservr.SerialNr!=ORrw.SerialNr) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      DoReleaseReservation(StockReservr);
+      StepBack(StockReservr);
+      res = true;
+    end;
+  end;
+  DoReleaseAll = res;
+  return;
+end;
+
+updating procedure DeleteStockResFromORRow(record ORVc ORp,row ORVc ORrw)
+begin
+  record StockReservVc StockReservr;
+  Boolean foundf;
+  Boolean testf;
+
+  ResetLoop(StockReservr);
+  StockReservr.Donef = 0;
+  StockReservr.FromFileName = kResTypeSalesOrder;
+  StockReservr.FromSerNr = ORp.SerNr;
+  StockReservr.ArtCode = ORrw.ArtCode;
+  foundf = true;
+  while (LoopKey("FromItem",StockReservr,4,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.FromFileName!=kResTypeSalesOrder) then begin foundf = false; end;
+    if (StockReservr.FromSerNr!=ORp.SerNr) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=ORrw.ArtCode) then begin foundf = false; end;
+    if (foundf) then begin
+      DoReleaseReservation(StockReservr);
+      StepBack(StockReservr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateStockResFromOR(record ORVc ORp)
+begin
+  row ORVc ORrw;
+  Integer i,rwcnt;
+  Integer orw,orcnt;
+  
+  if (ORp.Closed!=0) then begin
+    if (CountRecords("StockReservVc")>0) then begin
+      rwcnt = MatRowCnt(ORp);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(ORp,i,ORrw);
+        DeleteStockResFromORRow(ORp,ORrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure DeleteStockResFromPORow(record POVc POr,row POVc POrw)
+begin
+  record StockReservVc StockReservr;
+  Boolean foundf;
+  Boolean testf;
+
+  ResetLoop(StockReservr);
+  StockReservr.Donef = 0;
+  StockReservr.ToFileName = kResTypeExistingPO;
+  StockReservr.ToSerNr = POr.SerNr;
+  StockReservr.ArtCode = POrw.ArtCode;
+  foundf = true;
+  while (LoopKey("ToItem",StockReservr,4,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ToFileName!=kResTypeExistingPO) then begin foundf = false; end;
+    if (StockReservr.ToSerNr!=POr.SerNr) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=POrw.ArtCode) then begin foundf = false; end;
+    if (foundf) then begin
+      DoReleaseReservation(StockReservr);
+      StepBack(StockReservr);
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateStockResFromPO(record POVc POr,boolean deletef)
+begin
+  row POVc POrw;
+  Integer i,rwcnt;
+  Integer orw,orcnt;
+  
+  if (deletef) then begin
+    if (CountRecords("StockReservVc")>0) then begin
+      rwcnt = MatRowCnt(POr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(POr,i,POrw);
+        DeleteStockResFromPORow(POr,POrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure RebuildReservations()
+begin
+  record StockReservVc StockReservr;
+  Boolean res,foundf,testf;
+  string 40 location;
+  
+  StockReservr.Donef = 0;
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,1,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    testf = foundf;
+    if (testf) then begin
+      SetStockReserveQty(StockReservr.ArtCode,StockReservr.SerialNr,StockReservr.FromLocation,StockReservr.Quant-StockReservr.QuantDone,true);
+    end;
+  end;
+  return;
+end;
+
+global
+function Boolean DoesPOHaveReservations(record POVc POp)
+begin
+  record StockReservVc StockReservr;
+  Boolean foundf;
+  Boolean res;
+
+  res = false;
+  StockReservr.Donef = 0;
+  StockReservr.ToFileName = kResTypeExistingPO;
+  StockReservr.ToSerNr = POp.SerNr;
+  foundf = true;
+  while (LoopKey("ToItem",StockReservr,3,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ToFileName!=kResTypeExistingPO) then begin foundf = false; end;
+    if (StockReservr.ToSerNr!=POp.SerNr) then begin foundf = false; end;
+    if (foundf) then begin
+      res = true;
+      foundf = false;
+    end;
+  end;
+  ResetLoop(StockReservr);
+  StockReservr.Donef = 0;
+  StockReservr.ToFileName = kResTypeMakeNewPO;
+  StockReservr.ToSerNr = POp.SerNr;
+  foundf = true;
+  while (LoopKey("ToItem",StockReservr,3,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ToFileName!=kResTypeMakeNewPO) then begin foundf = false; end;
+    if (StockReservr.ToSerNr!=POp.SerNr) then begin foundf = false; end;
+    if (foundf) then begin
+      res = true;
+      foundf = false;
+    end;
+  end;
+  DoesPOHaveReservations = res;
+  return;
+end;
+
+procedure AddPOReservations(record POVc POp,var array string aartcode,var array val aq,var Integer acnt)
+begin
+  record StockReservVc StockReservr;
+  Boolean foundf,addedf;
+  Integer i;
+
+  StockReservr.Donef = 0;
+  StockReservr.ToFileName = kResTypeExistingPO;
+  StockReservr.ToSerNr = POp.SerNr;
+  foundf = true;
+  while (LoopKey("ToItem",StockReservr,3,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ToFileName!=kResTypeExistingPO) then begin foundf = false; end;
+    if (StockReservr.ToSerNr!=POp.SerNr) then begin foundf = false; end;
+    if (foundf) then begin
+      addedf = false;
+      for (i=0;i<acnt;i=i+1) begin
+        if (aartcode[i]==StockReservr.ArtCode) then begin
+          aq[i] = aq[i] + (StockReservr.Quant - StockReservr.QuantDone);
+          addedf = true;
+          i = acnt;
+        end;
+      end;
+      if (addedf==false) then begin
+        aartcode[acnt] = StockReservr.ArtCode;
+        aq[acnt] = StockReservr.Quant - StockReservr.QuantDone;
+        acnt = acnt + 1;
+      end;
+      foundf = false;
+    end;
+  end;
+  ResetLoop(StockReservr);
+  StockReservr.Donef = 0;
+  StockReservr.ToFileName = kResTypeMakeNewPO;
+  StockReservr.ToSerNr = POp.SerNr;
+  foundf = true;
+  while (LoopKey("ToItem",StockReservr,3,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ToFileName!=kResTypeMakeNewPO) then begin foundf = false; end;
+    if (StockReservr.ToSerNr!=POp.SerNr) then begin foundf = false; end;
+    if (foundf) then begin
+      addedf = false;
+      for (i=0;i<acnt;i=i+1) begin
+        if (aartcode[i]==StockReservr.ArtCode) then begin
+          aq[i] = aq[i] + (StockReservr.Quant - StockReservr.QuantDone);
+          addedf = true;
+          i = acnt;
+        end;
+      end;
+      if (addedf==false) then begin
+        aartcode[acnt] = StockReservr.ArtCode;
+        aq[acnt] = StockReservr.Quant - StockReservr.QuantDone;
+        acnt = acnt + 1;
+      end;
+      foundf = false;
+    end;
+  end;
+  return;
+end;
+
+global
+function Boolean WillPOQtyCoverReservations(record POVc POr)
+begin
+  row POVc POrw;
+  Integer i,rwcnt;
+  Integer j,jrwcnt;
+  Boolean foundf;
+  Boolean res;
+  array string 20 aartcode;
+  array val aq;
+  Integer acnt;
+
+  res = true;
+  AddPOReservations(POr,aartcode,aq,acnt);
+  rwcnt = MatRowCnt(POr);
+  for (j=0;j<acnt;j=j+1) begin
+    foundf = false;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(POr,i,POrw);
+      if (POrw.ArtCode==aartcode[j]) then begin
+        foundf = true;
+        aq[j] = (POrw.Quant - POrw.Shipd1) - aq[j];
+        if (aq[j]<0) then begin
+          res = false;
+          j = acnt;
+          i = rwcnt;
+        end;
+      end;
+    end;
+    if (foundf==false) then begin
+      res = false;
+    end;
+  end;
+  WillPOQtyCoverReservations = res;
+  return;
+end;
+
+updating procedure UpdateStockResFromRetPURow(record RetPUVc RetPUp,row RetPUVc RetPUrw,LongInt PONr)
+begin
+  record StockReservVc StockReservr;
+  record StockReservVc oldStockReservr;
+  record StockReservVc stockStockReservr;
+  val remain;
+  Boolean foundf;
+  Boolean testf;
+  record StockReservBlock SRb;
+  array LongInt stra;
+  LongInt acnt,i;
+  vector val vtreated; 
+  Array LongInt aFromSerNr;
+  Integer ori,orcnt;
+  record ORVc ORr;
+  record IntORVc IntORr;
+  
+  acnt = 0;
+  BlockLoad(SRb);
+  StockReservr.Donef = 0;
+  StockReservr.ToFileName = kResTypeStock;
+  StockReservr.ToSerNr = -1;
+  StockReservr.ArtCode = RetPUrw.ArtCode;
+  foundf = true;
+  remain = RetPUrw.Quant;
+  while (LoopKey("ToItem",StockReservr,4,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ToFileName!=kResTypeStock) then begin foundf = false; end;
+    if (StockReservr.ToSerNr!=-1) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=RetPUrw.ArtCode) then begin foundf = false; end;
+    testf = foundf;
+    if ((StockReservr.Quant - StockReservr.QuantDone)<=0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      if (remain<(StockReservr.Quant - StockReservr.QuantDone)) then begin
+        vtreated[StockReservr.FromFileName & ":" & StockReservr.FromSerNr] = vtreated[StockReservr.FromFileName & ":" & StockReservr.FromSerNr] + remain;
+        StockReservr.Quant = StockReservr.Quant - remain;
+        remain = 0;
+      end else begin
+        vtreated[StockReservr.FromFileName  & ":" & StockReservr.FromSerNr] = vtreated[StockReservr.FromFileName  & ":" & StockReservr.FromSerNr] + StockReservr.Quant;
+        remain = remain - (StockReservr.Quant - StockReservr.QuantDone);
+        StockReservr.Quant = StockReservr.QuantDone;
+      end;
+      for (ori=0;ori<orcnt;ori=ori+1) begin
+        if (aFromSerNr[ori]==StockReservr.FromSerNr) then begin
+          goto LUpdateStockResFromRetPURow;
+        end;
+      end;
+      aFromSerNr[orcnt] = StockReservr.FromSerNr;
+      orcnt = orcnt + 1;
+LUpdateStockResFromRetPURow:;      
+      RecordCopy(oldStockReservr,StockReservr);
+      if (RecordUpdate(oldStockReservr,StockReservr,true)==0) then begin
+      end;
+      if (StockReservr.QuantDone==StockReservr.Quant) then begin
+        stra[acnt] = StockReservr.SerNr;
+        acnt = acnt + 1;
+      end;
+      if (remain<=0) then begin
+        foundf = false;
+      end;      
+    end;
+  end;
+  for (i=0;i<acnt;i=i+1) begin
+    StockReservr.SerNr = stra[i];
+    if (ReadFirstMain(StockReservr,1,true)) begin
+      RecordCopy(oldStockReservr,StockReservr);
+      StockReservr.Donef = 1;
+      if (RecordUpdate(oldStockReservr,StockReservr,false)==0) then begin
+      end;
+    end;
+  end;
+  for (ori=0;ori<orcnt;ori=ori+1) begin
+    if (vtreated[kResTypeSalesOrder & ":" & aFromSerNr[ori]]!=0) then begin
+      ORr.SerNr = aFromSerNr[ori];
+      if (ReadFirstMain(ORr,1,true)) then begin
+        if (DoAutoReserveAll(ORr,-1)) then begin
+        end;
+      end;
+    end;
+    if (vtreated[kResTypeInternalOrder & ":" & aFromSerNr[ori]]!=0) then begin
+      IntORr.SerNr = aFromSerNr[ori];
+      if (ReadFirstMain(IntORr,1,true)) then begin
+        if (DoAutoReserveAll(IntORr,-1)) then begin
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateStockResFromRetPU(record RetPUVc RetPUp,record RetPUVc RetPU2p)
+begin
+  row RetPUVc RetPUrw;
+  Integer i,rwcnt;
+  Integer orw,orcnt;
+  LongInt PONr;
+  
+  if ((RetPUp.Invalid==0) and (RetPUp.OKFlag!=0) and (RetPU2p.OKFlag==0)) then begin
+    if (CountRecords("StockReservVc")>0) then begin
+      rwcnt = MatRowCnt(RetPUp);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(RetPUp,i,RetPUrw);
+        if (RetPUrw.OrdRow!=-1) then begin
+          PONr = RetPUrw.PONr;
+          if (PONr<=0) then begin
+            PONr = RetPUp.PONr;
+          end;
+          UpdateStockResFromRetPURow(RetPUp,RetPUrw,PONr);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating function Boolean DoReleaseIntORRsrvAll(record IntORVc IntORr,Integer ln)
+begin
+  record StockReservVc StockReservr;
+  row IntORVc IntORrw;
+  Boolean res,foundf,testf;
+  string 40 location;
+  
+  res = false;
+  if (ln>=0) then begin
+    MatRowGet(IntORr,ln,IntORrw);
+  end;
+  StockReservr.Donef = 0;
+  StockReservr.FromFileName = kResTypeInternalOrder;
+  StockReservr.FromSerNr = IntORr.SerNr;
+  foundf = true;
+  while (LoopKey("FromItem",StockReservr,3,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.FromFileName!=kResTypeInternalOrder) then begin foundf = false; end;
+    if (StockReservr.FromSerNr!=IntORr.SerNr) then begin foundf = false; end;
+    testf = foundf;
+    if (ln>=0) then begin
+      if (StockReservr.ArtCode!=IntORrw.ArtCode or StockReservr.SerialNr!=IntORrw.SerialNr) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      DoReleaseReservation(StockReservr);
+      StepBack(StockReservr);
+      res = true;
+    end;
+  end;
+  DoReleaseIntORRsrvAll = res;
+  return;
+end;

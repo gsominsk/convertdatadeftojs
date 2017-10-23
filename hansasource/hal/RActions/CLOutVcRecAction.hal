@@ -1,0 +1,1352 @@
+external procedure AutomatedSalesOrderly(string);
+external updating procedure CLOutUpdatePlannedPayments(record CLOutVc);
+external updating procedure UpdateChequeStatusHistory(record CheckVc,string,LongInt,Boolean);
+external updating procedure UpdateOwnChequeStatusHistory(record OwnCheckVc,string,LongInt,Boolean);
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external function Integer VICLOutOKed(LongInt,string,LongInt,var LongInt,var val);
+external function roundmode GetVATRoundMode(record RoundBlock);
+external updating procedure UpdateCLOutVI(record CLOutVc,record CLOutVc,Integer);
+external updating procedure UnOKLiqInfoFromPay(LongInt,LongInt);
+external updating procedure StoreLiqInfoFromCLOut(record CLOutVc,row CLOutVc,Integer);
+external updating procedure APInstallmentAdd2(record APVc,Integer,val,val,Date,Boolean,string,Boolean);
+external function Boolean CheckCurncy(string,string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external updating procedure AddTTrans_CLOutVc(record TRVc,record CLOutVc);
+external function Integer CheckRates(string,val,val,val,val,val,var string);
+external function Integer PMCheckType(string,var string,var string);
+external updating procedure ARPayAddCLOut(Date,string,LongInt,string,LongInt,val,val);
+external procedure GetSerRange(string,LongInt,var LongInt,var LongInt);
+external updating procedure OPPUpdateRow(LongInt,LongInt,Date,string,val,val,val,val,val,string,val,val,string,string,val,val,Boolean,Boolean);
+external updating function LongInt UpdatePPOKNr(LongInt);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external updating procedure VendStatUp(string,LongInt,string,string,Date,val,val,val,val,Boolean);
+external updating procedure CustStatUp(string,LongInt,string,string,string,string,string,Date,val,val,val,val,val,val,Boolean);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external function Boolean IsUnOKAllowed(string,Date);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function LongInt GetCurUserLastNr(string);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external function Integer MakeTransFromCLOut(var record TRVc,record CLOutVc,Boolean,var string);
+external function Boolean GetPMgentrans(string);
+external function Boolean PayModeRegistered(string);
+external function Boolean Date2Test(string,Date,string,Integer);
+external function Integer CheckObjs(string,string,var string);
+external procedure GetCorspAccNumber(string,var string);
+external function Integer CashSerNumberTest(string,val,string,LongInt,var Boolean);
+external function Boolean SerNrTestCLOutVc(LongInt,Date,var Boolean);
+external function Integer CheckCLOutAmount(LongInt,val,string);
+external function Boolean CLOutforVIRecordExists(LongInt,string,var LongInt);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function Integer IsUnOKAllowed_CLOutVc(record CLOutVc,var string,var Integer);
+
+
+
+updating procedure CLOutrsStats(record CLOutVc CLOutp,row CLOutVc CLOutrwp,Boolean deletef)
+BEGIN
+  record IPrsVc mainr;
+  
+  mainr.CustCode = CLOutp.CUCode;
+  mainr.TransDate = CLOutp.TransDate;
+  mainr.CustDate = CLOutp.TransDate;
+  mainr.TransNr = CLOutp.SerNr;
+  mainr.TransType = kIPrsTransTypeCashOut;
+//  mainr.AccNr = CLOutrwp.AccNumber;
+  mainr.IVNr = CLOutrwp.TransNr;
+  if (deletef) then begin
+    if (ReadFirstMain(mainr,0,true)) then begin
+      RecordDelete(mainr);
+    end;
+  end else begin  
+    if (RecordStore(mainr,false)) then begin end;
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutUpdateAR(record CLOutVc CLOutr,row CLOutVc CLOutrw,Boolean negf)
+BEGIN
+  record ARVc ARr;
+  record ARVc oldARr;
+  Boolean found;
+  Boolean delf;
+  val bv,t;
+  record IVVc IVr;
+  record BaseCurBlock bcur;
+  record CUVc CUr;
+
+  if (CLOutrw.Sum!=0) then begin
+    CLOutrw.Sum = -CLOutrw.Sum;//only credit notes allowed
+    delf = false;
+    ARr.InvoiceNr = CLOutrw.TransNr;
+    found = ReadFirstMain(ARr,1,true);
+    if (found==false) then begin
+      IVr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(IVr,1,true)) then begin
+        if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+          ARr.InvoiceNr = IVr.CredInv;
+          found = ReadFirstMain(ARr,1,true);
+        end;
+      end;
+    end;
+    if (found==false) then begin
+      IVr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(IVr,1,true)) then begin end;
+      ARr.InvoiceNr = CLOutrw.TransNr;    
+      ARr.CustCode = CLOutrw.Company;
+      ARr.ARCurncyCode = CLOutr.CurncyCode;
+      ARr.RVal = 0;
+      ARr.BookRVal = 0;
+      ARr.CustName = IVr.Addr0;
+      ARr.DueDate = IVr.PayDate;
+      ARr.InvDate = IVr.InvDate;
+      if (IVr.pdrdays==-1) then begin
+        ARr.ARRebDate = ARr.DueDate;
+      end else begin
+        ARr.ARRebDate = AddDay(IVr.InvDate,IVr.pdrdays);
+      end;
+      if (IVr.pdrdays2==-1) then begin
+        ARr.ARRebDate2 = ARr.DueDate;
+      end else begin
+        ARr.ARRebDate2 = AddDay(IVr.InvDate,IVr.pdrdays2);
+      end;
+    end else begin
+      RecordCopy(oldARr,ARr);
+    end;
+    ARr.RVal = ARr.RVal - CLOutrw.Sum;
+    bv = MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+    ARr.BookRVal = ARr.BookRVal - bv;
+    if (negf) then begin
+      ARr.RVal = -ARr.RVal;
+      ARr.BookRVal = -ARr.BookRVal;
+    end;
+    if (ARr.RVal==0) then begin delf = true; end;    
+    if (ARr.RVal<0) then begin 
+      ARr.DueDate = "";
+      ARr.ARRebDate = "";
+      ARr.ARRebDate2 = "";
+    end;    
+    if (delf==false) then begin
+      if (found) then begin
+        if (ARr.InvoiceNr!=-1) then begin
+          if (RecordUpdate(oldARr,ARr,false)==0) then begin end;
+        end;
+      end else begin
+        if (ARr.InvoiceNr!=-1) then begin
+          if (RecordStore(ARr,false)) then begin end;
+        end;
+      end;
+    end else begin
+      if (found==true) then begin
+        RecordDelete(oldARr);
+      end;
+    end;
+
+    BlockLoad(bcur);
+    t = -CLOutrw.Sum;
+    CUr.Code = CLOutrw.Company;
+    if (ReadFirstMain(CUr,1,true)) then begin end;
+    if ((blank(CUr.CurncyCode)) or (CUr.CurncyCode==bcur.BaseCur1)) then begin          
+      IVr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(IVr,1,true)) then begin 
+        t = -MulRateToBase1(IVr.CurncyCode,CLOutrw.Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);    
+      end else begin    
+        t = -MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+      end;
+    end;
+
+//multiply by invoice rate?    
+    CustStatUp("CLOutVc",CLOutr.SerNr,CLOutrw.Company,CLOutrw.Company,"","","",CLOutr.TransDate,0,0,t,0,bv,0,true);
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutrsStats2(record CLOutVc CLOutp,row CLOutVc CLOutrwp,Boolean deletef)
+BEGIN
+  record OPrsVc mainr;
+  
+  mainr.VECode = CLOutp.CUCode;
+  mainr.TransDate = CLOutp.TransDate;
+  mainr.TransNr = CLOutp.SerNr;
+  mainr.TransType = kOPrsTransTypeCashOut;
+  mainr.VINr = CLOutrwp.TransNr;
+  if (deletef) then begin
+    if (ReadFirstMain(mainr,0,true)) then begin
+      RecordDelete(mainr);
+    end;
+  end else begin  
+    if (RecordStore(mainr,false)) then begin end;
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutrsStats3(record CLOutVc CLOutp,row CLOutVc CLOutrwp,Boolean deletef)
+BEGIN
+  record PPrsVc PPrsr;
+
+  if (CLOutrwp.Type==3) then begin
+    PPrsr.Person = CLOutp.Person;
+    PPrsr.TransDate = CLOutp.TransDate;
+    PPrsr.PPOKNr = CLOutp.PPOKNr;
+    PPrsr.TransType = 2;
+    PPrsr.TransNr = CLOutp.SerNr;
+    if (deletef) then begin
+      if (ReadFirstMain(PPrsr,0,true)) then begin
+        RecordDelete(PPrsr);
+      end;
+    end else begin
+      if (RecordStore(PPrsr,false)) then begin
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutUpdateAP(record CLOutVc CLOutr,row CLOutVc CLOutrw,Boolean negf)
+BEGIN
+  record APVc APr;
+  record APVc oldAPr;
+  Boolean found;
+  Boolean delf,ratef;
+  val t,bv;
+  record VIVc VIr;
+  val fr,br1,br2,to1,to2;
+  record BaseCurBlock BCb;
+  record CUVc VEr;
+
+  if (CLOutrw.Sum!=0) then begin
+    BlockLoad(BCb);
+    delf = false;
+    APr.SerNr = CLOutrw.TransNr;
+    found = ReadFirstMain(APr,1,true);
+    if (found) then begin
+      VIr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(VIr,1,true)) then begin 
+        if (VIr.Invalid==0) then begin 
+          fr = VIr.FrRate;
+          to1 = VIr.ToRateB1;
+          to2 = VIr.ToRateB2;
+          br1 = VIr.BaseRate1;
+          br2 = VIr.BaseRate2;
+          ratef = true;
+        end;
+      end;
+    end else begin
+      VIr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(VIr,1,true)) then begin end;
+      APr.SerNr = CLOutrw.TransNr;    
+      APr.VECode = CLOutrw.Company;
+      APr.CurncyCode = CLOutr.CurncyCode;
+      APr.RVal = 0;
+      APr.BookRVal = 0;
+      APr.VEName = CLOutr.CUName;
+      APr.DueDate = VIr.DueDate;
+    end;
+    RecordCopy(oldAPr,APr);
+    if (ratef) then begin
+      bv = MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+    end else begin
+      bv = MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+    end;
+    if (negf) then begin
+      APr.RVal = APr.RVal + CLOutrw.Sum;
+      APr.BookRVal = APr.BookRVal + bv;
+    end else begin
+      APr.RVal = APr.RVal - CLOutrw.Sum;
+      APr.BookRVal = APr.BookRVal - bv;
+    end;
+    if (APr.RVal==0) then begin delf = true; end;
+    if (delf==false) then begin
+      if (found) then begin
+        if (RecordUpdate(oldAPr,APr,false)==0) then begin end;
+      end else begin
+        if (RecordStore(APr,false)) then begin end;
+      end;
+    end else begin
+      if (found==true) then begin
+        RecordDelete(oldAPr);
+      end;
+    end;
+    VEr.Code = CLOutrw.Company;
+    if (ReadFirstMain(VEr,1,true)) then begin end;
+
+    t = CLOutrw.Sum;
+    if ((blank(VEr.VECurncyCode)) or (VEr.VECurncyCode==BCb.BaseCur1)) then begin
+      if (ratef) then begin
+        t = MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+      end else begin
+        t = MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+      end;
+    end;
+//multiply by invoice rate?    
+    APInstallmentAdd2(APr,-1,CLOutrw.Sum,bv,CLOutr.TransDate,false,"",false);
+    bv = -bv;
+    t = -t;    
+    VendStatUp("CLOutVc",CLOutr.SerNr,CLOutrw.Company,"",CLOutr.TransDate,0,0,t,bv,negf);
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutrsStats4(LongInt SerNr,Date TransDate,string CurncyCode,string VATCode,
+                                 val FrRate,val ToRateB1,val ToRateB2,val BaseRate1,val BaseRate2,
+                                 LongInt TransNr,string Company,LongInt OrderNr,val rs,val bookrs,Boolean negf,Integer Invalid,string apacc)
+BEGIN
+  record APPayHistVc APPayHistr;
+  record OPrsVc mainr;
+  Boolean delf,foundf;
+  val t,vatv,bookvatv;
+  record RoundBlock Rb;
+  record CUVc VEr;
+  record BaseCurBlock bcur;
+
+  if (Invalid!=0) then begin goto LCLOutrsStats4; end;
+  BlockLoad(bcur);
+  VEr.Code = Company;
+  ReadFirstMain(VEr,1,true);
+  if (TransNr>0) then begin
+    BlockLoad(Rb);
+    MulVATIV(VATCode,rs,vatv,t,1,0);
+    vatv = Round(vatv,GetVATRoundMode(Rb));  
+    MulVATIV(VATCode,bookrs,bookvatv,t,1,0);
+    bookvatv = Round(vatv,GetVATRoundMode(Rb));  
+
+    OPPUpdateRow(TransNr,OrderNr,TransDate,CurncyCode,FrRate,ToRateB1,ToRateB2,BaseRate1,BaseRate2,
+                 Company,rs,vatv,VATCode,CurncyCode,rs,blankval,false,false);  
+
+    APPayHistr.VEPNr = TransNr;
+    APPayHistr.FileName = "CLOutVc";
+    APPayHistr.SerNr = SerNr;
+    if (ReadFirstMain(APPayHistr,0,true)) then begin
+      foundf = true;
+    end else begin
+      APPayHistr.VEPNr = TransNr;
+      APPayHistr.FileName = "CLOutVc";
+      APPayHistr.SerNr = SerNr;
+      APPayHistr.TransDate = TransDate;
+      APPayHistr.VECode = Company;
+      APPayHistr.CurncyCode = CurncyCode;
+      APPayHistr.BankCurncy = CurncyCode;
+      APPayHistr.VATVal = blankval;
+      APPayHistr.VATBookVal = blankval;
+      APPayHistr.OrderNr = OrderNr;
+      APPayHistr.APAcc = apacc;
+    end;
+    APPayHistr.Val = APPayHistr.Val + rs;
+    APPayHistr.BookVal = APPayHistr.BookVal + bookrs;
+    APPayHistr.VATVal = APPayHistr.VATVal + vatv;
+    APPayHistr.VATBookVal = APPayHistr.VATBookVal + bookvatv;
+    if (APPayHistr.Val==0) then begin delf = true; end;
+    if ((delf or negf) and foundf) then begin
+      RecordDelete(APPayHistr);
+    end else begin
+      if (RecordStore(APPayHistr,false)) then begin end;
+    end;
+  end;
+  t = rs;
+  if (nonblank(VEr.VECurncyCode)) and (VEr.VECurncyCode!=bcur.BaseCur1) then begin
+  end else begin          
+    if ((blank(VEr.VECurncyCode)) or (VEr.VECurncyCode==bcur.BaseCur1)) then begin
+      t = bookrs;
+    end;
+  end;
+  VendStatUp("CLOutVc",SerNr,Company,"",TransDate,0,0,t,bookrs,true);
+  
+LCLOutrsStats4:;
+  mainr.VECode = Company;
+  mainr.TransDate = TransDate;
+  mainr.TransNr = SerNr;
+  mainr.TransType = kOPrsTransTypeCashOut;
+  if (delf) or (negf) then begin
+    if (ReadFirstMain(mainr,0,true)) then begin
+      RecordDelete(mainr);
+    end;
+  end else begin
+    if (RecordStore(mainr,false)) then begin end;
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutrsStats5(LongInt SerNr,Date TransDate,string CurncyCode,
+                                 LongInt TransNr,string Company,LongInt OrderNr,val rs,val bookrs,Integer Invalid)
+BEGIN
+  record ARPayHistVc ARPayHistr;
+  record IPrsVc mainr;
+  Boolean delf,foundf;
+   
+  if (Invalid!=0) then begin goto LCLOutrsStats5; end;
+  if (TransNr>0) then begin
+    ARPayAddCLOut(TransDate,CurncyCode,TransNr,Company,OrderNr,rs,bookrs);
+    
+    ARPayHistr.CUPNr = TransNr;
+    ARPayHistr.FileName = "CLOutVc";
+    ARPayHistr.SerNr = SerNr;
+    if (ReadFirstMain(ARPayHistr,0,true)) then begin
+      foundf = true;
+    end else begin
+      ARPayHistr.CUPNr = TransNr;
+      ARPayHistr.FileName = "CLOutVc";
+      ARPayHistr.SerNr = SerNr;
+      ARPayHistr.TransDate = TransDate;
+      ARPayHistr.CustCode = Company;
+      ARPayHistr.CurncyCode = CurncyCode;
+      ARPayHistr.BankCurncy = CurncyCode;
+      ARPayHistr.VATVal = blankval;
+      ARPayHistr.VATBookVal = blankval;
+      ARPayHistr.OrderNr = OrderNr;
+    end;
+    ARPayHistr.Val = ARPayHistr.Val + rs;
+    ARPayHistr.BookVal = ARPayHistr.BookVal + bookrs;    
+    if (ARPayHistr.Val==0) then begin delf = true; end;
+    if (delf and foundf) then begin
+      RecordDelete(ARPayHistr);
+    end else begin
+      if (RecordStore(ARPayHistr,false)) then begin end;
+    end;
+  end;
+  CustStatUp("CLOutVc",SerNr,Company,Company,"","","",TransDate,0,0,bookrs,0,bookrs,0,false);
+LCLOutrsStats5:;  
+  mainr.CustCode = Company;
+  mainr.TransDate = TransDate;
+  mainr.CustDate = TransDate;
+  mainr.TransNr = SerNr;
+  mainr.TransType = kIPrsTransTypeReverseCustomerPrepayment;
+  mainr.IVNr = TransNr;
+  if (delf) then begin
+    if (ReadFirstMain(mainr,0,true)) then begin
+      RecordDelete(mainr);
+    end;
+  end else begin
+    if (RecordStore(mainr,false)) then begin end;
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutUpdateCheck(record CLOutVc CLOutp,row CLOutVc CLOutrw,Boolean unokf)
+BEGIN
+  record CheckVc Checkr;
+  record OrdenChqVc OrdenChqr;
+  string 10 accnr;
+  string 60 objs;
+  Integer cht;
+  record CLCorspVc CLCorspr;
+  record CheckVc oldCheckr;
+  Boolean testf;
+  string 255 paymode;
+  
+  Checkr.SerNr = CLOutrw.TransNr;
+  if (ReadFirstMain(Checkr,1,true)) then begin
+    if (unokf) then begin
+      if (Checkr.Openf==kCheckTypeEndorsed) then begin testf = true; end;
+    end else begin
+      if (Checkr.Openf==kCheckTypeAccepted) then begin testf = true; end;
+    end;
+    if (testf) then begin
+      RecordCopy(oldCheckr,Checkr);
+      paymode = CLOutrw.PayMode;
+      if (blank(paymode)) then begin paymode = CLOutp.PayMode; end;
+      cht = PMCheckType(paymode,accnr,objs);
+      if (cht==1) then begin
+        Checkr.CurncyCode = CLOutp.CurncyCode;
+        if (nonblank(CLOutp.Comment)) then begin
+          Checkr.CUName = CLOutp.Comment;
+        end;
+        if (nonblank(CLOutrw.CorspCode)) then begin
+          CLCorspr.Code = CLOutrw.CorspCode;
+        end else begin
+          CLCorspr.Code = CLOutp.CorspCode;
+        end;        
+        if (ReadFirstMain(CLCorspr,1,true)) then begin
+          //Checkr.OrigAccNr = CLCorspr.AccNumber;
+        end;  
+        if (blank(Checkr.TempAccNr)) then begin Checkr.TempAccNr = accnr; end;
+        if (blank(Checkr.TempObjects)) then begin Checkr.TempObjects = objs; end;
+        OrdenChqr.Code = CLOutrw.Company;
+        if (ReadFirstMain(OrdenChqr,1,true)) then begin
+          if (nonblank(OrdenChqr.Comment)) then begin
+            Checkr.CUName = OrdenChqr.Comment;
+          end;
+        end;
+        if (CLOutrw.Sum<0) then begin
+          Checkr.Openf = kCheckTypeCancelled;
+          Checkr.CancelledDate = CurrentDate;
+        end else begin
+          Checkr.Openf = kCheckTypeEndorsed;
+          Checkr.EndorsedDate = CurrentDate;
+          Checkr.TargetAccNr = CLCorspr.AccNumber;
+        end;
+        Checkr.ToFileName = "CLOutVc";
+        Checkr.ToNo = CLOutp.SerNr;
+        if (unokf) then begin
+          Checkr.ToFileName = "";
+          Checkr.ToNo = -1;
+          Checkr.CurncyCode = "";
+          Checkr.TempObjects = "";
+          Checkr.EndorsedDate = "";
+          Checkr.CancelledDate = "";
+          Checkr.TargetAccNr = "";
+          Checkr.Openf = kCheckTypeAccepted;
+        end;  
+        UpdateChequeStatusHistory(Checkr,"CLOutVc",CLOutp.SerNr,unokf);
+        if (RecordStore(Checkr,true)) then begin end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+updating procedure CLOutUpdateOwnCheck(record CLOutVc CLOutp,row CLOutVc CLOutrw,Boolean unokf)
+BEGIN
+  record OwnCheckVc OwnCheckr;
+  record OrdenChqVc OrdenChqr;
+  string 10 accnr;
+  string 60 objs;
+  Integer cht;
+  record CLCorspVc CLCorspr;
+  record OwnCheckVc oldOwnCheckr;
+  Boolean testf;
+  Date bd;
+  string 255 paymode;
+  
+  OwnCheckr.SerNr = CLOutrw.TransNr;
+  if (ReadFirstMain(OwnCheckr,1,true)) then begin
+    if (unokf) then begin
+      if (OwnCheckr.Openf==kCheckTypeAccepted) then begin testf = true; end;
+      if (OwnCheckr.Openf==kCheckTypeDeposited) then begin testf = true; end;
+    end else begin
+      if (OwnCheckr.Openf==kCheckTypeRegistered) then begin testf = true; end;
+    end;
+
+    if (testf) then begin    
+      RecordCopy(oldOwnCheckr,OwnCheckr);
+      paymode = CLOutrw.PayMode;
+      if (blank(paymode)) then begin paymode = CLOutp.PayMode; end;
+      cht = PMCheckType(paymode,accnr,objs);
+      if (cht==2) then begin
+        OwnCheckr.CurncyCode = CLOutp.CurncyCode;
+        OwnCheckr.TransDate = CLOutp.TransDate;
+        /*
+        if (nonblank(CLOutp.Comment)) then begin
+          OwnCheckr.VEName = CLOutp.Comment;
+        end;
+        */
+        OwnCheckr.Comment = CLOutp.Comment;
+        if (nonblank(CLOutrw.CorspCode)) then begin
+          CLCorspr.Code = CLOutrw.CorspCode;
+        end else begin
+          CLCorspr.Code = CLOutp.CorspCode;
+        end;        
+        if (ReadFirstMain(CLCorspr,1,true)) then begin
+          OwnCheckr.OrigAccNr = CLCorspr.AccNumber;
+        end;  
+        if (blank(OwnCheckr.TempAccNr)) then begin OwnCheckr.TempAccNr = accnr; end;
+        if (blank(OwnCheckr.TempObjects)) then begin OwnCheckr.TempObjects = objs; end;
+        OrdenChqr.Code = CLOutrw.Company;
+        if (ReadFirstMain(OrdenChqr,1,true)) then begin
+          if (nonblank(OrdenChqr.Comment)) then begin
+            OwnCheckr.VEName = OrdenChqr.Comment;
+          end;
+        end;
+        if (CLOutrw.Sum<0) then begin
+          OwnCheckr.Openf = kCheckTypeCancelled;
+        end else begin
+          if (OwnCheckr.ChkMode==2) then begin
+            OwnCheckr.Openf = kCheckTypeDeposited;
+            OwnCheckr.ClearingDate = CurrentDate;
+          end else begin
+            OwnCheckr.Openf = kCheckTypeAccepted;
+          end;
+        end;        
+        OwnCheckr.ToFileName = "CLOutVc";
+        OwnCheckr.ToNo = CLOutp.SerNr;
+        OwnCheckr.IssuedDate = CurrentDate;
+        if (unokf) then begin
+          OwnCheckr.ToFileName = "";
+          OwnCheckr.ToNo = -1;
+          OwnCheckr.IssuedDate = "";
+          if (CLOutp.Invalid==0) then begin
+            OwnCheckr.OrigAccNr = "";
+            OwnCheckr.Openf = kCheckTypeRegistered;
+            DeleteTransaction(OwnCheckr.SerNr,OwnCheckYc);
+          end else begin
+            OwnCheckr.OrigAccNr = "";
+            OwnCheckr.Openf = kCheckTypeRegistered;
+            DeleteTransaction(OwnCheckr.SerNr,OwnCheckYc);
+          end;
+        end;  
+        UpdateOwnChequeStatusHistory(OwnCheckr,"CLOutVc",CLOutp.SerNr,unokf);
+        if (RecordStore(OwnCheckr,true)) then begin end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure CLOutUpdateStats(record CLOutVc CLOutr,Boolean negf,Boolean importf)
+BEGIN
+  Integer i,j,rwcnt;
+  row CLOutVc CLOutrw;
+  row CLOutVc CLOut2rw;
+  val rs,bookrs;
+
+  rwcnt = MatRowCnt(CLOutr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CLOutr,i,CLOutrw);
+    switch (CLOutrw.Type) begin
+      case kCashOutRowTypeCredSalesInvoice: 
+        CLOutUpdateAR(CLOutr,CLOutrw,negf);
+        CLOutrsStats(CLOutr,CLOutrw,negf);
+      case kCashOutRowTypeInvoice: 
+        CLOutUpdateAP(CLOutr,CLOutrw,negf);
+        CLOutrsStats2(CLOutr,CLOutrw,negf);
+        if (importf==false) then begin
+          if (negf) then begin
+            UnOKLiqInfoFromPay(CLOutr.SerNr,i);          
+          end else begin
+            StoreLiqInfoFromCLOut(CLOutr,CLOutrw,i);
+          end;
+        end;
+      case kCashOutRowTypePersonnelPayment: 
+        CLOutrsStats3(CLOutr,CLOutrw,negf);
+      case kCashOutRowTypeSupplierPrepayment:
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(CLOutr,j,CLOut2rw);
+          if (CLOutrw.TransNr==CLOut2rw.TransNr) and
+             (CLOutrw.Type==CLOut2rw.Type)  then begin
+            goto LCLOutUpdateStatsRow; 
+          end;
+        end;
+        rs = blankval;
+        bookrs = blankval;
+        rwcnt = MatRowCnt(CLOutr);
+        for (j=i;j<rwcnt;j=j+1) begin
+          MatRowGet(CLOutr,j,CLOut2rw);
+          if (CLOut2rw.TransNr==CLOutrw.TransNr) and
+             (CLOutrw.Type==CLOut2rw.Type) then begin
+            rs = rs + CLOut2rw.Sum;
+            bookrs = bookrs + MulRateToBase1(CLOutr.CurncyCode,CLOut2rw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+          end;
+        end;
+        if (negf) then begin
+          rs = -rs;
+          bookrs = -bookrs;
+        end;
+        CLOutrsStats4(CLOutr.SerNr,CLOutr.TransDate,CLOutr.CurncyCode,CLOutr.VATCode,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,CLOutrw.TransNr,CLOutrw.Company,CLOutrw.OrderNr,rs,bookrs,negf,CLOutr.Invalid,CLOutrw.APARAcc);
+      case kCashOutRowTypeCustomerRevPrepayment:       
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(CLOutr,j,CLOut2rw);
+          if (CLOutrw.TransNr==CLOut2rw.TransNr) and
+             (CLOutrw.Type==CLOut2rw.Type) then begin 
+             goto LCLOutUpdateStatsRow; 
+          end;
+        end;
+        rs = blankval;
+        bookrs = blankval;
+        rwcnt = MatRowCnt(CLOutr);
+        for (j=i;j<rwcnt;j=j+1) begin
+          MatRowGet(CLOutr,j,CLOut2rw);
+          if (CLOut2rw.TransNr==CLOutrw.TransNr) and 
+             (CLOutrw.Type==CLOut2rw.Type) then begin
+            rs = rs + CLOut2rw.Sum;
+            bookrs = bookrs + MulRateToBase1(CLOutr.CurncyCode,CLOut2rw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+          end;
+        end;
+        if (negf) then begin
+          rs = -rs;
+          bookrs = -bookrs;
+        end;
+        CLOutrsStats5(CLOutr.SerNr,CLOutr.TransDate,CLOutr.CurncyCode,CLOutrw.TransNr,CLOutrw.Company,CLOutrw.OrderNr,rs,bookrs,CLOutr.Invalid);
+      case kCashOutRowTypeCheque:      
+        if (CLOutr.Invalid==0) then begin
+          CLOutUpdateCheck(CLOutr,CLOutrw,negf);
+        end;
+      case kCashOutRowTypeOwnCheque:      
+        if (CLOutr.Invalid==0) then begin
+          CLOutUpdateOwnCheck(CLOutr,CLOutrw,negf);
+        end else begin
+          CLOutUpdateOwnCheck(CLOutr,CLOutrw,negf);
+        end;
+    end;
+LCLOutUpdateStatsRow:;    
+  end;
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordSave(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  if (CLOutr.OKFlag!=0) then begin
+    CLOutr.PPOKNr = UpdatePPOKNr(CLOutr.PPOKNr);
+  end;
+  CLOutVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordSaveAfter(var record CLOutVc CLOutr,record CLOutVc CLOut2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+//  if (CLOutr.OKFlag!=0) then begin
+    UpdateCLOutVI(CLOutr,CLOut2r,0);
+//  end;  
+  if (CLOutr.OKFlag!=0) then begin
+    CLOutUpdateStats(CLOutr,false,false);
+    CLOutUpdatePlannedPayments(CLOutr);
+    AutomatedSalesOrderly("HasIntegratedNL");
+  end;
+  CLOutVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt CLOutVcRecordCheck(var record CLOutVc CLOutp,record CLOutVc CLOut2p,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record MainCLBlock MCLb;
+  record SRBlock SRRec;
+  record CLOutVc locCLOutr;
+  record CLCorspVc Corspr;
+  Integer cashres;
+  Boolean transf,gentrans,unokf,corspf;
+  LongInt oldnr,newnr;
+  string 255 tstr,errstr;
+  Integer insertmode,updatemode;
+  record TRVc gTRp;
+  LongInt vinr;
+  val tot;  
+  Integer i,rwcnt,errcode,j;
+  row CLOutVc CLOutrw;
+  row CLOutVc CLOut2rw;
+  record VIVc VIr;
+  record IVVc IVr;
+  record ARVc ARr;
+  record APVc APr;
+  record CUVc VEr;
+  record APPayHistVc APHistr;
+  record OPPVc OPPr;
+  record POVc POr;
+  val temp;
+  record APAccBlock APAccRec;
+  LongInt serstart,serend;
+  row PMBlock PMrw;
+  Integer koef;
+  val amount;
+  Integer cht;
+  record OwnCheckVc OwnCheckr;
+  record CheckVc Checkr;
+  record ARPayVc ARPayr;
+  record AccVc pmAccr;
+  string 255 paymode;
+
+  res = 0;
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  oldnr = CLOutp.SerNr;
+  if (CLOutp.OKFlag==0) then begin//unok
+    if (stat==updatemode) then begin
+      if (CLOut2p.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    res = IsUnOKAllowed_CLOutVc(CLOutp,tstr,i);
+    if (res!=0) then begin
+      RecordCheckError(res,"",i,tstr);      
+      res = -1; 
+    end;    
+    goto LCLOutVcRecordCheck;
+  end;
+  if (stat==updatemode) then begin
+    if (CLOutp.SerNr<=0) and (CLOut2p.OKFlag==0) then begin
+      CLOutp.SerNr = CLOut2p.SerNr;
+    end;
+  end;    
+  BlockLoad(SRRec);
+  BlockLoad(MCLb);
+  BlockLoad(APAccRec);
+  gentrans = true;
+  if ((CLOut2p.OKFlag==1) and (stat==updatemode)) then begin goto LCLOutVcRecordCheck; end;//?
+  transf = false;
+  if (CLOutp.OKFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (CLOut2p.OKFlag==0) then begin transf = true; end;
+    end;  
+  end;
+  if (transf) then begin
+    if (UserCanAction("OKCashOut",true)==false) then begin
+      RecordCheckError(1274,StringFromStringSet(3,"OKCashOut"),-1,"SerNr");      
+      res = -1;
+      goto L99CLOutVcRecordCheck; 
+    end;  
+  end;
+  if (CLOutp.SerNr<=0) then begin
+    newnr = GetCurUserLastNr("CLOutVc");
+    if (newnr==-1) then begin
+      newnr = SRRec.LastCLOutNr;
+    end;
+    CLOutp.SerNr = NextSerNr("CLOutVc",CLOutp.TransDate,newnr,false,CLOutp.LangCode);
+  end;
+  if ((stat==insertmode) or (CLOutp.SerNr!=CLOut2p.SerNr)) then begin
+    locCLOutr.SerNr = CLOutp.SerNr;
+    if (ReadFirstMain(locCLOutr,1,true)) then begin
+      RecordCheckError(1115,"",-1,"SerNr");      
+      res = -1;
+      goto L99CLOutVcRecordCheck;
+    end;
+  end;
+  cashres = CashSerNumberTest(CLOutp.PayMode,CLOutp.Total,"CLOutVc",CLOutp.SerNr,gentrans);
+  if (cashres==99) then begin 
+    res = -1; 
+    goto L99CLOutVcRecordCheck; 
+  end;
+  if (cashres==12) then begin
+    goto L12;
+  end;  
+  errcode = CheckRates(CLOutp.CurncyCode,CLOutp.FrRate,CLOutp.ToRateB1,CLOutp.ToRateB2,CLOutp.BaseRate1,CLOutp.BaseRate2,tstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,"",-1,tstr);      
+    res = -1; 
+    goto L99CLOutVcRecordCheck;
+  end;          
+  if ((MCLb.ChronologyforCLNo!=0) and (stat==insertmode)) then begin
+    GetSerRange("CLOutVc",CLOutp.SerNr,serstart,serend);
+    if (serend!=-1) then begin    
+      locCLOutr.SerNr = serend;
+    end else begin
+      locCLOutr.SerNr = CLOutp.SerNr;
+    end;    
+    if (ReadLastMain(locCLOutr,1,false)) then begin
+      if ((locCLOutr.SerNr>0) and ((locCLOutr.SerNr>=serstart) or (serstart==-1))) then begin
+        if ((locCLOutr.SerNr+1)!=CLOutp.SerNr) then begin
+          oldnr = locCLOutr.SerNr+1;
+          RecordCheckError(1034,"",-1,"SerNr");  
+          res = -1;
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+    end;
+  end;
+  if (SerNrTestCLOutVc(CLOutp.SerNr,CLOutp.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto L99CLOutVcRecordCheck;
+  end;
+L12:;
+  if (Date2Test("CLOutVc",CLOutp.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto L99CLOutVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,CLOutp.TransDate,"TransDate",-1)) then begin
+    res = -1;
+    goto L99CLOutVcRecordCheck;
+  end;
+  GetCorspAccNumber(CLOutp.CorspCode,tstr);
+  cashres = CheckObjs(tstr,CLOutp.Objects,errstr);
+  if (cashres!=0) then begin
+    RecordCheckError(cashres,errstr,-1,"Objects");      
+    res = -1;
+    goto L99CLOutVcRecordCheck;
+  end;
+  if (blank(CLOutp.PayMode)) then begin
+    RecordCheckError(1101,"",-1,"PayMode");      
+    res = -1;
+    goto L99CLOutVcRecordCheck;
+  end;
+  if (true) then begin//transf
+    if (MCLb.CashCollection!=0) then begin
+      cashres = VICLOutOKed(CLOutp.SerNr,CLOutp.FileName,CLOutp.FSerNr,vinr,tot);
+      switch (cashres) begin
+        case 0:
+          RecordCheckError(2072,"",-1,"SerNr");      
+          res = -1;
+          goto L99CLOutVcRecordCheck;
+        case 1:  
+          if (tot!=CLOutp.Total) then begin
+            RecordCheckError(2074,"",-1,"Total");      
+            res = -1;
+            goto L99CLOutVcRecordCheck;
+          end;
+      end;
+      gentrans = GetPMgentrans(CLOutp.PayMode);
+    end;  
+  end;  
+  if (UserCanAction("AllowNegCLOut",true)==false) then begin
+    if (CLOutp.Total<0) then begin
+      RecordCheckError(20071,"",-1,"Total");      
+      res = -1;
+      goto L99CLOutVcRecordCheck;
+    end;
+  end;
+  corspf = true;
+  rwcnt = MatRowCnt(CLOutp);
+  if (CLOutp.OKFlag!=0) then begin
+    if (rwcnt==0) then begin
+      if (CLOutp.Total==0) then begin
+        RecordCheckError(1058,"",-1,"Total");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+    end;
+  end;
+  if (GetPMRow(CLOutp.PayMode,PMrw)==false) then begin
+    RecordCheckError(1277,"",-1,"PayMode");      
+    res = -1;
+    goto L99CLOutVcRecordCheck;
+  end;
+  pmAccr.AccNumber = PMrw.AccNr;
+  ReadFirstMain(pmAccr,1,true);
+  if (nonblank(CLOutp.CUCode)) then begin
+    VEr.Code = CLOutp.CUCode;
+    if (ReadFirstMain(VEr,1,true)==false) then begin
+      RecordCheckError(1290," " & CLOutp.CUCode,-1,"CUCode");
+      res = -1; 
+      goto L99CLOutVcRecordCheck;
+    end;
+    if (nonblank(pmAccr.Curncy)) and (nonblank(VEr.VECurncyCode)) then begin
+      if (pmAccr.Curncy!=VEr.VECurncyCode)then begin
+        RecordCheckError(20806,"",-1,"PayMode");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+    end;      
+  end;
+  if (rwcnt==0) then begin 
+    cht = PMCheckType(CLOutp.PayMode,tstr,tstr);
+    if (cht==kPayModeTypeOwnCheque) or (cht==kPayModeTypeCheque) then begin
+      RecordCheckError(1277,"",-1,"PayMode");     
+      res = -1; 
+      goto L99CLOutVcRecordCheck;
+    end;
+  end;  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CLOutp,i,CLOutrw);
+    paymode = CLOutrw.PayMode;
+    if (blank(paymode)) then begin paymode = CLOutp.PayMode; end;
+    cht = PMCheckType(paymode,tstr,tstr);
+    if (CLOutrw.Type!=kCashOutRowTypeOwnCheque) then begin
+      if (cht==kPayModeTypeOwnCheque) then begin
+        if (blank(CLOutrw.PayMode)) then begin 
+          RecordCheckError(1277,"",-1,"PayMode");     
+        end else begin
+          RecordCheckError(1277,"",i,"PayMode");     
+        end;
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+    end;   
+    if (UserCanAction("AllowNegCLOut",true)==false) then begin
+      if (CLOutrw.Sum<0) then begin
+        RecordCheckError(20071,"",i,"Sum");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+    end;
+    if (PayModeRegistered(paymode)==false) then begin
+      RecordCheckError(1120,paymode,-1,"PayMode");      
+      res = -1;
+      goto L99CLOutVcRecordCheck;
+    end;
+    GetPMRow(paymode,PMrw);
+    pmAccr.AccNumber = PMrw.AccNr;
+    ReadFirstMain(pmAccr,1,true);
+    if (nonblank(CLOutrw.Company)) then begin
+      VEr.Code = CLOutrw.Company;
+      if (ReadFirstMain(VEr,1,true)) then begin
+        if (nonblank(pmAccr.Curncy)) and (nonblank(VEr.VECurncyCode)) then begin
+          if (pmAccr.Curncy!=VEr.VECurncyCode)then begin
+            RecordCheckError(20806,"",-1,"PayMode");      
+            res = -1;
+            goto L99CLOutVcRecordCheck;
+          end;
+        end;
+      end else begin
+        RecordCheckError(1290," " & CLOutrw.Company,i,"Company");
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;  
+    end;
+    if (CLOutrw.Type==kCashOutRowTypeOwnCheque) then begin
+      if (CLOutrw.TransNr==-1) then begin
+        RecordCheckError(1854,"",i,"TransNr");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (cht!=kPayModeTypeOwnCheque) then begin
+        if (blank(CLOutrw.PayMode)) then begin 
+          RecordCheckError(1277,"",-1,"PayMode");     
+        end else begin
+          RecordCheckError(1277,"",i,"PayMode");     
+        end;         
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      OwnCheckr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(OwnCheckr,1,true)==false) then begin
+        RecordCheckError(1279,"",i,"ChequeNr");
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end else begin
+        if (OwnCheckr.Openf!=kCheckTypeRegistered) then begin
+          RecordCheckError(1292,"",i,"ChequeNr");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+        amount = 0;
+        for (j=0;j<rwcnt;j=j+1) begin
+          MatRowGet(CLOutp,j,CLOut2rw);
+          if (CLOut2rw.Type==CLOutrw.Type) then begin
+            if (CLOut2rw.TransNr==CLOutrw.TransNr) then begin
+              amount = amount + CLOut2rw.Sum;
+            end;
+          end;
+        end;
+        if (amount!=OwnCheckr.Amount) then begin
+          RecordCheckError(20065," " & OwnCheckr.Amount,i,"Sum");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+    end;
+    if (CLOutrw.Type!=kCashOutRowTypeCheque) then begin
+      if (cht==kPayModeTypeCheque) then begin
+        if (blank(CLOutrw.PayMode)) then begin 
+          RecordCheckError(1277,"",-1,"PayMode");     
+        end else begin
+          RecordCheckError(1277,"",i,"PayMode");     
+        end;  
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;   
+    end;
+    if (CLOutrw.Type==kCashOutRowTypeCheque) then begin
+      if (CLOutrw.TransNr==-1) then begin
+        RecordCheckError(1854,"",i,"TransNr");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (cht!=kPayModeTypeCheque) then begin
+        if (blank(CLOutrw.PayMode)) then begin 
+          RecordCheckError(1277,"",-1,"PayMode");     
+        end else begin
+          RecordCheckError(1277,"",i,"PayMode");     
+        end;  
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      Checkr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(Checkr,1,true)==false) then begin
+        RecordCheckError(1279,"",i,"ChequeNr");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end else begin
+        if (Checkr.Openf!=kCheckTypeAccepted) then begin
+          RecordCheckError(1292,"",i,"ChequeNr");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+        amount = 0;
+        for (j=0;j<rwcnt;j=j+1) begin
+          MatRowGet(CLOutp,j,CLOut2rw);
+          if (CLOut2rw.Type==CLOutrw.Type) then begin
+            if (CLOut2rw.TransNr==CLOutrw.TransNr) then begin
+              amount = amount + CLOut2rw.Sum;
+            end;
+          end;
+        end;
+        if (amount!=Checkr.Amount) then begin
+          RecordCheckError(20065," " & Checkr.Amount,i,"Sum");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+        
+    end;
+    if (CLOutrw.Type==kCashOutRowTypeCustomerRevPrepayment) then begin    
+      if (nonblank(paymode)) then begin
+        if (CheckCurncy(paymode,CLOutp.CurncyCode)==false) then begin
+          RecordCheckError(1425,"",-1,"PayMode");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+      ARPayr.CUPNr = CLOutrw.TransNr;
+      if (ReadFirstMain(ARPayr,1,true)==true) then begin
+        amount = CLOutrw.Sum;
+        for (j=0;j<i;j=j+1) begin
+          MatRowGet(CLOutp,j,CLOut2rw);
+          if (CLOut2rw.Type==5) then begin
+            if (CLOut2rw.TransNr==CLOutrw.TransNr) then begin
+              amount = amount + CLOut2rw.Sum;
+            end;
+          end;
+        end;
+        if (amount>ARPayr.RVal) and (CLOutrw.Sum>0) then begin
+          RecordCheckError(1254,"",i,"PrepayNr");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+    end;
+    if (CLOutrw.Type==kCashOutRowTypePersonnelPayment) then begin    
+      if (blank(CLOutp.Person)) then begin
+        RecordCheckError(1058,"",-1,"Person");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+    end;
+    if (CLOutrw.Type==kCashOutRowTypeInvoice) then begin
+      VIr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(VIr,1,true)==false) then begin
+        RecordCheckError(1116,"",i,"TransNr");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (VIr.CurncyCode!=CLOutp.CurncyCode) then begin
+        RecordCheckError(1217,"",i,"TransNr");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (CLOutp.TransDate<VIr.InvDate) then begin
+        RecordCheckError(20852,"",i,"TransNr");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (CLOutrw.Company!=VIr.VECode) then begin
+        RecordCheckError(1215,"",i,"Company");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;            
+//      if (CLOutrw.TransNr>0) and (CLOutp.OKFlag==1) and
+      for (j=0;j<i;j=j+1) begin
+        MatRowGet(CLOutp,j,CLOut2rw);
+        if (CLOut2rw.Type==2) then begin
+          if (CLOut2rw.Company!=CLOutrw.Company) then begin
+            RecordCheckError(1215,"",i,"Company");      
+            res = -1;
+            goto L99CLOutVcRecordCheck;
+          end;
+        end;
+      end;
+
+      if (CLOutrw.TransNr>0) and 
+        (APAccRec.NoOverPayVI!=0) then begin
+        APr.SerNr = CLOutrw.TransNr;
+        if (ReadFirstMain(APr,1,true)==true) then begin
+          amount = CLOutrw.Sum;
+          for (j=0;j<i;j=j+1) begin
+            MatRowGet(CLOutp,j,CLOut2rw);
+            if (CLOut2rw.Type==2) then begin
+              if (CLOut2rw.TransNr==CLOutrw.TransNr) then begin
+                amount = amount + CLOut2rw.Sum;
+              end;
+            end;
+          end;
+
+          if ((APr.RVal<0) and (amount<0)) then begin
+            koef = -1;
+          end else begin
+            koef = 1;
+          end;
+          if ((APr.RVal*koef)<(amount*koef)) then begin
+            tstr = " " & amount & USetStr(20061);
+            tstr = tstr & " " & APr.RVal;
+            tstr = tstr & USetStr(20064) & (amount-APr.RVal) & USetStr(20063);
+            RecordCheckError(20065,tstr,i,"Sum");      
+            res = -1; 
+            goto L99CLOutVcRecordCheck;  
+          end;      
+        end;
+      end;
+    end;
+    if (CLOutrw.Type==kCashOutRowTypeCredSalesInvoice) then begin
+      IVr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(IVr,1,true)==false) then begin
+        RecordCheckError(1116,"",i,"TransNr");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+      ARr.InvoiceNr = IVr.SerNr;
+      if (ReadFirstMain(ARr,1,true)) then begin
+      end;
+      if (ARr.RVal>0) then begin//only credit notes
+        RecordCheckError(22052,"",i,"Type");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;      
+      end;
+      if (IVr.CurncyCode!=CLOutp.CurncyCode) then begin
+        RecordCheckError(1217,"",i,"TransNr");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (CLOutp.TransDate<IVr.InvDate) then begin
+        RecordCheckError(20852,"",i,"TransNr");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (CLOutrw.Company!=IVr.CustCode) then begin
+        RecordCheckError(1218,"",i,"Company");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end;      
+    end;
+    if (CLOutrw.Type==kCashOutRowTypeSupplierPrepayment) then begin
+      if (blank(CLOutrw.Company)) then begin
+        RecordCheckError(1205,"",i,"Company");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (CLOutrw.TransNr==-1) then begin
+        RecordCheckError(1289,"",i,"TransNr");      
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      if (nonblank(paymode)) then begin
+        if (CheckCurncy(paymode,CLOutp.CurncyCode)==false) then begin
+          RecordCheckError(1425,"",-1,"PayMode");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+      VEr.Code = CLOutrw.Company;
+      if (ReadFirstMain(VEr,1,true)) then begin
+        if (VEr.OnAccount==0) then begin
+          RecordCheckError(1131,"",i,"Company");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+        if (nonblank(VEr.VECurncyCode)) then begin
+          if (VEr.VECurncyCode!=CLOutp.CurncyCode) then begin
+            RecordCheckError(1217,"",i,"Company");      
+            res = -1;
+            goto L99CLOutVcRecordCheck;
+          end;
+        end;
+      end else begin
+        RecordCheckError(1290," " & CLOutrw.Company,i,"Company");
+        res = -1; 
+        goto L99CLOutVcRecordCheck;
+      end;
+      APHistr.VEPNr = CLOutrw.TransNr;
+      if (ReadFirstMain(APHistr,1,true)==true) then begin
+        if (APAccRec.ForceUniquePP!=0) then begin
+          temp = blankval;
+          OPPr.SerNr = APHistr.VEPNr;
+          if (ReadFirstMain(OPPr,1,true)==true) then begin
+            temp = OPPr.PPVal;
+          end;
+          temp = temp + CLOutrw.Sum;
+          if (temp!=0) and (CLOutrw.Sum>0) then begin
+            RecordCheckError(20057,"",i,"TransNr");      
+            res = -1; 
+            goto L99CLOutVcRecordCheck;
+          end;
+        end;
+        if (APHistr.VECode!=CLOutrw.Company) then begin
+          RecordCheckError(1215,"",i,"Company");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+        if (APHistr.CurncyCode!=CLOutp.CurncyCode) then begin
+          RecordCheckError(1217,"",i,"TransNr");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+      OPPr.SerNr = CLOutrw.TransNr;
+      if (ReadFirstMain(OPPr,1,true)) then begin
+        if (OPPr.PayDate!=CLOutp.TransDate) then begin
+          RecordCheckError(20853,"",i,"TransNr");      
+          res = -1; 
+          goto L99CLOutVcRecordCheck;
+        end;
+      end;
+      if (UserCanAction("DisallowPrepToNotOKPO",false)) then begin
+        POr.SerNr = CLOutrw.OrderNr;
+        if (ReadFirstMain(POr,1,true)) then begin
+          if (POr.OKFlag==0) then begin
+            RecordCheckError(20072,"",i,"OrderNr");      
+            res = -1;
+            goto L99CLOutVcRecordCheck;
+          end;
+        end;
+      end;
+    end;
+    if (CLOutp.OKFlag!=0) then begin
+      cashres = CheckObjs(PMrw.AccNr,CLOutrw.Objects,errstr);
+      if (cashres!=0) then begin
+        RecordCheckError(cashres,errstr,i,"Objects");      
+        res = -1;
+        goto L99CLOutVcRecordCheck;
+      end; 
+      if (nonblank(CLOutrw.CorspCode)) then begin
+        Corspr.Code = CLOutrw.CorspCode;
+        if (ReadFirstKey("Code2",Corspr,1,true)==false) then begin
+          RecordCheckError(1120,CLOutrw.CorspCode,i,"CorspCode");
+          res = -1;
+          goto L99CLOutVcRecordCheck;
+        end;
+        GetCorspAccNumber(CLOutrw.CorspCode,tstr);        
+        cashres = CheckObjs(tstr,CLOutrw.Objects,errstr);
+        if (cashres!=0) then begin
+          RecordCheckError(cashres,errstr,i,"Objects");      
+          res = -1;
+          goto L99CLOutVcRecordCheck;
+        end; 
+      end;
+    end;
+    if (CLOutrw.Type!=kCashOutRowTypeNormal) then begin 
+        corspf = false; 
+     end else begin
+      if (nonblank(CLOutrw.CorspCode)) then begin
+        corspf = false; 
+      end else begin
+        corspf = true; 
+      end;
+    end;      
+  end;
+  if (CLOutp.Total<0) then begin
+    if (UserCanAction("AllowNegCLOut",true)==false) then begin
+      RecordCheckError(20071,"",-1,"Total");   
+      res = -1; 
+      goto L99CLOutVcRecordCheck;
+    end;
+  end;           
+  if (corspf) then begin
+    Corspr.Code = CLOutp.CorspCode;
+    if (ReadFirstKey("Code2",Corspr,1,true)==false) then begin
+      RecordCheckError(1120,CLOutp.CorspCode,-1,"CorspCode");      
+      res = -1;
+      goto L99CLOutVcRecordCheck;
+    end;
+  end;
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+    errcode = MakeTransFromCLOut(gTRp,CLOutp,false,errstr);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,errstr,-1,"SerNr");      
+      res = -1;
+      goto L99CLOutVcRecordCheck;
+    end else begin
+      if ((gTRp.Number>0) and (gTRp.IntYc==CLOutYc)) then begin
+        tstr = CheckTrans(gTRp,2,true);
+        if (nonblank(tstr)) then begin
+          RecordCheckError(1085,tstr,-1,"SerNr");      
+          res = -1;
+          goto L99CLOutVcRecordCheck;
+        end;
+        SaveTrans(gTRp);
+        AddTTrans_CLOutVc(gTRp,CLOutp);
+      end;
+    end;
+  end;  
+L99CLOutVcRecordCheck:;
+  if (res!=0) then begin
+    CLOutp.SerNr = oldnr;
+  end;  
+LCLOutVcRecordCheck:;
+  CLOutVcRecordCheck = res;  
+  RETURN;
+end;
+

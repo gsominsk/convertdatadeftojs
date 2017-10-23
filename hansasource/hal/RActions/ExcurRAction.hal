@@ -1,0 +1,228 @@
+external updating procedure StoreInShopBask(Integer,LongInt,String,String,Val,Val,Val,String,String,LongInt,String,Boolean,string,string,longint,string,val,val,val,val,val);
+external updating procedure LinkExcurToJob(record ExcursionVc);
+external updating procedure LinkExcurToAct(record ExcursionVc);
+external function Boolean ValidStateChange(Integer,Integer);
+
+function Boolean JobInEvent(record ExcursionVc Excur,LongInt JobNr,Integer fromrow)
+begin
+  Integer i,rwcnt;
+  Row ExcursionVc Excurrw;
+  Boolean res;
+  
+  res = false;
+  rwcnt = MatRowCnt(Excur);
+  for (i=fromrow;i<rwcnt;i=i+1) begin
+    MatRowGet(Excur,i,Excurrw);
+    if (Excurrw.JobNr==JobNr) then begin
+      res = true;
+      goto LJobInEvent;
+    end;
+  end;
+LJobInEvent:;
+  JobInEvent = res;
+  return;
+end;  
+
+updating procedure UpdateExcursionrsVc(record ExcursionVc Excr,record ExcursionVc r2,Integer insmode)
+begin
+  record ExcursionrsVc Excurrsr;
+  Integer i,rwcnt;
+  Row ExcursionVc Excurrw;
+  Boolean err;
+  
+  rwcnt = MatRowCnt(Excr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Excr,i,Excurrw);
+    RecordNew(Excurrsr);
+    Excurrsr.JobNr     = Excurrw.JobNr;
+    Excurrsr.EventNr   = Excr.SerNr;
+    Excurrsr.Comment   = Excr.Comment;
+    Excurrsr.TransDate = Excr.TransDate;
+    Excurrsr.StartTime = Excr.StartTime;
+    Excurrsr.FileName  = "ExcursionVc";
+     
+    if (insmode==0) then begin   //Save
+      if (JobInEvent(Excr,Excurrw.JobNr,i+1)==false) then begin
+        err = RecordStore(Excurrsr,true);
+      end;
+    end;
+    if (insmode==1) then begin  // update 1
+      if (JobInEvent(r2,Excurrw.JobNr,0)==false) then begin
+        if (JobInEvent(Excr,Excurrw.JobNr,i+1)==false) then begin 
+          RecordDelete(Excurrsr);
+        end;
+      end;
+    end;
+    if (insmode==2) then begin  // update 2
+      if (JobInEvent(r2,Excurrw.JobNr,0)==false) then begin
+        if (JobInEvent(Excr,Excurrw.JobNr,i+1)==false) then begin
+          err = RecordStore(Excurrsr,true);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure UpdateJobOnExcursion(record ExcursionVc Ex)
+begin
+  Record ExcurTypeVc Excurtyper;
+  Row ExcursionVc Exrw;
+  string 60 comment;
+  Val qty;
+  Integer i,rows;
+  LongInt LastJobNr;
+  
+  Excurtyper.Code = Ex.ExcurType;
+  if readfirstmain(Excurtyper,1,true) then begin
+    
+    Comment = "Excursion " & Ex.SerNr & " " & Ex.Comment;
+    LastJobNr = -1;   qty = 0;
+    rows = matrowcnt(Ex);
+    for (i=1;i<rows;i=i+1) begin
+      matrowget(Ex,i,Exrw);
+      if ((LastJobNr<>Exrw.JobNr) and (LastJobNr<>-1)) then begin
+        StoreInShopBask(1,LastJobNr,Excurtyper.ArtCode,Comment,qty,Ex.Cost,blankval,"",Ex.Objects,-1,"",false,"","",-1,"",blankval,blankval,blankval,blankval,blankval);
+        qty = 0;
+      end else begin
+        qty = qty + 1;
+      end;
+      LastJobNr = Exrw.JobNr;
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt ExcursionVcRecordDefaults(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  Excr.SerNr     = NextSerNr("ExcursionVc",Excr.TransDate,-1,false,"");
+  Excr.TransDate = CurrentDate;
+  Excr.Status    = 0;
+  Excr.NotConf   = 0;
+  return;
+end;
+
+global
+function LongInt ExcursionVcRecordDuplicate(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  Excr.SerNr= NextSerNr("ExcursionVc",Excr.TransDate,-1,false,"");
+  Excr.Status = 0;
+  return;
+end;
+
+global
+updating function LongInt ExcursionVcRecordSave(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  Record ResortBlock ResBlock;
+  
+  UpdateExcursionrsVc(Excr,r2,0);
+  BlockLoad(ResBlock);
+  if (ResBlock.ActLink1==1) then begin
+    if nonblank(Excr.MainPersons) then begin LinkExcurToAct(Excr); end;
+  end;  
+  if (ResBlock.JobLink1==1) then begin                        
+    if nonblank(Excr.ResCode) then begin LinkExcurToJob(Excr); end;    //LO BUG ref to r2
+  end;
+  ExcursionVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt ExcursionVcRecordImport(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  UpdateExcursionrsVc(Excr,Excr,0);
+  ExcursionVcRecordImport = res;
+  return;
+end;
+
+global
+updating function LongInt ExcursionVcRecordUpdate(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  Record ResortBlock ResBlock;
+
+  if ((Excr.Status==3) and (r2.Status<>3))  then begin
+    UpdateJobOnExcursion(Excr);
+  end;
+  UpdateExcursionrsVc(r2,Excr,1);
+  UpdateExcursionrsVc(Excr,r2,2);
+  
+  if (Excr.Status>=2) then begin
+    BlockLoad(ResBlock);
+    if (ResBlock.ActLink1==1) then begin
+      if (Excr.MainPersons<>r2.MainPersons) then begin LinkExcurToAct(Excr); end;
+    end;  
+    if (ResBlock.JobLink1==1) then begin
+      if (Excr.ResCode<>r2.ResCode) then begin LinkExcurToJob(Excr); end;
+    end;
+  end;
+
+  ExcursionVcRecordUpdate = res;
+  return;
+end;
+
+global
+updating function LongInt ExcursionVcRecordRemove(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  UpdateExcursionrsVc(Excr,Excr,1);    
+  ExcursionVcRecordRemove = res;  
+  return;
+end;
+
+global
+function LongInt ExcursionVcRecordCheck(var record ExcursionVc Excur,record ExcursionVc Excurr2,LongInt stat,LongInt long4)
+BEGIN
+  row ExcursionVc Excurrw;
+  record ExcurTypeVc ExcurType;
+  LongInt res;
+  Integer i,rows,s;
+  Boolean Cond;
+  
+  res = -1;  
+  if (blankdate(Excur.TransDate)) then begin
+    RecordCheckError(1024,Excur.TransDate,-1,"TransDate");
+    goto LExcursionVcRecordCheck;
+  end;
+  if (blank(Excur.ExcurType)) then begin
+    RecordCheckError(1058,Excur.ExcurType,-1,"ExcurType");
+    goto LExcursionVcRecordCheck;
+  end;
+  if not ValidStateChange(Excur.Status,Excurr2.Status) then begin
+    RecordCheckError(20152,"",-1,"Status");
+    goto LExcursionVcRecordCheck;
+  end;  
+  if ((Excur.Status>1) and (Excurr2.Status<=1) and (Excur.NotConf<>0)) then begin
+    RecordCheckError(20153,": " & Excur.ExcurType,-1,"Status");
+    goto LExcursionVcRecordCheck;
+  end;  
+
+  rows = MatrowCnt(Excur);
+  ExcurType.Code = Excur.ExcurType;
+  if (readfirstmain(ExcurType,1,true)) then begin
+    if (rows > ExcurType.MaxQty) then begin
+      RecordCheckError(20154,": " & Excur.ExcurType,-1,"ExcurType");
+      goto LExcursionVcRecordCheck;
+    end;
+  end;
+ 
+  res = 0;
+LExcursionVcRecordCheck:;  
+  if (res<>0) then begin Beep; end;
+  ExcursionVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt ExcursionVcRecordRemoveTest(var record ExcursionVc Excr,record ExcursionVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  res = -1;
+  ExcursionVcRecordRemoveTest = res;  
+  return;
+end;

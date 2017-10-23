@@ -1,0 +1,430 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTLevCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass2(string,string,string,string,string,string,string);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure HTPOs(string,var string);
+external procedure HT2Per(Date, Date , var string);
+external procedure HTSupps(string,string,var string);
+
+procedure PrintHeader(record RcVc RepSpec)
+begin
+  StartFormat(15);
+  switch (RepSpec.flags[0]) begin
+    case 0:
+      OutString(0,0,USetStr(18011),false);
+      OutString(2,0,USetStr(18012),false);
+      OutString(3,0,USetStr(18013),false);
+      OutString(4,0,USetStr(18014),true);
+      OutString(5,0,USetStr(18015),true);
+      OutString(1,0,USetStr(18016),true);
+    case 1:
+      OutString(0,0,USetStr(18012),false);
+      OutString(2,0,USetStr(18011),false);
+      OutString(3,0,USetStr(18013),false);
+      OutString(4,0,USetStr(18015),true);
+      OutString(5,0,USetStr(18014),true);
+      OutString(1,0,USetStr(18016),true);
+  end;
+  EndFormat;
+  Gray_Divider(0,1);
+  return;
+end;
+
+function LongInt FindVIforPURow(record RcVc RepSpec,LongInt punr,LongInt purow,var val visum,var val viqty)
+begin
+  LongInt res;
+  record VIVc VIr;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  string 255 keystr;
+  
+  found = true;
+  keystr = "RowPUNr:" & punr;
+  while (LoopKey(keystr,VIr,1,found)) begin
+    if (found) then begin
+      testf = true;
+      if (VIr.Invalid!=0) then begin testf = false; end;
+      if (DateInRange(VIr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+        testf = false;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(VIr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VIr,i,VIrw);
+          testf = true;
+          if (VIrw.PUNr!=punr) then begin testf = false; end;
+          if (VIrw.PURow!=purow) then begin testf = false; end;
+          if (testf) then begin
+            res = Vir.SerNr;
+            visum = visum + VIrw.Sum;
+            viqty = viqty + VIrw.qty;
+          end;
+        end;
+      end;
+    end;
+  end;
+  FindVIforPURow = res;
+  return;
+end;
+
+procedure AddPURowToSumPO(record RcVc RepSpec,record POVc sumPOr,record PUVc PUr,row PUVc PUrw,LongInt purow)
+begin
+  row POVc sumPOrw;
+  Integer i,rwcnt;
+  Boolean testf;
+  val visum,viqty;
+  val uprice;
+  val vatv,t1;
+  LongInt vinr;
+
+//ChargeNumber is PO Row Nr
+//WSNr is PU Nr
+//POCORow is VI Nr
+//Price is PU Amount
+//Sum is VI Amount
+
+
+  vinr = FindVIforPURow(RepSpec,PUr.SerNr,purow,visum,viqty);
+  rwcnt = MatRowCnt(sumPOr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(sumPOr,i,sumPOrw);
+    testf = true;
+    if (sumPOrw.ChargeNumber!=PUrw.OrdRow) or (sumPOrw.WSNr!=PUr.SerNr) or (sumPOrw.POCORow!=vinr) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      uprice = PUrw.UPrice;
+      sumPOrw.Price = sumPOrw.Price + PUrw.Quant*uprice;
+      sumPOrw.Sum = sumPOrw.Sum + visum;
+      MatRowPut(sumPOr,i,sumPOrw);
+      goto LAddPURowToSumPO;
+    end;
+  end;
+  ClearRow(sumPOr,sumPOrw,1);
+  sumPOrw.ChargeNumber = PUrw.OrdRow;
+  sumPOrw.WSNr = PUr.SerNr;
+  sumPOrw.POCORow = vinr;
+  sumPOrw.ArtCode = PUrw.ArtCode;
+  uprice = PUrw.UPrice;
+  if (PUr.InclVAT!=0) then begin
+    MulVATIV(PUrw.VATCode,uprice,vatv,t1,PUr.InclVAT,0);
+    uprice = uprice - vatv;
+  end;
+  sumPOrw.Price = PUrw.Quant*uprice;
+  sumPOrw.Sum = visum;  
+  MatRowPut(sumPOr,MatRowCnt(sumPOr),sumPOrw);
+LAddPURowToSumPO:;  
+  return;
+end;
+
+procedure PrintSumPOr(record RcVc RepSpec,record POVc sumPOr)
+begin
+  Integer i,rwcnt;
+  row POVc sumPOrw;
+  Boolean testf;
+
+  rwcnt = MatRowCnt(sumPOr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(sumPOr,i,sumPOrw);
+    testf = true;
+    switch (RepSpec.flags[0]) begin
+      case 0:
+        if (RepSpec.flags[1]!=0) then begin 
+          if (sumPOrw.POCORow>0) then begin testf = false; end;
+        end else begin
+          if (sumPOrw.POCORow<=0) then begin testf = false; end;
+        end;       
+      case 1:
+        if (RepSpec.flags[2]!=0) then begin 
+          if (sumPOrw.WSNr<=0) then begin testf = false; end;
+        end;
+    end;
+    if ((sumPOrw.Price-sumPOrw.Sum)==0) then begin testf = false; end;
+    if (testf) then begin
+      StartFormat(15);
+      switch (RepSpec.flags[0]) begin
+        case 0:
+          OutLongInt(0,"DblPUVc",sumPOrw.WSNr,false);
+          OutLongInt(2,"DblVIVc",sumPOrw.POCORow,false);
+          OutString(3,0,sumPOrw.ArtCode,false);
+          OutVal(4,0,sumPOrw.Price,M4Val,true);
+          OutVal(5,0,sumPOrw.Sum,M4Val,true);
+          OutVal(1,0,sumPOrw.Price-sumPOrw.Sum,M4Val,true);
+        case 1:
+          OutLongInt(0,"DblVIVc",sumPOrw.POCORow,false);
+          OutLongInt(2,"DblPUVc",sumPOrw.WSNr,false);
+          OutString(3,0,sumPOrw.ArtCode,false);
+          OutVal(4,0,sumPOrw.Sum,M4Val,true);
+          OutVal(5,0,sumPOrw.Price,M4Val,true);
+          OutVal(1,0,sumPOrw.Sum-sumPOrw.Price,M4Val,true);
+      end;
+      EndFormat;
+    end;
+  end;
+  return;
+end;
+
+procedure PUDiff(record RcVc RepSpec,record POVc POr,LongInt PORow,record POVc sumPOr)
+begin
+  record PUVc PUr;
+  row PUVc PUrw;
+  Integer i,rwcnt,porwcnt;
+  Boolean found,testf;
+  string 255 keystr; 
+  Integer sort;
+
+  porwcnt = MatRowCnt(POr);
+  found = true;
+  PUr.PONr = POr.SerNr;
+  while (LoopKey("PONr",PUr,1,found)) begin
+    if (PUr.PONr!=POr.SerNr) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (PUr.Invalid!=0) then begin testf = false; end;
+      if (DateInRange(PUr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+        testf = false;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(PUr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          testf = true;
+          MatRowGet(PUr,i,PUrw);
+          if (PUrw.ovst!=0) then begin testf = false; end;
+          if (PUrw.OrdRow!=PORow) then begin testf = false; end;
+          if (PUrw.OrdRow>=porwcnt) then begin testf = false; end;          
+          if (testf) then begin
+            AddPURowToSumPO(RepSpec,sumPOr,PUr,PUrw,i);
+          end;
+        end;
+      end;
+    end;
+  end;
+  
+  ResetLoop(PUr);
+  found = true;
+  keystr = "RowPONr:" & POr.SerNr;
+  while (LoopKey(keystr,PUr,1,found)) begin
+    if (found) then begin
+      testf = true;
+      if (PUr.Invalid!=0) then begin testf = false; end;
+      if (DateInRange(PUr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+        testf = false;
+      end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(PUr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(PUr,i,PUrw);
+          if (PUrw.ovst!=0) then begin testf = false; end;
+          if (PUrw.PONr!=POr.SerNr) then begin testf = false; end;
+          if (PUrw.OrdRow!=PORow) then begin testf = false; end;
+          if (PUrw.OrdRow>=porwcnt) then begin testf = false; end;          
+          if (testf) then begin
+            AddPURowToSumPO(RepSpec,sumPOr,PUr,PUrw,i);
+          end;
+        end;
+      end;
+    end;
+  end;
+ 
+  return;
+end;
+
+procedure AddVIRowToSumPO(record RcVc RepSpec,record POVc sumPOr,LongInt vinr,row VIVc VIrw)
+begin
+  row POVc sumPOrw;
+  Integer i,rwcnt;
+  Boolean testf;
+  val visum,viqty;
+  row PUVc PUrw;
+  record PUVc PUr;
+
+//ChargeNumber is PO Row Nr
+//WSNr is PU Nr
+//POCORow is VI Nr
+//Price is PU Amount
+//Sum is VI Amount
+
+  PUr.SerNr = VIrw.PUNr;
+  if (ReadFirstMain(PUr,1,true)) then begin
+    if (VIrw.PURow<MatRowCnt(PUr)) then begin
+      MatRowGet(PUr,VIrw.PURow,PUrw);
+    end;
+  end;
+  
+  rwcnt = MatRowCnt(sumPOr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(sumPOr,i,sumPOrw);
+    testf = true;
+    if (sumPOrw.ChargeNumber!=VIrw.OrdRow) or (sumPOrw.WSNr!=VIrw.PUNr) or (sumPOrw.POCORow!=vinr) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      sumPOrw.Price = sumPOrw.Price + PUrw.Quant*PUrw.UPrice;
+      sumPOrw.Sum = sumPOrw.Sum + visum;
+      MatRowPut(sumPOr,i,sumPOrw);
+      goto LAddVIRowToSumPO;
+    end;
+  end;
+  ClearRow(sumPOr,sumPOrw,1);
+  sumPOrw.ChargeNumber = PUrw.OrdRow;
+  sumPOrw.WSNr = VIrw.PUNr;
+  sumPOrw.POCORow = vinr;
+  sumPOrw.ArtCode = VIrw.Item;
+  sumPOrw.Price = PUrw.Quant*PUrw.UPrice;
+  sumPOrw.Sum = VIrw.Sum;  
+  MatRowPut(sumPOr,MatRowCnt(sumPOr),sumPOrw);
+LAddVIRowToSumPO:;  
+  return;
+end;
+
+procedure VIDiff(record RcVc RepSpec,record POVc POr,LongInt PORow,record POVc sumPOr)
+begin
+  record VIVc VIr;
+  row VIVc VIrw;
+  Boolean found,testf;
+  Integer i,rwcnt;
+  
+  found = true;
+  VIr.POSerNr = POr.SerNr;
+  while (LoopKey("POSerNr",VIr,1,found)) begin
+    if (VIr.POSerNr!=POr.SerNr) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (DateInRange(VIr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+        testf = false;
+      end;
+      if (VIr.Invalid!=0) then begin testf = false; end;
+      if (testf) then begin
+        rwcnt = MatRowCnt(VIr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VIr,i,VIrw);
+          testf = true;
+          if (VIrw.OrdRow!=PORow) then begin testf = false; end;
+          if (testf) then begin
+            AddVIRowToSumPO(RepSpec,sumPOr,VIr.SerNr,VIrw);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintPOData(record RcVc RepSpec,record POVc POr)
+begin
+  record POVc sumPOr;
+  row POVc POrw;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(POr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POr,i,POrw);
+    switch (RepSpec.flags[0]) begin
+      case 0:
+        PUDiff(RepSpec,POr,i,sumPOr);
+      case 1:
+        VIDiff(RepSpec,POr,i,sumPOr);
+    end;
+  end;
+  PrintSumPOr(RepSpec,sumPOr);
+  return;
+end;
+
+global
+procedure PUVIDiffRn(record RcVc RepSpec)
+begin
+  LongInt frpo,topo;
+  record POVc POr;
+  Boolean found,testf;
+  string 255 keystr,tstr;
+  Integer sort,rw;  
+  string 20 frve,tove;
+  
+  frpo = FirstInRange(RepSpec.f1,10);
+  topo = LastInRange(RepSpec.f1,10);
+  frve = FirstInRange(RepSpec.f2,10);
+  tove = LastInRange(RepSpec.f2,10);
+  StartReportJob(USetStr(18010));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTSupps(frve,tove,tstr);
+  Header(rw,tstr,0);
+  if (HasCategories) then begin
+    HTLevCat(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;  
+  HTPOs(RepSpec.f1,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  EndHeader;
+  SetRepCol(2,80);
+  SetRepCol(3,160);
+  SetRepCol(4,340);
+  SetRepCol(5,410);  
+  PrintHeader(RepSpec);
+  
+  if (nonblank(RepSpec.f1)) then begin
+    keystr = "SerNr";
+    sort = 1;
+    POr.SerNr = frpo;
+  end else begin
+    keystr = "TransDate";
+    sort = 2;
+    POr.TransDate = RepSpec.sStartDate;
+  end;
+  found = true;
+
+  while (LoopKey(keystr,POr,1,found)) begin
+    switch (sort) begin
+      case 1:
+        if (nonblank(RepSpec.f1)) then begin
+          if (POr.SerNr>topo) then begin found = false; end;
+        end;
+      case 2:
+        if (DateInRange(POr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+          found = false;
+        end;
+    end;
+    if (found) then begin
+      testf = true;
+      switch (sort) begin
+        case 2:
+          if (nonblank(RepSpec.f1)) then begin
+            if (POr.SerNr<frpo) then begin testf = false; end;
+            if (POr.SerNr>topo) then begin testf = false; end;
+          end;
+        case 1:
+          if (DateInRange(POr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin 
+            testf = false;
+          end;
+      end;      
+      if (nonblank(RepSpec.f2)) then begin
+        if (POr.VECode<frve) then begin testf = false; end;
+        if (POr.VECode>tove) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        testf = ContactInGroupClass2(POr.VECode,RepSpec.f3,RepSpec.f4,"","SUPP","","");
+      end;
+      if (testf) then begin
+        PrintPOData(RepSpec,POr);
+      end;
+    end;
+  end;
+  EndJob;
+  return;
+end;

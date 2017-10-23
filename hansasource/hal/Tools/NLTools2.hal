@@ -1,0 +1,914 @@
+external updating procedure BatchSMMainAccrual(record SMVc,Boolean);
+external function Boolean VATCodeExists(string);
+external procedure TransAccTurnover(string,string,Date,Date,Integer,Integer,Integer,string,string,var val,var val);
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external updating procedure AddToArchive(string,string,string,Date,string,val);
+external procedure GetAccStartBalance(string,string,Date,record ObjBalVc,Integer,Integer,string,Integer,var val);
+external function Boolean GetObjBal(string,string,var record ObjBalVc);
+external procedure GetAccBalance(string,string,Date,record ObjBalVc,Integer,Integer,Integer,string,Integer,var val);
+external procedure GetAccTurnover(string,string,Date,Date,record ObjBalVc,string,Integer,Integer,Integer,var val,var val);
+external procedure SMSumup(var record SMVc);
+external updating procedure AddSM(record SMVc,Boolean);
+external procedure MockObjFromVATCode(string,var string);
+external procedure ExtractObj(string,var Integer,var string);
+external function Integer DateGetIntMonth(Date);
+external function val Budg1Calc(string,string,string,Date,Date,Integer,Integer,Integer);
+external updating procedure UpdateROHis(record TRVc,record TRVc,integer);
+external updating procedure AddTrans(record TRVc,Boolean,Boolean,Boolean);
+external procedure NegateTrans(Integer,var record TRVc);
+
+procedure ProcFactor(val a,var val b)
+BEGIN
+  b = a + 100;
+  b = b/100;
+  b = Round(b,DefaultRoundMode);
+  RETURN;
+END;
+
+global
+procedure Bud2Sumup(var record Bud2Vc Bud2p)
+BEGIN
+  val bv,tv,tempv,rv,mv;
+  Integer i,rwcnt;
+  row Bud2Vc Bud2rw;
+  row Bud2Vc nextBud2rw;
+  Integer b1rwcnt;
+  Date sd,ed;
+  Boolean bud1flag;
+  val calctotal,x;
+  
+  if (nonblank(Bud2p.Bud1Proc)) then begin
+    bud1flag = true;
+  end;  
+  tv = 0;
+  ProcFactor(Bud2p.Bud1Proc,bv);
+  rwcnt = MatRowCnt(Bud2p);
+  for (i=0; i<rwcnt; i= i+1) begin
+    MatRowGet(Bud2p,i,Bud2rw);
+    rv = blankval;
+    if (bud1flag) then begin
+      sd = Bud2rw.BudDate;
+      if (blankdate(sd)) then begin
+        goto LBud2Sumup;
+      end;  
+      if (i<(rwcnt-1)) then begin
+        MatRowGet(Bud2p,i+1,nextBud2rw);
+        ed = nextBud2rw.BudDate;
+        if (blankdate(ed)) then begin
+          ed = Bud2p.EndDate;
+        end else begin
+          ed = AddDay(ed,-1);
+        end;
+      end else begin
+        ed = Bud2p.EndDate;
+      end;
+      tempv = Budg1Calc(Bud2p.AccNumber,Bud2p.Objects,"",sd,ed,0,0,0);
+      tempv = tempv * bv;
+      rv = rv + tempv;
+    end;
+    mv = StringToVal(Bud2rw.DefStr,M4Val);
+    rv = rv + mv;
+    Bud2rw.sval = Round(rv,SetRoundModeD(2));
+    calctotal = calctotal + Bud2rw.sval;
+    MatRowPut(Bud2p,i,Bud2rw);    
+    tv = tv + rv;
+  end;
+LBud2Sumup:;
+  MatRowGet(Bud2p,rwcnt-1,Bud2rw); 
+  x = Bud2rw.sval;
+  Bud2rw.sval = Round(x + (tv-calctotal),SetRoundModeD(2)); 
+  MatRowPut(Bud2p,rwcnt-1,Bud2rw);    
+  Bud2p.BudSum = tv;
+  RETURN;
+END;
+
+global
+procedure Bud1Sumup(var record Bud1Vc Bud1p)
+begin
+  row Bud1Vc b1rrw;
+  record BFVc BFr;
+  row BFVc bfrw;
+  Boolean obs,bfs,accs,pospresflag;
+  Integer bfrwcnt;
+  record ObjBalVc ObjBalr;
+  Integer i,rwcnt;
+  val mv,tv,tempv,rv;
+  Integer obrwcnt;
+  val calctotal;
+  
+  tv = 0;
+  if (nonblank(Bud1p.BFCode) and (Bud1p.YearVal!=blankval)) then begin
+    BFr.BFCode = Bud1p.BFCode;
+    bfs = ReadFirstMain(BFr,1,true);
+    if (bfs) then begin
+      bfrwcnt = MatRowCnt(BFr);
+    end;
+  end;
+  rwcnt = MatRowCnt(Bud1p);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(Bud1p,i,b1rrw);
+    rv = blankval;
+    if (nonblank(Bud1p.BFCode) and (Bud1p.YearVal!=blankval)) then begin
+      if (bfs) then begin
+        if (i<bfrwcnt) then begin
+          MatRowGet(BFr,i,bfrw);
+          if (bfrw.crvval!=0) then begin
+            tempv = Bud1p.YearVal*bfrw.crvval;
+            tempv = tempv/BFr.Sum;
+            rv = rv + tempv;
+          end;
+        end;
+      end;
+    end;
+    if (nonblank(b1rrw.DefStr)) then begin
+      mv = StringToVal(b1rrw.DefStr,M4Val);
+      rv = rv + mv;
+    end;
+    b1rrw.sval = Round(rv,SetRoundModeD(2)); 
+    calctotal = calctotal + b1rrw.sval;
+    MatRowPut(Bud1p,i,b1rrw);
+    tv = tv + rv;
+  end;
+  if (rwcnt>0) then begin
+    MatRowGet(Bud1p,rwcnt-1,b1rrw);
+    b1rrw.sval = b1rrw.sval + (tv-calctotal); 
+    MatRowPut(Bud1p,rwcnt-1,b1rrw);
+  end;
+  Bud1p.BudSum = tv;
+  return;
+end;
+
+global
+updating procedure UpdateObjBal(string Acc,string SObj,Date td,val dvp,val cvp,string colname,Boolean toarchive)
+BEGIN
+  record ObjBalVc ObjBalr;
+  Boolean balrfound;
+  string 20 colname2;
+
+  colname2 = "transcredit";
+  if (colname=="simdebit") then begin
+    colname2 = "simcredit";
+  end;  
+  if (colname=="transdebit2") then begin
+    colname2 = "transcredit2";
+  end;  
+  balrfound = GetObjBal(Acc,SObj,ObjBalr);
+  if (toarchive) then begin
+    AddToArchive("ObjBalVc",Acc,SObj,td,colname,dvp);
+    AddToArchive("ObjBalVc",Acc,SObj,td,colname2,cvp);
+  end else begin
+    AddBalance(ObjBalr,td,colname,dvp,colname2,cvp,"",blankval,"",blankval,"",blankval,"",blankval);
+  end;
+  RETURN;
+END;
+
+global
+updating procedure UpdateBal(var Date PerDate,string accnumber,string objstr,
+                    val dvp,val cvp,string colname,string vatcodes,Boolean toarchive)
+BEGIN
+  Integer pos;
+  string 255 ostr,vatcode;
+ 
+  if (blankdate(PerDate)) then begin goto LUpdateBal; end;  
+  if (GetYear(PerDate)<1980) then begin
+    PerDate = AddYear(PerDate,-GetYear(PerDate)+1980);
+  end;  
+  if (nonblank(accnumber)) then begin
+    UpdateObjBal(accnumber,"",PerDate,dvp,cvp,colname,toarchive);
+    pos = 0;
+    ExtractObj(objstr,pos,ostr);
+    while (nonblank(ostr)) begin
+      UpdateObjBal(accnumber,ostr,PerDate,dvp,cvp,colname,toarchive);
+      ExtractObj(objstr,pos,ostr);
+    end;
+
+    if (nonblank(vatcodes)) then begin
+      pos = 0;
+      ExtractObj(vatcodes,pos,vatcode);
+      while (nonblank(vatcode)) begin 
+        MockObjFromVATCode(vatcode,ostr);
+        UpdateObjBal(accnumber,ostr,PerDate,dvp,cvp,colname,toarchive);
+        ExtractObj(vatcodes,pos,vatcode);
+      end;
+    end;
+  end;
+LUpdateBal:;
+  RETURN;
+END;
+
+updating procedure UpdateObjQuantBal(string Acc,string SObj,Date td,val qtyp,Boolean toarchive,Boolean deletef)
+BEGIN
+  record ObjBalVc oldObjBalr;
+  record ObjBalVc ObjBalr;
+  Boolean balrfound;
+  string 50 colname;
+  val qty;
+
+  if (deletef) then begin
+    if (qtyp<=0) then begin
+      colname = "debquant";
+      qty = qtyp;
+    end else begin
+      colname = "credquant";
+      qty = -qtyp;
+    end;
+  end else begin
+    if (qtyp>=0) then begin
+      colname = "debquant";
+      qty = qtyp;
+    end else begin
+      colname = "credquant";
+      qty = -qtyp;
+    end;
+  end;
+  balrfound = GetObjBal(Acc,SObj,ObjBalr);
+  if (toarchive) then begin
+    AddToArchive("ObjBalVc",Acc,SObj,td,colname,qty);
+  end else begin
+    AddBalance(ObjBalr,td,colname,qty,"",blankval,"",blankval,"",blankval,"",blankval,"",blankval);
+  end;
+  RETURN;
+END;
+
+global
+updating procedure UpdateQuantBal(var Date PerDate,string accnumber,string objstr,val qtyp,Boolean toarchive,Boolean deletef)
+BEGIN
+  Integer pos;
+  string 255 ostr;
+ 
+  if (blankdate(PerDate)) then begin goto LUpdateQuantBal; end;
+  if (GetYear(PerDate)<1980) then begin
+    PerDate = AddYear(PerDate,-GetYear(PerDate)+1980);
+  end;  
+  if (nonblank(accnumber)) then begin
+    UpdateObjQuantBal(accnumber,"",PerDate,qtyp,toarchive,deletef);
+    pos = 0;
+    ExtractObj(objstr,pos,ostr);
+    while (nonblank(ostr)) begin
+      UpdateObjQuantBal(accnumber,ostr,PerDate,qtyp,toarchive,deletef);
+      ExtractObj(objstr,pos,ostr);
+    end;
+  end;
+LUpdateQuantBal:;
+  RETURN;
+END;
+
+global
+updating procedure DeleteTransaction(LongInt sernr,Integer yc)
+BEGIN
+  record TRVc TRr;
+  record TRVc lTRr;
+  row TRVc TRrw;
+  Integer rwcnt,i,m;
+  val DebVal,CredVal;
+  string 255 balostr;
+  record MainVc mainr;
+  
+  TRr.IntYc = yc;
+  TRr.Number = sernr;
+  if (ReadFirstMain(TRr,2,true)) then begin
+    RecordCopy(lTRr,TRr);
+    NegateTrans(0,lTRr);
+    AddTrans(lTRr,false,false,true);
+//      UpdateROHis(TRr,oldTRr,2); // ? 
+
+    m = DateGetIntMonth(TRr.TransDate);
+    rwcnt = MatRowCnt(TRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+/*
+      if (TRrw.stp==1 and TRrw.ovst==0) then begin
+        DebVal = -TRrw.DebVal;
+        CredVal = -TRrw.CredVal;
+        UpdateBal(TRr.TransDate,TRrw.AccNumber,TRrw.Objects,
+                  DebVal,CredVal,"transdebit",TRrw.VATCode,false);
+        DebVal = -TRrw.DebVal2;
+        CredVal = -TRrw.CredVal2;
+        UpdateBal(TRr.TransDate,TRrw.AccNumber,TRrw.Objects,
+                  DebVal,CredVal,"transdebit2",TRrw.VATCode,false);
+        if (nonblank(TRrw.Curncy)) then begin
+          MockObjFromVATCode(TRrw.Curncy,balostr);
+          DebVal = -TRrw.CurDebVal;
+          CredVal = -TRrw.CurCredVal;
+          UpdateObjBal(TRrw.AccNumber,balostr,TRr.TransDate,DebVal,CredVal,"transdebit",false);
+        end;
+      end;
+*/
+
+      mainr.AccNumber = TRrw.AccNumber;
+      mainr.TransDate = TRr.TransDate;
+      mainr.TransNr = TRr.Number;
+      mainr.IntYc = TRr.IntYc;
+      mainr.FileName = "TRVc";
+      if (ReadFirstMain(mainr,0,true)) then begin
+        RecordDelete(mainr);    
+      end;
+    end;
+    RecordDelete(TRr);    
+  end;
+  RETURN;
+END;
+
+global
+updating procedure InvalidateTR(Integer yc,LongInt sernr)
+BEGIN
+  record TRVc TRr,lTRr;
+  record TRVc oldTRr;
+  row TRVc TRrw;
+  Integer rwcnt,i,m;
+  Boolean markedf;
+  val DebVal,CredVal;
+  string 255 balostr;
+  record RTViiteNumBlock RTr;
+  BlockLoad(RTr);
+  
+  TRr.IntYc = yc;
+  TRr.Number = sernr;
+  if (ReadFirstMain(TRr,2,true)) then begin
+    RecordCopy(oldTRr,TRr);
+    RecordCopy(lTRr,oldTRr);
+    NegateTrans(0,lTRr);
+    AddTrans(lTRr,false,false,true);
+
+    rwcnt = MatRowCnt(TRr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRr,i,TRrw);
+      if (TRrw.stp==1) and (TRrw.ovst==0) then begin
+        markedf = true;
+        TRrw.ovst = 1;
+        TRrw.Reconsf = 0;
+        TRrw.ReconCode = "";
+        MatRowPut(TRr,i,TRrw);
+      end;
+    end;
+    if (markedf) then begin
+      ClearRow(TRr,TRrw,2);
+      TRrw.ovst = 0;
+      TRrw.stp = 2;
+      TRrw.Sign = CurrentUser;
+      TRrw.OldTransDate = TRr.TransDate;
+      TRrw.UpdDate = CurrentDate;
+      MatRowPut(TRr,rwcnt,TRrw);
+    end;
+    if (RTr.RT == 1) then begin
+      UpdateROHis(TRr,oldTRr,2);
+    end;    
+    if (RecordUpdate(oldTRr,TRr,false)==0) then begin
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure DeleteSimulation(LongInt sernr,string filename)
+begin
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer rwcnt,i;
+  Boolean found;
+  
+  found = true;
+  SMr.FileName = filename;
+  SMr.TransNr = sernr;
+  while (LoopKey("FileName",SMr,2,found)) begin
+    if (SMr.FileName!=filename) then begin found = false; end;
+    if (SMr.TransNr!=sernr) then begin found = false; end;
+    if (found) then begin
+      AddSM(SMr,true);
+      BatchSMMainAccrual(SMr,true);
+      RecordDelete(SMr);    
+      StepBack(SMr);
+    end;
+  end;  
+  return
+end;
+
+global
+function Integer AccrualSimulationsTransferred(LongInt sernr,string filename)
+begin
+  Integer res;
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer rwcnt,i;
+  Boolean found;
+  
+  res = 0;
+  found = true;
+  SMr.FileName = filename;
+  SMr.TransNr = sernr;
+  while (LoopKey("FileName",SMr,2,found)) begin
+    if (SMr.FileName!=filename) then begin found = false; end;
+    if (SMr.TransNr!=sernr) then begin found = false; end;
+    if (found) then begin
+      rwcnt = MatRowCnt(SMr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SMr,i,SMrw);
+        if (SMrw.RowSimStat!=0) then begin
+          res = 7833;
+          goto LAccrualSimulationsTransferred;
+        end;
+      end;
+    end;
+  end;  
+LAccrualSimulationsTransferred:;  
+  AccrualSimulationsTransferred = res;
+  return
+end;
+
+global
+procedure FromBankDate(string tstr,var Date tdp)
+BEGIN
+  Date blankd;
+  
+  tdp = blankd;
+  tdp = AddYear(tdp,((asc(Mid(tstr,0,1)) - 48)*10) + (asc(Mid(tstr,1,1))-48+1900));
+  if (GetYear(tdp)<1930) then begin
+    tdp = AddYear(tdp,100);
+  end;
+  tdp = AddMonth(tdp,-GetMonth(tdp)+((asc(Mid(tstr,2,1)) - 48)*10) + (asc(Mid(tstr,3,1))-48));
+  tdp = AddDay(tdp,-GetDay(tdp)+((asc(Mid(tstr,4,1)) - 48)*10) + (asc(Mid(tstr,5,1))-48));
+  RETURN;
+END;
+
+global
+procedure TRTestVATCode(record TRVc TRp)
+BEGIN
+  record VATCodeBlock VATCodeRec;
+  row VATCodeBlock VATCoderw;
+  row TRVc TRrw;
+  Integer i,rwcnt,j,vatrows;
+  Boolean found;
+
+  rwcnt = MatRowCnt(TRp);
+  BlockLoad(VATCodeRec);
+  vatrows = MatRowCnt(VATCodeRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRp,i,TRrw);
+    if (TRrw.stp==1) then begin
+      if (nonblank(TRrw.VATCode)) then begin
+        found = false;
+        found = VATCodeExists(TRrw.VATCode);
+/*
+        for (j=0;j<vatrows;j=j+1) begin
+          MatRowGet(VATCodeRec,j,VATCoderw);
+          if (VATCoderw.VATCode==TRrw.VATCode) then begin
+            found = true;
+          end;  
+        end;
+*/
+        if (found==false) then begin
+          TRrw.VATCode = "";// all vatcodes blanked out ? 
+          MatRowPut(TRp,i,TRrw);
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function Integer BASAccType(string acc)
+BEGIN
+  Integer res;
+
+  res = 4;
+  if (nonblank(acc)) then begin
+    if (Mid(acc,1,1)=="1") then begin res = 0; end;
+    if (Mid(acc,1,1)=="2") then begin res = 1; end;
+    if (len(acc)>=2) then begin
+      if ((Mid(acc,1,1)=="2") and (Mid(acc,2,1)=="9")) then begin
+        res = 2;
+      end;  
+    end;  
+    if (Mid(acc,1,1)=="3") then begin res = 3; end;
+  end;
+  BASAccType = res;
+  RETURN;
+END;
+
+global
+updating function Boolean TRTestAccs(record TRVc TRp)
+BEGIN
+  record AccVc oldaccr;
+  record AccVc accr;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  Boolean accs;
+  Boolean res;
+   
+  rwcnt = MatRowCnt(TRp);
+  for (i = 0 ;i<rwcnt;i=i+1) begin
+    MatRowGet(TRp,i,TRrw);
+    if (TRrw.stp==1) then begin
+      if (nonblank(TRrw.AccNumber)) then begin
+        oldaccr.AccNumber = TRrw.AccNumber;
+        accs = ReadFirstMain(oldaccr,1,true);
+        if (accs==false) then begin
+          RecordNew(accr);
+          accr.AccNumber = TRrw.AccNumber;
+          accr.Comment = TRrw.Comment;
+          accr.AccType = BASAccType(accr.AccNumber);
+          accr.NVD = 1;
+          accr.NVC = 1;
+          if (RecordStore(accr,false)) then begin
+            res = true;
+          end;
+        end;
+      end;
+    end;
+  end;
+  TRTestAccs = res;
+  RETURN;
+END;
+
+global
+procedure Bud1AccObjCalc(var record Bud1Vc Bud1p)
+BEGIN
+  record Bud1Vc localbud;
+  row Bud1Vc budrw;
+  row Bud1Vc bud2rw;
+  Integer i,rwcnt,locrwcnt;
+  Boolean TrHs;
+  Boolean testf;
+  val temp,t2;
+
+  if (blank(Bud1p.AccNumber)) then begin goto LBud1AccObjCalc; end;
+  if (nonblank(Bud1p.Objects)) then begin goto LBud1AccObjCalc; end;
+  if (blankdate(Bud1p.StartDate)) then begin goto LBud1AccObjCalc; end;
+  if (blankdate(Bud1p.EndDate)) then begin goto LBud1AccObjCalc; end;
+  Bud1p.Objects = "";
+  Bud1p.BFCode = "";
+  Bud1p.YearVal = blankval;
+  rwcnt = MatRowCnt(Bud1p);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Bud1p,i,bud2rw);
+    bud2rw.DefStr = "";
+    MatRowPut(Bud1p,i,bud2rw);
+  end;
+  localbud.AccNumber = Bud1p.AccNumber;
+  TrHs = true;
+  while (LoopMain(localbud,1,TrHs)) begin
+    if (localbud.AccNumber!=Bud1p.AccNumber) then begin TrHs = false; end;
+    testf = TrHs;
+    if (testf) then begin
+      if (blank(localbud.Objects)) then begin testf = false; end;
+      if (Bud1p.StartDate!=localbud.StartDate) then begin testf = false; end;
+      if (Bud1p.EndDate!=localbud.EndDate) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      locrwcnt = MatRowCnt(localbud);
+      rwcnt = MatRowCnt(Bud1p);
+      for (i=0;i<locrwcnt;i=i+1) begin
+        MatRowGet(localbud,i,budrw);
+        temp = budrw.sval;
+        if (i<rwcnt) then begin
+          MatRowGet(Bud1p,i,bud2rw);
+          if (budrw.BudDate==bud2rw.BudDate) then begin
+            t2 = StringToVal(bud2rw.DefStr,M4Val); // Maybe this is wrong ??
+            temp = temp + t2;
+          end;
+        end;
+        bud2rw.BudDate = budrw.BudDate;
+        bud2rw.DefStr = "";
+        bud2rw.sval = temp;
+        bud2rw.DefStr = temp;
+        MatRowPut(Bud1p,i,bud2rw);
+      end;
+    end;
+  end;
+  Bud1Sumup(Bud1p);
+LBud1AccObjCalc:;
+  RETURN;
+END;
+
+global
+procedure Bud2AccObjCalc(var record Bud2Vc Bud2p)
+BEGIN
+  record Bud2Vc localbud;
+  row Bud2Vc budrw;
+  row Bud2Vc bud2rw;
+  Integer i,rwcnt,locrwcnt;
+  Boolean TrHs;
+  Boolean testf;
+  val temp,t2;
+
+  if (blank(Bud2p.AccNumber)) then begin goto LBud2AccObjCalc; end;
+  if (nonblank(Bud2p.Objects)) then begin goto LBud2AccObjCalc; end;
+  if (blankdate(Bud2p.StartDate)) then begin goto LBud2AccObjCalc; end;
+  if (blankdate(Bud2p.EndDate)) then begin goto LBud2AccObjCalc; end;
+  Bud2p.Objects = "";
+  rwcnt = MatRowCnt(Bud2p);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Bud2p,i,bud2rw);
+    bud2rw.DefStr = "";
+    MatRowPut(Bud2p,i,bud2rw);
+  end;
+  localbud.AccNumber = Bud2p.AccNumber;
+  TrHs = true;
+  while (LoopMain(localbud,1,TrHs)) begin
+    if (localbud.AccNumber!=Bud2p.AccNumber) then begin TrHs = false; end;
+    testf = TrHs;
+    if (testf) then begin
+      if (blank(localbud.Objects)) then begin testf = false; end;
+      if (Bud2p.StartDate!=localbud.StartDate) then begin testf = false; end;
+      if (Bud2p.EndDate!=localbud.EndDate) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      locrwcnt = MatRowCnt(localbud);
+      rwcnt = MatRowCnt(Bud2p);
+      for (i=0;i<locrwcnt;i=i+1) begin
+        MatRowGet(localbud,i,budrw);
+        temp = budrw.sval;
+        if (i<rwcnt) then begin
+          MatRowGet(Bud2p,i,bud2rw);
+          if (budrw.BudDate==bud2rw.BudDate) then begin
+            t2 = StringToVal(bud2rw.DefStr,M4Val); // Maybe this is wrong ??
+            temp = temp + t2;
+          end;
+        end;
+        bud2rw.BudDate = budrw.BudDate;
+        bud2rw.DefStr = "";
+        bud2rw.sval = temp;
+        bud2rw.DefStr = temp;
+        MatRowPut(Bud2p,i,bud2rw);
+      end;
+    end;
+  end;
+  Bud2Sumup(Bud2p);
+LBud2AccObjCalc:;
+  RETURN;
+END;
+
+global
+updating procedure SaveTRasSM(record TRVc TRp)
+BEGIN
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  row TRVc TRrw;
+  
+  RecordNew(SMr);
+  SMr.SerNr = TRp.Number;
+  SMr.TransDate = TRp.TransDate;
+  SMr.Comment = TRp.Comment;
+  SMr.RefStr = TRp.RefStr;
+  SMr.Balf = 0;
+  rwcnt = MatRowCnt(TRp);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(TRp,i,TRrw);
+    ClearRow(SMr,SMrw,1);
+    SMrw.AccNumber = TRrw.AccNumber;
+    SMrw.Objects = TRrw.Objects;
+    SMrw.Comment = TRrw.Comment;
+    SMrw.DebVal = TRrw.DebVal;
+    SMrw.CredVal = TRrw.CredVal;
+    MatRowPut(SMr,i,SMrw);
+  end;
+  SMSumup(SMr);
+  AddSM(SMr,false);
+  if (RecordStore(SMr,false)) then begin
+  end;
+  RETURN;
+END;
+
+global
+function Boolean UserBlockAccs(string user)
+begin
+  Boolean res;
+  record UserVc Userr;
+  record AccessVc Accessr;
+  
+  res = true;
+  Userr.Code = user;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    Accessr.Code = Userr.AccessGroup;
+    if (ReadFirstMain(Accessr,1,true)) then begin
+      if (nonblank(Accessr.BlockAccs)) then begin
+        res = false;
+      end;
+    end;
+  end;
+  UserBlockAccs = res;
+  return;
+end;
+
+global
+function string 255 UserBlockedAccs(string user)
+begin
+  string 255 res;
+  record UserVc Userr;
+  record AccessVc Accessr;
+  
+  Userr.Code = user;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    Accessr.Code = Userr.AccessGroup;
+    if (ReadFirstMain(Accessr,1,true)) then begin
+      res = Accessr.BlockAccs;
+    end;
+  end;
+  UserBlockedAccs = res;
+  return;
+end;
+
+global
+function Integer GetINType(string artcode)
+BEGIN
+  Integer res;
+  record INVc INr;
+
+  INr.Code = artcode;
+  if (ReadFirstMain(INr,1,true)) then begin
+    res = INr.ItemType;
+  end;
+  GetINType = res;
+  RETURN;
+END;
+
+global
+function val FindAccTurnover(string accstr,string objstr,date sdp,date edp,record ObjBalVc ObjBalr,
+                                Integer simf,Integer basecrncy,string crncycode,Integer IncDaughter)
+begin
+  val sb,vp;
+  
+  sb = BlankVal;
+  GetAccTurnover(accstr,objstr,sdp,edp,ObjBalr,crncycode,simf,basecrncy,IncDaughter,sb,vp);
+  FindAccTurnover = vp;
+  return;
+end;
+
+global
+function val FindAccBalance(string accstr,string objstr,date bdp,record ObjBalVc ObjBalr,Integer simf,
+                        Integer basecrncy,Integer crncy,string crncycode,Integer IncDaughter)
+begin
+  val res;
+  
+  GetAccBalance(accstr,objstr,bdp,ObjBalr,simf,basecrncy,crncy,crncycode,IncDaughter,res);
+  FindAccBalance = res;
+  return;
+end;
+
+global
+procedure FindNLAccBal(string AccNumber,string ObjStr,string ObjType,Integer AccType,Date AccumStartDatep,
+                       Date StartDatep,Integer SimVerf,Integer basecurncy,Boolean resUseAccum,
+                       string crncycode,Integer IncDaughter,string exclobject,string compcode,var val CurBalp)
+BEGIN
+  record ObjBalVc ObjBalr;
+  record ObjBalVc exclObjBalr;
+  record ObjVc OBr;
+  Boolean Objbals,objtyps,fullmonthf;
+  Date sd,ed;
+  val accbal,sumbal,v;
+  val dv,cv;
+  string 255 objtemp;
+    
+  objtyps = false;
+  objtemp = ObjStr;
+  ResetLoop(OBr);
+  if ((nonblank(ObjType)) and (blank(objtemp))) then begin objtyps = true; end;  
+  if (objtyps) then begin
+    OBr.OTCode = ObjType;
+    OBr.Code = "";
+    //if (m4_ReadFirstLCKey(ObjVc,"OTCode",&OBr,2,false,&LLoop1)==false) then goto L99;
+    if (LoopKey("OTCode",OBr,1,true)==false) then begin 
+      goto LFindNL; 
+    end else begin
+      StepBack(OBr);
+    end;
+    if (OBr.OTCode!=ObjType) then begin goto LFindNL; end;
+  end;
+L22LFindNL:;
+  if (objtyps) then begin
+    //if (m4_ReadLogicalCKey(ObjVc,"OTCode",LLoop1++,&OBr)==false) then goto L99;
+    if (LoopKey("OTCode",OBr,1,true)==false) then begin goto LFindNL; end;
+    if (OBr.OTCode!=ObjType) then begin goto LFindNL; end;
+    objtemp = OBr.Code;
+  end;
+  ObjBalr.AccNumber = AccNumber;
+  ObjBalr.Object = objtemp;
+  Objbals = ReadFirstMain(ObjBalr,2,true);
+  if (Objbals==false) then begin
+    ObjBalr.AccNumber = AccNumber;
+    ObjBalr.Object = objtemp;
+  end;  
+//              if ((blank(RepSpec.f3) or (EobjInEobj(RepSpec.f3,TRrw.Objects)==false))) then begin              
+
+// Might be improved by jumping to the end. No Objbals with one Object == No turnover 
+  if ((AccType==kAccTypeIncome) or (AccType==kAccTypeExpense)) then begin
+      if (resUseAccum==true) then begin
+        sd = AddDay(StartDatep,-1);
+        accbal = FindAccTurnover(AccNumber,objtemp,AccumStartDatep,sd,ObjBalr,
+                                 SimVerf,basecurncy,crncycode,IncDaughter);   
+        if (nonblank(exclobject)) then begin
+          ObjBalr.AccNumber = AccNumber;
+          ObjBalr.Object = exclobject;
+          Objbals = ReadFirstMain(ObjBalr,2,true);
+          if (Objbals==false) then begin
+            ObjBalr.AccNumber = AccNumber;
+            ObjBalr.Object = exclobject;
+          end else begin
+          end;
+          accbal = accbal - FindAccTurnover(AccNumber,exclobject,AccumStartDatep,sd,ObjBalr,
+                                   SimVerf,basecurncy,crncycode,IncDaughter);   
+        end;
+      end else begin
+        accbal = 0;
+      end;
+  end;
+  if ((AccType==kAccTypeAsset) or (AccType==kAccTypeLiability) or (AccType==kAccTypeEquity)) then begin
+    if (nonblank(compcode)) then begin
+      ed = AddDay(StartDatep,-1);
+      sd.year = 1980; sd.month = 1; sd.day = 1;
+      TransAccTurnover(AccNumber,objtemp,sd,ed,SimVerf,basecurncy,0,crncycode,compcode,dv,cv);
+      accbal = accbal + (dv-cv);
+    end else begin
+      sd = StartDatep;
+      if (sd.day==1) then begin
+        fullmonthf = true;
+      end else begin
+        fullmonthf = false;
+      end;      
+      if (fullmonthf) then begin
+        GetAccStartBalance(AccNumber,objtemp,sd,ObjBalr,SimVerf,basecurncy,crncycode,IncDaughter,accbal);
+        if (nonblank(exclobject)) then begin
+          exclObjBalr.AccNumber = AccNumber;
+          exclObjBalr.Object = exclobject;
+          Objbals = ReadFirstMain(exclObjBalr,2,true);
+          if (Objbals==false) then begin
+            exclObjBalr.AccNumber = AccNumber;
+            exclObjBalr.Object = exclobject;
+          end;  
+          GetAccStartBalance(AccNumber,exclobject,sd,exclObjBalr,SimVerf,basecurncy,crncycode,IncDaughter,v);
+          accbal = accbal - v;
+        end;
+      end else begin
+        ed = AddDay(StartDatep,-1);//end date is day before report start date
+
+//        sd = AccumStartDatep;
+//        if (blankdate(sd)) then begin
+          sd.year = 1980; sd.month = 1; sd.day = 1;
+//        end;
+        TransAccTurnover(AccNumber,objtemp,sd,ed,SimVerf,basecurncy,0,crncycode,compcode,dv,cv);
+        accbal = (dv-cv);
+        if (nonblank(exclobject)) then begin
+          exclObjBalr.AccNumber = AccNumber;
+          exclObjBalr.Object = exclobject;
+          Objbals = ReadFirstMain(exclObjBalr,2,true);
+          if (Objbals==false) then begin
+            exclObjBalr.AccNumber = AccNumber;
+            exclObjBalr.Object = exclobject;
+          end;  
+          TransAccTurnover(AccNumber,exclobject,sd,ed,SimVerf,basecurncy,0,crncycode,compcode,dv,cv);
+          accbal = accbal - (dv-cv);
+        end;
+      end;
+/*
+it would have worked if we have reconciliation date in mainvc
+      sd = StartDatep;
+      fullmonthf = true;
+      if (sd.day!=1) then begin
+        sd.day = 1;
+        fullmonthf = false;
+      end;
+      
+      GetAccStartBalance(AccNumber,objtemp,sd,ObjBalr,SimVerf,basecurncy,crncycode,IncDaughter,accbal);
+      if (nonblank(exclobject)) then begin
+        exclObjBalr.AccNumber = AccNumber;
+        exclObjBalr.Object = exclobject;
+        Objbals = ReadFirstMain(exclObjBalr,2,true);
+        if (Objbals==false) then begin
+          exclObjBalr.AccNumber = AccNumber;
+          exclObjBalr.Object = exclobject;
+        end;  
+        GetAccStartBalance(AccNumber,exclobject,sd,exclObjBalr,SimVerf,basecurncy,crncycode,IncDaughter,v);
+        accbal = accbal - v;
+      end;
+      if (fullmonthf==false) then begin
+        ed = StartDatep;
+        TransAccTurnover(AccNumber,objtemp,sd,ed,SimVerf,basecurncy,0,crncycode,compcode,dv,cv);
+        accbal = accbal + (dv-cv);
+        if (nonblank(exclobject)) then begin
+          exclObjBalr.AccNumber = AccNumber;
+          exclObjBalr.Object = exclobject;
+          Objbals = ReadFirstMain(exclObjBalr,2,true);
+          if (Objbals==false) then begin
+            exclObjBalr.AccNumber = AccNumber;
+            exclObjBalr.Object = exclobject;
+          end;  
+          TransAccTurnover(AccNumber,exclobject,sd,ed,SimVerf,basecurncy,0,crncycode,compcode,dv,cv);
+          accbal = accbal - (dv-cv);
+        end;
+      end;
+
+
+*/      
+    end;
+  end;
+  sumbal = sumbal + accbal;
+  if (objtyps==true) then begin goto L22LFindNL; end;
+LFindNL:;
+
+  CurBalp = sumbal;
+  RETURN;
+END;
+

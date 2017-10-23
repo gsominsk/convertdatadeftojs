@@ -1,0 +1,26 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fCode: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fDontInheritStyle: { public: true, type: 'INTEGER' },
+     fDontInheritSiteElements: { public: true, type: 'INTEGER' },
+     fStyleSheet: { public: true, type: 'TEXT' },
+     WebNGPageVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fWebElement: { public: true, type: 'TEXT' },
+           fPosition: { public: true, type: 'INTEGER' },
+           fNamedPosition: { public: true, type: 'TEXT' } } },
+     fTemplatePage: { public: true, type: 'TEXT' },
+     fPageTitle: { public: true, type: 'TEXT' },
+     fBodyClass: { public: true, type: 'TEXT' },
+     fDivID: { public: true, type: 'TEXT' },
+     fDivClass: { public: true, type: 'TEXT' },
+     fEncapsulateInDiv: { public: true, type: 'INTEGER' },
+     fNeedsLogin: { public: true, type: 'INTEGER' },
+     fTemporaryPage: { public: true, type: 'INTEGER' },
+     fDefLangCode: { public: true, type: 'TEXT' } },
+  indexes: { CodeIndex589: { fields: [ 'fCode' ], indicesType: 'UNIQUE' } } }

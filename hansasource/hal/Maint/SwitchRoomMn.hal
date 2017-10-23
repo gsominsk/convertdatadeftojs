@@ -1,0 +1,199 @@
+external procedure JobPasteTransDate(var record JobVc);
+external function Integer JobPasteResCode(var record JobVc,string);
+external procedure JobSumup(var record JobVc);
+external function LongInt DateDiff(Date,Date);
+external function Boolean CheckDblReserved(record JobVc);
+external procedure GetSalesGroup(string,var string);
+external function LongInt JobVcRecordCheck2(record JobVc,record JobVc,Integer);
+
+updating procedure MoveOpenShopBask(record JobVc Jobr,record JobVc Jobr2)
+begin
+  record ShopBaskVc ShopBaskr;
+  record ShopBaskVc oldShopBaskr;
+  Boolean found;
+  Boolean Accs,testf;
+  LongInt frser,toser;
+  Integer error;
+
+  if ((Jobr.SerNr>0) and (Jobr2.SerNr>0)) then begin
+    Accs = true;
+LMoveOpenShopBask:;
+    ResetLoop(ShopBaskr);
+    ShopBaskr.OwnerSerNr = Jobr.SerNr;
+    while (LoopKey("OwnerSerNr",ShopBaskr,1,Accs)) begin
+      if (ShopBaskr.OwnerSerNr!=Jobr.SerNr) then begin Accs = false; end;
+      testf = true;
+      if (ShopBaskr.DestinationNr>-1) then  begin testf = false; end;
+      if (Accs==false) then begin testf = false; end;
+      if (testf) then begin
+        RecordCopy(oldShopBaskr,ShopBaskr);
+        ShopBaskr.OwnerSerNr = Jobr2.SerNr;
+        error = RecordUpdate(oldShopBaskr,ShopBaskr,false);
+        goto LMoveOpenShopBask;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure SwitchRoomMn(Record RcVc RepSpec)
+begin
+  record JobVc Jobr,Jobr2,oldJobr;
+  record GuestObserVc GuestObserr;
+  record HotelBlock Hotelb;
+  record ResVc Resr;
+  LongInt Mother;
+  Date CheckoutD;
+  Time CheckoutT;
+  LongInt lres;
+ 
+  if blank(RepSpec.f4) then begin
+    lres = 2153;
+    goto LSwitchRoomMn;
+  end;
+
+  Blockload(Hotelb);   
+  
+  Jobr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(Jobr,1,true)) then begin
+
+    if ((Jobr.TransDate > RepSpec.sStartDate) or (Jobr.EndDate < RepSpec.sStartDate)) then begin
+      beep;
+      goto LSwitchRoomMn;
+    end;
+    switch (RepSpec.ArtMode) begin
+      case 1:
+      case 2:
+    end;
+    
+    RecordCopy(oldJobr,Jobr);
+    CheckoutD = Jobr.EndDate;
+    CheckoutT = Jobr.EndTime;
+    Jobr.EndDate   = RepSpec.sStartDate;
+    Jobr.EndTime   = RepSpec.sStartTime;
+    if ((RepSpec.flags[2]==1) and (RepSpec.sStartDate==CurrentDate)) then begin
+      Jobr.ResStatus = Hotelb.ChOutSt;
+    end;
+    if (Jobr.SwitchFlag==1) then begin
+      Jobr.SwitchFlag = 3;
+    end else begin
+      Jobr.SwitchFlag = 2;
+    end;
+    Resr.Code = Jobr.ResCode;
+    RecordCopy(Jobr2,Jobr);
+    Jobr2.SerNr      = -1;
+    Jobr2.SwitchFlag = 1;
+    if (RepSpec.flags[3]!=0) then begin
+      Jobr2.AgreedPrice = Jobr.AgreedPrice;
+      if (blank(Jobr2.AgreedPrice)) then begin
+        Jobr2.AgreedPrice = Jobr.PLPrice;
+      end;
+    end;
+    Jobr2.TransDate  = RepSpec.sStartDate;
+    JobPasteTransDate(Jobr2);
+    Jobr2.StartTime  = RepSpec.sStartTime;
+    Jobr2.Mother     = -1;
+    Jobr2.EndDate    = CheckoutD;
+    Jobr2.EndTime    = CheckoutT;
+    Jobr2.ResCode    = RepSpec.f4;
+    JobPasteResCode(Jobr2,RepSpec.FirstAcc);
+    
+    Jobr2.NrOfDays = DateDiff(Jobr2.EndDate,Jobr2.TransDate);
+    Resr.Code = RepSpec.f4;
+    if (ReadFirstMain(Resr,1,true)) then begin
+      Jobr2.Type = Resr.Type;
+    end; 
+    if ((RepSpec.flags[2]==1) and (RepSpec.sStartDate==CurrentDate)) then begin
+      Jobr2.ResStatus  = Hotelb.ChInSt;
+    end;
+    JobSumup(Jobr2);
+    Jobr2.SerNr      = NextSerNr("JobVc",Jobr2.TransDate,"",false,"");
+    lres = JobVcRecordCheck2(Jobr,oldJobr,2);
+    if (lres==0) then begin
+      RecordCopy(oldJobr,Jobr2);
+      lres = JobVcRecordCheck2(Jobr2,oldJobr,1);
+      if (lres==0) then begin
+        Resr.Code = Jobr.ResCode;
+        if (ReadFirstMain(Resr,1,true)) then begin 
+          Resr.ResStatus = Hotelb.ToResStatus;
+          if RecordStore(Resr,true) then begin end;
+        end;
+//        Jobr2.Mother = Jobr.SerNr;
+        if (RecordStore(Jobr2,true)) then begin end;
+        
+//Mother should be old one not new one I think
+        if (Jobr2.Mother==-1) then begin
+          Mother = Jobr2.SerNr;
+        end else begin
+          Mother = Jobr2.Mother;
+        end;
+        Jobr.Mother = Mother;
+        if (RecordStore(Jobr,true)) then begin end;
+        
+        MoveOpenShopBask(Jobr,Jobr2);
+      end;
+    end;
+  end;
+LSwitchRoomMn:;  
+  if (lres!=0) then begin
+    MessageBox(lres,"");
+  end;
+  return;
+end;
+
+global
+updating procedure BlockRoomMn(Record RcVc RepSpec)
+begin
+  record JobVc Jobr;
+  Integer wn;
+  record HotelBlock Hotelsettings;
+  record ResVc Resr; 
+  string 255 tstr,BlockState;
+  Date blankd;
+  Time blankt;
+
+  if blank(RepSpec.f4) then begin
+    beep
+    goto LBlockRoomMn;
+  end;
+  if (RepSpec.sStartDate > RepSpec.sEndDate) then begin
+    beep;
+    goto LBlockRoomMn;
+  end;
+  
+  BlockState = RepSpec.f3; 
+  RecordNew(Jobr);
+  BlockLoad(Hotelsettings);
+  Jobr.SerNr      = -1;
+  Jobr.SalesMan   = CurrentUser;
+  GetSalesGroup(Jobr.SalesMan,tstr);
+  Jobr.SalesGroup = tstr;
+  Jobr.LastTransferDate = blankd;
+  Jobr.LastTransferTime = blankt;
+  Jobr.Mother = -1;
+  Jobr.Persons = 1;
+  Jobr.SwitchFlag  = 1;
+  Jobr.CUName      = RepSpec.f2;
+  Jobr.SourceName  = "Block Room";
+  Jobr.ResStatus   = BlockState;
+  Jobr.StartTime   = Hotelsettings.CheckIn;
+  Jobr.EndTime     = Hotelsettings.CheckOut;
+  Jobr.EndDate     = RepSpec.sEndDate;
+  Jobr.TransDate   = RepSpec.sStartDate; 
+  Jobr.ResCode     = RepSpec.f4;
+  Resr.Code = RepSpec.f4;
+  if readfirstmain(Resr,1,true) then begin
+    Jobr.Type = Resr.Type;
+  end; 
+  Jobr.SerNr  = NextSerNr("JobVc",Jobr.TransDate,"",false,BlockState);
+  if (not CheckDblReserved(Jobr)) then begin
+    if recordstore(Jobr,true) then begin end;
+  end else begin
+    beep;
+  end;
+
+LBlockRoomMn:;  
+  return;
+end;
+

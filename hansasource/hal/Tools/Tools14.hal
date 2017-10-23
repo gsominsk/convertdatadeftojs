@@ -1,0 +1,513 @@
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure MulM4OneRate(val,val,var val,roundmode,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure PUCalcPerc(val,string,var val);
+
+global
+procedure ConvertToDualBase(var string reccurncyp,date recdatep,var val recfrp,var val recto1p,
+                            var val recto2p,var val recbr1p,var val recbr2p,var val rectotvalp,Boolean rectotf)
+BEGIN
+  val fr,to1,to2,br1,br2,base,br;
+  Boolean nocurncy;
+
+  if (recfrp==0) then begin
+    if (blank(reccurncyp)) then begin nocurncy = true; end;
+    GetFullCurncyRate(reccurncyp,recdatep,fr,to1,to2,recbr1p,recbr2p);
+    if (nocurncy==false) then begin
+      if (fr!=0) then begin
+// Testing required
+        if (rectotf) then begin
+          MulM4OneRate(rectotvalp,recto1p,base,DefaultCurRoundOff,false);
+          if (to1==0) then begin // Connected to Base2 
+            br = recbr1p/recbr2p;
+            base = base/br;
+            to2 = base/rectotvalp;
+            to2 = to2*100;
+            to2 = Round(to2,DefaultRoundMode);
+          end else begin // Connected to Base1 
+            to1 = base/rectotvalp;
+            to1 = to1*100;
+            to1 = Round(to1,DefaultRoundMode);
+          end;
+        end;
+        recfrp = fr;
+        recto1p = to1;
+        recto2p = to2;
+      end else begin // Old style 
+        // I don't think anything is neccesary 
+      end;
+    end;
+  end else begin
+    GetFullCurncyRate(reccurncyp,recdatep,fr,to1,to2,br1,br2);
+    recbr1p = br1;
+    recbr2p = br2;
+//    if (recbr1p==0) then begin recbr1p = br1; end;
+//    if (recbr2p==0) then begin recbr2p = br2; end;
+  end;
+  RETURN;
+END;
+
+global
+function Integer SerialNrOnThisPU(record PUVc PUr,string ArtCode,string SerialNr)
+BEGIN
+  row PUVc PUrw;
+  Integer rwcnt,i;
+  val qty;
+
+  qty = 0;
+  rwcnt = MatRowCnt(PUr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PUr,i,PUrw);
+    if (PUrw.ArtCode==ArtCode) and (PUrw.SerialNr==SerialNr) then begin
+      qty = qty + PUrw.Quant;
+    end;
+  end;
+  SerialNrOnThisPU = qty;
+  RETURN;
+END;
+
+global
+function Integer SerialNrOnThisPrelPU(record PrelPUVc PrelPUr,string ArtCode,string SerialNr)
+BEGIN
+  row PrelPUVc PrelPUrw;
+  Integer rwcnt,i;
+  val qty;
+
+  qty = 0;
+  rwcnt = MatRowCnt(PrelPUr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PrelPUr,i,PrelPUrw);
+    if (PrelPUrw.ArtCode==ArtCode) and (PrelPUrw.SerialNr==SerialNr) then begin
+      qty = qty + PrelPUrw.Quant;
+    end;
+  end;
+  SerialNrOnThisPrelPU = qty;
+  RETURN;
+END;
+
+global
+function Integer SerialNrOnThisRet(record RetVc Retr,string ArtCode,string SerialNr)
+BEGIN
+  row RetVc Retrw;
+  Integer rwcnt,i;
+  val qty;
+
+  qty = 0;
+  rwcnt = MatRowCnt(Retr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Retr,i,Retrw);
+    if (Retrw.ArtCode==ArtCode) and (Retrw.SerialNr==SerialNr) then begin
+      qty = qty + Retrw.Quant;
+    end;
+  end;
+  SerialNrOnThisRet = qty;
+  RETURN;
+END;
+
+global
+procedure LateCostSumUp(var record LateCostVc LateCostr)
+BEGIN
+  record RoundBlock RoundRec;
+  row LateCostVc LateCostrw;
+  Integer i,rwcnt;
+  val t,cc,totqty;
+  roundmode roundlines,rndtotal,rndvat;
+  
+  BlockLoad(RoundRec);
+  GetCurncyRoundoff(LateCostr.CurncyCode,"","LateCostVc",rndtotal,roundlines,rndvat);
+  LateCostr.SumQuant = blankval;
+  LateCostr.SumCostPrice = blankval;
+  LateCostr.ShipCost = blankval;
+  LateCostr.CustomsCost = blankval;
+  LateCostr.ExtraCost = blankval;
+  rwcnt = MatRowCnt(LateCostr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LateCostr,i,LateCostrw);
+    if ((LateCostrw.stp==3) or (LateCostrw.ovst!=0)) then begin
+      goto LSKIPLateCostROWLateCostSumUp;
+    end;
+    totqty = totqty + LateCostrw.Quant;
+    t = LateCostrw.Quant*LateCostrw.CostPrice;
+    LateCostr.SumCostPrice = LateCostr.SumCostPrice + t;
+    t = LateCostrw.Quant*LateCostrw.ShipCost;
+    LateCostr.ShipCost = t + LateCostr.ShipCost;
+    PUCalcPerc(LateCostrw.UPrice,LateCostrw.CustomsCost,cc);
+    t = LateCostrw.Quant*cc;
+    LateCostr.CustomsCost = t + LateCostr.CustomsCost;
+    PUCalcPerc(LateCostrw.UPrice,LateCostrw.Extra,cc);
+    t = LateCostrw.Quant*cc;
+    LateCostr.ExtraCost = t + LateCostr.ExtraCost;
+LSKIPLateCostROWLateCostSumUp:;    
+  end;
+  LateCostr.SumQuant = Round(totqty,SetRoundModeD(2));
+  LateCostr.ShipCost = Round(LateCostr.ShipCost,SetRoundModeD(3));
+  LateCostr.CustomsCost = Round(LateCostr.CustomsCost,SetRoundModeD(5));
+  LateCostr.ExtraCost = Round(LateCostr.ExtraCost,DefaultRoundMode);
+  LateCostr.SumCostPrice = Round(LateCostr.SumCostPrice,rndtotal);
+  RETURN;
+END;
+
+function
+Boolean IVVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record IVVc IVr;
+  
+  IVr.TransDate = CurrentDate;
+  if (ReadLastKey("TransDate",IVr,1,false)) then begin
+    if (IVr.SerNr!=sernr) then begin
+      if (dp<IVr.TransDate) then begin res = true; end;
+    end;
+  end;
+  IVVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean LateCostVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record LateCostVc LateCostr;
+  
+  LateCostr.TransDate = CurrentDate;
+  if (ReadLastKey("TransDate",LateCostr,1,false)) then begin
+    if (LateCostr.SerNr!=sernr) then begin
+      if (dp<LateCostr.TransDate) then begin res = true; end;
+    end;
+  end;
+  LateCostVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean IPVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record IPVc IPr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    IPr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",IPr,1,false)) then begin
+      if (IPr.SerNr!=sernr) then begin
+        if (dp<IPr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  IPVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean VIVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record VIVc VIr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    VIr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",VIr,1,false)) then begin
+      if (VIr.SerNr!=sernr) then begin
+        if (dp<VIr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  VIVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean OPVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record OPVc OPr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    OPr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",OPr,1,false)) then begin
+      if (OPr.SerNr!=sernr) then begin
+        if (dp<OPr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  OPVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean SHVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record SHVc SHr;
+  
+  SHr.ShipDate = CurrentDate;
+  if (ReadLastKey("ShipDate",SHr,1,false)) then begin
+    if (SHr.SerNr!=sernr) then begin
+      if (dp<SHr.ShipDate) then begin res = true; end;
+    end;
+  end;
+  SHVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean PUVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record PUVc PUr;
+  
+  PUr.TransDate = CurrentDate;
+  if (ReadLastKey("TransDate",PUr,1,false)) then begin
+    if (PUr.SerNr!=sernr) then begin
+      if (dp<PUr.TransDate) then begin res = true; end;
+    end;
+  end;
+  PUVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean SDVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record SDVc SDr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    SDr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",SDr,1,false)) then begin
+      if (SDr.SerNr!=sernr) then begin
+        if (dp<SDr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  SDVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean StockMovVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record StockMovVc StockMovr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    StockMovr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",StockMovr,1,false)) then begin
+      if (StockMovr.SerNr!=sernr) then begin
+        if (dp<StockMovr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  StockMovVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean RetVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record RetVc Retr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    Retr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",Retr,1,false)) then begin
+      if (Retr.SerNr!=sernr) then begin
+        if (dp<Retr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  RetVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean ProdVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record ProdVc Prodr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    Prodr.ProdDate = CurrentDate;
+    if (ReadLastKey("ProdDate",Prodr,1,false)) then begin
+      if (Prodr.SerNr!=sernr) then begin
+        if (dp<Prodr.ProdDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  ProdVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean ExpVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record ExpVc Expr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    Expr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",Expr,1,false)) then begin
+      if (Expr.SerNr!=sernr) then begin
+        if (dp<Expr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  ExpVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean PPVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record PPVc PPr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    PPr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",PPr,1,false)) then begin
+      if (PPr.SerNr!=sernr) then begin
+        if (dp<PPr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  PPVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean CLInVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record CLInVc CLInr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    CLInr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",CLInr,1,false)) then begin
+      if (CLInr.SerNr!=sernr) then begin
+        if (dp<CLInr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  CLInVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean CLOutVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record CLOutVc CLOutr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    CLOutr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",CLOutr,1,false)) then begin
+      if (CLOutr.SerNr!=sernr) then begin
+        if (dp<CLOutr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  CLOutVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean SMVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record SMVc SMr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    SMr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",SMr,1,false)) then begin
+      if (SMr.SerNr!=sernr) then begin
+        if (dp<SMr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  SMVcWarnOldRecords = res;
+  RETURN;
+END;
+
+function
+Boolean TRVcWarnOldRecords(Date dp,LongInt sernr)
+BEGIN
+  Boolean res;
+  record TRVc TRr;
+  
+  if (HasLocalization("PRT")==false) then begin
+    TRr.TransDate = CurrentDate;
+    if (ReadLastKey("TransDate",TRr,1,false)) then begin
+      if (TRr.Number!=sernr) then begin
+        if (dp<TRr.TransDate) then begin res = true; end;
+      end;
+    end;
+  end;
+  TRVcWarnOldRecords = res;
+  RETURN;
+END;
+
+global
+function Boolean WarnOldRecords(Date dp,string fnr,LongInt sernr)
+BEGIN
+  record DBLockBlock DBLockRec;
+  Boolean res;
+
+  BlockLoad(DBLockRec);
+  if (DBLockRec.WarnOldRecords==0) then begin goto LWarnOldRecords; end;
+  if (fnr=="CLInVc") then begin
+    res = CLInVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="CLOutVc") then begin
+    res = CLOutVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="ExpVc") then begin
+    res = ExpVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="IPVc") then begin
+    res = IPVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="IVVc") then begin
+    res = IVVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="LateCostVc") then begin
+    res = LateCostVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="OPVc") then begin
+    res = OPVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="PPVc") then begin
+    res = PPVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="ProdVc") then begin
+    res = ProdVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="PUVc") then begin
+    res = PUVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="RetVc") then begin
+    res = RetVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="SDVc") then begin
+    res = SDVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="SHVc") then begin
+    res = SHVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="SMVc") then begin
+    res = SMVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="StockMovVc") then begin
+    res = StockMovVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="TRVc") then begin
+    res = TRVcWarnOldRecords(dp,sernr);
+  end;
+  if (fnr=="VIVc") then begin
+    res = VIVcWarnOldRecords(dp,sernr);
+  end;
+LWarnOldRecords:;
+  WarnOldRecords = res;
+  RETURN;
+END;
+

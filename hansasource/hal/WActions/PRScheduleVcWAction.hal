@@ -1,0 +1,247 @@
+remote updating function Integer CreateMailFromPRScheduleD(record PRScheduleVc,var record MailVc,var string,string);
+remote procedure PRScheduleVc_PastePRCode(var record PRScheduleVc);
+external function Boolean CheckProjectManager(record PRVc);
+
+global
+function Boolean PRScheduleDClassUpdateTest(Integer wn)
+begin
+  Boolean res;
+  record PRScheduleVc PRScheduler;
+  record PRVc PRr;
+  
+  res = true;
+  if (UserCanAction("DisallowPRScheduleChangefornonPRMan",false)) then begin
+    GetWindowRecord(wn,PRScheduler);
+    PRr.Code = PRScheduler.PRCode;
+    if ReadFirstMain(PRr,1,true) then begin 
+      res = CheckProjectManager(PRr);
+    end;  
+  end;
+  PRScheduleDClassUpdateTest = res;
+  return;
+end;
+
+function boolean PRScheduleDClassPRCodeEFAfter(integer wn,integer fn,integer rownr,integer changedf)
+begin
+  boolean res;
+  record PRScheduleVc PRScheduler;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,PRScheduler);
+    PRScheduleVc_PastePRCode(PRScheduler);
+    PutWindowRecord(wn,PRScheduler);
+  end;
+  PRScheduleDClassPRCodeEFAfter = res;
+  return;
+end;
+
+function boolean PRScheduleDClassPRStageEFAfter(integer wn,integer rownr,Boolean changedf)
+begin
+  boolean res;
+  record PRScheduleVc PRScheduler;
+  row PRScheduleVc PRSchedulerw;
+  record PRStageVc PRStager;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,PRScheduler);
+    MatRowGet(PRScheduler,rownr,PRSchedulerw);
+    PRStager.Code = PRSchedulerw.PRStage;
+    ReadFIrstMain(PRStager,1,true);
+    PRSchedulerw.PRStageComment = PRStager.Comment;
+    MatRowPut(PRScheduler,rownr,PRSchedulerw);
+    PutWindowRecord(wn,PRScheduler);
+  end;
+  PRScheduleDClassPRStageEFAfter = res;
+  return;
+end;
+
+procedure SumUpPercentages(record PRScheduleVc PRScheduler)
+begin
+  row PRScheduleVc PRSchedulerw;
+  integer i,rwcnt;
+  val percsum,completesum,outstandsum;
+  
+  rwcnt = MatRowCnt(PRScheduler);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PRScheduler,i,PRSchedulerw);
+    if (PRSchedulerw.stp==1) then begin
+      percsum = percsum + PRSchedulerw.Complete;
+      if (nonblank(PRSchedulerw.PRStageSign)) then begin
+        completesum = completesum + PRSchedulerw.Complete;
+      end else begin
+        outstandsum = outstandsum + PRSchedulerw.Complete;
+      end;
+    end;
+  end;
+  PRScheduler.TotalPerc = percsum;
+  PRScheduler.CompletePerc = completesum;
+  PRScheduler.OutstandingPerc = outstandsum;
+  return;
+end;
+
+function boolean PRScheduleDRecalcPercentages(integer wn,integer fn,integer rownr,integer changedf)
+begin
+  boolean res;
+  record PRScheduleVc PRScheduler;
+
+  res = true;
+  if (changedf) then begin
+    GetWindowRecord(wn,PRScheduler);
+    SumUpPercentages(PRScheduler);
+    PutWindowRecord(wn,PRScheduler);
+  end;
+  PRScheduleDRecalcPercentages = res;  
+  return;
+end;
+ 
+global
+function boolean PRScheduleDClassAfterEditField(integer wn,string fieldname,integer fn, integer rownr,integer changed)
+begin
+  boolean res;
+
+  switch (fieldname) begin
+    case "PRStage": res = PRScheduleDClassPRStageEFAfter(wn,rownr,changed!=0);
+    case "PRCode": res = PRScheduleDClassPRCodeEFAfter(wn,fn,rownr,changed);
+    case "Complete": res = PRScheduleDRecalcPercentages(wn,fn,rownr,changed);
+    case "PRStageSign": res = PRScheduleDRecalcPercentages(wn,fn,rownr,changed);
+  end;
+  PRScheduleDClassAfterEditField = res;
+  return;
+end;
+
+global
+function boolean PRScheduleDClassClosedButtonAction(integer wn, integer value)
+begin
+  boolean res;
+  
+  res = true;
+  PRScheduleDClassClosedButtonAction = res;
+  return;
+end;
+
+global
+function boolean PRScheduleDClassActiveEditField(integer wn, string fieldname,integer fn, integer wnst, integer rownr, integer changed)
+begin
+  boolean res;
+
+  res = true;
+  PRScheduleDClassActiveEditField = res;
+  return;
+end;
+
+procedure AddPRScheduleLineType(Integer t,Boolean firstf)
+begin
+  record PRScheduleVc PRScheduler;
+  row PRScheduleVc PRSchedulerw;
+  Integer wn,rownr;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,PRScheduler);
+  rownr = WindowActiveRow(wn);
+  DeselectWindow(wn,false);
+  if (rownr<0) then begin 
+    if (firstf) then begin
+      rownr = 0;
+    end else begin
+      rownr = MatRowCnt(PRScheduler);
+    end;
+  end;
+  ClearRow(PRScheduler,PRSchedulerw,t);
+  PRSchedulerw.PRStageComment = "";
+  MatRowInsert(PRScheduler,rownr,PRSchedulerw);
+  PutWindowRecord(wn,PRScheduler);
+  return;
+end;
+
+global
+procedure HeaderLinePRScheduleDsm()
+begin
+  AddPRScheduleLineType(17,true);
+  return;
+end;
+
+global 
+updating procedure CreateMailFromPRScheduleDsm()
+begin
+  Integer wn,nwn;
+  record MailVc Mailr;
+  record PRScheduleVc PRScheduler;
+  Integer err;
+  string 255 tstr;
+  string 255 docname;
+  Boolean testf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    testf = true;
+    GetWindowRecord(wn,PRScheduler);  
+    if (err!=0) then begin
+      MessageBox(err,": " & PRScheduler.PRCode);
+      testf = false;
+    end;
+    if (testf) then begin
+      err = CreateMailFromPRScheduleD(PRScheduler,Mailr,tstr,WindowFormName(wn));
+      if (err!=0) then begin
+        MessageBox(err,": " & tstr);
+      end else begin
+        nwn = OpenWindow("MailDClass",1,0,"","",Mailr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+/*
+global
+procedure PRScheduleApproveDsm()
+begin
+  record PRScheduleVc PRScheduler;
+  row PRScheduleVc PRSchedulerw;
+  Integer wn,rownr;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+  rownr = WindowActiveRow(wn);
+  if (rownr>=0) then begin
+    GetWindowRecord(wn, PRScheduler);
+    MatRowGet(PRScheduler,rownr,PRSchedulerw);
+    PRSchedulerw.Sign = CurrentUser;
+    MatRowPut(PRScheduler,rownr,PRSchedulerw);
+    SumUpPercentages(PRScheduler);
+    PutWindowRecord(wn, PRScheduler);
+  end;
+  return;
+end;
+
+global 
+updating procedure PRScheduleCreateDeadlinesDsm()
+BEGIN
+  record PRScheduleVc PRScheduler;
+  row PRScheduleVc PRSchedulerw;
+  record ActVc Actr;
+  Integer wn,i,cnt;
+  time t;
+  
+  wn = CurWindow;
+  if (WindowState(wn)==0) then begin
+    GetWindowRecord(wn,PRScheduler);
+    cnt = MatRowCnt(PRScheduler);
+    for (i=0;i<cnt;i=i+1) begin
+      MatRowGet(PRScheduler,i,PRSchedulerw);
+      if (PRSchedulerw.stp==1) then begin
+        if (nonblankdate(PRSchedulerw.DueDate)) then begin
+          CreateRemoteDeadlineActivity(Actr,PRSchedulerw.PRStageComment,CurrentUser,PRSchedulerw.DueDate);
+          CreateRecordLink(Actr,CurrentCompany,PRScheduler,CurrentCompany);
+          CreateRecordLink(PRScheduler,CurrentCompany,Actr,CurrentCompany);
+        end;
+      end;
+    end;
+    DeselectWindow(wn,false);
+  end else begin
+    Beep;
+  end;
+  RETURN;
+END;
+*/

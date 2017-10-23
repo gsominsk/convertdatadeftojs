@@ -1,0 +1,810 @@
+external procedure StripEndingSpaces(var string);
+
+procedure GetCustomOfficeName(string cuscode,var string res)
+BEGIN
+  record CustomOfficesBlock CustomOfficesRec;
+  row CustomOfficesBlock CustomOfficesrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(CustomOfficesRec);
+  rwcnt = MatRowCnt(CustomOfficesRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CustomOfficesRec,i,CustomOfficesrw);
+    if (cuscode==CustomOfficesrw.Code) then begin
+      res = CustomOfficesrw.Comment;
+      goto LGetCustomOfficeName;
+    end;
+  end;
+  res = cuscode;
+LGetCustomOfficeName:;  
+  RETURN;
+END;
+
+procedure GetArrivalCode(string instr,var string res)
+BEGIN
+  Integer i,l;
+  string 1 c;
+  
+  res = "";
+  l = len(instr);
+  for (i=0;i<=l;i=i+1) begin
+    c = Mid(instr,i,1);
+    if (c=="/") then begin
+      goto LGetArrivalCode;
+    end;
+    res = res & c;
+  end;
+LGetArrivalCode:;  
+  RETURN;
+END;
+
+procedure ImportBGM12Line(string instr,record CustomsVc Customsr,var string cusomsreference)
+BEGIN
+  string 30 tstr,tstr2;
+  
+  tstr = MID(instr,7,35);
+  cusomsreference = tstr;
+  GetArrivalCode(tstr,tstr2);
+  StripEndingSpaces(tstr2);
+  Customsr.ArrivalCode = tstr2;
+  if (ReadFirstKey("ArrivalCode",Customsr,1,true)) then begin
+  end;
+  RETURN;
+END;
+
+function
+Integer ImportBGMLine(string instr)
+BEGIN
+  Integer res;
+  string 255 tstr;
+  
+  tstr = MID(instr,7,3);
+  res = StringToInt(tstr);
+  ImportBGMLine = res;
+  RETURN;
+END;
+
+updating procedure StoreNote(record CustomsVc Customsr,record NotepadVc Noter,string linkcomment,Integer partnr)
+BEGIN
+  record RLinkVc RLinkr; 
+  Integer notenr;
+  
+  if (Customsr.SerNr>0) then begin
+    notenr = 1;
+    Noter.SerNr = NextSerNr("NotepadVc",CurrentDate,-1,false,"");
+    if (RecordStore(Noter,false)) then begin
+      CreateRecordLink(Customsr,CurrentCompany,Noter,CurrentCompany);  
+      while (ReadRecordLink(Customsr,notenr,Noter,RLinkr)) begin
+        notenr = notenr + 1;
+      end;
+      if (ReadRecordLink(Customsr,notenr-1,Noter,RLinkr)) then begin
+        RLinkr.Comment = linkcomment;
+        if (partnr>0) then begin
+          RLinkr.Comment = RLinkr.Comment & " ";    
+          RLinkr.Comment = RLinkr.Comment & partnr;
+        end;
+        if (RecordStore(RLinkr,true)) then begin
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+procedure NewToDO(record ActVc Actr,string comment,LongInt declnr,LongInt prevactnr)
+BEGIN
+  RecordNew(Actr);  
+  Actr.MainPersons = CurrentUser;
+  Actr.ActType = "CUSRE";
+  Actr.StartTime = CurrentTime;
+  Actr.TransDate = CurrentDate;
+  Actr.TodoFlag = 1;
+  Actr.CalTimeFlag = 1;
+  Actr.SymbNr = kActivitySymbolDeskwork;
+  Actr.Comment = comment & ": " & declnr;
+  if (prevactnr!=-1) then begin
+    Actr.Comment = Actr.Comment & "  contnuing  ";
+    Actr.Comment = Actr.Comment & prevactnr;
+  end;
+  RETURN;
+END;
+
+updating procedure StoreToDo(record ActVc Actr)
+BEGIN
+  Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");
+  if (RecordStore(Actr,false)) then begin
+  end;
+  RETURN;
+END;
+
+procedure GetErrorCodeDescription(string errcode,var string errdesc)
+BEGIN
+  switch (errcode) begin
+    case "00A": errdesc = "Farmskra breytt/leidrett";
+    case "00E": errdesc = "Farmskra hefur verid breytt leidrett";
+    case "000": errdesc = "Akvonordunar-/totallfgriedslustadur";
+    otherwise errdesc = errcode;
+  end;
+  RETURN;
+END;
+
+updating function
+Boolean ImportCUSERR()
+BEGIN
+  Boolean testf;
+  Boolean addrowf;
+  record CustomsVc Customsr;
+  record ActVc Actr;
+  row ActVc Actrw;
+  string 255 instr,labstr,tstr,tstr2;
+  Integer rwcnt;
+  
+  testf = true;
+  while (testf) begin  
+    instr = ImportField();
+    testf = NextImportLine(false);
+    if (len(instr)==0) then begin testf = false; end;
+    if (testf) then begin
+      addrowf = false;
+      labstr = Left(instr,5);
+      switch (labstr) begin
+        case "UNT  ": testf = false;
+        case "BGM12":
+          ImportBGM12Line(instr,Customsr,tstr);
+          NewToDO(Actr,"CUSERR",Customsr.SerNr,-1);
+          addrowf = true;
+        case "FTX12":
+          tstr = MID(instr,7,70);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10702);
+          addrowf = true;
+        case "LOC1 ":
+          tstr = MID(instr,11,25);
+          StripEndingSpaces(tstr);
+          GetCustomOfficeName(tstr,tstr);
+          labstr = USetStr(10700);          
+          addrowf = true;
+        case "GIS1 ":
+          tstr = MID(instr,7,3);
+          StripEndingSpaces(tstr);
+        case "ERP1 ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          if (tstr2=="1") then begin
+            labstr = USetStr(10704);
+          end;
+          if (tstr2=="10") then begin
+            labstr = USetStr(10705);
+          end;
+          tstr = "";
+          tstr2 = MID(instr,11,35);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,47,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          addrowf = true;          
+        case "ERC1 ":
+          tstr2 = MID(instr,7,8);
+          StripEndingSpaces(tstr2);
+          GetErrorCodeDescription(tstr2,tstr);
+          tstr2 = MID(instr,16,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,20,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          labstr = USetStr(10706);
+          addrowf = true;          
+        case "RFF5 ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10701);          
+          addrowf = true;
+      end;
+      if (addrowf) then begin
+        rwcnt = MatRowCnt(Actr);
+        if (rwcnt>=100) then begin
+          StoreToDo(Actr);
+          NewToDO(Actr,"CUSERR",Customsr.SerNr,Actr.SerNr);
+        end;
+        ClearRow(Actr,Actrw,1);
+        Actrw.Text = labstr & ": " & tstr;
+        MatRowPut(Actr,MatRowCnt(Actr),Actrw);
+      end;
+    end;
+  end; 
+  if (MatRowCnt(Actr)>0) then begin
+    StoreToDo(Actr);
+  end;
+  ImportCUSERR = true; 
+  RETURN;
+END;
+
+updating function
+Boolean ImportCUSGER()
+BEGIN
+  Boolean testf;
+  Boolean addrowf;
+  record CustomsVc Customsr;
+  record ActVc Actr;
+  row ActVc Actrw;
+  string 255 instr,labstr,tstr;
+  Integer rwcnt;
+  
+  testf = true;
+  while (testf) begin  
+    instr = ImportField();
+    testf = NextImportLine(false);
+    if (len(instr)==0) then begin testf = false; end;
+    if (testf) then begin
+      addrowf = false;
+      labstr = Left(instr,5);
+      switch (labstr) begin
+        case "UNT  ": testf = false;
+        case "BGM12":
+          ImportBGM12Line(instr,Customsr,tstr);
+          NewToDO(Actr,"CUSGER",Customsr.SerNr,-1);
+          addrowf = true;
+        case "LOC1 ":
+          tstr = MID(instr,11,25);
+          StripEndingSpaces(tstr);
+          GetCustomOfficeName(tstr,tstr);
+          labstr = USetStr(10700);          
+          addrowf = true;
+        case "GIS1 ":
+          tstr = MID(instr,7,3);
+          StripEndingSpaces(tstr);
+        case "FTX1 ":
+          tstr = MID(instr,7,70);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10702);
+          addrowf = true;
+        case "FTX12":
+          tstr = MID(instr,7,70);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10702);
+          addrowf = true;
+        case "RFF5 ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10701);          
+          addrowf = true;
+      end;
+      if (addrowf) then begin
+        rwcnt = MatRowCnt(Actr);
+        if (rwcnt>=100) then begin
+          StoreToDo(Actr);
+          NewToDO(Actr,"CUSGER",Customsr.SerNr,Actr.SerNr);
+        end;
+        ClearRow(Actr,Actrw,1);
+        Actrw.Text = labstr & ": " & tstr;
+        MatRowPut(Actr,rwcnt,Actrw);
+      end;
+    end;
+  end; 
+  if (MatRowCnt(Actr)>0) then begin
+    StoreToDo(Actr);
+  end;
+  ImportCUSGER = true; 
+  RETURN;
+END;
+
+updating function
+Boolean ImportCUSDOR()
+BEGIN
+  Boolean testf;
+  Boolean addrowf;
+  record CustomsVc Customsr;
+  record ActVc Actr;
+  row ActVc Actrw;
+  string 255 instr,labstr,tstr,tstr2;
+  Integer rwcnt;
+  
+  testf = true;
+  while (testf) begin  
+    instr = ImportField();
+    testf = NextImportLine(false);
+    if (len(instr)==0) then begin testf = false; end;
+    if (testf) then begin
+      addrowf = false;
+      labstr = Left(instr,5);
+      switch (labstr) begin
+        case "UNT  ": testf = false;
+        case "BGM12":
+          ImportBGM12Line(instr,Customsr,tstr);      
+          NewToDO(Actr,"CUSDOR",Customsr.SerNr,-1);
+          addrowf = true;
+        case "LOC1 ":
+          tstr = MID(instr,11,25);
+          StripEndingSpaces(tstr);
+          GetCustomOfficeName(tstr,tstr);
+          labstr = USetStr(10700);          
+          addrowf = true;
+        case "GIS1 ":
+          tstr = MID(instr,7,3);
+          StripEndingSpaces(tstr);
+        case "RFF5 ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10701);          
+          addrowf = true;
+        case "DOC8 ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,15,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,19,35);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          labstr = USetStr(10703);          
+          addrowf = true;
+        case "DOC82":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          labstr = USetStr(10703);          
+          addrowf = true;          
+        case "DOC83":
+          tstr2 = MID(instr,7,35);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,47,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,51,2);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,56,2);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          labstr = USetStr(10703);          
+          addrowf = true;          
+      end;
+      if (addrowf) then begin
+        rwcnt = MatRowCnt(Actr);
+        if (rwcnt>=100) then begin
+          StoreToDo(Actr);
+          NewToDO(Actr,"CUSDOR",Customsr.SerNr,Actr.SerNr);
+        end;
+        ClearRow(Actr,Actrw,1);
+        Actrw.Text = labstr & ": " & tstr;
+        MatRowPut(Actr,MatRowCnt(Actr),Actrw);
+      end;
+    end;
+  end; 
+  if (MatRowCnt(Actr)>0) then begin
+    StoreToDo(Actr);
+  end;
+  ImportCUSDOR = true; 
+  RETURN;
+END;
+
+updating procedure AddTextToNote(record CustomsVc Customsr,record NotepadVc Noter,string label,string tstr,var Integer partnr)
+BEGIN
+  if (Customsr.SerNr>0) then begin
+    if ((SizeTextCnt(Noter)+len(tstr))>32000) then begin
+      StoreNote(Customsr,Noter,label,partnr);
+      partnr = partnr + 1;
+      RecordNew(Noter);
+    end;      
+    AddToText(tstr,Noter);
+    AddToText(Chr(13) & Chr(10),Noter);
+  end;
+  RETURN;
+END;
+
+updating function Boolean ImportCUSPAR()
+BEGIN
+  Boolean testf;
+  record CustomsVc oldCustomsr;
+  record CustomsVc Customsr;
+  record NotepadVc Noter;
+  record ActVc Actr;
+  string 255 instr,labstr,tstr,tstr2;
+  Integer partnr;
+  Boolean updatef;
+   
+  partnr = 0;
+  RecordNew(Noter);  
+  testf = true;
+  while (testf) begin  
+    instr = ImportField();
+    testf = NextImportLine(false);
+    if (len(instr)==0) then begin testf = false; end;
+    if (testf) then begin
+      labstr = Left(instr,6);
+      switch (labstr) begin
+        case "UNT   ": testf = false;
+        case "BGM12 ":
+          ImportBGM12Line(instr,Customsr,tstr);
+          NewToDO(Actr,"CUSPAR",Customsr.SerNr,-1);
+          RecordCopy(oldCustomsr,Customsr);          
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "LOC1  ":
+          tstr = MID(instr,11,25);
+          StripEndingSpaces(tstr);
+//          GetCustomOfficeName(tstr,tstr);
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "PAC2  ":
+          tstr2 = MID(instr,7,8);          
+          StripEndingSpaces(tstr2);
+          Customsr.NrOffPackages = StringToVal(tstr2,M4UVal);
+          if (Customsr.NrOffPackages!=oldCustomsr.NrOffPackages) then begin
+            updatef = true;
+          end;
+          tstr = tstr2;
+          tstr2 = MID(instr,18,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,21,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,26,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,30,17);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,52,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;        
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "RFF5  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "GIS1  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "GIS4  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "GIS7  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+        case "DTM1  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSPAR",labstr & tstr,partnr);
+      end;    
+    end;
+  end;
+  if (updatef) then begin
+    if (oldCustomsr.SerNr>0) then begin
+      if (RecordUpdate(oldCustomsr,Customsr,true)==0) then begin
+      end;
+    end;
+  end;
+  if (SizeTextCnt(Noter)>0) then begin
+    StoreNote(Customsr,Noter,"CUSPAR",partnr);
+  end;  
+  StoreToDo(Actr);
+  ImportCUSPAR = true; 
+  RETURN;
+END;
+
+procedure AddToCalcCharges(record CalcChargeVc CalcCharger,string code,val calcv)
+BEGIN
+  row CalcChargeVc CalcChargerw;
+  Integer i,rwcnt;
+  
+  StripEndingSpaces(code);
+  rwcnt = MatRowCnt(CalcCharger);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CalcCharger,i,CalcChargerw);
+    if (code==CalcChargerw.Code) then begin
+      CalcChargerw.CalcVal = CalcChargerw.CalcVal + calcv;
+      MatRowPut(CalcCharger,i,CalcChargerw);
+      goto LAddToCalcCharges;
+    end;
+  end;
+  ClearRow(CalcCharger,CalcChargerw,1);
+  CalcChargerw.Code = code;
+  CalcChargerw.CalcVal = calcv;
+  MatRowPut(CalcCharger,rwcnt,CalcChargerw);
+LAddToCalcCharges:;  
+  RETURN;
+END;
+
+updating procedure UpdateCalcCharges(LongInt customsnr,string vecode,string vename,record CalcChargeVc newCalcCharger)
+BEGIN
+  record CalcChargeVc CalcCharger;
+  
+  CalcCharger.SerNr = customsnr;
+  if (ReadFirstMain(CalcCharger,1,true)) then begin
+    newCalcCharger.SerNr = CalcCharger.SerNr;
+    newCalcCharger.VECode = CalcCharger.VECode;
+    newCalcCharger.Addr0 = CalcCharger.Addr0;
+    if (RecordUpdate(CalcCharger,newCalcCharger,true)==0) then begin
+    end;
+  end else begin
+    newCalcCharger.SerNr = customsnr;
+    newCalcCharger.VECode = vecode;
+    newCalcCharger.Addr0 = vename;
+    if (RecordStore(newCalcCharger,false)) then begin
+    end;
+  end;
+  RETURN;
+END;
+
+updating function
+Boolean ImportCUSTAR()
+BEGIN
+  Boolean testf;
+  record CustomsVc oldCustomsr;
+  record CustomsVc Customsr;
+  row CustomsVc Customsrw;
+  record NotepadVc Noter;
+  record ActVc Actr;
+  row ActVc Actrw;
+  string 255 instr,labstr,tstr,tstr2;
+  Integer rwcnt;
+  val rowduties,rowcharges;
+  Integer rownr;
+  Boolean chargesf,dutiesf,updatef;
+  record CalcChargeVc CalcCharger;
+  string 5 calcchargescode;
+  Integer partnr;
+  
+  RecordNew(CalcCharger);  
+  RecordNew(Noter);  
+  testf = true;
+  while (testf) begin  
+    instr = ImportField();
+    testf = NextImportLine(false);
+    if (len(instr)==0) then begin testf = false; end;
+    if (testf) then begin
+      labstr = Left(instr,6);
+      switch (labstr) begin
+        case "UNT   ": testf = false;
+        case "BGM12 ":
+          ImportBGM12Line(instr,Customsr,tstr);
+          RecordCopy(oldCustomsr,Customsr);
+          NewToDO(Actr,"CUSTAR",Customsr.SerNr,-1);
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "LOC1  ":
+          tstr = MID(instr,11,25);
+          StripEndingSpaces(tstr);
+          GetCustomOfficeName(tstr,tstr);
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "GIS1  ":
+          tstr = MID(instr,7,3);
+          StripEndingSpaces(tstr);
+        case "TAX4  ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,23,35);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,59,6);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;          
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "TAX42 ":
+          tstr2 = MID(instr,7,15);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,23,7);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,39,17);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,57,12);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;          
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "TAX43 ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,20);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "MOA4  ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,20);
+          StripEndingSpaces(tstr2);          
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,32,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,40,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "TAX7  ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,23,35);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,59,6);
+          StripEndingSpaces(tstr2);
+          dutiesf = false;
+          if (Left(tstr2,1)=="T") then begin
+            dutiesf = true;            
+          end;
+          chargesf = false;
+          if (Left(tstr2,1)=="G") then begin
+            chargesf = true;
+          end;
+          calcchargescode = Mid(tstr2,1,3);
+          tstr = tstr & " " & tstr2;          
+//          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "TAX72 ":
+          tstr2 = MID(instr,7,15);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,23,7);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,39,17);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,57,12);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;          
+//          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "TAX73 ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,20);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+//          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "MOA7  ":
+          tstr2 = MID(instr,7,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr2;
+          tstr2 = MID(instr,11,20);
+          StripEndingSpaces(tstr2);
+          if (dutiesf) then begin
+            rowduties = rowduties + StringToVal(tstr2,M4Val);
+          end;
+          if (chargesf) then begin
+            rowcharges = rowcharges + StringToVal(tstr2,M4Val);
+          end;
+          AddToCalcCharges(CalcCharger,calcchargescode,StringToVal(tstr2,M4Val));          
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,32,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+          tstr2 = MID(instr,40,3);
+          StripEndingSpaces(tstr2);
+          tstr = tstr & " " & tstr2;
+//          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "RFF5  ":
+          tstr = MID(instr,7,3);
+          if (tstr=="AFD") then begin
+            if (rownr!=-1) then begin
+              if (rownr<MatRowCnt(Customsr)) then begin
+                MatRowGet(Customsr,rownr,Customsrw);
+                Customsrw.DutiesVal = rowduties;
+                Customsrw.ChargesVal = rowcharges;
+                MatRowPut(Customsr,rownr,Customsrw);
+                updatef = true;
+              end;
+            end;
+            tstr = MID(instr,11,3);
+            rownr = StringToInt(tstr)-1;
+            rowduties = blankval;
+            rowcharges = blankval;
+          end else begin
+            tstr = MID(instr,7,35);
+            StripEndingSpaces(tstr);
+            AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+          end;
+          /*
+        case "GIS1  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "GIS4  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+        case "GIS7  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+          */
+        case "DTM1  ":
+          tstr = MID(instr,7,35);
+          StripEndingSpaces(tstr);
+          AddTextToNote(Customsr,Noter,"CUSTAR",labstr & tstr,partnr);
+      end;
+      /*
+      if (addrowf) then begin
+        rwcnt = MatRowCnt(Actr);
+        if (rwcnt>=100) then begin
+          StoreToDo(Actr);
+          NewToDO(Actr,"CUSTAR",Customsr.SerNr,Actr.SerNr);
+        end;
+        ClearRow(Actr,Actrw,1);
+        Actrw.Text = labstr & ": " & tstr;
+        MatRowPut(Actr,MatRowCnt(Actr),Actrw);
+      end;
+      */
+    end;
+  end; 
+  if (rownr!=-1) then begin
+    if (rownr<MatRowCnt(Customsr)) then begin
+      MatRowGet(Customsr,rownr,Customsrw);
+      Customsrw.DutiesVal = rowduties;
+      Customsrw.ChargesVal = rowcharges;
+      MatRowPut(Customsr,rownr,Customsrw);
+      updatef = true;
+    end;
+  end;
+  if (updatef) then begin
+    if (oldCustomsr.SerNr>0) then begin
+      if (RecordUpdate(oldCustomsr,Customsr,true)==0) then begin
+        UpdateCalcCharges(Customsr.SerNr,Customsr.VECode,Customsr.Addr0,CalcCharger);
+      end;
+    end;
+  end;
+  if (SizeTextCnt(Noter)>0) then begin
+    StoreNote(Customsr,Noter,"CUSTAR",partnr);
+  end;  
+//  if (MatRowCnt(Actr)>0) then begin
+    StoreToDo(Actr);
+//  end;
+  ImportCUSTAR = true; 
+  RETURN;
+END;
+
+global
+updating procedure EDICustomsIn()
+BEGIN
+  Boolean testf;
+  string 255 instr,labstr,tstr;
+  Integer cusrestype;
+  
+  testf = true;
+  while (testf) begin  
+    instr = ImportField();
+    testf = NextImportLine(false);
+    if (len(instr)==0) then begin testf = false; end;
+    if (testf) then begin
+      labstr = Left(instr,5);
+      switch (labstr) begin
+        case "BGM1 ":
+          cusrestype = ImportBGMLine(instr);
+          switch (cusrestype) begin
+            case 961: 
+              testf = ImportCUSGER();
+            case 962: 
+              testf = ImportCUSDOR();
+            case 963: 
+              testf = ImportCUSERR();
+            case 964: 
+              testf = ImportCUSPAR();
+            case 965: 
+              testf = ImportCUSTAR();
+          end;
+       end;
+    end;
+  end;
+  RETURN;
+END;

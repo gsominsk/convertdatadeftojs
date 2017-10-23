@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fTransDate: { public: true, type: 'DATE' },
+     fNewPayDate: { public: true, type: 'DATE' },
+     fCUCode: { public: true, type: 'TEXT' },
+     fCUName: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     fTransNr: { public: true, type: 'INTEGER' },
+     fIntYc: { public: true, type: 'INTEGER' },
+     fSum: { public: true, type: 'FLOAT' },
+     fBaseSum: { public: true, type: 'FLOAT' },
+     fClosed: { public: true, type: 'INTEGER' },
+     fLiqInfoNr: { public: true, type: 'INTEGER' },
+     fPayNr: { public: true, type: 'INTEGER' },
+     fPayRow: { public: true, type: 'INTEGER' } },
+  indexes: { SerNrIndex573: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

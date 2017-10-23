@@ -1,0 +1,187 @@
+external function string 20 FindJobCustomerCode(record JobVc);
+external function string 60 FindJobCustomerName(record JobVc);
+external function integer GetGuestsInJob(record JobVc);
+
+global
+procedure AddGuestObs2sm()
+begin
+  record RcVc RepSpec;
+  Integer wn,wn1,rown;
+  record JobVc Jobr;
+  Row JobVc Jobrw;
+  record GuestObserVc GuestObserr;
+  Integer rwcnt;
+  
+  wn = CurWindow;
+  rown = WindowActiveRow(wn);
+  GetWindowRecord(wn,Jobr);
+  if (rown==-1) then begin
+    if (MatRowCnt(Jobr)>0) then begin
+      rown = 0;
+    end;
+  end;
+  if (rown!=-1) then begin
+    MatRowGet(Jobr,rown,Jobrw);
+    if (nonblank(Jobrw.GuestCode)) then begin
+      RecordNew(GuestObserr);
+      GuestObserr.Guest = Jobrw.GuestCode;
+      GuestObserr.StartDate = Jobr.TransDate;
+      GuestObserr.EndDate = Jobr.EndDate;
+      wn1 = OpenWindow("GuestObserDClass",1,0,"","",GuestObserr);
+    end;
+  end;
+  return;
+end;
+
+
+global
+procedure ShowGuestObs2sm()
+begin
+  record RcVc RepSpec;
+  Integer rown,wn;
+  record JobVc Jobr;
+  Row JobVc Jobrw;
+  
+  wn = CurWindow;
+  rown = WindowActiveRow(wn);
+  GetWindowRecord(wn,Jobr);
+  if (rown==-1) then begin
+    if (MatRowCnt(Jobr)>0) then begin
+      rown = 0;
+    end;
+  end;
+  if (rown!=-1) then begin
+    GetWindowRecord(wn,Jobr);
+    MatRowGet(Jobr,rown,Jobrw);
+    if (nonblank(Jobrw.GuestCode)) then begin
+      RepSpec.repname  = "ShowGuestObsRn";
+      RepSpec.f1 = Jobrw.GuestCode;
+      RepSpec.Media = mtScreen;    
+      RunReport(RepSpec,0);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure CheckObsRecord(record GuestObserVc GuestObserr)
+begin
+  Date bldat;
+  Time bltim;
+  
+  if ((GuestObserr.Type==0) or (GuestObserr.Type==2) or (GuestObserr.Type==4)) then begin
+    GuestObserr.TransDate = bldat;
+    GuestObserr.TransTime = bltim;
+  end else begin
+    if (blankdate(GuestObserr.TransDate)) then begin
+      GuestObserr.TransDate = CurrentDate;
+    end;
+    if (blanktime(GuestObserr.TransTime)) then begin
+      GuestObserr.TransTime = CurrentTime;
+    end;
+  end;
+/*
+  if ((GuestObserr.Type==0) or (GuestObserr.Type==1)) then begin
+    GuestObserr.StartDate = bdate;
+    GuestObserr.EndDate = bdate;
+  end;
+*/
+  return;
+end;
+
+function Boolean GuestObserDClassTransDateEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+Begin
+  record GuestObserVc GuestObserr;
+  Date bldat;
+  Time bltim;
+  
+  if (changed!=0) then begin
+    GetWindowRecord(wn,GuestObserr);
+    if (nonblankdate(GuestObserr.TransDate)) then begin
+      switch (GuestObserr.Type) begin
+        case 0: GuestObserr.Type = 1;
+        case 2: GuestObserr.Type = 6;
+        case 4: GuestObserr.Type = 3;
+      end;
+    end;
+    CheckObsRecord(GuestObserr);
+    PutWindowRecord(wn,GuestObserr);
+  end;
+  GuestObserDClassTransDateEFAfter = false;
+  Return;
+End;
+
+function Boolean GuestObserDClassOBTypeEFAfter(Integer wn,Integer changed)
+Begin
+  record GuestObserVc GuestObserr;
+  record OBTypeVc OBTyper;
+  
+  if (changed!=0) then begin
+    GetWindowRecord(wn,GuestObserr);
+    OBTyper.Code = GuestObserr.OBType;
+    if (ReadFirstMain(OBTyper,1,true)) then begin
+      GuestObserr.Comment = OBTyper.Comment;
+      GuestObserr.Type = OBTyper.Type;
+    end;
+    CheckObsRecord(GuestObserr);
+    PutWindowRecord(wn,GuestObserr);
+  end;
+  GuestObserDClassOBTypeEFAfter = false;
+  Return;
+End;
+ 
+global
+function Boolean GuestObserDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "TransDate": res = GuestObserDClassTransDateEFAfter(wn,fn,rownr,changed);
+    case "OBType": res = GuestObserDClassOBTypeEFAfter(wn,changed);
+  end;
+  GuestObserDClassAfterEditField = res;
+  RETURN;
+END;
+
+global
+procedure JobRestBookingDsm()
+begin
+  Integer wn,nwn;
+  record JobVc Jobr;
+  record RestBookingVc RestBookingr;
+  
+  wn = CurWindow;
+  GetWindowRecord(wn,Jobr);
+  RecordNew(RestBookingr);
+  RestBookingr.ResCode = Jobr.ResCode;
+  RestBookingr.CUCode = FindJobCustomerCode(Jobr);
+  RestBookingr.CUName = FindJobCustomerName(Jobr);
+  RestBookingr.Contact = Jobr.CustContact;  
+  RestBookingr.Persons = GetGuestsInJob(Jobr);
+  if (Jobr.TransDate<CurrentDate) then begin
+    RestBookingr.BookDate = CurrentDate;
+  end else begin
+    RestBookingr.BookDate = Jobr.TransDate;
+  end;
+  nwn = OpenWindow("RestBookingDClass",1,0,"","",RestBookingr);
+  DeselectWindow(wn,false);
+  WindowFieldGoto(nwn,RestBookingr,-1,"BookStart",true);
+  return;
+end;
+
+global
+function Boolean GuestObserDClassTypeButtonAfter(Integer wn,Boolean changedf)
+begin        
+  record GuestObserVc GuestObserr;
+  Boolean res;
+  Date bdate;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,GuestObserr);
+    DeselectWindow(wn,false);
+    CheckObsRecord(GuestObserr);
+    PutWindowRecord(wn,GuestObserr);
+  end;
+  GuestObserDClassTypeButtonAfter = res;  
+  return;
+end;

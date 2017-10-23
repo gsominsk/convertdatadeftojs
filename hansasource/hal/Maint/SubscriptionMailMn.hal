@@ -1,0 +1,135 @@
+external procedure ResolveMailboxNumber(var row MailVc);
+external procedure MailTextRow2(string,string,string,string,var row MailTextVc,var Integer);
+external function boolean AddEMailRecipients(var record MailVc,string,string,integer);
+external procedure FindUserMailboxName(string,var string,var string);
+
+global
+updating function Boolean SubscriptionMail_Run(var record RcVc RepSpec,string mailboxname)
+begin
+  Boolean res;
+  record MailVc Mailr,OldMailr;
+  row MailVc Mailrw;
+  string 255 fname;
+  record RcVc theRepSpec;
+  record IVVc IVr;
+  record IVVc oldIVr;
+  Boolean found,testf;
+  row MailTextVc MTrw;
+  Integer IgnoreRecordDetails;
+  record LTxtVc LTxtr;
+  Integer i,rwcnt;
+  record CUVc CUr;
+  string 255 tstr;
+
+  found = true;
+  IVr.Prntdf = 0;
+  SetLoopPosition(IVr,RepSpec.long2);
+  while (LoopKey("Prntdf",IVr,1,found)) begin
+    if (IVr.Prntdf!=0) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (nonblankdate(RepSpec.d1)) then begin
+        if (IVr.TransDate!=RepSpec.d1) then begin testf = false; end;
+      end;
+      if (IVr.OKFlag==0) then begin testf = false; end;
+      if (testf) then begin          
+        CUr.Code = IVr.CustCode;
+        ReadFirstMain(CUr,1,true);
+        if (blank(CUr.eMail)) then begin testf = false; end;
+      end;
+      if (testf) then begin          
+
+        RecordCopy(theRepSpec,RepSpec);
+        theRepSpec.f1 = CUr.Code;
+        RecordNew(Mailr);
+
+        ClearRow(Mailr,Mailrw,1);
+        Mailrw.RowTyp = kMailRowTypeFrom;
+        Mailrw.AddrCode = mailboxname;
+        ResolveMailboxNumber(Mailrw);
+        MatRowPut(Mailr,0,Mailrw);
+        if (AddEMailRecipients(Mailr,CUr.Code,CUr.eMail,kMailInvoice)==true) then begin 
+        end;
+
+        MailTextRow2("",USetStr(2541),CUr.LangCode,theRepSpec.Language,MTrw,IgnoreRecordDetails);
+        Mailr.Header = MTrw.Header;
+        if (blank(Mailr.Header)) then begin 
+          Mailr.Header = USetStr(2541);
+        end;
+        LTxtr.Code = MTrw.FirstTxt;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          rwcnt = LineTextCnt(LTxtr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            tstr = LineTextGet(LTxtr,i);
+            LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+          end;    
+          AddCRToText(Mailr);
+        end;
+
+        LTxtr.Code = MTrw.LastTxt;
+        if (ReadFirstMain(LTxtr,1,true)) then begin
+          rwcnt = LineTextCnt(LTxtr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            tstr = LineTextGet(LTxtr,i);
+            LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+          end;    
+          AddCRToText(Mailr);
+        end;
+
+        Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");          
+        RecordInsert(Mailr,true);
+
+        fname = "tmp/" & Mailr.Header & "-" & IVr.SerNr & ".pdf";
+        SetDocumentFilename(fname);
+        SetMedia(mtPdf);         
+        theRepSpec.repname = "InvForm";
+        PrintDocument(theRepSpec,"InvForm",false);
+        if (FileExists(fname)) then begin
+          RecordLinkFile(fname,0,Mailr,CurrentCompany);
+          RecordCopy(OldMailr,Mailr);
+          Mailr.SendFlag = 1;
+          RecordUpdate(OldMailr,Mailr,true);
+          
+          RecordCopy(oldIVr,IVr);
+          IVr.Prntdf = 1;
+          RecordUpdate(oldIVr,IVr,false);
+        end else begin
+          RecordDelete(Mailr);
+        end;
+        
+        SetDocumentFilename("");    
+        Delete_File(fname);
+
+        res = true;
+        found = false;
+        RepSpec.long2 = GetLoopPosition(CUr);
+      end;
+    end;
+  end;
+  SubscriptionMail_Run = res;
+  return;
+end;
+
+global
+procedure SubscriptionMailMn(record RcVc RepSpec)
+begin
+  record MailSettingsBlock MSb;
+  string 255 mailboxnr,mailboxname;
+
+  if (blank(mailboxname)) then begin
+    BlockLoad(MSb);
+    mailboxname = MSb.FromSystem;
+  end;
+  if (blank(mailboxname)) then begin
+    goto LSubscriptionMailMn;
+  end;
+
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = AddDay(CurrentDate,-1);
+  end;
+
+  while (qupdating.SubscriptionMail_Run(RepSpec,mailboxname)) begin
+  end;
+LSubscriptionMailMn:;  
+  return;
+end;

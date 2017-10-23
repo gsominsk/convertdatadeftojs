@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSenderID: { public: true, type: 'TEXT' },
+     fSenderKey: { public: true, type: 'TEXT' },
+     fTestMode: { public: true, type: 'INTEGER' },
+     fEmailOnComplete: { public: true, type: 'INTEGER' },
+     fEmailAddress: { public: true, type: 'TEXT' },
+     fTestVATNr: { public: true, type: 'TEXT' },
+     fJavaPath: { public: true, type: 'TEXT' },
+     fDefaultTaxRep: { public: true, type: 'TEXT' },
+     fNorID: { public: true, type: 'TEXT' },
+     fVatNorPwd: { public: true, type: 'TEXT' },
+     fNorTestMode: { public: true, type: 'INTEGER' },
+     fNorHttpMode: { public: true, type: 'INTEGER' },
+     fNorLogWebReq: { public: true, type: 'INTEGER' },
+     fCertificate: { public: true, type: 'TEXT' },
+     fPrivateKey: { public: true, type: 'TEXT' } } }

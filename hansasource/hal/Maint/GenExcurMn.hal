@@ -1,0 +1,104 @@
+external procedure CheckFlush(var Integer,Integer);
+external procedure PasteJobInExcur(record JobVc,var record ExcursionVc,var Integer);
+external function Boolean IsCancelState(String);
+external procedure PasteExcurTypeInExcursion(var record ExcursionVc);
+
+
+// There is only one event of each type per day ! 
+updating procedure AddJobtoEvent(LongInt JobNr,String EventType,Date eDate,var Integer flushcnt)
+begin
+  record ExcursionVc Excursion;
+  record JobVc Jobr;
+  Integer rows;
+  
+  if (blank(EventType) or blankdate(eDate)) then begin
+    goto LAddJobtoEvent;
+  end;
+  Jobr.SerNr = JobNr;
+  if readfirstmain(Jobr,1,true) then begin
+    Excursion.ExcurType = EventType;
+    Excursion.TransDate = eDate;
+    if readfirstkey("ExcurType",Excursion,2,true) then begin
+      rows = MatRowCnt(Excursion);
+      PasteJobInExcur(Jobr,Excursion,rows);
+    end else begin
+      RecordNew(Excursion);
+      Excursion.TransDate = eDate;
+      Excursion.ExcurType = EventType;
+      PasteExcurTypeInExcursion(Excursion);
+      rows = 0;
+      PasteJobInExcur(Jobr,Excursion,rows);
+      Excursion.SerNr = NextSerNr("ExcursionVc",Excursion.TransDate,-1,false,"");
+    end;
+    if recordstore(Excursion,true) then begin end;
+    CheckFlush(flushcnt,10);
+  end;
+LAddJobtoEvent:;  
+  return;
+end;
+
+
+updating procedure ImplementSugestedProgram(LongInt JobNr,Date vDate,String DExcurType,var Integer flushcnt) 
+begin
+  record ResEventTypeVc ResEventTyper;
+  Row ResEventTypeVc ResEventTyperw;
+  Integer rwcnt,i;
+  
+  ResEventTyper.SerNr = JobNr;
+  if readfirstmain(ResEventTyper,1,true) then begin
+    rwcnt = MatRowCnt(ResEventTyper);
+    for(i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(ResEventTyper,i,ResEventTyperw);
+      if (ResEventTyperw.TransDate == vDate) then begin
+        if ((DExcurType==ResEventTyperw.EventType) or blank(DExcurType)) then begin
+          AddJobtoEvent(JobNr,ResEventTyperw.EventType,ResEventTyperw.TransDate,flushcnt);
+        end;  
+      end;
+    end;
+  end;
+  return;
+end;
+
+
+global
+updating procedure GenExcurMn(record RcVc RepSpec)
+begin
+  Record JobVc Jobr;
+  Boolean Skip,TrHs;
+  Date pDate,sDate,eDate;
+  Integer flushcnt;
+
+  if blankDate(RepSpec.d1) then begin  //pDate is principio del periodo
+    pDate = CurrentDate;
+  end else begin
+    pDate = RepSpec.d1;
+  end;
+  sDate = addDay(pDate,-10);  // Maximum stay around 10 days ?
+  eDate = addDay(pDate,8);
+
+  TrHs = true;
+  Jobr.TransDate = sDate;
+  while(LoopKey("TransDate",Jobr,1,TrHs)) begin
+   
+    Skip= false;
+    if (Jobr.TransDate > eDate) then begin
+      TrHs = false;
+      skip   = true;
+    end;
+    if ((pDate < Jobr.TransDate) or (pDate > Jobr.EndDate)) then begin
+      skip = true;
+    end;
+    if IsCancelState(Jobr.ResStatus) then begin
+      skip = true;
+    end;
+    if (Jobr.Mother<>-1) then begin
+      skip = true;
+    end;
+    
+    if (not skip) then begin
+      UserTrace(Jobr.SerNr,0);
+      ImplementSugestedProgram(Jobr.SerNr,pDate,RepSpec.f1,flushcnt);
+    end;
+  end;
+  return;
+end;

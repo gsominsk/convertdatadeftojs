@@ -1,0 +1,202 @@
+external procedure OutAddress(string,string,string,string,string,string,string);
+external function Boolean FindFormcode(Integer,Integer);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure GetLangNr(string,var record LangNrVc);
+external procedure CommonDocumentFields(record RcVc);
+external procedure GetINInvCode(string,var string);
+external procedure GetShipDealText(string,string,var string);
+external procedure GetShipModeText(string,string,var string);
+
+procedure ServiceOfItem(record WSVc WSr)
+begin
+  record SVOVc SVOr;
+  row SVOVc SVOrw;
+  integer j,rwcnt2;  
+  string 255 orgsernr;
+  SVOr.SerNr = WSr.SVONr;
+  if (ReadFirstMain(SVOr,1,true)) then begin
+    rwcnt2 = MatRowCnt(SVOr);
+    for (j=0;j<rwcnt2;j=j+1) begin
+      MatRowGet(SVOr,j,SVOrw);
+      if (nonblank(SVOrw.SerialNr)) then begin
+        OUTFORMFIELD("F_ORGSERNR",SVOrw.SerialNr);
+        OUTFORMFIELD("F_ORGITEM",SVOrw.ArtCode);
+        OUTFORMFIELD("F_ORGITEMDESC",SVOrw.Spec);
+        goto L80;
+      end;
+    end;
+  end;
+  L80:;
+  return;
+end;
+
+procedure PrintWSRows(record RcVc RepSpec,record WSVc WSr,record SysFormatBlock SysFormatRec,record LangNrVc LangNrr,
+                      var val totaldiscount)
+BEGIN
+  Integer i,rwcnt;
+  row WSVc WSrw;
+  string 255 tstr;
+  record INVc INr;
+  val t;
+  val vatprc,vatval,vatexclprc,vatinclprc;
+  
+  totaldiscount = blankval;
+  rwcnt = MatRowCnt(WSr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(WSr,i,WSrw);
+    if (WSrw.stp==1) then begin
+      INr.Code = WSrw.ArtCode;
+      if (ReadFirstMain(INr,1,true)) then begin
+      end;
+      OUTFORMFIELD("F_MOTHERNR",WSrw.MotherNr);
+      switch (WSrw.ItemType) begin
+        case 0: tstr = "";
+        case 1: tstr = USetStr(7761);
+        case 2: tstr = USetStr(7762);
+        case 3: tstr = USetStr(7763);
+        case 4: tstr = USetStr(7768);
+      end;      
+      OUTFORMFIELD("F_ITEMTYPE",tstr);
+      OUTFORMFIELD("F_ARTNR",WSrw.ArtCode);
+      tstr = ValToString(WSrw.Quant,M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,LangNrr.CutDecimals);      
+      OUTFORMFIELD("F_ANTAL",tstr);
+      OUTFORMFIELD("F_BESKRIVNING",WSrw.Spec);
+      OUTFORMFIELD("F_APRIS",WSrw.Price);
+      OUTFORMFIELD("F_BELOPP",WSrw.Sum);
+      OUTFORMFIELD("F_RABATT",WSrw.vRebate);
+      OUTFORMFIELD("F_SALESACC",WSrw.SalesAcc);
+      OUTFORMFIELD("F_ROWOBJECT",WSrw.Objects);
+      OUTFORMFIELD("F_MOMS",WSrw.VATCode);
+      OUTFORMFIELD("F_SERIALNR",WSrw.SerialNr);
+      OUTFORMFIELD("F_RECEPY",WSrw.Recepy);
+      tstr = ValToString(WSrw.Invd,M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,LangNrr.CutDecimals);
+      OUTFORMFIELD("F_INVOICED",tstr);
+      EndFormRow;
+      if (WSrw.vRebate!=0) then begin
+        t = WSrw.Quant*WSrw.Price - WSrw.Sum;
+        totaldiscount = totaldiscount + t;
+      end;
+    end;  
+  end;    
+  RETURN;
+END;
+
+global
+procedure DoWSForm(record RcVc RepSpec,record WSVc WSr)
+BEGIN
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  record CUVc CUr;
+  record SVOVc SVOr;
+  Integer i,rwcnt;
+  string 255 tstr;
+  val t;
+  record SysFormatBlock SysFormatRec;
+  record LangNrVc LangNrr;
+  Boolean printf,langf;
+  Integer intdocnr;
+  string 30 formcode,langcode;
+  
+  GetLangNr(WSr.LangCode,LangNrr);  
+  BlockLoad(SysFormatRec);
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto LDoWSForm;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  langcode = WSr.LangCode;
+  for (i=rwcnt-1;i>=0;i=i-1) begin
+    MatRowGet(FDr,i,FDrw);
+    if (FDrw.LangCode==langcode) then begin
+      i = -1;
+      langf = true;
+    end;
+  end;
+  if (langf==false) then begin langcode = ""; end;
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (FindFormcode(WSr.OKFlag,FDrw.Typ)) then begin 
+        if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,WSr.SerNr,FDrw.PrintGroupCode,
+                        langcode,intdocnr,"WSVc",formcode)) then
+        begin
+          goto LBREAK;
+        end;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin    
+          CommonDocumentFields(RepSpec);
+          NumberofDocumentPages(FDrw.FPCode,MatRowCnt(WSr));
+          SVOr.SerNr = WSr.SVONr;
+          if (ReadFirstMain(SVOr,1,true)) then begin
+          end;        
+          OUTFORMFIELD("F_SERNR",WSr.SerNr);
+          OUTFORMFIELD("F_ORDERNUMMER",WSr.WONr);
+          OUTFORMFIELD("F_SERVICEORDER",WSr.SVONr);
+          OUTFORMFIELD("F_TRANSDATE",WSr.TransDate);
+          OUTFORMFIELD("F_PERSON",WSr.EMCode);
+          OUTFORMFIELD("F_PERSNAME",WSr.EMName);
+          OUTFORMFIELD("F_KUNDNR",WSr.CustCode);
+          OUTFORMFIELD("F_ORGCUSTNR",WSr.CustCode);
+          OUTFORMFIELD("F_ORGCUSTNAME",WSr.Addr0);
+          OUTFORMFIELD("F_TOCONTACT",WSr.CustContact);
+          OUTFORMFIELD("F_SUMMA",WSr.Sum1);
+          OUTFORMFIELD("F_VATVAL",WSr.Sum3);
+          OUTFORMFIELD("F_AMOUNT",WSr.Sum4);
+          OUTFORMFIELD("F_OBJECT",WSr.Objects);
+          OUTFORMFIELD("F_TOPHONE",WSr.Phone);
+          OUTFORMFIELD("F_SIGNATURE",WSr.Sign);
+          OUTFORMFIELD("F_FAKTURATILL",WSr.InvoiceToCode);
+          OUTFORMFIELD("F_LOCATION",WSr.Location);
+          OUTFORMFIELD("F_COMMENT",WSr.Comment1);
+          OUTFORMFIELD("F_COMMENT",WSr.Comment2);
+          OUTFORMFIELD("F_COMMENT",WSr.Comment3);
+          OUTFORMFIELD("F_COMMENT",WSr.Comment4);
+          if (FIELDINFORM("F_INVLEVSATTTEXT")) then begin
+            GetShipModeText(SVOr.ShipMode,SVOr.LangCode,tstr);
+            OUTFORMFIELD("F_INVLEVSATTTEXT",tstr);
+          end;  
+          if (FIELDINFORM("F_INVLEVVILLKTEXT")) then begin
+            GetShipDealText(SVOr.ShipDeal,SVOr.LangCode,tstr);
+            OUTFORMFIELD("F_INVLEVVILLKTEXT",tstr);
+          end;  
+          OutAddress("F_ADRESS",SVOr.Addr0,SVOr.Addr1,SVOr.Addr2,SVOr.Addr3,SVOr.InvAddr3,SVOr.InvAddr4);
+          OUTFORMFIELD("F_KUNDTEL",SVOr.Phone);
+          OUTFORMFIELD("F_KUNDFAX",SVOr.Fax);
+          if (FIELDINFORM("F_EMAIL")) then begin
+            CUr.Code = WSr.CustCode;
+            if (ReadFirstMain(CUr,1,true)) then begin
+              OUTFORMFIELD("F_EMAIL",CUr.eMail);
+            end;
+          end;           
+          OUTFORMFIELD("F_KUNDMOMSNR",SVOr.VATNr);
+          OutAddress("F_LEVADRESS",SVOr.Addr0,SVOr.ShipAddr1,SVOr.ShipAddr2,SVOr.ShipAddr3,SVOr.DelAddr3,SVOr.DelAddr4);
+          PrintWSRows(RepSpec,WSr,SysFormatRec,LangNrr,t);
+          OUTFORMFIELD("F_TOTALDISCOUNT",t);
+          if (FIELDINFORM("F_ORGSERNR")) or (FIELDINFORM("F_ORGITEM")) or (FIELDINFORM("F_ORGITEMDESC")) then begin
+            ServiceOfItem(WSr);
+          end;
+          CloseForm;        
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+LDoWSForm:;  
+  RETURN;
+END;

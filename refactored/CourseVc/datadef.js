@@ -1,0 +1,28 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fCode: { public: true, type: 'TEXT' },
+     fName: { public: true, type: 'TEXT' },
+     fContact: { public: true, type: 'TEXT' },
+     fContactSClass: { public: true, type: 'FLOAT' },
+     fPricePrHour: { public: true, type: 'FLOAT' },
+     fDescription: { public: true, type: 'TEXT' },
+     fTerminated: { public: true, type: 'INTEGER' },
+     fClass: { public: true, type: 'TEXT' },
+     fType: { public: true, type: 'TEXT' },
+     fMaxPersons: { public: true, type: 'INTEGER' },
+     fLength: { public: true, type: 'TEXT' },
+     fItemCode: { public: true, type: 'TEXT' },
+     fResponsible: { public: true, type: 'TEXT' },
+     CourseVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fLangCode: { public: true, type: 'TEXT' },
+           fLangName: { public: true, type: 'TEXT' },
+           fLangDescription: { public: true, type: 'TEXT' },
+           fLangLength: { public: true, type: 'TEXT' } } },
+     fActType: { public: true, type: 'TEXT' },
+     fSMSReminderText: { public: true, type: 'TEXT' } },
+  indexes: { CodeIndex545: { fields: [ 'fCode' ], indicesType: 'UNIQUE' } } }

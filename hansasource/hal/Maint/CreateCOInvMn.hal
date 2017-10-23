@@ -1,0 +1,336 @@
+external procedure IVSumup(var record IVVc,Boolean);
+external function LongInt GetCurUserLastNr(string);
+external updating function LongInt ConvertIVToOR(var record IVVc);
+external function string 255 FindNextLegalSerNr(record IVVc,string);
+external procedure CheckFlush(var Integer,Integer);
+external procedure SetCOInvOnceRows(var record COVc,Date,LongInt);
+external procedure MakeInvFromCO(record RcVc,var record COVc,var record IVVc,Date,Date,Date,Integer,Integer,Integer);
+external updating function Integer GroupInvoicingCO(record RcVc,var LongInt,Boolean);
+external updating procedure CreateCOIV(record COVc,record IVVc);
+external function Integer GetCUCOInvDef(string);
+external updating procedure CreateSummaryActivity(string,string,string);
+external updating procedure InvCreateActivity(record COVc,string,string,string,Integer);
+
+function Integer ContractClassReminderFlag(string contractclass)
+BEGIN
+  Integer res;
+  record ContractClassBlock ContractClassRec;
+  row ContractClassBlock ContractClassrw;
+  Integer i,rwcnt;
+  
+  BlockLoad(ContractClassRec);
+  rwcnt = MatRowCnt(ContractClassRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ContractClassRec,i,ContractClassrw);
+    if (ContractClassrw.Code==contractclass) then begin
+      res = ContractClassrw.NoRemndrFlag;
+      goto LContractClassReminderFlag;
+    end;
+  end;
+LContractClassReminderFlag:;  
+  ContractClassReminderFlag = res;
+  RETURN;
+END;
+
+global
+function Boolean CheckCustomerBlocked(string cucode)
+BEGIN
+  record CUVc CUr;
+  Boolean res;
+
+  CUr.Code = cucode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (CUr.OnHoldFlag!=0) then begin res = true; end;
+    if (CUr.blockedFlag!=0) then begin res = true; end;
+  end;
+  CheckCustomerBlocked = res;
+  RETURN;
+END;
+
+global
+procedure FindShortestPeriod(record COVc COr,var Date invpers,var Date oldinvpers,var Integer oldshortestline,var LongInt perLength,var Date startDate,var Date endDate,var Integer invDtype,var Integer invDays,var Date lastInvDate,var Integer shortestline)
+begin
+  row COVc COrw;
+  Integer rwcnt,i;
+  Date invpere,invdate;
+  Boolean testf;
+  
+  shortestline = -1;
+  perLength = COr.perLength;
+  startDate = COr.startDate;
+  endDate = COr.endDate;
+  invDtype = COr.invDtype;
+  invDays = COr.invDays;
+  lastInvDate = COr.lastInvDate;
+  rwcnt = MatRowCnt(COr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(COr,i,COrw);
+    if ((COrw.perLength>0) or (nonblankdate(COrw.startDate)) or (nonblankdate(COrw.endDate))) then begin
+      testf = true;
+      if (lastInvDate<COrw.lastInvDate) then begin
+        testf = false;
+      end;
+      if (lastInvDate>COrw.endDate) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if (shortestline>-1) then begin
+          if (COrw.startDate>startDate) then begin
+            testf = false;
+          end;
+          if (COrw.endDate>endDate) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        lastInvDate = COrw.lastInvDate;
+        if (nonblankdate(COrw.startDate)) then begin
+          startDate = COrw.startDate;
+        end;
+        if (nonblankdate(COrw.endDate)) then begin
+          endDate = COrw.endDate;
+        end;
+        if (perLength!=COrw.perLength) then begin
+          perLength = COrw.perLength;
+        end;
+        shortestline = i;
+      end;
+    end;
+  end;
+  if (nonblank(oldinvpers)) then begin
+    if (oldshortestline!=shortestline) then begin
+      invpers = startDate;
+    end;
+  end;
+  oldinvpers = invpers;
+  oldshortestline = shortestline;
+  return;
+end;
+
+function Boolean HasNormalLine(record COVc COr)
+begin
+  row COVc COrw;
+  Integer i,rwcnt;
+  Boolean res;
+  
+  res = false;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(COr,i,COrw);
+    if ((COrw.perLength==-1) and (blank(COrw.startDate))) then begin
+      res = true;
+      i = rwcnt;
+    end;
+  end;
+  HasNormalLine = res;
+  return;
+end;
+
+global
+procedure SetLastInvoiceDate(var record COVc COr,Integer shortestline,Date invdate)
+begin
+  row COVc COrw;
+  
+  if (shortestline==-1) then begin
+    COr.lastInvDate = invdate;
+  end else begin
+    MatRowGet(COr,shortestline,COrw);
+    COrw.lastInvDate = invdate;
+    MatRowPut(COr,shortestline,COrw);
+    if ((COrw.perLength==COr.perLength) and (COrw.startDate==COr.startDate)) then begin
+      if (HasNormalLine(COr)==false) then begin
+        COr.lastInvDate = invdate;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating function LongInt CreateCOInv(record RcVc RepSpec,Boolean maintf,var Boolean orderf,var Integer err)
+begin
+  record COVc oldCOr;
+  record COVc COr;
+  record SRBlock SRRec;
+  record IVVc IVr;
+  row COVc COrw;
+  Boolean TrHs,testf;
+  Date invdate,invpers,invpere;
+  string 255 frcc,tocc;
+  LongInt frco,toco,invcnt;
+  Integer detailinv,errorid;
+  string 20 curuser;
+  string 255 tstr;
+  Integer curcomp;
+  LongInt res;
+  Integer cnt;
+  record CUVc CUr;
+  Integer invDtype,invDays;
+  Date startDate,endDate,lastInvDate,oldinvpers,bldat,coinvdate;
+  LongInt perLength;
+  Integer shortestline,oldshortestline;
+  record COCUServiceBlock COCUSb;
+  LongInt newnr;
+  
+  err = 0;
+  BlockLoad(COCUSb);
+  if (COCUSb.BlockUsingStdCO!=0) then begin
+    goto LCreateCOInvMn;
+  end;
+  RecordNew(IVr);
+  cnt = 0;
+  curuser = CurrentUser;
+  curcomp = CurrentCompany;
+  invcnt = 0;
+  TrHs = true;
+  if (RepSpec.ArtMode==1) then begin
+    err = GroupInvoicingCO(RepSpec,invcnt,maintf);
+    goto LCreateCOInvMn;
+  end;
+  BlockLoad(SRRec);
+  frcc = FirstInRange(RepSpec.f1,20);
+  tocc = LastInRange(RepSpec.f1,20);
+  frco = FirstInRange(RepSpec.f2,20);
+  toco = LastInRange(RepSpec.f2,20);
+  COr.SerNr = frco;
+  COr.ChildSerNr = -1;
+  TrHs = true;
+  while (LoopMain(COr,2,TrHs)) begin
+    RecordCopy(oldCOr,COr);
+    if (toco!=-1) then begin
+      if (COr.SerNr>toco) then begin TrHs = false; end;
+    end;    
+    testf = true;
+    if (TrHs==false) then begin testf = false; end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (COr.CustCode>tocc) then begin testf = false; end;
+      if (COr.CustCode<frcc) then begin testf = false; end;
+    end;
+    if (COr.OKFlag==0) then begin testf = false; end;
+    if (blankdate(COr.startDate)) then begin testf = false; end;
+    if (nonblank(COr.InvoiceToCode)) then begin
+      detailinv = GetCUCOInvDef(COr.InvoiceToCode);
+    end else begin
+      detailinv = GetCUCOInvDef(COr.CustCode);
+    end;
+    oldinvpers = bldat;
+    oldshortestline = 0;
+    FindShortestPeriod(COr,invpers,oldinvpers,oldshortestline,perLength,startDate,endDate,invDtype,invDays,lastInvDate,shortestline);
+    if (nonblankdate(lastInvDate)) then begin
+      if (lastInvDate>RepSpec.d2) then begin testf = false; end;
+    end;
+    if (nonblank(RepSpec.f3)) then begin
+      if (SetInSet(COr.ContractClass,RepSpec.f3)==false) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      if (CheckCustomerBlocked(COr.CustCode)) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      if (perLength<=0) then begin goto LCreateCOInvMnLoopEnd; end;
+      invpers = startDate;
+LNextCOInv:;
+      FindShortestPeriod(COr,invpers,oldinvpers,oldshortestline,perLength,startDate,endDate,invDtype,invDays,lastInvDate,shortestline);
+      if (perLength<=0) then begin goto LCreateCOInvMnLoopEnd; end;
+      if (nonblankdate(endDate)) then begin
+        if (invpers>endDate) then begin goto LCreateCOInvMnLoopEnd; end;
+      end else begin
+        if (invDtype==0) then begin
+          if (AddDay(invpers,-invDays)>RepSpec.d2) then begin goto LCreateCOInvMnLoopEnd; end;
+        end else begin
+          if (invpers>RepSpec.d2) then begin goto LCreateCOInvMnLoopEnd; end;
+        end;
+      end;
+      if (nonblankdate(COr.CancelDate)) then begin
+        if (invpers>COr.CancelDate) then begin goto LCreateCOInvMnLoopEnd; end;
+      end;
+      if (COr.perType==0) then begin
+        invpere = AddMonth(invpers,perLength);
+      end else begin
+        invpere = AddDay(invpers,perLength);
+      end;
+      invpere = AddDay(invpere,-1);
+      if (invDtype==0) then begin
+        invdate = AddDay(invpers,-invDays); // invpers
+      end else begin
+        invdate = AddDay(invpers,invDays);
+      end;
+      if (lastInvDate>=invdate) then begin goto LSkip; end;
+      if (DateInRange(invdate,RepSpec.d1,RepSpec.d2)) then begin
+        coinvdate = invdate;
+        if (nonblankdate(RepSpec.RegDate)) then begin 
+          invdate = RepSpec.RegDate; 
+        end;    
+        MakeInvFromCO(RepSpec,COr,IVr,invdate,invpers,invpere,detailinv,RepSpec.flags[2],shortestline);
+        if (IVr.Sum4!=0) then begin
+          if (blank(IVr.LangCode)) then begin
+            IVr.LangCode = RepSpec.Language;
+          end;  
+          newnr = GetCurUserLastNr("IVVc");
+          if (newnr==-1) then begin
+            newnr = SRRec.LastInvNr;
+          end;
+          IVr.SerNr = NextSerNr("IVVc",IVr.TransDate,newnr,false,IVr.LangCode);          
+          if (IVr.SerNr<=0) then begin
+            err = 1747;
+            goto LCreateCOInvMn;
+          end;
+          CUr.Code = COr.CustCode;
+          if (ReadFirstMain(CUr,1,true)) then begin end;
+//          IVr.OfficialSerNr = FindNextLegalSerNr(IVr,CUr.Classification);  //POSN
+          if (IVr.SerNr!=-1) then begin
+            IVr.NoRemndrFlag = ContractClassReminderFlag(COr.ContractClass);
+            IVr.NoEInvoice = RepSpec.flags[5];
+            SRRec.LastCOInvNr = IVr.SerNr;
+            IVr.NoEInvoice = RepSpec.flags[5];
+            IVSumup(IVr,true);  
+            if (RecordInsert(IVr,false)) then begin 
+              invcnt = invcnt + 1;
+            end else begin
+              InvCreateActivity(COr,IVr.SerNr,USetStr(27351),curuser,curcomp);
+            end;
+            SetCOInvOnceRows(COr,IVr.InvDate,IVr.SerNr);
+            SetLastInvoiceDate(COr,shortestline,coinvdate);
+            errorid = RecordUpdate(oldCOr,COr,false);
+            if (errorid!=0) then begin
+              InvCreateActivity(oldCOr,oldCOr.SerNr,USetStr(errorid),curuser,curcomp);            
+            end;            
+            CreateCOIV(COr,IVr);
+            res = IVr.SerNr;
+            RecordCopy(oldCOr,COr);            
+            if (COr.CreateRegister!=0) then begin
+              res = ConvertIVToOR(IVr);
+              orderf = true;
+            end;
+          end;
+          if (maintf) then begin
+            CheckFlush(cnt,10);
+          end;
+        end;
+        RecordNew(IVr);
+      end;
+LSkip:;
+      invpers = AddDay(invpere,1);
+      goto LNextCOInv;
+LCreateCOInvMnLoopEnd:;
+    end;
+    if (RepSpec.ArtMode!=-1) then begin MaintTrace(COr.SerNr); end;
+  end;
+LCreateCOInvMn:;
+//  CreateSummaryActivity(invcnt," invoices have been created",curuser) ; 
+  CreateCOInv = res;
+  return;
+end;
+
+global
+updating procedure CreateCOInvMn(record RcVc RepSpec)
+begin
+  LongInt res;
+  Boolean orderf;
+  Integer err;
+  
+  res = CreateCOInv(RepSpec,true,orderf,err);
+  if (err!=0) then begin
+    MessageBox(err,"");
+  end;
+  return;
+end;  

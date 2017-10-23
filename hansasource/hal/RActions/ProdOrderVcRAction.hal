@@ -1,0 +1,557 @@
+external function Boolean SerNrTestProdOrderVc(LongInt,Date,var Boolean);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Integer CheckObjs(string,string,var string);
+external function Boolean IsRecipeClosed(string);
+external updating procedure UpdateInstock(string,string,string,string,date,val,val,val,val,val,val,val,val,val);
+external procedure GetCurUser(var record UserVc);
+external updating procedure UpdatePlanned(string,string,string,LongInt,Date,val,Integer,val,val,Boolean);
+external function Boolean PasteRecInProdOrder(var record ProdOrderVc);
+external procedure CalcProdDuration(var record ProdOrderVc);
+
+global
+function Boolean ShouldBeInQueue(record ProdOrderVc ProdOr)
+begin
+  Boolean res;
+  
+  res = false;
+  if ((ProdOr.StatusFlag>0) and (ProdOr.StatusFlag<3)) then begin
+    res = true;
+  end;
+  ShouldBeInQueue = res;
+  return;
+end;
+
+// Not used, this should be called from the EFAfter routines.
+procedure UpdateProdOrderMachine(var record ProdOrderVc ProdOr,string frommch,string tomch)
+begin
+  record ProdItemVc pir;
+  record RecVc rr;
+  row ProdItemVc pirw;
+  row RecVc rrw;
+  Integer rwcnt,i;
+  string 30 item;
+  string 30 recipe;
+  Boolean res;
+
+  if (frommch!=tomch) then begin
+    rr.Code = ProdOr.Recipe;
+    if (ReadFirstMain(rr,1,true)) then begin
+      rwcnt = MatRowCnt(rr);
+      for (i=0;i<rwcnt;i = i + 1) begin
+        MatRowGet(rr,i,rrw);
+        if (rrw.OutQty>0) then begin
+          item = rrw.Item;
+          goto LUPRM_found;
+        end;
+      end;
+    end;
+    goto LUPRM_out;
+LUPRM_found:;
+    pir.ItemCode = item;
+    if (ReadFirstMain(pir,1,true)) then begin
+      rwcnt = MatRowCnt(pir);
+      for (i=0;i<rwcnt;i = i + 1) begin
+        MatRowGet(pir,i,pirw);
+        if (pirw.Machine==tomch) then begin
+          recipe = pirw.DefRecipe;
+          goto LUPRM_found2;
+        end;
+      end;      
+    end;
+    goto LUPRM_out;
+LUPRM_found2:;
+    ProdOr.Recipe = recipe;
+    res = PasteRecInProdOrder(ProdOr);
+  end;
+LUPRM_out:;
+  RETURN;
+end;
+
+procedure InsertInQueue(var record ProdOrderVc ProdOrdr,Boolean newqueue)
+begin
+  record ProdOrderVc ProdOrdr2;
+  Boolean foundf,testf;
+  Boolean gotonepos;
+  LongInt qiwant;
+  
+  if (ShouldBeInQueue(ProdOrdr)) then begin
+    if ((ProdOrdr.QueuePos<=0) or (newqueue)) then begin
+      ProdOrdr2.Machine = ProdOrdr.Machine;
+      ProdOrdr2.QueuePos = 99999999;
+      if (ReadLastKey("Queue",ProdOrdr2,2,false)) then begin
+        if (ProdOrdr2.Machine==ProdOrdr.Machine) then begin
+          if (ProdOrdr2.QueuePos==-1) then begin
+            ProdOrdr2.QueuePos = 0;
+          end;
+        end else begin
+          ProdOrdr2.QueuePos = 0;
+        end;
+        ProdOrdr.QueuePos = ProdOrdr2.QueuePos + 1;
+      end else begin
+        ProdOrdr.QueuePos = 1;
+      end;
+    end;
+  end else begin
+    ProdOrdr.QueuePos = -1;
+  end;
+  RETURN;
+end;
+
+global
+updating procedure UpdateProdOrderPlanned(record ProdOrderVc ProdOp,Boolean addf)
+begin
+  row ProdOrderVc ProdOrw;
+  record MainStockBlock MainStockRec;
+  Integer i,rwcnt;
+  val dtaqty,qty;
+  string 255 location;
+  Date thedat;
+  
+  location = ProdOp.Location;
+  if (blank(location)) then begin
+    BlockLoad(MainStockRec);
+    location = MainStockRec.MainStock;
+  end;
+  
+  qty = ProdOp.Qty - ProdOp.Finished;
+  rwcnt = MatRowCnt(ProdOp);
+  
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdOp,i,ProdOrw);
+
+    if (ProdOrw.InQty==0) then begin
+      dtaqty = ProdOrw.OutQty * qty;
+      thedat = ProdOp.DueDate;
+// No handling for Quant2 
+      UpdatePlanned(ProdOrw.Item,location,"Fut2ProdOrderInVc",ProdOp.SerNr,thedat,dtaqty,i,dtaqty,ProdOrw.FIFORowVal,addf); // ProdOp.DueDate
+    end else begin
+      dtaqty = -ProdOrw.InQty * qty;
+      thedat = ProdOp.PlannedStartDate;
+// No handling for Quant2 
+      UpdatePlanned(ProdOrw.Item,location,"Fut2ProdOrderOutVc",ProdOp.SerNr,thedat,dtaqty,i,dtaqty,ProdOrw.FIFORowVal,addf); // ProdOp.DueDate
+    end;
+  end;
+  
+  return;
+end;
+
+global
+function LongInt ProdOrderVcRecordCheck(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt check)
+begin
+  row ProdOrderVc ProdOrw;
+  record ProdItemVc ProdItemr;
+  row ProdItemVc ProdItemrw;
+  record INVc INr;
+  string 20 item;
+  string 255 errstr;
+  Integer i,rwcnt;
+  Integer j,jrwcnt;
+  Boolean testf,gentrans;
+  LongInt res;
+  record RecVc Recr;
+  record LocationVc Locr;
+  record UserVc Userr;
+  Integer errcode;
+  record RoutingVc Routingr;
+  record ProdClassVc ProdClassr;
+  Date td;
+  
+  res = 0;
+  td = ProdOr.StartDate;
+  if (blankdate(td)) then begin
+    td = CurrentDate;
+  end;
+  if (ProdOr.SerNr<=0) then begin
+    ProdOr.SerNr = NextSerNr("ProdOrderVc",td,-1,false,"");
+  end;
+  if (stat==2) then begin
+    if (ProdOr.SerNr<=0) then begin
+      ProdOr.SerNr = ProdO2r.SerNr;
+    end;
+  end;  
+  if (SerNrTestProdOrderVc(ProdOr.SerNr,td,gentrans)==false) then begin
+    RecordCheckError(1034,"",-1,"SerNr");      
+    res = -1; 
+    goto LProdOrderVcRecordCheck;
+  end;
+  if (check!=0) then begin
+    if (IsRecipeClosed(ProdOr.Recipe)) then begin
+      RecordCheckError(2088,"",-1,"Recipe");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+  if ((ProdOr.StatusFlag>0) and (blank(ProdOr.Routing))) then begin
+    if (blank(ProdOr.Machine)) then begin
+      RecordCheckError(1058,"",-1,"Machine");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+  if (nonblank(ProdOr.Recipe)) then begin
+    Recr.Code = ProdOr.Recipe;
+    if (ReadFirstMain(Recr,1,true)==false) then begin
+      RecordCheckError(1120,ProdOr.Recipe,-1,"Recipe");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+  if (nonblank(ProdOr.Location)) then begin
+    Locr.Code = ProdOr.Location;
+    if (ReadFirstMain(Locr,1,true)==false) then begin
+      RecordCheckError(1120,ProdOr.Location,-1,"Location");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;  
+  if (nonblank(ProdOr.Person)) then begin
+    Userr.Code = ProdOr.Person;
+    if (ReadFirstMain(Userr,1,true)==false) then begin
+      RecordCheckError(1120,ProdOr.Person,-1,"Person");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;  
+  if (nonblank(ProdOr.Routing)) then begin
+    Routingr.Code = ProdOr.Routing;
+    if (ReadFirstMain(Routingr,1,true)==false) then begin
+      RecordCheckError(1120,ProdOr.Routing,-1,"Routing");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;  
+  if (nonblank(ProdOr.ProdClass)) then begin
+    ProdClassr.Code = ProdOr.ProdClass;
+    if (ReadFirstMain(ProdClassr,1,true)==false) then begin
+      RecordCheckError(1290,"",-1,"ProdClass");      
+      res = -1;
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+  errcode = CheckObjs("",ProdOr.Objects,errstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,errstr,-1,"Objects");      
+    res = -1; 
+    goto LProdOrderVcRecordCheck;
+  end;
+  
+  if nonblank(ProdOr.Machine) then begin
+    testf = true;
+    rwcnt = MatRowCnt(ProdOr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(ProdOr,i,ProdOrw);
+      if (nonblank(ProdOrw.Item)) then begin
+        if (ReadFirstItem(ProdOrw.Item,INr,true,true)==false) then begin
+          RecordCheckError(1120,ProdOrw.Item,i,"Item");      
+          res = -1; 
+          goto LProdOrderVcRecordCheck;
+        end;
+      end;
+      errcode = CheckObjs("",ProdOrw.Objects,errstr);
+      if (errcode!=0) then begin
+        RecordCheckError(errcode,errstr,i,"Objects");      
+        res = -1; 
+        goto LProdOrderVcRecordCheck;
+      end;
+      if (ProdOrw.OutQty>0) then begin
+        if (true) then begin
+          ProdItemr.ItemCode = ProdOrw.Item;
+          if (ReadFirstMain(ProdItemr,1,true)) then begin
+            testf = false;
+            if (ProdItemr.DefMachine==ProdOr.Machine) then begin
+              testf = true;
+            end;
+            if (testf==false) then begin
+              rwcnt = MatRowCnt(ProdItemr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(ProdItemr,i,ProdItemrw);
+                if (ProdItemrw.Machine==ProdOr.Machine) then begin
+                  testf = true;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (testf==false) then begin
+      RecordCheckError(2166,"",-1,"Machine");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+  if (ProdO2r.StatusFlag>2) then begin
+    if (ProdOr.StatusFlag<=2) then begin
+      RecordCheckError(2164,"",-1,"SerNr");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+  if (ProdOr.StatusFlag==3) then begin
+    if (ProdO2r.StatusFlag<1) then begin
+      RecordCheckError(2164,"",-1,"SerNr");      
+      res = -1; 
+      goto LProdOrderVcRecordCheck;
+    end;
+  end;
+LProdOrderVcRecordCheck:;
+  ProdOrderVcRecordCheck = res;
+  RETURN;
+end;
+
+procedure SetProdOrderFlags(record ProdOrderVc ProdOr,Integer oldstatus)
+begin
+  if (ProdOr.StatusFlag>2) then begin
+    ProdOr.DoneFlag = 1;
+  end;
+  if (ProdOr.StatusFlag==2) then begin
+    if (oldstatus<2) then begin
+      ProdOr.StartDate = CurrentDate;
+      ProdOr.StartTime = CurrentTime;
+    end;
+  end;
+  if (ProdOr.StatusFlag>2) then begin
+    if (oldstatus<=2) then begin
+      ProdOr.EndDate = CurrentDate;
+      ProdOr.EndTime = CurrentTime;
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt ProdOrderVcRecordSave(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  InsertInQueue(ProdOr,false);
+
+//  UpdateProdOrderMachine(ProdOr,"",ProdOr.Machine);
+  SetProdOrderFlags(ProdOr,0);
+  
+  ProdOrderVcRecordSave = res;
+  RETURN;
+end;
+
+global
+updating procedure UpdateProdOrd2(record ProdOrderVc ProdOrdp,Boolean addf,val qty,Boolean updplannedf)
+BEGIN
+  row ProdOrderVc ProdOrdrw;
+  Integer i,rwcnt;
+  val t,t2,t3,blankv,rsrv;
+  record MainStockBlock MainStockRec;
+  string 255 location;
+  
+  if (ProdOrdp.StatusFlag==3 or ProdOrdp.StatusFlag==4) then begin
+    goto LUpdateProdOrd2;
+  end;
+  location = ProdOrdp.Location;
+  if (blank(location)) then begin
+    BlockLoad(MainStockRec);
+    location = MainStockRec.MainStock;
+  end;
+  rwcnt = MatRowCnt(ProdOrdp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdOrdp,i,ProdOrdrw);
+    if (ProdOrdrw.InQty!=0) then begin
+      t = ProdOrdrw.InQty*ProdOrdp.Qty;
+      t2 = ProdOrdrw.InQty*ProdOrdp.Finished;
+      t3 = ProdOrdrw.InQty*ProdOrdp.Discarded;
+      t = t - t2 - t3;
+      if (qty!=0) then begin
+//        t = qty;
+      end;
+      rsrv = blankval;
+      if (ProdOrdp.Reserved!=0) then begin
+        rsrv = ProdOrdrw.InQty*ProdOrdp.Qty - ProdOrdrw.InQty*ProdOrdp.Finished - ProdOrdrw.InQty*ProdOrdp.Discarded;
+      end;
+      if (addf==false) then begin
+        t = -t;
+        rsrv = -rsrv;
+      end;
+      if (t!=0) or (rsrv!=0)  then begin
+        UpdateInstock("ProdOrdVc",ProdOrdp.SerNr,ProdOrdrw.Item,location,ProdOrdp.StartDate,blankv,blankv,rsrv,blankv,blankv,blankv,t,blankv,blankv);
+      end;
+    end;
+    if (ProdOrdrw.OutQty!=0) then begin
+      t = ProdOrdrw.OutQty*ProdOrdp.Qty;
+      t2 = ProdOrdrw.OutQty*ProdOrdp.Finished;
+      t3 = ProdOrdrw.OutQty*ProdOrdp.Discarded;
+      t = t - t2 - t3;
+      t = -t;
+      if (addf==false) then begin
+        t = -t;
+      end;
+      if (t!=0) then begin
+        UpdateInstock("ProdOrdVc",ProdOrdp.SerNr,ProdOrdrw.Item,location,ProdOrdp.StartDate,blankv,blankv,blankv,blankv,blankv,blankv,t,blankv,blankv);
+      end;
+    end;
+  end;
+  if (updplannedf) then begin
+    UpdateProdOrderPlanned(ProdOrdp,addf);
+  end;
+LUpdateProdOrd2:;
+  RETURN;
+END;
+
+global
+updating procedure UpdateProdOrd(record ProdOrderVc ProdOrdp,Boolean addf,val qty)
+begin
+  UpdateProdOrd2(ProdOrdp,addf,qty,true);
+  return;
+end;
+
+
+global
+updating function LongInt ProdOrderVcRecordSaveAfter(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateProdOrd(ProdOr,true,blankval);
+  ProdOrderVcRecordSaveAfter = res;
+  RETURN;
+end;
+
+global
+function LongInt ProdOrderVcRecordUpdate(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+    
+  if (ProdOr.Machine==ProdO2r.Machine) then begin
+    InsertInQueue(ProdOr,false);
+  end else begin
+    InsertInQueue(ProdOr,true);
+  end;
+  CalcProdDuration(ProdOr);
+//  UpdateProdOrderMachine(ProdOr,ProdO2r.Machine,ProdOr.Machine);
+  SetProdOrderFlags(ProdOr,ProdO2r.StatusFlag);
+  ProdOrderVcRecordUpdate = res;
+  return;
+end;
+
+global
+updating function LongInt ProdOrderVcRecordUpdateAfter(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+
+  UpdateProdOrd(ProdO2r,false,blankval);
+  UpdateProdOrd(ProdOr,true,blankval);
+  ProdOrderVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+updating function LongInt ProdOrderVcRecordRemove(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  UpdateProdOrd(ProdOr,false,blankval);
+
+  ProdOrderVcRecordRemove = res;
+  return;
+end;
+
+global
+updating function LongInt ProdOrderVcRecordImport(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  SetProdOrderFlags(ProdOr,ProdOr.StatusFlag);
+  ProdOrderVcRecordImport = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdOrderVcRecordRemoveTest(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record ProdVc Prodr;
+  
+  res = 1;
+  Prodr.ProdOrder = ProdOr.SerNr;
+  if (ReadFirstKey("ProdOrder",Prodr,1,true)) then begin
+    MessageBox(22056,"");
+    res = 0;
+  end;
+  ProdOrderVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+function LongInt ProdOrderVcRecordDefaults(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt long1,LongInt long2)
+BEGIN
+  LongInt res;
+  Time blankt;
+  record UserVc USr;
+  
+  res = 0;
+  ProdOr.SerNr = -1;
+  ProdOr.QueuePos = -1;
+  ProdOr.Qty = BlankVal;
+  ProdOr.DoneFlag = 0;
+  GetCurUser(USr);  
+  ProdOr.Location = USr.Location;
+  ProdOrderVcRecordDefaults = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdOrderVcRecordDuplicate(var record ProdOrderVc ProdOr,record ProdOrderVc ProdO2r,LongInt long1,LongInt long2)
+BEGIN
+  LongInt res;
+  Date bd;
+  Time bt;
+  
+  res = 0;
+  ProdOr.SerNr = -1;
+  ProdOr.QueuePos = -1;
+  ProdOr.Discarded = BlankVal;
+  ProdOr.Finished = BlankVal;
+  ProdOr.DoneFlag = 0;
+  ProdOr.StatusFlag = 0;
+  ProdOr.StartDate = bd;
+  ProdOr.EndDate = bd;  
+  ProdOr.StartTime = bt;
+  ProdOr.EndTime = bt;
+  ProdOrderVcRecordDuplicate = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdOrderVcRecordInIndex(record ProdOrderVc ProdOr,string indexname)
+BEGIN
+  LongInt res;
+  
+  res = 1;
+  if (indexname=="Queue") then begin 
+    res = 0;
+    if (ShouldBeInQueue(ProdOr)) then begin
+      res = 1;
+    end;
+  end;
+  if (indexname=="OutItemDueAct") then begin
+    res = 0;
+    if (ProdOr.StatusFlag==0 or ProdOr.StatusFlag==1) then begin
+      res = 1;
+    end;
+  end;
+  ProdOrderVcRecordInIndex = res;
+  RETURN;
+END;
+
+global
+function LongInt ProdOrderVcRecordProtectFields(var record ProdOrderVc ProdOrderr,record ProdOrderVc ProdOrder2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  ProdOrder2r.Finished = ProdOrderr.Finished;
+  ProdOrder2r.Discarded = ProdOrderr.Discarded;
+  ProdOrder2r.StartTime = ProdOrderr.StartTime;
+  ProdOrder2r.EndTime = ProdOrderr.EndTime;
+  ProdOrder2r.StartDate = ProdOrderr.StartDate;
+  ProdOrder2r.EndDate = ProdOrderr.EndDate;
+  ProdOrder2r.DurDays = ProdOrderr.DurDays;
+  ProdOrder2r.DurTime = ProdOrderr.DurTime;
+  ProdOrderVcRecordProtectFields = res;
+  RETURN;
+END;

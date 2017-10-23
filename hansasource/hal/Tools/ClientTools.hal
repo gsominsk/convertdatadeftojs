@@ -1,0 +1,285 @@
+remote updating procedure AddToEditFieldsAccess(record RcVc);
+external function Boolean ActDClassEndTimeEFAfter(Integer,Integer,Integer,Integer);
+external function Boolean GetGlobalUserMainCompany(string,var string);
+external procedure SetupCustPS2Rn(string,var record RcVc);
+remote function Boolean CustomerCanGetCreditTrampoline(string,val,Integer,Integer,Integer,Integer,Integer,Integer,var Boolean);
+remote function Boolean CustomerCanUseLoyaltyCardTrampoline(string,var Boolean);
+external procedure ActVcRecordDefClient(var record ActVc);
+remote updating function Boolean MakeActOutgoingPhoneCall3(string,string,string,var record ActVc,Integer,Integer);
+
+global
+procedure SaverStatToHansaWorld()
+begin
+  OpenWebBrowser("www.hansaworld.com");
+  return;
+end;
+
+global
+updating function Boolean OnOutGoingPhoneCall2(Integer wn,string cucode,string person,string callerid,var LongInt serno,Integer compno,Integer comidtyp)
+BEGIN
+  record ActVc Actr;
+  record RcVc RepSpec;
+  Boolean res;
+  Integer nwn;
+  string 255 custstatcrit;
+  record LocalMachineBlock LMb;
+  Integer oldcomp;
+  string 20 compcode;
+  
+  oldcomp = CurrentCompany;
+  if (compno>-1) then begin
+    SetCompany(compno,false);
+  end else begin
+    if (GetGlobalUserMainCompany(CurrentUser,compcode)) then begin
+      if (nonblank(compcode)) then begin
+        if (SetCompanyCode(compcode,false)) then begin
+        end;
+      end;
+    end;
+  end;
+  if (serno>-1) then begin
+    Actr.SerNr = serno;
+    if (ReadFirstMain(Actr,1,true)) then begin
+      res = true;
+    end;
+  end;
+  if (res==false) then begin
+    RecordNew(Actr);
+    ActVcRecordDefClient(Actr);
+    res = MakeActOutgoingPhoneCall3(cucode,person,callerid,Actr,comidtyp,compno);
+  end;
+  if (res) then begin
+    if (blank(Actr.MainPersons)) then begin
+      Actr.MainPersons = CurrentUser;
+    end;
+    Actr.StartTime = CurrentTime;
+    Actr.TransDate = CurrentDate;
+    RecordStore(Actr,true);
+    nwn = OpenWindow("ActDClass",1,0,"","",Actr);
+    serno = Actr.SerNr;
+    if (WindowState(nwn)==Rs_normal) then begin
+      DoUpdate(nwn);
+    end;
+  end;
+
+  BlockLoad(LMb);  
+  if (LMb.CustPSOnCall) then begin
+    if (nonblank(person)) then begin
+      custstatcrit = person;
+    end;
+    if (nonblank(cucode)) then begin
+      custstatcrit = cucode;
+    end;
+    if (nonblank(custstatcrit)) then begin
+      SetupCustPS2Rn(custstatcrit,RepSpec);
+      RepSpec.Media = mtScreen;
+      RunReport(RepSpec,0);
+    end;
+  end;
+
+  ResetCompany(oldcomp);
+  OnOutGoingPhoneCall2 = res;
+  RETURN;
+END;
+
+global
+updating function Boolean OnOutGoingPhoneCall(Integer wn,string cucode,string person,string callerid,var LongInt serno)
+begin
+  OnOutGoingPhoneCall = OnOutGoingPhoneCall2(wn,cucode,person,callerid,serno,-1,comIdTypePhone);
+end;
+
+global
+updating function Boolean OnPhoneCallConnected3(Integer wn,string cucode,string person,string callerid,Integer calldirection,var LongInt serno,Integer compno,Integer comidtyp)
+begin
+  Boolean res;
+  res = OnOutGoingPhoneCall2(wn,cucode,person,callerid,serno,compno,comidtyp);
+  switch (calldirection) begin
+    case k4CallDirectionUnknown:
+    case k4CallDirectionInbound:
+    case k4CallDirectionOutbound:
+    case k4CallDirectionInternal:
+  end;
+  OnPhoneCallConnected3 = res;
+  return;
+end;
+
+global
+updating function Boolean OnPhoneCallConnected2(Integer wn,string cucode,string person,string callerid,Integer calldirection,var LongInt serno,Integer comidtyp)
+begin
+  OnPhoneCallConnected2 = false;
+end;
+
+global
+updating function Boolean OnPhoneCallConnected(Integer wn,string cucode,string person,string callerid,Integer calldirection,var LongInt serno)
+begin
+  OnPhoneCallConnected = OnPhoneCallConnected2(wn,cucode,person,callerid,calldirection,serno,comIdTypePhone);
+end;
+
+global
+updating procedure OnPhoneCallEnded(Integer wn,LongInt serno,Integer compno)
+begin
+  record ActVc Actr;
+  Integer oldcomp;
+
+  oldcomp = CurrentCompany;
+  if (compno>-1) then begin
+    SetCompany(compno,false);
+  end;
+  if (wn>0) then begin
+    if (WindowState(wn)==Rs_normal) then begin
+      DoUpdate(wn);
+    end;
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,Actr);
+    Actr.EndTime = CurrentTime;
+    Actr.EndDate = CurrentDate;
+    PutWindowRecord(wn,Actr);
+    ActDClassEndTimeEFAfter(wn,-1,-1,1);
+  end else begin
+/*    Actr.SerNr = serno;
+    if (ReadFirstMain(Actr,1,true)) then begin
+      Actr.EndTime = CurrentTime;
+      Actr.EndDate = CurrentDate;
+    end else begin
+      LogText(0,"OnPhoneCallEnded: Actr.SerNr:" & Actr.SerNr & " compno:" & compno & " not found");
+    end;*/
+  end;
+  ResetCompany(oldcomp);
+end;
+
+global
+function Boolean CustomerCanGetCredit(string custcode,val sum4,Integer based,Integer owncheques,Integer thirdcheques,Integer ioucheques,Integer thirdioucheques,Integer orsavewarn, var Boolean res)
+begin
+  Boolean remoteconnection;
+  Integer oldprogmode;
+  
+  res = true;
+  oldprogmode = SetCompanyProgramMode(kProgramModeClient);
+  remoteconnection = CustomerCanGetCreditTrampoline(custcode,sum4,based,owncheques,thirdcheques,ioucheques,thirdioucheques,orsavewarn,res);
+  ResetCompanyProgramMode(oldprogmode);
+  CustomerCanGetCredit = remoteconnection;
+  return;
+end;
+
+global
+function Boolean CustomerCanUseLoyaltyCard(string custcode,var Boolean res)
+begin
+  Boolean remoteconnection;
+  Integer oldprogmode;
+  
+  res = true;
+  oldprogmode = SetCompanyProgramMode(kProgramModeClient);
+  remoteconnection = CustomerCanUseLoyaltyCardTrampoline(custcode,res);
+  ResetCompanyProgramMode(oldprogmode);
+  CustomerCanUseLoyaltyCard = remoteconnection;
+  return;
+end;
+
+global
+updating procedure ClientsDisplayDemoMessage(string msg)
+begin
+  record RcVc RepSpec;
+  record LastDemoMsgBlock LDMDb;
+  
+  if (UserModuleAccess("modTC")==kAccessLevelFull) or (UserModuleAccess("modSY")==kAccessLevelFull) then begin
+    BlockLoad(LDMDb);
+    if (LDMDb.Date<>CurrentDate) then begin
+      LDMDb.Date = CurrentDate;
+      BlockStore(LDMDb);
+      OpenWindow("DemoMsgWClass",0,0,"","",RepSpec);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure DoUpdateBrowses(string vcname)
+begin
+  UpdateBrowses(vcname);
+end;
+
+procedure EditFieldAccessMode(string arg)
+begin
+  Integer wn
+  
+  wn = CurWindow;
+  if (wn>0) then begin
+    PutWindowString(wn,"EditFieldAccessMode",arg);
+  end;
+  return;
+end;
+
+global
+procedure EditFieldAccessDsm()
+begin
+  Integer wn,nwn;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  if (wn>0) then begin
+    if (GetWindowString(wn,"EditFieldAccessMode")=="true") then begin
+      PutWindowString(wn,"EditFieldAccessMode","false");
+      SetWindowState(wn,StringToInt(GetWindowString(wn,"EditFieldAccessRs_mode")));
+    end else begin
+      PutWindowString(wn,"EditFieldAccessMode","true");
+      PutWindowString(wn,"EditFieldAccessRs_mode",WindowState(wn));
+      SetWindowState(wn,Rs_editing);
+
+      RepSpec.f2 = CurrentUserAccessGroupCode;
+      nwn = OpenWindow("EditFieldsAccessGroupIClass",1,wn,"","",RepSpec);
+    end;
+    DeselectWindow(wn,true);
+  end;
+  return;
+end;
+
+global
+procedure OKEditFieldsAccessGroupIClass()
+begin
+  Integer wn,mwn;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  DeselectWindow(wn,false);
+/*  
+  mwn = MotherWindow(wn);
+  if (mwn>0) then begin
+    DeselectWindow(wn,false);
+    GetWindowRecord(wn,RepSpec);
+    PutWindowString(mwn,"EditFieldAccessGroup",RepSpec.f2);
+  end;
+*/  
+//  CloseWindow(wn);
+  return;
+end;
+
+global
+updating procedure OKEditFieldsAccessVClass()
+begin
+  Integer wn;
+  record RcVc RepSpec;
+  
+  wn = CurWindow;
+  if (wn>0) then begin
+    GetWindowRecord(wn,RepSpec);
+    AddToEditFieldsAccess(RepSpec);
+  end;
+  CloseWindow(wn);
+  return;
+end;
+
+global
+procedure CancelEditFieldsAccessVClass()
+begin
+  Integer wn;
+  
+  wn = CurWindow;
+  CloseWindow(wn);
+  return;
+end;
+
+global
+procedure ClientRemoteMessage(longint errorcode,string msg)
+begin
+  MessageBox(errorcode,msg);
+end;

@@ -1,0 +1,500 @@
+external function boolean CheckItemGroupClassification(string,string,string);
+external procedure HTItemClass(string,var string);
+external procedure HTArtSel(string,string, var string);
+external function Boolean CheckVARSubsets(record VARVc,string,string);
+external procedure ExtractObj(string,var Integer,var string);
+external function Integer FindYVars(string,string,string);
+external function Boolean FindItemVAR(string,var string,var string,var string,var string);
+external procedure FindStockValueInclStockReserv(LongInt,string,string,string,var record ItemStatusVc,var val);
+external function val FindReseverdQty(string,string,string);
+external procedure GetRegisterToStrings(Integer,LongInt,var string,var string,var string);
+external procedure GetReservRegisterFromStrings(Integer,LongInt,var string,var string,var string);
+external procedure FindStockValue(string,string,var record ItemStatusVc);
+
+function string 200 GetPrioText(LongInt priolevel)
+begin
+  string 200 res;
+  
+  res = USetStr(16127) & " (" & priolevel & ")";
+  if (priolevel<100) then begin
+    res = USetStr(16128) & " (" & priolevel & ")";
+  end else begin
+    if (priolevel>100) then begin
+      if (priolevel==500) then begin
+        res = USetStr(16157);
+      end else begin
+        res = USetStr(16129) & " (" & priolevel & ")";
+      end;
+    end;
+  end;
+  GetPrioText = res;
+  return;
+end;
+
+procedure INReservDetailed(record INVc INr,record ItemStatusVc ISr,string frloc,string toloc)
+begin
+  record StockReservVc StockReservr;
+  Boolean res,foundf,testf;
+  string 200 comment,dblstr,plandel;
+  
+  StartFormat(15);
+  OutString(0,"DblINVc",INr.Code,false);
+  OutString(2,0,Left(INr.Name,20),false);
+  EndFormat;
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(16131),false);
+  OutString(2,0,USetStr(16158),false);
+  OutString(6,0,USetStr(16143),false);
+  OutString(7,0,USetStr(16144),false);
+  OutString(8,0,USetStr(16146),true);
+  OutString(4,0,USetStr(16175),false);
+  EndFormat;
+  Gray_Divider(0,1);
+  StockReservr.Donef = 0;
+  StockReservr.ArtCode = INr.Code;
+  foundf = true;
+  while (LoopKey("ArtCode",StockReservr,2,foundf)) begin
+    if (StockReservr.Donef!=0) then begin foundf = false; end;
+    if (StockReservr.ArtCode!=INr.Code) then begin foundf = false; end;
+    testf = foundf;
+    if (nonblank(frloc)) then begin
+      if (StockReservr.FromLocation<frloc) then begin testf = false; end;
+    end;
+    if (nonblank(toloc)) then begin
+      if (StockReservr.FromLocation>toloc) then begin testf = false; end;
+    end;
+    if (testf) then begin
+        GetReservRegisterFromStrings(StockReservr.FromFileName,StockReservr.FromSerNr,comment,dblstr,plandel);
+        StartFormat(15);
+        switch (StockReservr.FromFileName) begin
+          case kResTypeInternalOrder:
+            OutLongInt(0,dblstr,StockReservr.FromSerNr,false);
+            OutString(len(StockReservr.FromSerNr)+10,0,"I",false);
+          otherwise 
+            OutLongInt(0,dblstr,StockReservr.FromSerNr,false);
+        end;
+        OutString(2,0,StockReservr.FromLocation,false);
+        GetRegisterToStrings(StockReservr.ToFileName,StockReservr.ToSerNr,comment,dblstr,plandel);
+        OutString(6,0,comment,false);
+        OutLongInt(7,dblstr,StockReservr.ToSerNr,false);
+        OutVal(8,0,StockReservr.Quant-StockReservr.QuantDone,M4UVal,true);
+        OutString(4,0,GetPrioText(StockReservr.PrioLevel),false);
+        if (StockReservr.ToFileName!=kResTypeMakeNewPO) then begin
+          OutStringID(3,"DblMoveReservUp",USetStr(16177),true,StockReservr.SerNr);
+          OutStringID(9,"DblMoveReservDown",USetStr(16178),true,StockReservr.SerNr);
+        end else begin
+          OutString(3,0,"",true);
+          OutString(9,0,"",true);
+        end;
+        OutStringID(1,"DblStockReservRel",USetStr(16169),true,StockReservr.SerNr);
+        EndFormat;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintItemResultsOverview(record LocationVc Locr,record INVc INr)
+begin
+  record ItemStatusVc ISr;
+  val stockreservq;
+
+  FindStockValue(INr.Code,Locr.Code,ISr);
+//            FindStockValueInclStockReserv(-1,INr.Code,"",Locr.Code,ISr,stockreservq);
+  stockreservq = FindReseverdQty(INr.Code,"",Locr.Code);
+
+  if (stockreservq!=0) then begin
+    StartFormat(15);
+    OutString(0,"DblINReservDetail",INr.Code,false);
+    OutString(2,0,Left(INr.Name,20),false);
+    OutString(3,0,Locr.Code,false);
+    OutVal(4,0,ISr.Instock,M4UVal,true);
+    OutVal(5,0,stockreservq,M4UVal,true);
+    OutVal(1,0,ISr.Instock - stockreservq,M4UVal,true);
+    EndFormat;
+/*
+    if (stockreservq!=ISr.StockRsrvQty) then begin
+      StartFormat(15);
+      OutString(0,0,"#### ISr.StockRsrvQty is out of synk ####",false);
+      OutString(300,0,stockreservq,false);
+      OutString(400,0,ISr.StockRsrvQty,false);
+      EndFormat;
+    end;
+*/
+  end;
+  return;
+end;
+
+procedure PrintOneVarietyResultsOverview(record RcVc RepSpec,record LocationVc Locr,record INVc aINr,string group,string itsz,string subsets,string mask)
+begin
+  record VARVc VARr;
+  Boolean found,testf;
+  Integer insz;
+  string 255 artcode,itemcode,itemname;
+  record INVc INr;
+  
+  RecordCopy(INr,aINr);
+  itemcode = INr.Code;
+  itemname = INr.Name;
+  if (itsz!=".") then begin
+    insz = StringToInt(itsz);
+  end;
+  found = true;
+  VARr.VARGCode = group;
+  while (LoopKey("VARGCode",VARr,1,found)) begin
+    if (VARr.VARGCode!=group) then begin
+      found = false;
+    end;
+    if (found) then begin
+      if (itsz!=".") then begin
+        artcode = itemcode & VARr.Code;
+      end else begin
+        artcode = itemcode & itsz & VARr.Code;
+      end;      
+      INr.Code = artcode;
+      INr.Name = itemname & ", " & VARr.Comment;
+      testf = true;
+      if (nonblank(subsets)) then begin
+        if (CheckVARSubsets(VARr,subsets,mask)==false) then begin
+          testf = false;
+        end;
+      end;    
+      if (testf) then begin
+        PrintItemResultsOverview(Locr,INr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintTwoVarietiesResultsOverview(record RcVc RepSpec,record LocationVc Locr,record INVc aINr,string group1,string group2,string subsets,string mask)
+begin
+  record VARVc VARr1;
+  Boolean found1,testf;
+  record VARVc VARr2;
+  Boolean found2;
+  record VARGVc VARGr;
+  Integer insz1,insz2;
+  string 255 artcode,artcode1,itemcode,itemname,itsz1,itsz2,subsettotest;
+  record INVc INr;
+  
+  RecordCopy(INr,aINr);
+  itemcode = INr.Code;
+  itemname = INr.Name;
+  found1 = true;
+  VARr1.VARGCode = group1;
+  while (LoopKey("VARGCode",VARr1,1,found1)) begin
+    if (VARr1.VARGCode!=group1) then begin
+      found1 = false;
+    end;
+    if (found1) then begin
+      VARGr.Code = VARr1.VARGCode;
+      ReadFIrstMain(VARGr,1,true);
+      itsz1 = VARGr.VarSize;
+      if (itsz1!=".") then begin
+        insz1 = StringToInt(itsz1);
+      end;
+      if (itsz1!=".") then begin
+        artcode = itemcode & VARr1.Code;
+      end else begin
+        artcode = itemcode & itsz1 & VARr1.Code;
+      end;      
+      artcode1 = artcode;
+      testf = true;
+      if (nonblank(subsets)) then begin
+        if (CheckVARSubsets(VARr1,subsets,mask)==false) then begin
+          testf = false;
+        end;
+      end;
+      
+      if (testf) then begin
+        ResetLoop(VARr2);
+        found2 = true;
+        VARr2.VARGCode = group2;
+        while (LoopKey("VARGCode",VARr2,1,found2)) begin
+          if (VARr2.VARGCode!=group2) then begin
+            found2 = false;
+          end;
+          if (found2) then begin  
+            artcode = artcode1;
+            VARGr.Code = VARr2.VARGCode;
+            ReadFIrstMain(VARGr,1,true);
+            itsz2 = VARGr.VarSize;
+            if (itsz2!=".") then begin
+              insz2 = StringToInt(itsz2);
+            end;
+            if (itsz2!=".") then begin
+              artcode = artcode & VARr2.Code;
+            end else begin
+              artcode = artcode & itsz2 & VARr2.Code;
+            end;      
+            INr.Code = artcode;
+            INr.Name = itemname & ", "  & VARr1.Comment & ", " & VARr2.Comment;
+            testf = true;
+            if (nonblank(subsets)) then begin
+              if (CheckVARSubsets(VARr2,subsets,mask)==false) then begin
+                testf = false;
+              end;
+            end;
+            if (testf) then begin
+              PrintItemResultsOverview(Locr,INr);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintThreeVarietiesResultsOverview(record RcVc RepSpec,record LocationVc Locr,record INVc aINr,string group1,string group2,string group3,string subsets,string mask)
+begin
+  record VARVc VARr1;
+  Boolean found1;
+  record VARVc VARr2;
+  Boolean found2;
+  record VARVc VARr3;
+  Boolean found3,testf;
+  record VARGVc VARGr;
+  Integer insz1,insz2,insz3;
+  string 255 artcode,artcode1,artcode2,itemcode,itemname,itsz1,itsz2,itsz3;
+  string 255 varname1,varname2,varname3;
+  record INVc INr;
+  
+  RecordCopy(INr,aINr);
+  itemcode = INr.Code;
+  itemname = INr.Name;
+  found1 = true;
+  VARr1.VARGCode = group1;
+  while (LoopKey("VARGCode",VARr1,1,found1)) begin
+    if (VARr1.VARGCode!=group1) then begin
+      found1 = false;
+    end;
+    if (found1) then begin
+      VARGr.Code = VARr1.VARGCode;
+      ReadFIrstMain(VARGr,1,true);
+      itsz1 = VARGr.VarSize;
+      if (itsz1!=".") then begin
+        insz1 = StringToInt(itsz1);
+      end;
+      if (itsz1!=".") then begin
+        artcode = itemcode & VARr1.Code;
+      end else begin
+        artcode = itemcode & itsz1 & VARr1.Code;
+      end;      
+      artcode1 = artcode;
+      testf = true;
+      if (nonblank(subsets)) then begin
+        if (CheckVARSubsets(VARr1,subsets,mask)==false) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        ResetLoop(VARr2);
+        found2 = true;
+        VARr2.VARGCode = group2;
+        while (LoopKey("VARGCode",VARr2,1,found2)) begin
+          if (VARr2.VARGCode!=group2) then begin
+            found2 = false;
+          end;
+          if (found2) then begin  
+            artcode = artcode1;
+            VARGr.Code = VARr2.VARGCode;
+            ReadFIrstMain(VARGr,1,true);
+            itsz2 = VARGr.VarSize;
+            if (itsz2!=".") then begin
+              insz2 = StringToInt(itsz2);
+            end;
+            if (itsz2!=".") then begin
+              artcode = artcode & VARr2.Code;
+            end else begin
+              artcode = artcode & itsz2 & VARr2.Code;
+            end;      
+            artcode2 = artcode;
+
+            testf = true;
+            if (nonblank(subsets)) then begin
+              if (CheckVARSubsets(VARr2,subsets,mask)==false) then begin
+                testf = false;
+              end;
+            end;
+            if (testf) then begin
+              ResetLoop(VARr3);
+              found3 = true;
+              VARr3.VARGCode = group3;
+              while (LoopKey("VARGCode",VARr3,1,found3)) begin
+                if (VARr3.VARGCode!=group3) then begin
+                  found3 = false;
+                end;
+                if (found3) then begin
+                  artcode = artcode2;
+                  VARGr.Code = VARr3.VARGCode;
+                  ReadFIrstMain(VARGr,1,true);
+                  itsz2 = VARGr.VarSize;
+                  if (itsz2!=".") then begin
+                    insz2 = StringToInt(itsz2);
+                  end;
+                  if (itsz2!=".") then begin
+                    artcode = artcode & VARr3.Code;
+                  end else begin
+                    artcode = artcode & itsz2 & VARr3.Code;
+                  end;      
+                  INr.Code = artcode;
+                  INr.Name = itemname & ", "  & VARr1.Comment & ", " & VARr2.Comment & ", " & VARr3.Comment;
+                  testf = true;
+                  if (nonblank(subsets)) then begin
+                    if (CheckVARSubsets(VARr3,subsets,mask)==false) then begin
+                      testf = false;
+                    end;
+                  end;
+                  if (testf) then begin
+                    PrintItemResultsOverview(Locr,INr);
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintItemVarietiesResultsOverview(record RcVc RepSpec,record LocationVc Locr,record INVc INr)
+begin
+  string 255 itsz,mask,subsets,mskrep,xpos,ypos,zpos,tstr;
+  Integer nrofy,pos,i,cnt;
+  Array string 20 ac;
+  Boolean varf;
+
+  varf = FindItemVAR(INr.Code,itsz,mask,mskrep,subsets);
+  if (varf) then begin
+    cnt = 0;
+    pos = 0;
+    for (i=0;i<20;i=i+1) begin
+      ExtractObj(mask,pos,tstr);
+      if (nonblank(tstr)) then begin
+        ac[i] = tstr;
+        cnt = cnt + 1;
+      end else begin
+        i = 20;
+      end;
+    end;
+    if (cnt>0) then begin xpos = ac[0]; end;
+    if (cnt>1) then begin ypos = ac[1]; end;
+    if (cnt>2) then begin zpos = ac[2]; end;
+    nrofy = FindYVars(ypos,subsets,mask);
+
+    switch (cnt) begin
+      case 1: PrintOneVarietyResultsOverview(RepSpec,Locr,INr,xpos,itsz,subsets,mask);
+      case 2: PrintTwoVarietiesResultsOverview(RepSpec,Locr,INr,xpos,ypos,subsets,mask);
+      case 3: PrintThreeVarietiesResultsOverview(RepSpec,Locr,INr,xpos,ypos,zpos,subsets,mask);
+    end;
+
+  end else begin
+    PrintItemResultsOverview(Locr,INr);
+  end;
+  return;
+end;
+
+global
+procedure INReservRn(record RcVc RepSpec)
+BEGIN
+  record StockReservBlock SRb;
+  record ItemStatusVc ISr;
+  record INVc INr;
+  record LocationVc Locationr;
+  Boolean infoundf,intestf;
+  Boolean locfoundf,loctestf;
+  string 20 frin,toin;
+  string 20 frloc,toloc;
+  string 60 location;
+  val stockreservq;
+  string 255 tstr;
+  integer rw;
+  
+  BlockLoad(SRb);
+  frin = FirstInRange(RepSpec.f1,10);
+  toin = LastInRange(RepSpec.f1,10);
+  frloc = FirstInRange(RepSpec.f2,10);
+  toloc = LastInRange(RepSpec.f2,10);
+  StartReportJob(USetStr(16174));
+  rw = 1;
+  if (nonblank(RepSpec.f1) or nonblank(RepSpec.f3)) then begin
+    HTArtSel(RepSpec.f1,RepSpec.f3,tstr);
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (nonblank(RepSpec.f8)) then begin 
+    HTItemClass(RepSpec.f8,tstr);
+    Header(rw,tstr,1);  
+    rw = rw + 1;  
+  end;
+  EndHeader;
+  if (RepSpec.ArtMode==0) then begin
+    SetRepCol(2,80);
+    SetRepCol(3,200);
+    SetRepCol(4,320);
+    SetRepCol(5,400);
+    StartFormat(15);
+    OutString(0,0,USetStr(16136),false);
+    OutString(2,0,USetStr(16134),false);
+    OutString(3,0,USetStr(16158),false);
+    OutString(4,0,USetStr(16168),true);
+    OutString(5,0,USetStr(16146),true);
+    OutString(1,0,USetStr(16172),true);
+    EndFormat;
+    Gray_Divider(0,1);
+  end else begin
+    SetRepCol(2,50);
+    SetRepCol(6,125);
+    SetRepCol(7,205);
+    SetRepCol(8,280);
+    SetRepCol(4,290);
+    SetRepCol(3,390);
+    SetRepCol(9,430);
+  end;
+  infoundf = true;
+  INr.Code = frin;
+  while (LoopMain(INr,1,infoundf)) begin
+    intestf = true;
+    if (nonblank(RepSpec.f1)) then begin
+      if (INr.Code>toin) then begin
+        infoundf = false;
+        intestf = false;
+      end;
+    end;
+    if (CheckItemGroupClassification(INr.Code,RepSpec.f3,RepSpec.f8)==false) then begin 
+      intestf = false;
+    end;
+    if (intestf) then begin
+      if (RepSpec.ArtMode==0) then begin
+        locfoundf = true;
+        ResetLoop(Locationr);
+        Locationr.Code = frloc;
+        while (LoopMain(Locationr,1,locfoundf)) begin
+          if (nonblank(RepSpec.f2)) then begin
+            if (Locationr.Code>toloc) then begin
+              locfoundf = false;
+            end;
+          end;
+          loctestf = locfoundf;
+          if (loctestf) then begin
+            if (RepSpec.flags[0]!=0) then begin
+              PrintItemVarietiesResultsOverview(RepSpec,Locationr,INr);
+            end else begin
+              PrintItemResultsOverview(Locationr,INr);
+            end;
+          end;
+        end;
+      end else begin
+        INReservDetailed(INr,ISr,frloc,toloc);
+      end;
+    end;
+  end;
+  EndJob;
+  RETURN;
+END;
+

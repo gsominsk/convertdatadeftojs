@@ -1,0 +1,26 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fTransDate: { public: true, type: 'DATE' },
+     fOKFlag: { public: true, type: 'INTEGER' },
+     fDepCode: { public: true, type: 'TEXT' },
+     fSign: { public: true, type: 'TEXT' },
+     fComment: { public: true, type: 'TEXT' },
+     AT2TakeVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fAT2Code: { public: true, type: 'TEXT' },
+           fDescription: { public: true, type: 'TEXT' },
+           fInventoryNr: { public: true, type: 'TEXT' },
+           fComment: { public: true, type: 'TEXT' },
+           fATTakeStatus: { public: true, type: 'INTEGER' },
+           fLoanPerson: { public: true, type: 'TEXT' },
+           fQty: { public: true, type: 'FLOAT' } } },
+     fRespPerson: { public: true, type: 'TEXT' },
+     fPhysCheckf: { public: true, type: 'INTEGER' },
+     fTransTime: { public: true, type: 'TIME' },
+     fMotherInvNr: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex256: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

@@ -1,0 +1,415 @@
+external function string 255 GetLegalInvoiceNrSerie(row LegalInvNrBlock,string);
+external procedure GetLegalInvNrRow(string,var row LegalInvNrBlock);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure WarnFutureDate(Boolean,Date);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure CLInVc_PasteCorspCode(var record CLInVc,Integer);
+external procedure PastePMInCLIn(var record CLInVc);
+external function string 50 NextLegalCLInSerNr(LongInt,Date,string,LongInt,LongInt);
+external function Boolean DateWarned(Date,string);
+external function Boolean DateLocked(Date,string);
+external procedure SwapM4Val(var val,var val);
+external updating procedure UpdateORPrepaidAmount(LongInt,val);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Boolean DateLocked(Date,string);
+external function Boolean DateWarned(Date,string);
+
+global
+function LongInt CLInVcRecordInvalidateTest(var record CLInVc CLInr,record CLInVc CLIn2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  row CLInVc CLInrw;
+  Integer i,rwcnt;
+  record ARPayHistVc ARPayHistr;
+  record APPayHistVc APPayHistr;
+
+  res = 1;
+  if (UserCanAction("CLInInvalid",true)==false) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LCLInVcRecordInvalidateTest;
+  end;
+  if (CLInr.Invalid!=0) then begin
+    res = 0;
+    goto LCLInVcRecordInvalidateTest;
+  end;
+  if (CLInr.OKFlag==0) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LCLInVcRecordInvalidateTest;
+  end;
+  if (CLInr.OKFlag!=0) then begin
+    if (DateLocked(CLInr.TransDate,"CLInVc")) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end else begin
+        MessageBox(34500,"");
+      end;
+      res = 0;
+      goto LCLInVcRecordInvalidateTest;
+    end;
+    if (DateWarned(CLInr.TransDate,"CLInVc")) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+    end;
+  end;
+  rwcnt = MatRowCnt(CLInr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CLInr,i,CLInrw);
+    if (CLInrw.Type==4) then begin
+      ARPayHistr.CUPNr = CLInrw.TransNr;
+      ARPayHistr.FileName = "CLInVc";
+      ARPayHistr.SerNr = CLInr.SerNr;
+      if (ReadFirstMain(ARPayHistr,0,true)) then begin
+        if (long3>0) then begin
+          MessageBox(1560,"");
+        end else begin
+          MessageBox(34500,"");
+        end;
+        res = 0;
+        goto LCLInVcRecordInvalidateTest;
+      end;      
+    end;
+    if (CLInrw.Type==5) then begin
+      APPayHistr.VEPNr = CLInrw.TransNr;
+      APPayHistr.FileName = "CLInVc";
+      APPayHistr.SerNr = CLInr.SerNr;
+      if (ReadFirstMain(APPayHistr,0,true)) then begin
+        if (long3>0) then begin
+          MessageBox(1560,"");
+        end else begin
+          MessageBox(34500,"");
+        end;
+        res = 0;
+        goto LCLInVcRecordInvalidateTest;
+      end;      
+    end;
+  end;
+  CLInr.Invalid = 1;  
+LCLInVcRecordInvalidateTest:;
+  CLInVcRecordInvalidateTest = res;  
+  RETURN;
+END;
+
+global
+updating procedure ARPayAddCLIn(Date TransDate,string CurncyCode,string VATCode,LongInt TransNr,string Company,LongInt OrderNr,val rs,val bookrs,val vatv,val bookvatv)
+BEGIN
+  record ARPayVc ARPayr;
+  record ARPayVc oldARPayr;
+  record CUVc CUr;
+  Boolean found,delf;
+
+  if (rs!=0) then begin
+    delf = false;
+    ARPayr.CUPNr = TransNr;
+    CUr.Code = Company;
+    found = ReadFirstMain(ARPayr,1,true);
+    if (found) then begin
+      RecordCopy(oldARPayr,ARPayr);
+    end else begin
+      ARPayr.CUPNr = TransNr;
+      ARPayr.CustCode = Company;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        ARPayr.CustName = CUr.Name;
+      end;
+      ARPayr.CurncyCode = CurncyCode;
+      ARPayr.BankCurncy = CurncyCode;
+      ARPayr.VATVal = 0;
+      ARPayr.VATCode = VATCode;
+      ARPayr.VATBookVal = 0;
+      ARPayr.RVal = 0;
+      ARPayr.BookRVal = 0;
+      ARPayr.OrderNr = OrderNr;
+    end;
+    ARPayr.PayDate = TransDate;
+
+    ARPayr.RVal = ARPayr.RVal + rs;
+    ARPayr.BookRVal = ARPayr.BookRVal + bookrs;
+
+    ARPayr.VATVal = ARPayr.VATVal + vatv;
+    ARPayr.VATBookVal = ARPayr.VATBookVal + bookvatv;
+    if (ARPayr.RVal==0) then begin delf = true; end;
+    if (delf==false) then begin
+      if (found) then begin
+        if (RecordUpdate(oldARPayr,ARPayr,true)==0) then begin end;
+      end else begin
+        if (RecordStore(ARPayr,false)) then begin end;        
+      end;
+    end else begin
+      if (found==true) then begin
+        RecordDelete(oldARPayr);
+      end;
+    end;
+    if (OrderNr>0) then begin
+      UpdateORPrepaidAmount(OrderNr,rs);
+    end; 
+  end;
+  RETURN;
+END;
+
+global
+updating procedure ARPayAddCLOut(Date TransDate,string CurncyCode,LongInt TransNr,string Company,LongInt OrderNr,val rs,val bookrs)
+BEGIN
+  record ARPayVc ARPayr;
+  record ARPayVc oldARPayr;
+  record CUVc CUr;
+  Boolean found,delf;
+
+  if (rs!=0) then begin
+    delf = false;
+    ARPayr.CUPNr = TransNr;
+    found = ReadFirstMain(ARPayr,1,true);
+    CUr.Code = Company;
+    RecordCopy(oldARPayr,ARPayr);
+    if (found) then begin
+    end else begin
+      ARPayr.CUPNr = TransNr;
+      ARPayr.CustCode = Company;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        ARPayr.CustName = CUr.Name;
+      end;
+      ARPayr.CurncyCode = CurncyCode;
+      ARPayr.BankCurncy = CurncyCode;
+      ARPayr.VATVal = 0;
+      ARPayr.VATBookVal = 0;
+      ARPayr.RVal = 0;
+      ARPayr.BookRVal = 0;
+      ARPayr.OrderNr = OrderNr;
+    end;
+    ARPayr.PayDate = TransDate;
+
+    ARPayr.RVal = ARPayr.RVal - rs;
+    ARPayr.BookRVal = ARPayr.BookRVal - bookrs;
+
+    ARPayr.VATVal = blankval;
+    ARPayr.VATBookVal = blankval;
+    if (ARPayr.RVal==0) then begin delf = true; end;
+    if (delf==false) then begin
+      if (found) then begin
+        if (RecordUpdate(oldARPayr,ARPayr,true)==0) then begin end;
+      end else begin
+        if (RecordStore(ARPayr,false)) then begin end;        
+      end;
+    end else begin
+      if (found) then begin
+        RecordDelete(oldARPayr);
+      end;
+    end;
+    if (OrderNr>0) then begin
+      UpdateORPrepaidAmount(OrderNr,-rs);
+    end; 
+  end;
+  RETURN;
+END;
+
+procedure CLInVcConvertB1ToB2(var record CLInVc CLInp,string curp,var val to1p,var val to2p,var val br1p,var val br2p)
+BEGIN
+  val t;
+    
+  SwapM4Val(br1p,br2p);
+  SwapM4Val(to1p,to2p);
+  RETURN;
+END;
+
+global
+function LongInt CLInVcRecordImport(var record CLInVc CLInr,record CLInVc CLIn2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  val t;
+  string 5 crncycode;
+  Boolean gBase1ToBase2,gToDualBase;
+  record ConvMasterBlock cvm;
+  record UserVc USr;
+  row LegalInvNrBlock LINrbrw;
+
+  BlockLoad(cvm);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+
+  if (gToDualBase) then begin
+    crncycode = CLInr.CurncyCode;
+    fr = CLInr.FrRate;
+    to1 = CLInr.ToRateB1;
+    to2 = CLInr.ToRateB2;
+    br1 = CLInr.BaseRate1;
+    br2 = CLInr.BaseRate2;
+    t = CLInr.Total;
+    ConvertToDualBase(crncycode,CLInr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLInr.Total = t;
+    fr = CLInr.FrRate;
+    to1 = CLInr.ToRateB1;
+    to2 = CLInr.ToRateB2;
+    br1 = CLInr.BaseRate1;
+    br2 = CLInr.BaseRate2;
+    t = CLInr.NetVal;
+    ConvertToDualBase(crncycode,CLInr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLInr.NetVal = t;
+    fr = CLInr.FrRate;
+    to1 = CLInr.ToRateB1;
+    to2 = CLInr.ToRateB2;
+    br1 = CLInr.BaseRate1;
+    br2 = CLInr.BaseRate2;
+    t = CLInr.VATVal;
+    ConvertToDualBase(crncycode,CLInr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLInr.VATVal = t;
+    fr = CLInr.FrRate;
+    to1 = CLInr.ToRateB1;
+    to2 = CLInr.ToRateB2;
+    br1 = CLInr.BaseRate1;
+    br2 = CLInr.BaseRate2;
+    t = CLInr.TAX1Sum;
+    ConvertToDualBase(crncycode,CLInr.TransDate,fr,to1,to2,br1,br2,t,true);
+    CLInr.TAX1Sum = t;
+    CLInr.CurncyCode = crncycode;
+    CLInr.FrRate = fr;
+    CLInr.ToRateB1 = to1;
+    CLInr.ToRateB2 = to2;
+    CLInr.BaseRate1 = br1;
+    CLInr.BaseRate2 = br2;
+  end;
+  if (gBase1ToBase2) then begin
+    crncycode = CLInr.CurncyCode;
+    to1 = CLInr.ToRateB1;
+    to2 = CLInr.ToRateB2;
+    br1 = CLInr.BaseRate1;
+    br2 = CLInr.BaseRate2;
+    CLInVcConvertB1ToB2(CLInr,crncycode,to1,to2,br1,br2);
+    CLInr.ToRateB1 = to1;
+    CLInr.ToRateB2 = to2;
+    CLInr.BaseRate1 = br1;
+    CLInr.BaseRate2 = br2;
+  end;
+  if (blank(CLInr.SalesGroup)) then begin
+    USr.Code = CLInr.Person;
+    if (ReadFirstMain(USr,1,true)) then begin end;
+    CLInr.SalesGroup = USr.SalesGroup;
+  end;
+  if (blank(CLInr.OfficialSerNrSerie)) then begin
+    GetLegalInvNrRow(CLInr.OfficialSerNr,LINrbrw);
+    CLInr.OfficialSerNrSerie = GetLegalInvoiceNrSerie(LINrbrw,CLInr.OfficialSerNr);
+  end;
+  CLInVcRecordImport = res;
+  RETURN;
+END;
+
+global
+function LongInt CLInVcRecordDefaults(var record CLInVc CLInp,record CLInVc CLIn2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record MainCLBlock MainCLRec;
+  record AccBlock ARAccRec;
+  val fr,to1,to2,br1,br2;
+  string 10 curcode;
+  record LegalCLInNrBlock LegalCLInNrRec;
+  row LegalCLInNrBlock LegalCLInNrrw;
+  Integer i,rwcnt;
+  
+  CLInp.SerNr = -1;
+  CLInp.TransDate = CurrentDate;
+  BlockLoad(MainCLRec);
+  BlockLoad(ARAccRec);
+  CLInp.ARonTR = ARAccRec.ARonTR;
+  CLInp.PayMode = MainCLRec.DefPM;
+  CLInp.CorspCode = MainCLRec.DefCorspCode;
+  CLInVc_PasteCorspCode(CLInp,-1);
+  CLInp.VATCode = MainCLRec.VATCode;
+  if (SingleUserMode) then begin
+    CLInp.SerNr = NextSerNr("CLInVc",CLInp.TransDate,-1,false,CLInp.LangCode);
+  end;  
+  PastePMInCLIn(CLInp);  
+  curcode = CLInp.CurncyCode;
+  GetFullCurncyRate(curcode,CLInp.TransDate,fr,to1,to2,br1,br2);
+  CLInp.CurncyCode = curcode;
+  CLInp.FrRate = fr;
+  CLInp.ToRateB1 = to1; 
+  CLInp.ToRateB2 = to2;
+  CLInp.BaseRate1 = br1;
+  CLInp.BaseRate2 = br2;
+  CLInp.OKFlag = 0;
+  CLInp.FileName = "";
+  CLInp.FSerNr = -1;  
+  CLInp.OKFlag = 0;
+  CLInp.ColFlag = 0;
+  BlockLoad(LegalCLInNrRec);  
+  rwcnt = MatRowCnt(LegalCLInNrRec);
+  if (blank(CLInp.OfficialSerNr)) and (rwcnt>0) then begin    
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(LegalCLInNrRec,i,LegalCLInNrrw);
+      CLInp.OfficialSerNr = NextLegalCLInSerNr(CLInp.SerNr,CLInp.TransDate,LegalCLInNrrw.Serie,LegalCLInNrrw.TSerStart,LegalCLInNrrw.TSerEnd);
+      if (nonblank(CLInp.OfficialSerNr)) then begin 
+        i = rwcnt;
+      end;
+    end;
+  end;  
+  if (Importing==false) then begin
+    if (DateLocked(CLInp.TransDate,"CLInVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(CLInp.TransDate,"CLInVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;    
+  end;
+  CLInVcRecordDefaults = res;  
+  RETURN;
+end;
+
+global
+function LongInt CLInVcRecordDuplicate(var record CLInVc CLInp,record CLInVc CLIn2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  string 5 crncy;
+  record MainCLBlock MainCLRec;
+  record LegalCLInNrBlock LegalCLInNrRec;
+  row LegalCLInNrBlock LegalCLInNrrw;
+  Integer i,rwcnt;
+
+  CLInp.SerNr = -1;
+  if (SingleUserMode) then begin
+    CLInp.SerNr = NextSerNr("CLInVc",CLInp.TransDate,-1,false,CLInp.LangCode);
+  end;  
+  CLInp.OKFlag = 0;
+  CLInp.ColFlag = 0;
+  CLInp.Invalid = 0;
+  CLInp.FileName = "";
+  CLInp.FSerNr = -1;  
+  crncy = CLInp.CurncyCode;
+  GetFullCurncyRate(crncy,CLInp.TransDate,fr,to1,to2,br1,br2);
+  CLInp.CurncyCode = crncy;
+  CLInp.FrRate = fr;
+  CLInp.ToRateB1 = to1; 
+  CLInp.ToRateB2 = to2;
+  CLInp.BaseRate1 = br1;
+  CLInp.BaseRate2 = br2;
+  PastePMInCLIn(CLInp);  
+  BlockLoad(MainCLRec);
+  if (MainCLRec.ChronologyforCLNo!=0) then begin
+    CLInp.TransDate = CurrentDate;
+  end;
+  BlockLoad(LegalCLInNrRec);  
+  rwcnt = MatRowCnt(LegalCLInNrRec);
+  if (rwcnt>0) then begin    
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(LegalCLInNrRec,i,LegalCLInNrrw);
+      CLInp.OfficialSerNr = NextLegalCLInSerNr(CLInp.SerNr,CLInp.TransDate,LegalCLInNrrw.Serie,LegalCLInNrrw.TSerStart,LegalCLInNrrw.TSerEnd);
+      if (nonblank(CLInp.OfficialSerNr)) then begin 
+        i = rwcnt;
+      end;
+    end;
+  end;  
+  if (Importing==false) then begin
+    if (DateLocked(CLInp.TransDate,"CLInVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(CLInp.TransDate,"CLInVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;    
+  end;
+  WarnFutureDate(true,CLInp.TransDate);
+  CLInVcRecordDuplicate = res;
+  RETURN;
+end;

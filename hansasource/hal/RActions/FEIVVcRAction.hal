@@ -1,0 +1,348 @@
+external procedure FEIVSumup(record FEIVVc);
+external procedure GetSalesGroup(string,var string);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetCurUser(var record UserVc);
+external function Integer IsUnOKAllowed_FEIVVc(record FEIVVc);
+
+function val ARPayHistAmount(LongInt prepaymentnr)
+BEGIN
+  record ARPayHistVc ARPayHistr;  
+  record IPVc IPr;  
+  row IPVc IPrw;
+  Boolean foundf;
+  Integer i,rwcnt;
+  val res;
+
+  ARPayHistr.CUPNr = prepaymentnr;
+  ARPayHistr.FileName = "IPVc";
+  foundf = true;
+  while (LoopMain(ARPayHistr,2,foundf)) begin
+    if ((ARPayHistr.CUPNr<>prepaymentnr) or (ARPayHistr.FileName<>"IPVc")) then begin foundf = false; end;
+    if (foundf) then begin
+      IPr.SerNr = ARPayHistr.SerNr;
+      if (ReadFirstMain(IPr,1,true)) then begin
+        rwcnt = MatRowCnt(IPr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IPr,i,IPrw);
+          if (IPrw.CUPNr==prepaymentnr) then begin
+            res = res + IPrw.RecVal;
+          end;
+        end;
+      end;
+    end;
+  end;
+  ARPayHistAmount = res;
+  RETURN;
+END;
+
+global
+function val AllFEIVPrepaymentAmount(LongInt feivnr,LongInt prepaymentnr)
+BEGIN
+  record FEIVVc FEIVr;
+  Boolean TrHs,testf;
+  val res;
+  
+  if (prepaymentnr==-1) then begin
+    goto LAllFEIVPrepaymentAmount;
+  end;
+  TrHs = true;
+  FEIVr.PrepaymentNr = prepaymentnr;
+  while (LoopKey("PrepaymentNr",FEIVr,1,TrHs)) begin
+    if (FEIVr.PrepaymentNr!=prepaymentnr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      testf = true;
+      if (FEIVr.SerNr==feivnr) then begin testf = false; end;
+      if (testf) then begin
+        res = res + FEIVr.Sum4;
+      end;
+    end;
+  end;
+LAllFEIVPrepaymentAmount:;  
+  AllFEIVPrepaymentAmount = res;
+  RETURN;
+END;
+
+global
+updating function LongInt FEIVVcRecordCheck(record FEIVVc FEIVp,record FEIVVc FEIV2p,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row FEIVVc FEIVrw;
+  record FEIVVc locFEIVr;
+  record CUVc CUr;
+  record INVc INr;
+  Boolean check,unokf;
+  Integer errstr;
+  Integer i,rwcnt;
+  Integer insertmode,updatemode;
+  Integer curcomp;
+  LongInt oldnr,sernr;
+  val t,t1;
+  
+  res = 0;
+  curcomp = CurrentCompany;    
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  if (FEIVp.OKFlag==0) then begin
+    if (stat==updatemode) then begin
+      if (FEIV2p.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    errstr = IsUnOKAllowed_FEIVVc(FEIVp);
+    if (errstr!=0) then begin
+      RecordCheckError(errstr,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LFEIVVcRecordCheck;
+  end;
+  if (long4>0) then begin
+    check = true;
+  end else begin
+    check = false;
+  end;
+  if (stat==updatemode) then begin
+    if (FEIVp.SerNr<=0) and (FEIV2p.OKFlag==0) then begin
+      FEIVp.SerNr = FEIV2p.SerNr;
+    end;
+  end;      
+  if (FEIVp.SerNr<=0) then begin
+    FEIVp.SerNr = NextSerNr("FEIVVc",FEIVp.TransDate,-1,true,FEIVp.LangCode);
+  end;  
+  if (FEIVp.PrepaymentNr!=-1) then begin
+    sernr = FEIVp.SerNr;
+    if (RecordValid(FEIV2p)) then begin
+      if (FEIVp.SerNr!=FEIV2p.SerNr) then begin
+        sernr = FEIV2p.SerNr;
+      end;
+    end;
+    t = AllFEIVPrepaymentAmount(sernr,FEIVp.PrepaymentNr);
+    t1 = ARPayHistAmount(FEIVp.PrepaymentNr);
+//    StopAlert("t " & t & " t1 " & t1);
+    if (nonblank(t1)) then begin
+      if ((t+FEIVp.Sum4)>t1) then begin
+        RecordCheckError(1210,"",-1,"Sum4");      
+        res = -1;
+        goto LFEIVVcRecordCheck;        
+      end;
+    end;
+  end;
+  rwcnt = MatRowCnt(FEIVp);
+  if (rwcnt==0) then begin
+    RecordCheckError(1030,"",0,"ArtCode");      
+    res = -1;
+    goto LFEIVVcRecordCheck;        
+  end;
+  if (res!=0) then begin FEIVp.SerNr = oldnr; end;
+LFEIVVcRecordCheck:;
+  FEIVVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt FEIVVcRecordDefaults(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  val fr,to1,to2,br1,br2;
+  string 255 tstr;
+  record UserVc USr;
+  Date blankd;
+ 
+  FEIVr.SerNr = -1;
+  FEIVr.InvType = kInvoiceTypeNormal;
+  FEIVr.IVInvDate = CurrentDate;
+  FEIVr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    FEIVr.SerNr = NextSerNr("FEIVVc",FEIVr.TransDate,-1,false,"");
+  end;
+//  FEIVr.PayDate = blankd;
+  FEIVr.Prntdf = 0;
+  FEIVr.OrderNr = -1;
+  FEIVr.IVNr = -1;
+  FEIVr.PrepaymentNr = -1;
+  FEIVr.CredInv = -1;
+  FEIVr.ExportFlag = 0;
+  FEIVr.OKFlag = 0;
+  FEIVr.PayDeal = "";
+  FEIVr.Objects = "";
+  GetCurUser(USr);
+  FEIVr.Objects = USr.PersObjx;
+  FEIVr.InvComment = "";
+  tstr = "";
+  GetFullCurncyRate(tstr,FEIVr.TransDate,fr,to1,to2,br1,br2);
+  FEIVr.CurncyCode = tstr;
+  FEIVr.FrRate = fr;
+  FEIVr.ToRateB1 = to1; 
+  FEIVr.ToRateB2 = to2;
+  FEIVr.BaseRate1 = br1;
+  FEIVr.BaseRate2 = br2;    
+  FEIVr.CalcFinRef = "";
+  FEIVr.OurContact = USr.CurOurContact;
+  FEIVr.SalesMan = USr.Code;
+  GetSalesGroup(FEIVr.SalesMan,tstr);
+  FEIVr.SalesGroup = tstr;
+  FEIVr.Sum0 = blankval;
+  FEIVr.Sum1 = blankval;
+  FEIVr.Sum2 = blankval;
+  FEIVr.Sum3 = blankval;
+  FEIVr.Sum4 = blankval;
+  FEIVr.FrItem = "";
+  FEIVr.OrgCust = "";
+  FEIVr.FrObjects = "";
+  FEIVr.SalesMan = "";
+  FEIVr.FrBase = blankval;
+  FEIVr.FrPrice = blankval;
+  FEIVr.FrGP = blankval;
+  FEIVr.FrGPPercent = blankval;
+  FEIVr.BaseSum4 = blankval;
+  FEIVVcRecordDefaults = res;  
+  RETURN;
+END;
+
+global
+function LongInt FEIVVcRecordDuplicate(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  string 255 tstr;
+  record UserVc USr;
+  val fr,to1,to2,br1,br2;
+  row FEIVVc FEIVrw;
+
+  FEIVr.SerNr = -1;
+  FEIVr.IVInvDate = CurrentDate;
+  FEIVr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    FEIVr.SerNr = NextSerNr("FEIVVc",FEIVr.TransDate,-1,false,FEIVr.LangCode);
+  end;  
+  FEIVr.Prntdf = 0;
+  FEIVr.IVNr = -1;
+  FEIVr.OrderNr = -1;
+  FEIVr.PrepaymentNr = -1;
+  FEIVr.CredInv = -1;
+  FEIVr.CredMark = "";
+  FEIVr.OKFlag = 0;
+  GetCurUser(USr);
+  FEIVr.OurContact = USr.CurOurContact;
+  FEIVr.CalcFinRef = "";
+  tstr = FEIVr.CurncyCode;
+  GetFullCurncyRate(tstr,FEIVr.TransDate,fr,to1,to2,br1,br2);
+  FEIVr.CurncyCode = tstr;
+  FEIVr.FrRate = fr;
+  FEIVr.ToRateB1 = to1; 
+  FEIVr.ToRateB2 = to2;
+  FEIVr.BaseRate1 = br1;
+  FEIVr.BaseRate2 = br2;  
+  FEIVSumup(FEIVr);            
+  FEIVVcRecordDuplicate = res;
+  RETURN;
+END;
+
+global
+function LongInt FEIVVcRecordReset(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  FEIVr.OKFlag = 0;
+  FEIVVcRecordReset = res;
+  RETURN;
+END;
+
+global
+function LongInt FEIVVcRecordImportTest(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  res = 1;
+  if (FEIVr.SerNr==-1) then begin res = 0; end;
+  FEIVVcRecordImportTest = res;
+  RETURN;
+END;
+
+global
+function LongInt FEIVVcRecordImport(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record AccBlock Accb;
+      
+  BlockLoad(Accb);
+  if (FEIVr.NoTAXonVAT==-1) then begin
+    FEIVr.NoTAXonVAT = Accb.NoTAXonVAT;
+  end;
+  FEIVVcRecordImport = res;
+  RETURN;
+END;
+
+global
+updating function LongInt FEIVVcRecordRemove(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+LFEIVVcRecordRemove:;
+  FEIVVcRecordRemove = res; 
+  RETURN;
+END;
+
+global
+function LongInt FEIVVcRecordRemoveTest(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+
+  res = 1;
+  if (FEIVr.OKFlag!=0) then begin
+    BlockLoad(DBLockRec);
+    if (FEIVr.TransDate>DBLockRec.DeleteBeforeDate) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+      res = 0;
+      goto LFEIVVcRecordRemoveTest;
+    end;
+  end;  
+LFEIVVcRecordRemoveTest:;  
+  FEIVVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt FEIVVcRecordSave(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  FEIVSumup(FEIVr);
+LFEIVVcRecordSave:;
+  FEIVVcRecordSave = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt FEIVVcRecordSaveAfter(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+LFEIVVcRecordSaveAfter:;
+  FEIVVcRecordSaveAfter = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt FEIVVcRecordUpdate(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+    
+  if ((FEIVr.OKFlag!=0) and (FEIV2r.OKFlag==0)) then begin
+    FEIVSumup(FEIVr);
+  end;
+LFEIVVcRecordUpdate:;
+  FEIVVcRecordUpdate = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt FEIVVcRecordUpdateAfter(var record FEIVVc FEIVr,record FEIVVc FEIV2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  
+LFEIVVcRecordUpdateAfter:;
+  FEIVVcRecordUpdateAfter = res; 
+  RETURN;
+END;

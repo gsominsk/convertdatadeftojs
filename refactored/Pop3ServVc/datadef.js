@@ -1,0 +1,15 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fCode: { public: true, type: 'TEXT' },
+     fIPaddr: { public: true, type: 'TEXT' },
+     fPortnr: { public: true, type: 'INTEGER' },
+     fUser: { public: true, type: 'TEXT' },
+     fPassw: { public: true, type: 'TEXT' },
+     fClosedf: { public: true, type: 'INTEGER' },
+     fApopf: { public: true, type: 'INTEGER' },
+     fReturnToSend: { public: true, type: 'INTEGER' },
+     fComment: { public: true, type: 'TEXT' },
+     fType: { public: true, type: 'INTEGER' },
+     fMailbox: { public: true, type: 'TEXT' },
+     fUseSSLf: { public: true, type: 'INTEGER' } },
+  indexes: { CodeIndex204: { fields: [ 'fCode' ], indicesType: 'UNIQUE' } } }

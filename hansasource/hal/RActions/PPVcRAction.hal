@@ -1,0 +1,945 @@
+external updating procedure UpdateChequeStatusHistory(record CheckVc,string,LongInt,Boolean);
+external updating procedure UpdateOwnChequeStatusHistory(record OwnCheckVc,string,LongInt,Boolean);
+external function Boolean HasIntegratedNL();
+external procedure WarnFutureDate(Boolean,Date);
+external function Boolean DisallowFutureDateCheck(Boolean,Date,string,Integer);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function Integer PMCheckType(string,var string,var string);
+external procedure PPSumup(var record PPVc);
+external updating procedure AddTTrans_PPVc(record TRVc,record PPVc);
+external function Boolean CheckTTRPerRow(string,string,string,Boolean,var string,Integer);
+external function Boolean DateLocked(Date,string);
+external function Boolean DateWarned(Date,string);
+external function Integer CheckRates(string,val,val,val,val,val,var string);
+external procedure AddTransAutoTransRows(record TRVc);
+external function Integer CheckObjs(string,string,var string);
+external Procedure GetPMObjCta(String,var String,var String,Var Integer);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external updating procedure StoreUnOKHistory(string,LongInt,Date,Time,string);
+external procedure SwapM4Val(var val,var val);
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure B1ToB2Val(val,val,val,var val);
+external updating procedure InvalidateTR(Integer,LongInt);
+external updating procedure DeleteTransaction(LongInt,Integer);
+external function Boolean IsUnOKAllowed(string,Date);
+external procedure PastePMInPP(var record PPVc);
+external updating procedure PPrsStats(record PPVc,Boolean);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external procedure TRSumup(var record TRVc,var val);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure GetFullCurncyRateText(Boolean,var string,val,val,val,val,val);
+external function Boolean TransInFiscal(Date);
+external function Boolean PayModeAccIsClosed(string);
+external function Boolean Date2Test(string,Date,string,Integer);
+external function Boolean SerNrTestPPVc(LongInt,Date,var Boolean);
+external function Integer CashSerNumberTest(string,val,string,LongInt,var Boolean);
+external updating function LongInt UpdatePPOKNr(LongInt);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+
+updating procedure UpdatePPChecks(record PPVc PPr,Boolean unokf)
+begin
+  Record OwnCheckVc OwnChqr;
+  Record UserVc Userr;
+  Row PPVc PPrw;
+  Boolean err,testf;
+  Integer j,rows,D2;
+  String 30 D1,cta,pmmode,tstr;
+  Integer cht,gchk;
+  record CheckVc Checkr;
+  Date bldate;
+
+  rows = MatRowCnt(PPr);
+  for (j=0;j<rows;j=j+1) begin
+    MatRowGet(PPr,j,PPrw);
+    if (PPrw.ChequeNr>0) then begin
+      pmmode = PPrw.PayMode;
+      if (blank(pmmode)) then begin
+        pmmode = PPr.PayMode;
+      end;  
+      cht = PMCheckType(pmmode,tstr,tstr);
+      switch (cht) begin
+        case 1:
+          Checkr.SerNr = PPrw.ChequeNr;
+          if (ReadFirstMain(Checkr,1,true)) then begin
+            //nk
+            if (unokf==false) then begin
+              Checkr.TargetAccNr = "";
+              Checkr.TargetObjects = "";
+//            Checkr.TargetAccNr = VIr.APAcc;
+              Checkr.ClearedAmount = Checkr.Amount;
+              Checkr.Openf = kCheckTypeEndorsed;
+              Checkr.EndorsedDate = CurrentDate;
+              Checkr.ToFileName = "PPVc";
+              Checkr.ToNo = PPr.SerNr;
+            end else begin
+              Checkr.ToNo = -1;
+              Checkr.ToFileName = "";
+              Checkr.EndorsedDate = bldate;
+              Checkr.ToNo = -1;
+              Checkr.ToFileName = "";
+              Checkr.EndorsedDate = bldate;
+              Checkr.Openf = kCheckTypeAccepted;
+              Checkr.ClearedAmount = Checkr.ClearedAmount - Checkr.Amount;
+              DeleteTransaction(Checkr.SerNr,CheckYc);
+            end;          
+            UpdateChequeStatusHistory(Checkr,"PPVc",PPr.SerNr,unokf);
+            if (RecordStore(Checkr,true)) then begin end;
+          end;
+        case 2:
+          OwnChqr.SerNr = PPrw.ChequeNr;
+          if (ReadFirstMain(OwnChqr,1,true)) then begin
+            if (unokf) then begin
+              if (OwnChqr.Openf==kCheckTypeAccepted) then begin testf = true; end;
+              if (OwnChqr.Openf==kCheckTypeDeposited) then begin testf = true; end;
+            end else begin
+              if (OwnChqr.Openf==kCheckTypeRegistered) then begin testf = true; end;
+            end;
+            OwnChqr.IssuedDate = CurrentDate;
+            if (testf) then begin    
+              if (OwnChqr.ChkMode==2) then begin
+                OwnChqr.Openf = kCheckTypeDeposited;
+              end else begin
+                OwnChqr.Openf = kCheckTypeAccepted;
+              end;
+              OwnChqr.TransDate = PPr.TransDate;  
+              OwnChqr.ToNo = PPr.SerNr;
+              OwnChqr.ToFileName = "PPVc";
+              Userr.Code = PPrw.Person;
+              if (ReadFirstMain(Userr,1,true)) then begin
+                OwnChqr.OrigAccNr = Userr.PersAcc;
+                OwnChqr.VEName = Userr.Name;
+              end;
+              GetPMObjCta(PPr.PayMode,D1,cta,D2);
+              OwnChqr.TempAccNr = cta;
+              OwnChqr.ClearingDate = PPr.TransDate;
+            end;  
+            if (unokf) then begin
+              OwnChqr.ToNo = -1;
+              OwnChqr.ToFileName = "";
+              OwnChqr.IssuedDate = "";
+              if (OwnChqr.Invalid==0) then begin
+                OwnChqr.OrigAccNr = "";
+                OwnChqr.Openf = kCheckTypeRegistered;
+                DeleteTransaction(OwnChqr.SerNr,OwnCheckYc);
+              end else begin
+                OwnChqr.OrigAccNr = "";
+                OwnChqr.Openf = kCheckTypeRegistered;
+                DeleteTransaction(OwnChqr.SerNr,OwnCheckYc);
+              end;
+            end;  
+            UpdateOwnChequeStatusHistory(OwnChqr,"PPVc",PPr.SerNr,unokf);
+            err = RecordStore(OwnChqr,true);            
+          end; 
+      end; 
+    end;
+  end;
+  return;
+end;
+
+global
+function LongInt PPVcRecordDefaults(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  string 10 curcode;
+  val fr,to1,to2,br1,br2;
+  
+  PPr.SerNr = -1;
+  PPr.RegDate = CurrentDate;
+  PPr.PayDate = CurrentDate;
+  PPr.TransDate = CurrentDate;
+  if (SingleUserMode) then begin
+    PPr.SerNr = NextSerNr("PPVc",PPr.TransDate,-1,false,"");
+  end;
+  PPr.OrderedFlag = 0;
+  PPr.DoneFlag = 0;
+  PPr.SentFlag = 0;
+  PPr.PayMode = "";
+  curcode = PPr.CurncyCode;
+  GetFullCurncyRate(curcode,PPr.TransDate,fr,to1,to2,br1,br2);
+  PPr.CurncyCode = curcode;
+  PPr.FrRate = fr;
+  PPr.ToRateB1 = to1; 
+  PPr.ToRateB2 = to2;
+  PPr.BaseRate1 = br1;
+  PPr.BaseRate2 = br2;
+  PastePMInPP(PPr);
+  if (Importing==false) then begin
+    if (DateLocked(PPr.TransDate,"PPVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(PPr.TransDate,"PPVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;  
+  end;
+  PPVcRecordDefaults = res; 
+  RETURN;
+END;
+
+procedure SetPPFlags(record PPVc PPr)
+begin
+  row PPVc PPrw;
+  Integer i,rwcnt;
+  
+  PPr.OSFlag = 0;
+  rwcnt = MatRowCnt(PPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PPr,i,PPrw);
+    if (PPrw.PayVal>PPrw.ExpUsedPayVal) then begin
+      PPr.OSFlag = 1;
+      goto LSetPPFlags;
+    end;
+  end;
+LSetPPFlags:;  
+  if (PPr.DoneFlag==0) then begin
+    PPr.OSFlag = 0;
+  end;
+  return;
+end;
+
+global
+function LongInt PPVcRecordDuplicate(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  row PPVc PPrw;
+  Integer i,rwcnt;
+
+  PPr.SerNr = -1;
+  PPr.RegDate = CurrentDate;
+  if (SingleUserMode) then begin
+    PPr.SerNr = NextSerNr("PPVc",PPr.TransDate,-1,false,"");
+  end;
+  PPr.OrderedFlag = 0;
+  PPr.DoneFlag = 0;
+  PPr.SentFlag = 0;
+  PPr.Invalid = 0;
+  PPr.PPOKNr = -1;
+  PastePMInPP(PPr);
+  PPSumup(PPr);
+  if (Importing==false) then begin
+    if (DateLocked(PPr.TransDate,"PPVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(PPr.TransDate,"PPVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;  
+  end;
+  rwcnt = MatRowCnt(PPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PPr,i,PPrw);
+    PPrw.ExpUsedPayVal = blankval;
+    PPrw.B1ExpUsedPayVal = blankval;
+    MatRowPut(PPr,i,PPrw);
+  end;  
+  WarnFutureDate(true,PPr.TransDate);
+  SetPPFlags(PPr);
+  PPVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function LongInt PPVcRecordRemoveTest(var record PPVc PPr,record PPVc PP2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+  record DBLockBlock DBLockRec;
+
+  res = 1;
+  BlockLoad(DBLockRec);
+  if (PPr.TransDate<=DBLockRec.DeleteBeforeDate) then begin
+    res = 1;
+    goto LPPVcRecordRemoveTest; 
+  end;
+  if (PPr.DoneFlag!=0) then begin
+    if (long3>0) then begin
+      MessageBox(1544,"");
+    end;
+    res = 0;
+  end;    
+LPPVcRecordRemoveTest:;
+  PPVcRecordRemoveTest = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt PPVcRecordSave(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (PPr.DoneFlag!=0) then begin
+    PPr.PPOKNr = UpdatePPOKNr(PPr.PPOKNr);
+    UpdatePPChecks(PPr,false);
+  end;
+  SetPPFlags(PPr);
+  PPVcRecordSave = res;
+  RETURN;
+END;
+
+global
+updating function LongInt PPVcRecordSaveAfter(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (PPr.DoneFlag!=0) then begin
+    PPrsStats(PPr,false);
+  end;
+  PPVcRecordSaveAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt PPVcRecordImportAfter(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if (PPr.DoneFlag!=0) then begin
+    PPrsStats(PPr,false);
+  end;
+  PPVcRecordImportAfter = res;
+  RETURN;
+END;
+
+global
+updating function LongInt PPVcRecordUpdate(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((PPr.DoneFlag!=0) and (PP2r.DoneFlag==0)) then begin
+    PPr.PPOKNr = UpdatePPOKNr(PPr.PPOKNr);
+    UpdatePPChecks(PPr,false);
+  end;
+  if ((PPr.DoneFlag==0) and (PP2r.DoneFlag==1)) then begin//unok
+    DeleteTransaction(PPr.SerNr,PPYc);
+    UpdatePPChecks(PPr,true);
+  end;
+  SetPPFlags(PPr);
+  PPVcRecordUpdate = res;
+  RETURN;
+END;
+
+updating procedure InvalidatePP(record PPVc PPp)
+BEGIN
+  PPrsStats(PPp,true);    
+  RETURN;
+END;
+
+global
+updating function LongInt PPVcRecordUpdateAfter(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  if ((PPr.DoneFlag!=0) and (PP2r.DoneFlag==0)) then begin
+    PPrsStats(PPr,false);
+  end;
+   if ((PPr.Invalid!=0) and (PP2r.Invalid==0)) then begin
+    if (PP2r.DoneFlag!=0) then begin
+      InvalidateTR(PPYc,PPr.SerNr);
+      InvalidatePP(PPr);
+    end;
+  end;   
+  if ((PPr.DoneFlag==0) and (PP2r.DoneFlag==1)) then begin//unok
+    PPrsStats(PPr,true);    
+    StoreUnOKHistory("PPVc",PPr.SerNr,CurrentDate,CurrentTime,CurrentUser);
+  end;
+  PPVcRecordUpdateAfter = res;
+  RETURN;
+END;
+
+global
+function Integer MakeTransFromPP(record TRVc gTRp,record PPVc PPp,Boolean rpt)
+BEGIN
+  Integer res;
+  record APAccBlock APAccRec;
+  record TRGenBlock TRGenRec;
+  record PMBlock PMRec;
+  record UserVc Userr;
+  record AccVc Accr;
+  record TRVc lTRr;
+  row PPVc PPrw;
+  row PMBlock pmrw;
+  row PMBlock rowpmrw;
+  Integer i,rwcnt,PMn,pmcnt,pi;
+  string 255 ftxt,otxt,taccnumber;
+  string 255 tstr,t2;
+  string 255 vstr;
+  val t,v;
+  Boolean dc1,dc2;
+  val frrate,torate1,torate2,baserate1,baserate2;
+  val rs,totsum,pmrs,pmv;
+  string 10 persacc;
+
+  res = 1085;
+  BlockLoad(TRGenRec);
+  BlockLoad(APAccRec);
+  frrate = PPp.FrRate;
+  torate1 = PPp.ToRateB1;
+  torate2 = PPp.ToRateB2;
+  baserate1 = PPp.BaseRate1;
+  baserate2 = PPp.BaseRate2;
+  if ((baserate1==0) or (baserate2==0)) then begin
+    GetFullCurncyRate(PPp.CurncyCode,PPp.TransDate,frrate,torate1,torate2,baserate1,baserate2);
+  end;
+  RecordNew(gTRp);
+  if (rpt==false) then begin
+    if (TRGenRec.PPGenTrans==0) then begin
+      res = 0;
+      goto LMakeTransFromPP;
+    end;
+    if ( (nonblankdate(TRGenRec.PPStartDate)) and
+         (PPp.TransDate<TRGenRec.PPStartDate) ) then begin
+      res = 0;
+      goto LMakeTransFromPP;
+    end;
+  end;
+  if (true) then begin
+    gTRp.IntYc = PPYc;
+    gTRp.Number = PPp.SerNr;
+    gTRp.RefStr = "";
+    gTRp.Comment = PPp.Comment;
+  end;
+  if (rpt==false) then begin
+    lTRr.IntYc = gTRp.IntYc;
+    lTRr.Number = gTRp.Number;
+    if (ReadFirstMain(lTRr,2,true)) then begin
+      res = 1032;
+      goto LMakeTransFromPP;
+    end;
+  end;  
+  gTRp.RegDate = CurrentDate;
+  gTRp.RegTime = CurrentTime;
+  gTRp.TransDate = PPp.TransDate;
+  if (TransInFiscal(gTRp.TransDate)==false) then begin
+    res = 0;
+    goto LMakeTransFromPP;
+  end;
+  ftxt = "";
+  ftxt = PPp.BankAcc;
+  if (nonblank(PPp.CurncyCode)) then begin
+    ftxt = ftxt & ", ";
+    ftxt = ftxt & PPp.CurncyCode;
+    ftxt = ftxt & " ";
+    GetFullCurncyRateText(true,tstr,PPp.FrRate,PPp.ToRateB1,PPp.ToRateB2,PPp.BaseRate1,PPp.BaseRate2);
+    ftxt = ftxt & tstr;
+  end;
+  gTRp.Comment = ftxt;
+
+  PMn = 0;
+  BlockLoad(PMRec);
+  pmcnt = MatRowCnt(PMRec);
+  if (len(PPp.PayMode)>0) then begin
+    for (i=0;i<pmcnt;i=i+1) begin
+      MatRowGet(PMRec,i,pmrw);
+      if (pmrw.Code==PPp.PayMode) then begin
+        PMn = i;
+        i = pmcnt;
+      end;
+    end;
+  end;
+  dc1 = true;
+  dc2 = false;
+  rwcnt = MatRowCnt(PPp);
+  for (i=0; i<rwcnt;i=i+1) begin
+    MatRowGet(PPp,i,PPrw);
+    if (PPrw.ovst==0) then begin
+      otxt = "";
+      persacc = "";
+      Userr.Code = PPrw.Person;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        persacc = Userr.PersAcc;
+        otxt = Userr.PersObjx;
+      end;
+      otxt = PPrw.Objects;//PersObjx is put on paste person
+      if (GetAccName(persacc,tstr,60)==false) then begin 
+        res = 2130;
+        goto LMakeTransFromPP;
+      end;
+      v = PPrw.PayVal;
+      ftxt = Userr.Code & "  ";
+      ftxt = ftxt & Userr.Name;
+      rs = MulRateToBase1(PPp.CurncyCode,v,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+      if (CheckTTRPerRow("PPVc",persacc,otxt,dc1,taccnumber,1)) then begin end;      
+      AddEuroCurncyTrRow(gTRp,persacc,otxt,"",ftxt,rs,false,dc1,totsum,
+                     PPp.CurncyCode,frrate,torate1,torate2,baserate1,baserate2,v,blankval,-1,false,taccnumber);
+      if (nonblank(PPrw.PayMode)) then begin
+        for (pi=0;pi<pmcnt;pi=pi+1) begin
+          MatRowGet(PMRec,pi,rowpmrw);
+          if (rowpmrw.Code==PPrw.PayMode) then begin
+            pi = pmcnt;
+          end;
+        end;
+        Accr.AccNumber = pmrw.AccNr;
+        if (ReadFirstMain(Accr,1,true)==false) then begin
+          res = 1277;
+          goto LMakeTransFromPP;
+        end;
+        if (nonblank(Accr.Curncy)) then begin
+          if (Accr.Curncy!=PPp.CurncyCode) then begin
+            res = 1277;
+            goto LMakeTransFromPP;
+          end;
+        end;
+        if (CheckTTRPerRow("PPVc",rowpmrw.AccNr,rowpmrw.Objects,dc2,taccnumber,1)) then begin end;      
+        AddEuroCurncyTrRow(gTRp,rowpmrw.AccNr,rowpmrw.Objects,"",rowpmrw.Comment,rs,false,dc2,totsum,
+                           Accr.Curncy,frrate,torate1,torate2,baserate1,baserate2,v,blankval,-1,false,taccnumber);
+      end else begin
+        pmrs = pmrs + rs;
+        pmv = pmv + v;
+      end;
+    end;
+  end;
+  rs = PPp.ExtraCost;
+  pmrs = pmrs + rs;
+  pmv = pmv + DivRateToBase1(PPp.CurncyCode,rs,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+  if (rs!=0) then begin
+    if (GetAccName(APAccRec.ExtraCostAcc,tstr,60)==false) then begin
+      res = 2121;
+      goto LMakeTransFromPP;
+    end;
+    if (CheckTTRPerRow("PPVc",APAccRec.ExtraCostAcc,"",dc1,taccnumber,1)) then begin end;      
+    AddEuroTrRow(gTRp,APAccRec.ExtraCostAcc,"","",tstr,rs,baserate1,baserate2,false,dc1,totsum,false,taccnumber,"","");
+  end;
+  rs = PPp.BasePayVal;
+  Accr.AccNumber = pmrw.AccNr;
+  if (ReadFirstMain(Accr,1,true)==false) then begin
+    res = 1277;
+    goto LMakeTransFromPP;
+  end;
+  if (nonblank(Accr.Curncy)) then begin
+    if (Accr.Curncy!=PPp.CurncyCode) then begin
+      res = 1277;
+      goto LMakeTransFromPP;
+    end;
+  end;
+  if (CheckTTRPerRow("PPVc",pmrw.AccNr,pmrw.Objects,dc2,taccnumber,1)) then begin end;      
+  AddEuroCurncyTrRow(gTRp,pmrw.AccNr,pmrw.Objects,"",pmrw.Comment,pmrs,true,dc2,totsum,
+                     Accr.Curncy,frrate,torate1,torate2,baserate1,baserate2,pmv,blankval,-1,false,taccnumber);
+  t = MulRateToBase1(PPp.CurncyCode,PPp.PayVal,PPp.FrRate,PPp.ToRateB1,PPp.ToRateB2,PPp.BaseRate1,PPp.BaseRate2,DefaultCurRoundOff);
+  t = t + PPp.ExtraCost;
+  t = t - PPp.BasePayVal;
+  if (t<0) then begin
+    if (GetAccName(APAccRec.RateLossAcc,t2,60)==false) then begin
+      res = 1918;
+      goto LMakeTransFromPP;    
+    end;
+    AddEuroTrRow(gTRp,APAccRec.RateLossAcc,"","",t2,t,baserate1,baserate2,true,false,totsum,false,"","","");
+  end;
+  if (t>0) then begin
+    if (GetAccName(APAccRec.RateGainAcc,t2,60)==false) then begin
+      res = 1917;
+      goto LMakeTransFromPP;    
+    end;
+    AddEuroTrRow(gTRp,APAccRec.RateGainAcc,"","",t2,t,baserate1,baserate2,true,false,totsum,false,"","","");
+  end;
+  TRSumup(gTRp,t);
+  if (gTRp.DiffVal!=0) then begin
+    if (GetAccName(APAccRec.RateRndOffAcc,t2,60)==false) then begin
+      res = 1904;
+      goto LMakeTransFromPP;
+    end;
+    AddEuroTrRow(gTRp,APAccRec.RateRndOffAcc,"","",t2,gTRp.DiffVal,baserate1,baserate2,true,false,totsum,false,"","","");
+    TRSumup(gTRp,t);
+  end;
+  AddTransAutoTransRows(gTRp);
+  res = 0;
+LMakeTransFromPP:;
+  MakeTransFromPP = res;
+  RETURN;
+END;
+
+global
+updating function LongInt PPVcRecordCheck(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt check)
+BEGIN
+  LongInt res,cashres;
+  record UserVc Userr;
+  row PPVc PPrw;
+  Integer i,rwcnt,errcode;
+  LongInt oldnr,newnr;
+  Boolean transf,gentrans,unokf;
+  Integer insertmode,updatemode;
+  record TRVc gTRp;
+  string 255 errstr;
+  string 255 pmmode,tstr;
+  Integer cht,gchk;
+  record OwnCheckVc OwnCheckr;
+  record CheckVc Checkr;
+  Record CouponVc Couponr;
+  row PMBlock PMrw;
+  
+  res = 0;     
+  insertmode = 1;//Rs_insert
+  updatemode = 2;//Rs_update
+  oldnr = PPr.SerNr;
+  if (PPr.DoneFlag==0) then begin
+    if (stat==updatemode) then begin
+      if (PP2r.DoneFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    if (IsUnOKAllowed("PPVc",PPr.TransDate)==false) then begin
+      RecordCheckError(1046,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LPPVcRecordCheck;
+  end;
+  if (stat==updatemode) then begin
+    if (PPr.SerNr<=0) and (PP2r.SentFlag==0) then begin
+      PPr.SerNr = PP2r.SerNr;
+    end;
+  end;  
+  transf = false;
+  if (PPr.DoneFlag==1) then begin
+    if (stat==insertmode) then begin transf = true; end;
+    if (stat==updatemode) then begin
+      if (PP2r.DoneFlag==0) then begin transf = true; end;
+    end;
+  end;
+  gentrans = true;
+  if ((PP2r.DoneFlag==1) and (stat==updatemode)) then begin goto LPPVcRecordCheck; end;//?
+  rwcnt = MatRowCnt(PPr);
+  if (PPr.SerNr<=0) then begin
+    PPr.SerNr = NextSerNr("PPVc",PPr.TransDate,-1,false,"");
+  end;
+  cashres = CashSerNumberTest(PPr.PayMode,PPr.PayVal,"PPVc",PPr.SerNr,gentrans);
+  if (cashres==99) then begin 
+    res = -1; 
+    goto LPPVcRecordCheck; 
+  end;
+  if (cashres==12) then begin
+    goto L12;
+  end;  
+  if (SerNrTestPPVc(PPr.SerNr,PPr.TransDate,gentrans)==false) then begin
+    if (check>0) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1;
+    goto LPPVcRecordCheck;
+  end;
+  end;
+L12:;
+  if (check==0) then begin
+    goto LPPVcRecordCheck_GenTrans;
+  end;
+  if ((PPr.OrderedFlag==0) and (PPr.DoneFlag!=0)) then begin
+    RecordCheckError(1202,"",-1,"SerNr");      
+    res = -1; 
+    goto LPPVcRecordCheck;
+  end;
+  if (Date2Test("PPVc",PPr.TransDate,"TransDate",-1)==false) then begin
+    res = -1;
+    goto LPPVcRecordCheck;
+  end;
+/*  
+  if (DisallowFutureDateCheck(true,PPr.TransDate,"TransDate",-1)) then begin
+    res = -1;
+    goto LPPVcRecordCheck;
+  end;
+  if (DisallowFutureDateCheck(true,PPr.PayDate,"PayDate",-1)) then begin
+    res = -1;
+    goto LPPVcRecordCheck;
+  end;
+*/  
+  if (blankdate(PPr.PayDate)) then begin
+    RecordCheckError(1058,"",-1,"PayDate");      
+    res = -1; 
+    goto LPPVcRecordCheck;
+  end;
+  if (blank(PPr.PayMode)) then begin
+    RecordCheckError(1207,"",-1,"PayMode");      
+    res = -1; 
+    goto LPPVcRecordCheck;
+  end;
+  if (rwcnt==0) then begin
+    RecordCheckError(1030,"",0,"Person");      
+    res = -1; 
+    goto LPPVcRecordCheck;
+  end;
+  errcode = CheckRates(PPr.CurncyCode,PPr.FrRate,PPr.ToRateB1,PPr.ToRateB2,PPr.BaseRate1,PPr.BaseRate2,errstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,"",-1,errstr);      
+    res = -1; 
+    goto LPPVcRecordCheck;
+  end;
+  if (BuildProductCode!="StandardExpenses") then begin
+    if (PayModeAccIsClosed(PPr.PayMode)) then begin
+      RecordCheckError(1258,PPr.PayMode,-1,"PayMode");      
+      res = -1; 
+      goto LPPVcRecordCheck;
+    end;  
+  end;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PPr,i,PPrw);
+    switch (PPrw.stp) begin
+      case 1:
+        Userr.Code = PPrw.Person;
+        if (ReadFirstMain(Userr,1,true)==false) then begin
+          RecordCheckError(1120,PPrw.Person,i,"Person");      
+          res = -1; 
+          goto LPPVcRecordCheck;
+        end;
+        if (blank(PPrw.PayVal)) then begin
+          RecordCheckError(1058,"",i,"PayVal");      
+          res = -1; 
+          goto LPPVcRecordCheck;
+        end;
+        errcode = CheckObjs(Userr.PersAcc,PPrw.Objects,errstr);
+        if (errcode!=0) then begin
+          RecordCheckError(errcode,errstr,i,"Objects");      
+          res = -1; 
+          goto LPPVcRecordCheck;
+        end;        
+        pmmode = PPrw.PayMode;
+        if (blank(pmmode)) then begin
+          pmmode = PPr.PayMode;
+        end;  
+        if (HasIntegratedNL) then begin
+          if (GetPMRow(pmmode,PMrw)) then begin end;
+          errcode = CheckObjs(PMrw.AccNr,PPrw.Objects,errstr);
+          if (errcode!=0) then begin
+            RecordCheckError(errcode,errstr,i,"Objects");      
+            res = -1;
+            goto LPPVcRecordCheck;
+          end;   
+        end;
+        cht = PMCheckType(pmmode,tstr,tstr);
+        switch (cht) begin
+          case 1:
+             if (PPrw.ChequeNr!=-1) then begin                
+              Checkr.SerNr = PPrw.ChequeNr;
+              if (ReadFirstMain(Checkr,1,true)==false) then begin
+                RecordCheckError(1279,"",i,"ChequeNr");      
+                res = -1; 
+                goto LPPVcRecordCheck;
+              end else begin
+                if (PPr.DoneFlag==1) then begin 
+                  if not (((Checkr.Openf==kCheckTypeRegistered) and (PPrw.PayVal>0)) or 
+                          ((Checkr.Openf==kCheckTypeAccepted) and (PPrw.PayVal>0)) or
+                          ((Checkr.Openf==kCheckTypeDeposited) and (PPrw.PayVal<0) and (Checkr.ChkMode==2))) then begin
+                    RecordCheckError(1292,"",i,"ChequeNr");      
+                    res = -1; 
+                    goto LPPVcRecordCheck;
+                  end;
+                end;
+                if (PPrw.PayVal!=Checkr.Amount) then begin
+                  RecordCheckError(1280,"",i,"ChequeNr");      
+                  res = 1280; 
+                  goto LPPVcRecordCheck;
+                end;
+              end;
+            end else begin
+              if (transf) then begin
+                RecordCheckError(1854,"",i,"ChequeNr");      
+                res = -1; 
+                goto LPPVcRecordCheck;
+              end;
+            end;
+          case 2:
+             if (PPrw.ChequeNr!=-1) then begin                
+              OwnCheckr.SerNr = PPrw.ChequeNr;
+              if (ReadFirstMain(OwnCheckr,1,true)==false) then begin
+                RecordCheckError(1279,"",i,"ChequeNr");      
+                res = -1; 
+                goto LPPVcRecordCheck;
+              end else begin
+                if not (((OwnCheckr.Openf==kCheckTypeRegistered) and (PPrw.PayVal>0)) or 
+                        ((OwnCheckr.Openf==kCheckTypeAccepted) and (PPrw.PayVal<0) and (OwnCheckr.ChkMode!=2)) or
+                        ((OwnCheckr.Openf==kCheckTypeDeposited) and (PPrw.PayVal<0) and (OwnCheckr.ChkMode==2))) then begin
+                  RecordCheckError(1292,"",i,"ChequeNr");      
+                  res = -1; 
+                  goto LPPVcRecordCheck;
+                end;
+                if (PPrw.PayVal!=OwnCheckr.Amount) then begin
+                  RecordCheckError(1280,"",i,"ChequeNr");      
+                  res = 1280; 
+                  goto LPPVcRecordCheck;
+                end;
+              end;
+            end else begin
+              if (transf) then begin
+                RecordCheckError(1854,"",i,"ChequeNr");      
+                res = -1; 
+                goto LPPVcRecordCheck;
+              end;
+            end;
+
+          case 3:
+            if (PPrw.ChequeNr!=-1) then begin
+              Couponr.SerNr = PPrw.ChequeNr;
+              if (ReadFirstMain(Couponr,1,true)) then begin
+                if not (((Couponr.Status==0) and (PPrw.PayVal>0)) or
+                        ((Couponr.Status==1) and (PPrw.PayVal<0))) then begin
+                  RecordCheckError(1292,"",i,"ChequeNr");      
+                  res = -1; 
+                  goto LPPVcRecordCheck;
+                end;
+              end else begin
+                res = -1;
+                RecordCheckError(1279,PPrw.ChequeNr,i,"ChequeNr");  
+                goto LPPVcRecordCheck;
+              end;
+            end else begin
+              RecordCheckError(1854,"",I,"ChequeNr");      
+              res = -1; 
+              goto LPPVcRecordCheck;              
+            end;
+        end;
+    end;    
+  end;
+LPPVcRecordCheck_GenTrans:;
+  if (gentrans==false) then begin transf = false; end;
+  if (IsStandardProduct) then begin
+    transf = HasIntegratedNL and transf;
+  end;
+  if (transf) then begin
+    errcode = MakeTransFromPP(gTRp,PPr,false);
+    if (errcode!=0) then begin
+      RecordCheckError(errcode,"",i,"SerNr");      
+      res = -1; 
+      goto LPPVcRecordCheck;
+    end;
+    if ((gTRp.Number>0) and (gTRp.IntYc==PPYc)) then begin
+      errstr = CheckTrans(gTRp,2,true);
+      if (nonblank(errstr)) then begin
+        RecordCheckError(1085,errstr,-1,"SerNr");      
+        res = -1;
+        goto LPPVcRecordCheck;
+      end;
+      SaveTrans(gTRp);
+      AddTTrans_PPVc(gTRp,PPr);
+    end;    
+  end;
+LPPVcRecordCheck:;
+  if (res!=0) then begin PPr.SerNr = oldnr; end;
+  PPVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt PPVcRecordInvalidateTest(var record PPVc PPr,record PPVc PP2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 1;
+  if (UserCanAction("PPInvalid",true)==false) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LPPVcRecordInvalidateTest;
+  end;
+  if (PPr.Invalid!=0) then begin
+    res = 0;
+    goto LPPVcRecordInvalidateTest;
+  end;
+  if (PPr.DoneFlag==0) then begin
+    res = 0;
+    MessageBox(34500,"");
+    goto LPPVcRecordInvalidateTest;
+  end;
+  if (PPr.DoneFlag!=0) then begin
+    if (DateLocked(PPr.TransDate,"PPVc")) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end else begin
+        MessageBox(34500,"");
+      end;
+      res = 0;
+      goto LPPVcRecordInvalidateTest;
+    end;
+    if (DateWarned(PPr.TransDate,"PPVc")) then begin
+      if (long3>0) then begin
+        MessageBox(1560,"");
+      end;
+    end;
+  end;
+  PPr.Invalid = 1;  
+LPPVcRecordInvalidateTest:;
+  PPVcRecordInvalidateTest = res;  
+  RETURN;
+END;
+
+global
+function LongInt PPVcRecordImport(var record PPVc PPr,record PPVc PP2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val t,fr,to1,to2,br1,br2;
+  string 5 curncy;
+  Boolean gBase1ToBase2,gToDualBase;
+  record ConvMasterBlock cvm;
+      
+  BlockLoad(cvm);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gToDualBase) then begin
+    curncy = PPr.CurncyCode;
+    fr = PPr.FrRate;
+    to1 = PPr.ToRateB1;
+    to2 = PPr.ToRateB2;
+    br1 = PPr.BaseRate1;
+    br2 = PPr.BaseRate2;
+    t = PPr.PayVal;
+    ConvertToDualBase(curncy,PPr.TransDate,fr,to1,to2,br1,br2,t,true);
+    PPr.CurncyCode = curncy;
+    PPr.FrRate = fr;
+    PPr.ToRateB1 = to1;
+    PPr.ToRateB2 = to2;
+    PPr.BaseRate1 = br1;
+    PPr.BaseRate2 = br2;
+    PPr.PayVal = t;                      
+  end;
+  if (gBase1ToBase2) then begin
+    curncy = PPr.CurncyCode;
+    fr = PPr.FrRate;
+    to1 = PPr.ToRateB1;
+    to2 = PPr.ToRateB2;
+    br1 = PPr.BaseRate1;
+    br2 = PPr.BaseRate2;
+    SwapM4Val(br1,br2);
+    SwapM4Val(to1,to2);
+    B1ToB2Val(PPr.ExtraCost,br1,br2,t);
+    PPr.ExtraCost = t;    
+    PPr.CurncyCode = curncy;
+    PPr.FrRate = fr;
+    PPr.ToRateB1 = to1;
+    PPr.ToRateB2 = to2;
+    PPr.BaseRate1 = br1;
+    PPr.BaseRate2 = br2;
+    PPSumup(PPr);
+  end;  
+  SetPPFlags(PPr);
+  PPVcRecordImport = res;
+  RETURN;
+END;
+
+global
+function LongInt PPVcRecordReset(var record PPVc PPr,record PPVc PP2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  PPr.DoneFlag = 0;
+  PPVcRecordReset = res;
+  RETURN;
+END;
+
+global
+function LongInt PPVcRecordInIndex(record PPVc PPr,string indexname)
+begin
+  LongInt res;
+  
+  res = 1;
+  if (PPr.OSFlag==0) then begin 
+    if (indexname=="OSPerson") then begin res = 0; end;
+  end;
+  PPVcRecordInIndex = res;
+  return;
+end;
+
+global
+function LongInt PPVcRecordProtectFields(var record PPVc PPr,record PPVc PP2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  PP2r.OSFlag = PPr.OSFlag;
+  PPVcRecordProtectFields = res;
+  RETURN;
+END;

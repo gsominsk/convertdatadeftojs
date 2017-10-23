@@ -1,0 +1,382 @@
+external procedure SetInvARAcc(var record IVVc);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function string 255 GetCustomerOnAccountAC(string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure GetARAcc(string,var string);
+
+procedure PrintInvoice(record RcVc RepSpec,record IPrsVc IPrsr,var val totsubv,var val totnlv)
+begin
+  record IVVc IVr;
+  record IVVc orgIVr;
+  row IVVc IVrw;
+  Boolean testf;
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  val nlv,slv;
+  val coef;
+  row PMBlock PMrw;
+  string 255 aracc;
+  
+  IVr.SerNr = IPrsr.TransNr;
+  if (ReadFIrstMain(IVr,1,true)) then begin
+    switch (IVr.InvType) begin
+      case kInvoiceTypeCashInvoiceReceiptPRT:
+        testf = false;
+      case kInvoiceTypeCash:
+        testf = false;
+      case kInvoiceTypeCredit:
+        orgIVr.SerNr = IVr.CredInv;
+        if (ReadFIrstMain(orgIVr,1,true)) then begin
+          if (orgIVr.InvType==kInvoiceTypeCash) then begin
+            testf = false;
+          end else begin
+            testf = true;
+          end;
+        end else begin
+          if (IVr.CredInv>0) then begin
+            testf = false;
+            StartFormat(15);
+             OutString(0,0,USetStr(28277) & ": " & IVr.CredInv,false);
+            EndFormat;
+          end else begin
+            testf = true;
+          end;
+        end;
+        coef = -1.00;
+      otherwise
+        testf = true;
+        coef = 1.00;
+    end;
+    aracc = IVr.ARAcc;
+    if (blank(aracc)) then begin
+      SetInvARAcc(IVr);
+      aracc = IVr.ARAcc;
+    end;
+    rwcnt = MatRowCnt(IVr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(IVr,i,IVrw);
+      switch (IVrw.stp) begin
+        case kInvoiceRowTypeLoyaltyPointsPayment:
+          GetPMRow(IVrw.PayMode,PMrw);
+          aracc = PMrw.AccNr;
+        case kInvoiceRowTypeCashPayment:
+          GetPMRow(IVrw.PayMode,PMrw);
+          aracc = PMrw.AccNr;
+        case kInvoiceRowTypeCreditCardPayment:
+          GetPMRow(IVrw.PayMode,PMrw);
+          aracc = PMrw.AccNr;
+        case kInvoiceRowTypeChequePayment:
+          GetPMRow(IVrw.PayMode,PMrw);
+          aracc = PMrw.AccNr;
+      end;
+    end;
+    if (IVr.OKFlag==0) then begin testf = false; end;
+    if (nonblank(aracc)) and (nonblank(RepSpec.f8)) then begin
+      if (SetInSet(aracc,RepSpec.f8)==false) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      TRr.IntYc = IVYc;
+      TRr.Number = IVr.SerNr;
+      ReadFirstMain(TRr,2,true);
+      rwcnt = MatRowCnt(TRr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(TRr,i,TRrw);
+//          if (TRrw.AccNumber==IVr.ARAcc) then begin
+        if (SetInSet(TRrw.AccNumber,RepSpec.f8)) then begin
+          nlv = TRrw.DebVal - TRrw.CredVal;
+          i = rwcnt;
+        end;
+      end;
+      slv = IVr.BaseSum4;
+      if (slv==0) then begin
+        slv = MulRateToBase1(IVr.CurncyCode,IVr.Sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+      end;
+      slv = coef*slv;
+      if (RepSpec.flags[0]!=0) then begin
+        if (slv==nlv) then begin testf = false; end;
+      end;
+      if (testf) then begin
+      
+        StartFormat(15);
+         OutDate(0,0,IPrsr.TransDate,false);
+         switch (IVr.InvType) begin
+           case kInvoiceTypeCredit:
+             OutString(50,0,USetStr(28279),false);
+           otherwise
+             OutString(50,0,USetStr(28280),false);
+         end;
+         OutString(100,"DblIVVc",IPrsr.TransNr,false);
+         OutVal(220,0,slv,M4Val,true);
+         OutVal(300,0,nlv,M4Val,true);
+         OutVal(380,0,slv-nlv,M4Val,true);
+        EndFormat;
+        totsubv = totsubv + slv;
+        totnlv = totnlv + nlv;
+      end;
+    end;
+  end else begin
+    StartFormat(15);
+     OutString(0,0,USetStr(28281) & ": " & IPrsr.TransNr,false);
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure PrintReceipt(record RcVc RepSpec,record IPrsVc IPrsr,var val totsubv,var val totnlv)
+begin
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer ipi,iprwcnt;
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer tri,trrwcnt;
+  val nlv,nlvc;
+  string 255 accnumber;
+  Boolean testf;
+  
+  IPr.SerNr = IPrsr.TransNr;
+  if (ReadFirstMain(IPr,1,true)) then begin
+    testf = true;
+    if (IPr.OKFlag==0) then begin testf = false; end;
+    if (testf) then begin
+      TRr.IntYc = IPYc;
+      TRr.Number = IPr.SerNr;
+      ReadFirstMain(TRr,2,true);
+      trrwcnt = MatRowCnt(TRr);
+
+      iprwcnt = MatRowCnt(IPr);
+      for (ipi=0;ipi<iprwcnt;ipi=ipi+1) begin
+        MatRowGet(IPr,ipi,IPrw);
+        if (IPrw.InvoiceNr==IPrsr.IVNr) then begin
+          accnumber = IPrw.ARAcc;
+          if (IPrw.InvoiceNr>0) then begin
+            if (blank(accnumber)) then begin
+              GetARAcc(IPrw.CustCode,accnumber);
+            end;
+          end else begin
+            accnumber = GetCustomerOnAccountAC(IPrw.CustCode);
+          end;
+          
+          if (SetInSet(accnumber,RepSpec.f8)) then begin
+            trrwcnt = MatRowCnt(TRr);
+            for (tri=0;tri<trrwcnt;tri=tri+1) begin
+              MatRowGet(TRr,tri,TRrw);
+              nlvc = TRrw.CurCredVal - TRrw.CurDebVal;
+              if (nlvc==0) then begin
+                nlvc = TRrw.CredVal - TRrw.DebVal;
+              end;
+              if (SetInSet(TRrw.AccNumber,RepSpec.f8)) and (nlvc==IPrw.InvVal) then begin
+  //            if (TRrw.AccNumber==accnumber) and (nlvc==IPrw.InvVal) then begin
+                nlv = TRrw.CredVal - TRrw.DebVal;
+                tri = trrwcnt;
+              end;
+            end;
+  
+            if (RepSpec.flags[0]!=0) then begin
+              if (IPrw.InvVal==nlv) then begin testf = false; end;
+            end;
+            if (testf) then begin
+  
+              StartFormat(15);
+               OutDate(0,0,IPrsr.TransDate,false);
+               OutString(50,0,USetStr(28282),false);
+               OutString(100,"DblIPVc",IPrsr.TransNr,false);
+               OutVal(220,0,-IPrw.InvVal,M4Val,true);
+               OutVal(300,0,-nlv,M4Val,true);
+               OutVal(380,0,nlv-IPrw.InvVal,M4Val,true);
+              EndFormat;
+              totsubv = totsubv - IPrw.InvVal;
+              totnlv = totnlv - nlv;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    StartFormat(15);
+     OutString(0,0,USetStr(28283) & ": " & IPrsr.TransNr,false);
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure PrintNLTransaction(record RcVc RepSpec,record IPrsVc IPrsr,var val totsubv,var val totnlv)
+begin
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer tri,trrwcnt;
+  Boolean testf,ivf;
+  record IVVc IVr;
+  val nlv,slv;
+
+  TRr.Number = IPrsr.TransNr;
+  TRr.IntYc = IPrsr.IntYc;
+  if (ReadFIrstMain(TRr,2,true)) then begin
+    trrwcnt = MatRowCnt(TRr);
+    for (tri=0;tri<trrwcnt;tri=tri+1) begin
+      MatRowGet(TRr,tri,TRrw);
+      if (TRrw.Typ==kTransactionRowTypeCustomer) then begin
+        testf = true;
+        if (SetInSet(TRrw.AccNumber,RepSpec.f8)==false) then begin testf = false; end;
+        
+        IVr.SerNr = TRrw.SerNr;
+        ivf = ReadFirstMain(IVr,1,true);
+        if (testf) then begin
+          nlv = TRrw.DebVal - TRrw.CredVal;
+          slv = blankval;
+          if (ivf) then begin
+            if (IVr.ARAcc==TRrw.AccNumber) then begin
+              slv = nlv;
+            end else begin
+              slv = 0;
+            end;
+          end;
+          if (RepSpec.flags[0]!=0) then begin
+            if (slv==nlv) then begin testf = false; end;
+          end;
+        end;
+        if (testf) then begin
+          StartFormat(15);
+           OutDate(0,0,IPrsr.TransDate,false);
+           OutString(50,0,USetStr(28284),false);
+           OutStringID(100,"DblTRVc",IPrsr.TransNr,false,IPrsr.IntYc);
+           OutVal(220,0,slv,M4Val,true);
+           OutVal(300,0,nlv,M4Val,true);
+           OutVal(380,0,nlv-slv,M4Val,true);
+          EndFormat;
+          totsubv = totsubv + (TRrw.DebVal-TRrw.CredVal);
+          totnlv = totnlv + (TRrw.DebVal-TRrw.CredVal);
+        end;
+      end;
+    end;
+  end else begin
+    StartFormat(15);
+     OutString(0,0,USetStr(28285) & ": " & IPrsr.TransNr,false);
+    EndFormat;
+  end;
+  return;
+end;
+
+procedure PrintNLTransaction2(record RcVc RepSpec,record MainVc Mainr,var val totsubv,var val totnlv)
+begin
+  record TRVc TRr;
+  row TRVc TRrw;
+  Integer tri,trrwcnt;
+  Boolean testf;
+  val nlv,slv;
+
+  TRr.Number = Mainr.TransNr;
+  TRr.IntYc = Mainr.IntYc;
+  if (ReadFIrstMain(TRr,2,true)) then begin
+    trrwcnt = MatRowCnt(TRr);
+    for (tri=0;tri<trrwcnt;tri=tri+1) begin
+      MatRowGet(TRr,tri,TRrw);
+      if (TRrw.Typ!=kTransactionRowTypeCustomer) then begin
+        testf = true;
+        if (SetInSet(TRrw.AccNumber,RepSpec.f8)==false) then begin testf = false; end;            
+        if (testf) then begin
+          nlv = TRrw.CredVal - TRrw.DebVal;
+          slv = blankval;
+          if (RepSpec.flags[0]!=0) then begin
+            if (slv==nlv) then begin testf = false; end;
+          end;
+        end;
+        if (testf) then begin
+          StartFormat(15);
+           OutDate(0,0,Mainr.TransDate,false);
+           OutString(50,0,USetStr(28284),false);
+           OutStringID(100,"DblTRVc",Mainr.TransNr,false,Mainr.IntYc);
+           OutVal(300,0,TRrw.DebVal-TRrw.CredVal,M4Val,true);
+          OutVal(380,0,-(TRrw.DebVal-TRrw.CredVal),M4Val,true);
+          EndFormat;
+          totnlv = totnlv + (TRrw.DebVal-TRrw.CredVal);
+        end;
+      end;
+    end;
+  end else begin
+    StartFormat(15);
+     OutString(0,0,USetStr(28285) & ": " & Mainr.TransNr,false);
+    EndFormat;
+  end;
+  return;
+end;
+
+global
+procedure ARRollFwdRn(record RcVc RepSpec)
+begin
+  string 255 tstr;
+  Integer rw;
+  record IPrsVc IPrsr;
+  record IVVc IVr;
+  record MainVc Mainr;
+  Boolean found,testf;
+  val totsubv,totnlv;
+  
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;
+  StartReportJob(USetStr(28270));
+   rw = 1;
+   tstr = RepSpec.d1;
+   Header(rw,tstr,1);
+   rw = rw + 1;
+  EndHeader;    
+  StartFormat(15);
+   OutString(0,0,USetStr(28271),false);
+   OutString(50,0,USetStr(28272),false);
+   OutString(100,0,USetStr(28273),false);
+   OutString(220,0,USetStr(28274),true);
+   OutString(300,0,USetStr(28275),true);
+   OutString(380,0,USetStr(28276),true);
+  EndFormat;
+  Gray_Divider(0,1);
+
+  found = true;
+  IPrsr.TransDate = RepSpec.d1;
+  while (LoopKey("TransDate",IPrsr,1,found)) begin
+    if (IPrsr.TransDate!=RepSpec.d1) then begin found = false; end;
+    if (found) then begin
+      switch (IPrsr.TransType) begin
+        case kIPrsTransTypeInvoice:
+          PrintInvoice(RepSpec,IPrsr,totsubv,totnlv);
+        case kIPrsTransTypeReceipt:
+          PrintReceipt(RepSpec,IPrsr,totsubv,totnlv);
+        case kIPrsTransTypeNLTransaction:
+          PrintNLTRansaction(RepSpec,IPrsr,totsubv,totnlv);          
+        case kIPrsTransTypeCashIn:
+        case kIPrsTransTypeCashOut:
+        case kIPrsTransTypeReverseCustomerPrepayment:
+        case kIPrsTransTypeCredMan:
+      end;
+    end;
+  end;
+  found = true;
+  Mainr.TransDate = RepSpec.d1;
+  while (LoopKey("TransDate",Mainr,1,found)) begin
+    if (Mainr.TransDate!=RepSpec.d1) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (SetInSet(Mainr.AccNumber,RepSpec.f8)==false) then begin testf = false; end;
+      if (testf and Mainr.IntYc==IVYc) then begin 
+        IVr.SerNr = Mainr.TransNr;
+        if (ReadFirstMain(IVr,1,true)) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        PrintNLTRansaction2(RepSpec,Mainr,totsubv,totnlv);          
+      end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  StartFormat(15);
+   OutVal(220,0,totsubv,M4Val,true);
+   OutVal(300,0,totnlv,M4Val,true);
+   OutVal(380,0,totsubv-totnlv,M4Val,true);
+  EndFormat;
+  EndJob;
+  return;
+end;

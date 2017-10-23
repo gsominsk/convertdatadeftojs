@@ -1,0 +1,148 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external procedure HTCusts(string, string, var string);
+external function string 20 FindJobCustomerCode(record JobVc);
+external function string 60 FindJobCustomerName(record JobVc);
+external function LongInt DateDiff(Date,Date);
+
+global
+procedure ConfirmRn(record RcVc RepSpec)
+begin
+  Integer i; 
+  record JobVc Jobr;
+  record CUVc Clnt;  
+  record ReservationStatusVc ResStatr;
+  Boolean TsHr,testf,Dummy;
+  LongInt Diff;
+  String 50 tstr,InvoiceNro;
+  Integer keys;
+  String 20 mykey;
+  String 60 vatnr,vatPos,Supname,dom1,dom2;
+  String 100 HdrStr;
+  Integer HdrLn;
+  record MailSettingsBlock MBr;
+  string 60 keynam;
+  string 20 frcu,tocu;
+  Integer rw;
+
+  BlockLoad(MBr);
+  frcu = FirstInRange(RepSpec.f3,20);
+  tocu = LastInRange(RepSpec.f3,20);
+  StartReportJob(USetStr(9930));
+  rw = 1;
+  HTCusts(frcu,tocu,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f4,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f5,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;  
+  EndHeader;
+  
+  SetRepCol(2,60);
+  SetRepCol(3,200);
+  SetRepCol(4,290);
+  SetRepCol(5,390);
+  StartFormat(15);
+  OutString(3,0,USetStr(9923),false);
+  OutString(4,0,USetStr(9941),false);
+  OutString(1,0,USetStr(9933),true);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(9931),false);
+  OutString(2,0,USetStr(9935),false);
+  OutString(3,0,USetStr(9936),false);
+  OutString(4,0,USetStr(9936),false);
+  OutString(5,0,USetStr(9937),false);
+  OutString(1,0,USetStr(9938),true);
+  
+  EndFormat;
+  Gray_Divider(0,1);
+  if (RepSpec.flags[2]==0) then begin
+    keynam = "TransDate";
+    Jobr.TransDate = RepSpec.sStartDate;
+  end else begin
+    keynam = "ConfDate";
+    Jobr.ConfDate = RepSpec.sStartDate;
+  end;
+   TsHr = true;  
+   while (LoopKey(keynam,Jobr,1,TsHr)) begin
+     if (RepSpec.flags[2]==0) then begin
+       If (Jobr.TransDate>RepSpec.sEndDate) then begin
+         TsHr = false;
+       end;
+     end else begin
+       If (Jobr.ConfDate>RepSpec.sEndDate) then begin
+         TsHr = false;
+       end;
+     end;
+     if (TsHr) then begin   
+       testf = true;
+       if ((nonblank(RepSpec.f1)) and (RepSpec.f1 <> Jobr.ResStatus)) then begin
+         testf = false;
+       end;
+       ResStatr.Code = Jobr.ResStatus;
+       if (ReadFirstMain(ResStatr,1,true)) then begin
+         if (ResStatr.StatType!=1) then begin
+           testf = false;
+         end;
+       end;
+       if (nonblank(RepSpec.f3)) then begin
+         if (Jobr.CUCode<frcu) or (Jobr.CUCode>tocu) then begin
+           testf = false;
+         end;
+       end;
+       if (testf) then begin
+         testf = ContactInGroupClass(Jobr.CUCode,RepSpec.f4,RepSpec.f5,"CUST","","");
+       end;       
+       If (testf) then begin
+          StartFormat(15);
+          if (nonblank(Jobr.ConfDate)) then begin
+            Diff = DateDiff(Jobr.ConfDate,CurrentDate);
+          end else begin
+            Diff = DateDiff(Jobr.TransDate,CurrentDate);
+          end;
+          OutString(0,"DblJobVc",Jobr.SerNr,false);
+          OutString(2,0,Left(FindJobCustomerName(Jobr),25),false);
+          OutDate(3,0,Jobr.TransDate,false);
+          OutDate(4,0,Jobr.ConfDate,false);
+          OutString(5,0,Jobr.ResStatus,false); 
+          OutLongInt(1,0,Diff,true); 
+          EndFormat;
+          Clnt.Code = FindJobCustomerCode(Jobr);
+          if (RepSpec.flags[1]==1) then begin
+            if (ReadFirstMain(Clnt,1,true)) then begin
+              StartFormat(15);
+              OutString(2,0,Jobr.ConfComment,false);
+              OutString(4,0,Clnt.Phone,false); 
+              if (blank(Clnt.eMail)) then begin
+                OutString(5,0,USetStr(2289),false);
+              end else begin
+                if (MBr.ExclEmail==0) then begin
+                  OutString(5,0,Clnt.eMail,true);
+                end;
+              end;
+              EndFormat;
+            end;
+          end;
+        end;
+      end;  
+   end;
+  
+  EndJob;
+  return;
+end;
+

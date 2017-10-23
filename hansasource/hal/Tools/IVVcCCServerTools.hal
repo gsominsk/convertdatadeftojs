@@ -1,0 +1,649 @@
+external procedure ParseT1Data(string,var string,var string,var string,var string,var string);
+external procedure ParseT2Data(string,var string,var string,var string,var string);
+external procedure IVCashSumup(var record IVCashVc,Boolean);
+external remote function Boolean IVCashVc_PasteCustCode(var record IVCashVc,string,string,string,var Integer,var string);
+external procedure IVVc_PasteItem(record IVVc,Integer,Integer);
+external function Boolean IVVc_PasteQuantity(var record IVVc,Integer);
+external function Boolean IVDClassCustCodeEFAfter(Integer,Integer,Integer);
+external updating function Integer CreditCardPurchase(string,string,string,val,string,string,string,string,string,string,string,string,
+                                             string,string,Integer,Integer,string,
+                                             string,string,string,string,string,string,string,string,
+                                             string,string,string,string,string,string,string,string,
+                                             longint,string,val,val,string,
+                                             string,string,var string,var string,var string,var string,
+                                             string,string,Integer);
+external function Boolean GetFirstItem(var string,var record INVc);
+remote procedure GetFullCurncyRate(var string,Date,var val,var val,var val,var val,var val);
+external function Boolean PasteCust2InInv(var record IVVc,record LocalMachineBlock,string,Boolean,var string,var string,var string,var string,var string);
+external function Boolean GetNextCustNr(var string);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure FindCCAccountID(string,string,Integer,var record CCAccountIDVc,Integer);
+external function boolean CheckRefundNeedTransactionID(string,record CCAccountIDVc);
+
+function string 255 ParseCCName(string ccname)
+begin
+  string 255 res;
+  string 255 fname;
+  string 255 lname;
+  string 1 thischar;
+  string 1 prevchar;
+  LongInt i,pos;
+  
+  pos = 0;
+  thischar = " ";
+  prevchar = " ";
+  
+  while (mid(ccname,pos,1)!="/" and pos<len(ccname)) begin
+    thischar = mid(ccname,pos,1);
+    
+    if (prevchar<>" ") then begin
+      lname = lname & lowercase(thischar);
+    end else begin
+      lname = lname & thischar;
+    end;
+    
+    prevchar = thischar;
+    
+    pos = pos + 1;
+  end;
+  
+  pos = pos + 1;
+  prevchar = " ";
+  
+  while (pos<len(ccname)) begin
+    thischar = mid(ccname,pos,1);
+    
+    if (prevchar<>" ") then begin
+      fname = fname & lowercase(thischar);
+    end else begin
+      fname = fname & thischar;
+    end;
+    
+    prevchar = thischar;
+    
+    pos = pos + 1;
+  end;
+  
+  ParseCCName = trim(trim(fname) & " " & trim(lname));
+  
+  return;
+end;
+
+global
+function string 255 ProtectCreditCardNr(string CreditCardNr)
+begin
+  string 255 res;
+  Integer i;
+  
+  for (i=0;i<(len(CreditCardNr) - 4);i=i+1) begin
+    res = res & "*";
+  end;
+  res = res & right(CreditCardNr,4);
+  
+  ProtectCreditCardNr = res;
+  return;
+end;
+
+global
+updating procedure IVVcProcessCCData(var record IVVc IVr,val chargeamt,string sdata,Integer addtocontacts,var string message,string pmcd)
+begin
+  xml xdata;
+  string 255 t1;
+  string 255 t2;
+  string 255 t3;
+  string 255 t1stripped;
+  string 255 t2stripped;
+  string 255 priacc;
+  string 255 name;
+  string 255 expdate;
+  string 255 scode;
+  string 255 exdata;
+  record CreditCardVc CCr;
+  string 255 cuname;
+  string 255 protacc;
+  record CUVc CUr;
+  longint i,rowno;
+  Integer err;
+  record RcVc RepSpec;
+  string 255 transid,errordesc,errorcode,AuthCode;
+  Integer txtype;
+  row IVVc IVrw;
+  record DefCashBlock DefCashRec;
+  string 255 tstr,pmcode;
+  val fr,to1,to2,br1,br2;
+  string 255 warning,errstr,prepstr,invdatewarn,transdatewarn;
+  string 255 passw;
+  record CashierDefBlock CDb;
+  record LocalMachineBlock LMb;
+  Boolean newcustf;
+  record CCAccountIDVc CCAccountIDr;
+  integer rwcnt;
+  
+  BlockLoad(LMb);  
+  BlockLoad(CDb);  
+  xdata = ParseXmlString(sdata);
+  
+  t1 = XmlGet(xdata,"HAL1/T1");
+  t2 = XmlGet(xdata,"HAL1/T2");
+  t3 = XmlGet(xdata,"HAL1/T3");
+  
+//  StopAlert("t1: " & t1);
+//  StopAlert("t2: " & t2);
+//  StopAlert("t3: " & t3);
+  
+  t1stripped = t1;
+  t2stripped = t2;
+  
+  if (left(t1stripped,1)=="%") then begin
+    t1stripped = right(t1stripped,len(t1stripped) - 1);
+  end;
+  
+  if (right(t1stripped,1)=="?") then begin
+    t1stripped = left(t1stripped,len(t1stripped) - 1);
+  end;
+  
+  if (left(t2stripped,1)==";") then begin
+    t2stripped = right(t2stripped,len(t2stripped) - 1);
+  end;
+  
+  if (right(t2stripped,1)=="?") then begin
+    t2stripped = left(t2stripped,len(t2stripped) - 1);
+  end;
+  
+  ParseT1Data(t1,priacc,name,expdate,scode,exdata);
+  //ParseT2Data(t2,priacc,expdate,scode,exdata);
+    
+  protacc = ProtectCreditCardNr(priacc);
+  cuname = ParseCCName(name);
+  
+  newcustf = (IVr.CustCode==LMb.DefCustCode) or (IVr.CustCode==CDb.DefCustCode);
+  newcustf = newcustf and (addtocontacts!=0);
+  if (newcustf) then begin
+    CCr.CreditCardNr = protacc;
+    CCr.CUName = cuname;
+    
+    // ## pop up "old or new customer dialog"
+    
+    if (ReadFirstKey("CUName",CCr,2,true)) then begin
+      CUr.Code = CCr.CUCode;
+    end else begin
+      // ## read default POS customer and duplicate
+      RecordNew(CUr);
+      CUr.Name = cuname;
+      
+      if (GetNextCustNr(passw)) then begin end;
+      CUr.Code = passw;
+      
+      RecordStore(CUr,true);
+      
+      RecordNew(CCr);
+      CCr.CreditCardNr = protacc;
+      CCr.CUName = cuname;
+      CCr.CUCode = CUr.Code;
+      CCR.ValidThru = expdate;
+      
+      RecordStore(CCr,true);
+    end;
+  end else begin
+    CUr.Code = IVr.CustCode;
+    CCr.CreditCardNr = protacc;
+  end;
+  
+  if (IVr.CustCode<>CUr.Code) then begin
+    IVr.CustCode = CUr.Code;
+    //PutWindowRecord(wn,IVr);
+    
+    if (PasteCust2InInv(IVr,LMb,"",true,warning,errstr,prepstr,invdatewarn,transdatewarn)) then begin end;
+    
+    /*
+    PutWindowRecord(wn,IVr);
+    if (nonblank(warning)) then begin
+      MessageBox(0,warning);
+    end;
+    if (nonblank(errstr)) then begin
+      MessageBox(0,errstr);
+    end;
+    if (nonblank(prepstr)) then begin
+      MessageBox(0,prepstr);
+    end;
+    if (nonblank(transdatewarn)) then begin
+      MessageBox(0,transdatewarn);
+    end;
+    if (nonblank(invdatewarn)) then begin
+      MessageBox(0,invdatewarn);
+    end;
+    */
+    
+    //if (WindowDoOK(wn,0)) then begin end;
+  end;
+  
+  // GetWindowRecord(wn,IVr);
+  
+  // # return here and open add CC charge dialog
+  
+  if (chargeamt<0) then begin
+    txtype = kCardTransactionRefund;
+  end else begin
+    txtype = kCardTransactionPay;
+  end;
+ 
+  if (txtype==kCardTransactionRefund) then begin
+    FindCCAccountID(IVr.CurncyCode,LMb.LocalMachineCode,kCCAccountTypePOS,CCAccountIDr,kCardHolderPresent);
+    if (CheckRefundNeedTransactionID(transid,CCAccountIDr)) then begin
+      rwcnt = MatRowCnt(IVr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        if (IVrw.stp==kInvoiceRowTypeCreditCardPayment) then begin
+          rowno = i;
+          i = rwcnt;
+          transid = IVrw.CCTransID;
+        end;
+      end;
+    end;
+  end;
+  
+  err = CreditCardPurchase("","","",chargeamt,"","","","","","","","",
+    IVr.CurncyCode,CurMachineName,0,txtype,"POS",
+    "","","","","","","","",
+    "","","","","","","","",
+    -1,"",0,0,"",
+    "123","",transid,errordesc,errorcode,AuthCode,
+    t1stripped,t2stripped,kCardHolderPresent);
+  
+  if (err!=0) then begin
+    message = USetStr(err) & " " & errordesc;
+    //Trace("IVVcProcessCCData","CreditCardPurchase failed");
+    goto LIVVcProcessCCData;
+  end else begin
+    //Trace("IVVcProcessCCData","CreditCardPurchase success");
+    
+    BlockLoad(DefCashRec);
+    //pmcode = GetWindowString(wn,"IVPMCode" & btnNr);
+    //if (blank(pmcode)) then begin
+    //  pmcode = GetWindowString(wn,"PMCode" & btnNr);
+    //end;
+    pmcode = pmcd;
+    if (blank(pmcode)) then begin
+      pmcode =  DefCashRec.DefCCPayMode;
+    //Trace("pmcode ",pmcode);
+    end;
+    //rowstp = StringToLongInt(GetWindowString(wn,"rowstp" & btnNr));
+    //if (rowstp<0) then begin
+    //  rowstp = StringToInt(GetWindowString(wn,"IVrowstp" & btnNr));
+    //end;
+    //if (rowstp==0) then begin
+      ClearRow(IVr,IVrw,kInvoiceRowTypeCreditCardPayment); 
+    //end else begin
+    //  ClearRow(IVr,IVrw,rowstp); 
+    //end;
+    
+    tstr = IVrw.CurncyCode;
+    GetFullCurncyRate(tstr,IVr.TransDate,fr,to1,to2,br1,br2);
+    IVrw.CurncyCode = tstr;
+    IVrw.FrRate = fr;
+    IVrw.ToRateB1 = to1; 
+    IVrw.ToRateB2 = to2;
+    IVrw.BaseRate1 = br1;
+    IVrw.BaseRate2 = br2;    
+    IVrw.PayMode =  pmcode;
+    
+    IVrw.AuthorizationCode = AuthCode;
+    IVrw.CCTransID = transid;
+    IVrw.Sum = chargeamt;        
+    IVrw.CreditCard = CCr.CreditCardNr;
+    
+    rowno = MatRowCnt(IVr);
+    MatRowPut(IVr,rowno,IVrw);
+    IVsumup(IVr,true);
+    //PutWindowRecord(wn,IVr);
+    //WindowFieldGoto(wn,IVr,rowno,"Sum",true);
+    //DisplayIVSubTotalAction(IVr);
+  end;
+  
+//  if (IVr.RetnVal==0) then begin // ... or perhaps > 0??? ...
+//    IVr.OKFlag = 1;
+//  end;
+//  if (RepSpec.long2<0) then begin
+//    IVr.AuthorizationCode = AuthCode;
+//    IVr.CCTransID = transid;
+//  end else begin
+//    MatRowGet(IVr,RepSpec.long2,IVrw);
+//    IVrw.AuthorizationCode = AuthCode;
+//    IVrw.CCTransID = transid;
+//    MatRowPut(IVr,RepSpec.long2,IVrw);
+//  end;
+  
+LIVVcProcessCCData:;
+  return;
+end;
+
+global
+updating function string 20 CreateCustAndCrediCard(string CUName,string CreditCardNr,string ValidThru)
+begin
+  record CUVc CUr;
+  record CreditCardVc CCr;
+  string 20 CUCode;
+  
+  CCr.CUName = CUName;
+  CCr.CreditCardNr = CreditCardNr;
+  
+  // ## pop up "old or new customer dialog"
+  
+  if (ReadFirstKey("CUName",CCr,2,true)) then begin
+    CUCode = CCr.CUCode;
+  end else begin
+    // ## read default POS customer and duplicate
+    RecordNew(CUr);
+    CUr.Name = CUName;
+    
+    if (GetNextCustNr(CUCode)) then begin end;
+    CUr.Code = CUCode;
+    
+    RecordStore(CUr,true);
+    
+    RecordNew(CCr);
+    CCr.CreditCardNr = CreditCardNr;
+    CCr.CUName = CUName;
+    CCr.CUCode = CUCode;
+    CCR.ValidThru = ValidThru;
+    RecordStore(CCr,true);
+  end;
+  
+  CreateCustAndCrediCard = CUCode;
+  return;
+end;
+
+global
+updating procedure IVCashVcProcessCCData(var record IVCashVc IVCashr,val chargeamt,string paymode,string sdata,Integer addtocontacts,var string message)
+begin
+  xml xdata;
+  string 255 t1;
+  string 255 t2;
+  string 255 t3;
+  string 255 t1stripped;
+  string 255 t2stripped;
+  string 255 priacc;
+  string 255 name;
+  string 255 expdate;
+  string 255 scode;
+  string 255 exdata;
+  string 255 cuname;
+  string 255 protacc;
+  string 20 CUCode;
+  longint i,rowno;
+  Integer err;
+  record RcVc RepSpec;
+  string 255 transid,errordesc,errorcode,AuthCode;
+  Integer txtype;
+  row IVCashVc IVCashrw;
+  record DefCashBlock DefCashRec;
+  string 255 tstr,pmcode;
+  val fr,to1,to2,br1,br2;
+  string 255 warning,errstr,prepstr,invdatewarn,transdatewarn;
+  string 255 passw;
+  record LocalMachineBlock LMb;
+  record CashierDefBlock CDb;  
+  Boolean newcustf;
+  record CCAccountIDVc CCAccountIDr;
+  record IVCashVc orgIVCashr;
+  integer rwcnt;
+  
+  BlockLoad(LMb);  
+  BlockLoad(CDb);  
+  xdata = ParseXmlString(sdata);
+  
+  t1 = XmlGet(xdata,"HAL1/T1");
+  t2 = XmlGet(xdata,"HAL1/T2");
+  t3 = XmlGet(xdata,"HAL1/T3");
+  
+//  StopAlert("t1: " & t1);
+//  StopAlert("t2: " & t2);
+//  StopAlert("t3: " & t3);
+  
+  t1stripped = t1;
+  t2stripped = t2;
+  
+  if (left(t1stripped,1)=="%") then begin
+    t1stripped = right(t1stripped,len(t1stripped) - 1);
+  end;
+  
+  if (right(t1stripped,1)=="?") then begin
+    t1stripped = left(t1stripped,len(t1stripped) - 1);
+  end;
+  
+  if (left(t2stripped,1)==";") then begin
+    t2stripped = right(t2stripped,len(t2stripped) - 1);
+  end;
+  
+  if (right(t2stripped,1)=="?") then begin
+    t2stripped = left(t2stripped,len(t2stripped) - 1);
+  end;
+  
+  ParseT1Data(t1,priacc,name,expdate,scode,exdata);
+  //ParseT2Data(t2,priacc,expdate,scode,exdata);
+  
+  protacc = ProtectCreditCardNr(priacc);
+  cuname = ParseCCName(name);
+  
+  newcustf = (IVCashr.CustCode==LMb.DefCustCode) or (IVCashr.CustCode==CDb.DefCustCode);
+  newcustf = newcustf and (addtocontacts!=0);
+  if (newcustf) then begin
+    CUCode = CreateCustAndCrediCard(cuname,protacc,expdate);
+  end else begin
+    CUCode = IVCashr.CustCode;
+  end;
+  
+  if (IVCashr.CustCode<>CUCode) then begin
+    IVCashr.CustCode = CUCode;
+    //PutWindowRecord(wn,IVCashr);
+    
+    if (IVCashVc_PasteCustCode(IVCashr,"",LMb.DefLocation,LMb.PLCode,err,warning)) then begin end;
+        
+    /*
+    PutWindowRecord(wn,IVCashr);
+    if (nonblank(warning)) then begin
+      MessageBox(0,warning);
+    end;
+    if (nonblank(errstr)) then begin
+      MessageBox(0,errstr);
+    end;
+    if (nonblank(prepstr)) then begin
+      MessageBox(0,prepstr);
+    end;
+    if (nonblank(transdatewarn)) then begin
+      MessageBox(0,transdatewarn);
+    end;
+    if (nonblank(invdatewarn)) then begin
+      MessageBox(0,invdatewarn);
+    end;
+    */
+    
+    //if (WindowDoOK(wn,0)) then begin end;
+  end;
+  
+  // GetWindowRecord(wn,IVCashr);
+  
+  // # return here and open add CC charge dialog
+  
+  if (chargeamt<0) then begin
+    txtype = kCardTransactionRefund;
+  end else begin
+    txtype = kCardTransactionPay;
+  end;
+ 
+  if (txtype==kCardTransactionRefund) then begin
+    FindCCAccountID(IVCashr.CurncyCode,LMb.LocalMachineCode,kCCAccountTypePOS,CCAccountIDr,kCardHolderPresent);
+    if (CheckRefundNeedTransactionID(transid,CCAccountIDr)) then begin
+      rwcnt = MatRowCnt(IVCashr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVCashr,i,IVCashrw);
+        if (IVCashrw.stp==kInvoiceRowTypeReturnIVNr) then begin 
+          i = rwcnt;
+        end;
+      end;
+      orgIVCashr.SerNr = IVCashrw.OrgIVNr;
+      if (ReadFirstMain(orgIVCashr,1,true)) then begin
+        rwcnt = MatRowCnt(orgIVCashr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(orgIVCashr,i,IVCashrw);
+          if (IVCashrw.stp==kInvoiceRowTypeCreditCardPayment) then begin 
+            transid = IVCashrw.CCTransID;
+            i = rwcnt;
+          end;
+        end;
+      end;
+    end;
+  end;
+  
+  err = CreditCardPurchase("","","",chargeamt,"","","","","","","","",
+    IVCashr.CurncyCode,CurMachineName,0,txtype,"POS",
+    "","","","","","","","",
+    "","","","","","","","",
+    -1,"",0,0,"",
+    "123","",transid,errordesc,errorcode,AuthCode,
+    t1stripped,t2stripped,kCardHolderPresent);
+  
+  if (err!=0) then begin
+    message = USetStr(err) & " " & errordesc;
+    //Trace("IVCashVcProcessCCData","CreditCardPurchase failed");
+    goto LIVCashVcProcessCCData;
+  end else begin
+    //Trace("IVCashVcProcessCCData","CreditCardPurchase success");
+    pmcode = paymode;
+    BlockLoad(DefCashRec);
+    if (blank(pmcode)) then begin
+      pmcode =  DefCashRec.DefCCPayMode;
+    end;
+    ClearRow(IVCashr,IVCashrw,kInvoiceRowTypeCreditCardPayment); 
+    
+    tstr = IVCashrw.CurncyCode;
+    GetFullCurncyRate(tstr,IVCashr.TransDate,fr,to1,to2,br1,br2);
+    IVCashrw.CurncyCode = tstr;
+    IVCashrw.FrRate = fr;
+    IVCashrw.ToRateB1 = to1; 
+    IVCashrw.ToRateB2 = to2;
+    IVCashrw.BaseRate1 = br1;
+    IVCashrw.BaseRate2 = br2;    
+    IVCashrw.PayMode =  pmcode;
+    
+    IVCashrw.AuthorizationCode = AuthCode;
+    IVCashrw.CCTransID = transid;
+    IVCashrw.Sum = chargeamt;        
+    IVCashrw.CreditCard = protacc;
+    
+    rowno = MatRowCnt(IVCashr);
+    MatRowPut(IVCashr,rowno,IVCashrw);
+    IVCashSumup(IVCashr,true);
+    //PutWindowRecord(wn,IVCashr);
+    //WindowFieldGoto(wn,IVCashr,rowno,"Sum",true);
+    //DisplayIVCashSubTotalAction(IVCashr);
+  end;
+  
+//  if (IVCashr.RetnVal==0) then begin // ... or perhaps > 0??? ...
+//    IVCashr.OKFlag = 1;
+//  end;
+//  if (RepSpec.long2<0) then begin
+//    IVCashr.AuthorizationCode = AuthCode;
+//    IVCashr.CCTransID = transid;
+//  end else begin
+//    MatRowGet(IVCashr,RepSpec.long2,IVCashrw);
+//    IVCashrw.AuthorizationCode = AuthCode;
+//    IVCashrw.CCTransID = transid;
+//    MatRowPut(IVCashr,RepSpec.long2,IVCashrw);
+//  end;
+  
+LIVCashVcProcessCCData:;
+  return;
+end;
+
+global
+updating procedure IPVcProcessCCData(var record IPVc IPr,val chargeamt,string paymode,string sdata,Integer addtocontacts,var string message)
+begin
+  xml xdata;
+  string 255 t1;
+  string 255 t2;
+  string 255 t3;
+  string 255 t1stripped;
+  string 255 t2stripped;
+  string 255 priacc;
+  string 255 name;
+  string 255 expdate;
+  string 255 scode;
+  string 255 exdata;
+  record CreditCardVc CCr;
+  string 255 cuname;
+  string 255 protacc;
+  record CUVc CUr;
+  longint i,rowno;
+  Integer err;
+  record RcVc RepSpec;
+  string 255 transid,errordesc,errorcode,AuthCode;
+  Integer txtype;
+  row IPVc IPrw;
+  record DefCashBlock DefCashRec;
+  string 255 tstr,pmcode;
+  val fr,to1,to2,br1,br2;
+  string 255 warning,errstr,prepstr,invdatewarn,transdatewarn;
+  string 255 passw;
+  record LocalMachineBlock LMb;
+  record CashierDefBlock CDb;  
+  Boolean newcustf;
+  
+  BlockLoad(LMb);  
+  BlockLoad(CDb);  
+  xdata = ParseXmlString(sdata);
+  
+  t1 = XmlGet(xdata,"HAL1/T1");
+  t2 = XmlGet(xdata,"HAL1/T2");
+  t3 = XmlGet(xdata,"HAL1/T3");
+  
+//  StopAlert("t1: " & t1);
+//  StopAlert("t2: " & t2);
+//  StopAlert("t3: " & t3);
+  
+  t1stripped = t1;
+  t2stripped = t2;
+  
+  if (left(t1stripped,1)=="%") then begin
+    t1stripped = right(t1stripped,len(t1stripped) - 1);
+  end;
+  
+  if (right(t1stripped,1)=="?") then begin
+    t1stripped = left(t1stripped,len(t1stripped) - 1);
+  end;
+  
+  if (left(t2stripped,1)==";") then begin
+    t2stripped = right(t2stripped,len(t2stripped) - 1);
+  end;
+  
+  if (right(t2stripped,1)=="?") then begin
+    t2stripped = left(t2stripped,len(t2stripped) - 1);
+  end;
+  
+  ParseT1Data(t1,priacc,name,expdate,scode,exdata);
+  //ParseT2Data(t2,priacc,expdate,scode,exdata);
+  
+  protacc = ProtectCreditCardNr(priacc);
+  cuname = ParseCCName(name);
+  
+  
+  // # return here and open add CC charge dialog
+  txtype = 1;
+  err = CreditCardPurchase("","","",chargeamt,"","","","","","","","",
+    IPr.PayCurCode,CurMachineName,0,txtype,"POS",
+    "","","","","","","","",
+    "","","","","","","","",
+    -1,"",0,0,"",
+    "123","",transid,errordesc,errorcode,AuthCode,
+    t1stripped,t2stripped,kCardHolderPresent);
+  
+  if (err!=0) then begin
+    message = USetStr(err) & " " & errordesc;
+    //Trace("IPVcProcessCCData","CreditCardPurchase failed");
+    goto LIPVcProcessCCData;
+  end else begin
+    IPr.AuthorizationCode = AuthCode;
+  end;    
+LIPVcProcessCCData:;
+  return;
+end;

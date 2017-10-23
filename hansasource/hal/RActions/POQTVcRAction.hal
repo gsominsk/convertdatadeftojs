@@ -1,0 +1,256 @@
+external procedure ConvertToDualBase(var string,date,var val,var val,var val,var val,var val,var val,Boolean);
+external procedure SwapM4Val(var val,var val);
+external function Integer CheckRates(string,val,val,val,val,val,var string);
+external function Date ConvertPlanShipString(string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean AllowThisItem(string,string,string,Integer);
+external function Boolean CheckPOCQStatVECode(LongInt, string,var Integer);
+external function Boolean CorrectM4ValProc(val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure GetSalesGroup(string,var string);
+
+procedure PasteLocationToPOQT(string location,record POQTVc POQTp)
+begin
+  record LocationVc Locr;
+  
+  Locr.Code = location;
+  if (ReadFirstMain(Locr,1,true)) then begin
+    POQTp.Location = Locr.Code;
+    POQTp.ShipAddr0 = Locr.Name;
+    POQTp.ShipAddr1 = Locr.Addr0;
+    POQTp.ShipAddr2 = Locr.Addr1;
+    POQTp.ShipAddr3 = Locr.Addr2;
+    POQTp.DelAddr3 = Locr.Addr3;
+    POQTp.DelAddr4 = Locr.Addr4;    
+  end;
+  return;
+end;
+
+global
+function LongInt POQTVcRecordDefaults(var record POQTVc POQTr,record POQTVc POQT2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record UserVc Userr;
+  string 10 curcode;
+  val fr,to1,to2,br1,br2;
+  record AccBlock ARAccb;
+  
+  BlockLoad(ARAccb);
+  POQTr.SerNr = -1;
+  POQTr.PONr = -1;
+  POQTr.OrdNr = -1;
+  POQTr.WONr = -1;
+  POQTr.POCQStatNr = -1;
+  POQTr.TransDate = CurrentDate;
+  POQTr.ExportFlag = 0;
+  Userr.Code = CurrentUser;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    POQTr.OurContact = Userr.CurOurContact;
+    PasteLocationToPOQT(Userr.Location,POQTr);
+    POQTr.SalesMan = Userr.Code;
+    GetSalesGroup(POQTr.SalesMan,POQTr.SalesGroup);
+  end;
+  POQTr.PayDeal = "";
+  POQTr.CurncyCode = "";
+  curcode = POQTr.CurncyCode;
+  GetFullCurncyRate(curcode,POQTr.TransDate,fr,to1,to2,br1,br2);
+  POQTr.CurncyCode = curcode;
+  POQTr.FrRate = fr;
+  POQTr.ToRateB1 = to1; 
+  POQTr.ToRateB2 = to2;
+  POQTr.BaseRate1 = br1;
+  POQTr.BaseRate2 = br2;  
+  if (SingleUserMode) then begin
+    POQTr.SerNr = NextSerNr("POQTVc",POQTr.TransDate,-1,false,"");
+  end;  
+  POQTr.NoTAXonVAT = ARAccb.NoTAXonVAT;
+  POQTVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt POQTVcRecordDuplicate(var record POQTVc POQTr,record POQTVc POQT2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Integer i,rwcnt;
+  string 10 curcode;
+  val fr,to1,to2,br1,br2;
+  row POQTVc POQTrw;
+  record UserVc Userr;
+
+  POQTr.SerNr = -1;
+  POQTr.PONr = -1;
+  POQTr.OrdNr = -1;
+  POQTr.WONr = -1;
+  POQTr.POCQStatNr = -1;
+  POQTr.Closed = 0;
+  POQTr.TransDate = CurrentDate;
+  POQTr.ExportFlag = 0;
+  rwcnt = MatRowCnt(POQTr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POQTr,i,POQTrw);
+    POQTrw.WSNr = -1;
+    MatRowPut(POQTr,i,POQTrw);
+  end;
+  Userr.Code = CurrentUser;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    POQTr.OurContact = Userr.CurOurContact;
+  end;
+  curcode = POQTr.CurncyCode;
+  GetFullCurncyRate(curcode,POQTr.TransDate,fr,to1,to2,br1,br2);
+  POQTr.CurncyCode = curcode;
+  POQTr.FrRate = fr;
+  POQTr.ToRateB1 = to1; 
+  POQTr.ToRateB2 = to2;
+  POQTr.BaseRate1 = br1;
+  POQTr.BaseRate2 = br2;  
+  if (SingleUserMode) then begin
+    POQTr.SerNr = NextSerNr("POQTVc",POQTr.TransDate,-1,false,"");
+  end;  
+  POQTVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function LongInt POQTVcRecordCheck(var record POQTVc POQTr,record POQTVc POQT2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Integer insertmode,updatemode;
+  Integer i,rwcnt,errcode;
+  LongInt oldnr;
+  Boolean gentrans,found;
+  row POQTVc POQTrw;
+  record INVc INr;
+  string 255 tstr;
+  
+  res = 0;
+  insertmode = 1;
+  updatemode = 2;
+
+  rwcnt = MatRowCnt(POQTr);
+  oldnr = POQTr.SerNr;
+  if (POQTr.SerNr<=0) then begin
+    POQTr.SerNr = NextSerNr("POQTVc",POQTr.TransDate,-1,false,"");
+  end;
+  if (stat==updatemode) then begin
+    if (POQTr.SerNr<=0) then begin
+      POQTr.SerNr = POQT2r.SerNr;
+    end;
+  end;    
+  if (CheckPOCQStatVECode(POQTr.POCQStatNr,POQTr.VECode,i)==false) then begin
+    RecordCheckError(i,"",i,"POCQStatNr");      
+    res = -1; 
+    goto LPOQTVcRecordCheck;
+  end;  
+  errcode = CheckRates(POQTr.CurncyCode,POQTr.FrRate,POQTr.ToRateB1,POQTr.ToRateB2,POQTr.BaseRate1,POQTr.BaseRate2,tstr);
+  if (errcode!=0) then begin
+    RecordCheckError(errcode,"",-1,tstr);      
+    res = -1; 
+    goto LPOQTVcRecordCheck;
+  end;          
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POQTr,i,POQTrw);
+    switch (POQTrw.stp) begin
+      case 1:
+        if (nonblank(POQTrw.ArtCode)) then begin
+          found = ReadFirstItem(POQTrw.ArtCode,INr,true,false);
+          if (found==false) then begin
+            RecordCheckError(1120,POQTrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LPOQTVcRecordCheck;
+          end;
+          if (INr.Terminated!=0) then begin
+            RecordCheckError(1266,POQTrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LPOQTVcRecordCheck;
+          end;
+          if (INr.ItemType==2) then begin
+            RecordCheckError(1826,POQTrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LPOQTVcRecordCheck;
+          end;
+          tstr = POQTr.PRCode;
+          if (nonblank(POQTrw.PRCode)) then begin
+            tstr = POQTrw.PRCode;
+          end;
+          if (AllowThisItem("POQTVc",tstr,POQTrw.ArtCode,INr.ItemType)==false) then begin
+            RecordCheckError(1285,POQTrw.ArtCode,i,"ArtCode");      
+            res = -1; 
+            goto LPOQTVcRecordCheck;
+          end;          
+        end;
+        if (blank(POQTrw.VATCode) and (POQTrw.Sum!=0)) then begin
+          RecordCheckError(1134,"",i,"VATCode");      
+          res = -1; 
+          goto LPOQTVcRecordCheck;
+        end;
+        if (CorrectM4ValProc(POQTrw.vRebate)==false) then begin
+          RecordCheckError(1019,"",i,"vRebate");      
+          res = -1; 
+          goto LPOQTVcRecordCheck;
+        end;
+    end;
+  end;
+LPOQTVcRecordCheck:;
+  if (res!=0) then begin POQTr.SerNr = oldnr; end;
+  POQTVcRecordCheck = res;
+  RETURN;
+END;
+
+procedure POQTVcConvertB1ToB2(var val to1p,var val to2p,var val br1p,var val br2p)
+BEGIN    
+  SwapM4Val(br1p,br2p);
+  SwapM4Val(to1p,to2p);
+  RETURN;
+END;
+
+global
+function LongInt POQTVcRecordImport(var record POQTVc POQTr,record POQTVc POQT2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  val fr,to1,to2,br1,br2,t;
+  string 5 curncy;
+  Boolean gToDualBase,gBase1ToBase2;
+  record ConvMasterBlock cvm;
+
+  if (blankdate(POQTr.PlanShipDate)) then begin
+    POQTr.PlanShipDate = ConvertPlanShipString(POQTr.PlanShip);
+  end;      
+  BlockLoad(cvm);
+  if (cvm.DualBaseCurrencyFlag!=0) then begin gToDualBase = true; end;
+  if (gToDualBase) then begin
+    curncy = POQTr.CurncyCode;
+    fr = POQTr.FrRate;
+    to1 = POQTr.ToRateB1;
+    to2 = POQTr.ToRateB2;
+    br1 = POQTr.BaseRate1;
+    br2 = POQTr.BaseRate2;
+    t = POQTr.Sum4;
+    ConvertToDualBase(curncy,POQTr.TransDate,fr,to1,to2,br1,br2,t,true);
+    POQTr.CurncyCode = curncy;
+    POQTr.FrRate = fr;
+    POQTr.ToRateB1 = to1;
+    POQTr.ToRateB2 = to2;
+    POQTr.BaseRate1 = br1;
+    POQTr.BaseRate2 = br2;
+    POQTr.Sum4 = t;       
+  end;
+  if (cvm.Base1ToBase2Flag!=0) then begin gBase1ToBase2 = true; end;
+  if (gBase1ToBase2) then begin
+    curncy = POQTr.CurncyCode;
+    to1 = POQTr.ToRateB1;
+    to2 = POQTr.ToRateB2;
+    br1 = POQTr.BaseRate1;
+    br2 = POQTr.BaseRate2;
+    POQTVcConvertB1ToB2(to1,to2,br1,br2);
+    POQTr.ToRateB1 = to1;
+    POQTr.ToRateB2 = to2;
+    POQTr.BaseRate1 = br1;
+    POQTr.BaseRate2 = br2;
+  end;
+  if (POQTr.NoTAXonVAT==-1) then begin
+    POQTr.NoTAXonVAT = 0;
+  end;
+  POQTVcRecordImport = res;
+  RETURN;
+END;

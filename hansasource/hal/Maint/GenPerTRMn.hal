@@ -1,0 +1,606 @@
+external function Integer CheckVATCodes(string,string,string,var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external function Integer TypeOfCurncy(var string,var Integer);
+external procedure SaveExchangeRate(val,val,val,val,val,var val,var val,var val,var val,var val);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Integer CheckObjs(string,string,var string);
+external procedure CheckFlush(var Integer,Integer);
+external function Integer GetIntYc(Date);
+external function val MulWithRateToBase2(var string,Date,val,roundmode);
+external updating procedure UpdateBal(var Date,string,string,val,val,string,string,Boolean);
+external procedure TRSumup(var record TRVc,var val);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure AddEuroCurncyTrRow(record TRVc,string,string,string,string,val,Boolean,Boolean,var val,string,val,val,val,val,val,val,val,LongInt,Boolean,string);
+external procedure SMSumup(var record SMVc);
+external function Boolean GetObjBal(string,string,var record ObjBalVc);
+external procedure PrintTRRecord(record TRVc,Integer);
+
+function Boolean OtherExchangeRate(val fr,val to1,val to2,val br1,val br2,val afr,val ato1,val ato2,val abr1,val abr2)
+begin
+  Boolean res;
+  
+  res = false;
+  if ((afr!=fr) or (ato1!=to1) or (ato2!=to2) or (abr1!=br1) or (abr2!=br2)) then begin
+//    if ((afr!=0) or (ato1!=0) or (ato2!=0)) then begin // Shouldn't happen with Base Currency Records...
+      res = true;
+//    end;
+  end;
+  OtherExchangeRate = res;
+  return;
+end;
+
+global
+function string 255 CheckTrans(var record TRVc TRp,Integer ver,Boolean checkf)
+BEGIN
+  string 255 res;
+  val temp,totsum;
+  string 60 objects;
+  string 60 tstr;
+  string 10 acc;
+  val nilv;
+  string 20 curncy;
+  record NLRateBlock NLRec;
+  record AccBlock acr;
+  record BaseCurBlock bascur;
+  record CYBlock CYr;
+  string 255 objs,errstr;
+  Integer err;
+  row TRVc TRrw;
+  Integer i,rwcnt;
+  
+  nilv = -1;
+  if (TRp.IntYc<201) then begin
+    TRp.IntYc = GetIntYc(TRp.TransDate);
+  end;
+  if (checkf) then begin
+    rwcnt = MatRowCnt(TRp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRp,i,TRrw);
+      err = CheckVATCodes(TRrw.AccNumber,TRrw.VATCode,"",errstr);
+      if (err!=0) then begin
+        res = ". " & USetStr(err) & TRrw.VATCode & USetStr(24219) & TRrw.AccNumber;
+        goto LCheckTrans;
+      end;
+    end;
+  end;
+  temp = 0;
+  TRSumup(TRp,temp);
+  if ((TRp.DiffVal!=0) or (temp!=0)) then begin
+    objects = "";
+    totsum = blankval;
+    switch (ver) begin // During Import 
+      case 0:
+        BlockLoad(CYr);
+        objects = CYr.Object; // Not done during import in TRSumup...
+        tstr = "";
+        acc = "99999";
+      case 1: // Converting to Dual Base 
+        BlockLoad(NLRec);
+        if (temp>0) then begin
+          acc = NLRec.RateGainAcc;
+        end else begin
+          acc = NLRec.RateLossAcc;
+        end;    
+        if (GetAccName(acc,tstr,60)) then begin end;
+      otherwise // Storing TR from subsystem //case 2
+        BlockLoad(bascur);
+        BlockLoad(acr);
+        if (nonblank(bascur.BaseCur2)) then begin
+          curncy = bascur.BaseCur2;
+        end;  
+        acc = acr.BaseRoundOffAcc;
+        if (GetAccName(acc,tstr,60)==false) then begin 
+          res = ". " & USetStr(2133);
+          goto LCheckTrans;
+        end;
+    end;
+    if (checkf) then begin
+      BlockLoad(CYr);
+      objs = CYr.Object;
+      err = CheckObjs(acc,objs,errstr);
+      if (err!=0) then begin
+        res = ": " & acr.BaseRoundOffAcc & ". " & USetStr(err) & " " & errstr;
+        goto LCheckTrans;
+      end;
+    end;
+    AddEuroCurncyTrRow(TRp,acc,objects,"",tstr,TRp.DiffVal,true,false,totsum,
+                       curncy,-1,-1,-1,-1,-1,temp,nilv,-1,false,"");
+    temp = 0;
+    TRSumup(TRp,temp);
+  end;
+LCheckTrans:;  
+  CheckTrans = res;
+  RETURN;
+END;
+
+global
+updating procedure SaveTrans(record TRVc TRp)
+BEGIN
+  record TRVc oldTRp;
+  
+  RecordCopy(oldTRp,TRp);
+  if (CheckTrans(TRp,2,false)=="") then begin end;
+  
+  if (TRp.IntYc<=1) then begin
+    goto LSaveTrans;
+  end;  
+  if (ReadFirstMain(oldTRp,2,true)==false) then begin
+    if (RecordInsert(TRp,false)) then begin
+    end;
+  end;
+LSaveTrans:;
+  RETURN;
+END;
+
+global
+procedure DeleteStockRowFromTransaction(record TRVc gTRp)
+begin
+  row TRVc gTRrw;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(gTRp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(gTRp,i,gTRrw);
+    if (gTRrw.ovst==0) then begin
+      if (gTRrw.Typ==kTransactionRowTypeStock) then begin
+        MatRowDelete(gTRp,i);
+        i = i - 1;
+        rwcnt = MatRowCnt(gTRp);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdateTrans_Stock(record TRVc TRp)
+begin
+  record TRVc nTRr;
+  record TRVc oldTRp;
+  Integer i,rwcnt;
+  row TRVc TRrw;
+
+  oldTRp.Number = TRp.Number;
+  oldTRp.IntYc = TRp.IntYc;
+  if (ReadFirstMain(oldTRp,2,true)) then begin
+    RecordCopy(nTRr,oldTRp);
+    RecordDelete(oldTRp);
+    
+    DeleteStockRowFromTransaction(nTRr);
+    
+    rwcnt = MatRowCnt(TRp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(TRp,i,TRrw);
+      MatRowPut(nTRr,MatRowCnt(nTRr),TRrw);
+//      MatRowInsert(nTRr,0,TRrw);
+    end;
+    if (CheckTrans(nTRr,2,false)=="") then begin end;
+    if (RecordInsert(nTRr,false)) then begin
+    end;
+  end;  
+LUpdateTrans_Stock:;
+  return;
+end;
+
+function
+Boolean CheckSim(var record SMVc SMp)
+BEGIN
+  Boolean res;
+  
+  res = true;
+  if (SMp.SerNr==-1) then begin res = false; end;
+  SMSumup(SMp);
+  CheckSim = res;
+  RETURN;
+END;
+
+global
+updating function Boolean SaveSim(record SMVc SMp)
+BEGIN
+  record SMVc oldSMp;
+  Boolean res;
+
+  RecordCopy(oldSMp,SMp);
+  if (CheckSim(SMp)==false) then begin goto LSaveSim; end;
+  if (ReadFirstMain(oldSMp,2,true)==false) then begin
+    if (RecordInsert(SMp,false)) then begin
+      res = true;
+    end;
+  end;
+LSaveSim:;
+  SaveSim = res;
+  RETURN;
+END;
+
+global
+updating procedure AddSM(record SMVc SMp,Boolean negf)
+BEGIN
+  Integer i;
+  row SMVc SMrw;
+  Integer rwcnt;
+  val dv,cv;
+  Date td;
+
+  rwcnt = MatRowCnt(SMp);
+  for (i = 0 ; i< rwcnt; i=i+1) begin
+    MatRowGet(SMp,i,SMrw);
+    if ((SMrw.RowSimStat==1) or (SMrw.RowSimStat==2)) then begin
+      goto LFOREND;
+    end;            
+    if (negf) then begin
+      dv = -SMrw.DebVal;
+      cv = -SMrw.CredVal;
+    end else begin
+      dv = SMrw.DebVal;
+      cv = SMrw.CredVal;
+    end;
+    td = SMp.TransDate;
+    if (nonblankdate(SMrw.TransDate)) then begin td = SMrw.TransDate; end;
+    UpdateBal(td,SMrw.AccNumber,SMrw.Objects,dv,cv,"simdebit",SMrw.VATCode,false);
+LFOREND:;
+  end;
+  RETURN;
+END;
+/*
+updating procedure LinkTR(record SMVc SMp,record TRVc TRp)
+BEGIN
+  record VIVc VIr;
+  record IVVc IVr;
+  record RLinkVc RLinkr;
+  Integer notenr;
+  Integer curcomp;
+
+  curcomp = CurrentCompany;    
+  notenr = 1;
+  while (ReadRecordLink(SMp,notenr,VIr,RLinkr)) begin
+    CreateRecordLink(VIr,curcomp,TRp,curcomp);  
+    notenr = notenr + 1;
+  end;
+  notenr = 1;
+  while (ReadRecordLink(SMp,notenr,IVr,RLinkr)) begin
+    CreateRecordLink(IVr,curcomp,TRp,curcomp);  
+    notenr = notenr + 1;
+  end;
+  RETURN;
+END;
+*/  
+
+updating procedure LinkTRtoVI(record SMVc SMp,record TRVc TRp)
+BEGIN
+  record VIVc VIr;
+  record IVVc IVr;
+  record RLinkVc RLinkr;
+  Integer notenr;
+  Integer curcomp;
+
+  curcomp = CurrentCompany;    
+  notenr = 1;
+  while (ReadRecordToLink(SMp,notenr,VIr,RLinkr)) begin
+    CreateRecordLink(VIr,curcomp,TRp,curcomp);  
+    notenr = notenr + 1;
+  end;
+  notenr = 1;
+  while (ReadRecordToLink(SMp,notenr,IVr,RLinkr)) begin
+    CreateRecordLink(IVr,curcomp,TRp,curcomp);  
+    notenr = notenr + 1;
+  end;
+  RETURN;
+END;
+
+global
+updating procedure SMBookTR2(record SMVc SMp,string objects,Date untildatp,Integer lmod,var LongInt trsernr,var Integer flushcnt,Boolean printf)
+BEGIN
+  record SRBlock SRRec;
+  record TRVc TRr;
+  row TRVc TRrw;
+  record SMVc theoldSMr;
+  record SMVc oldSMr;
+  row SMVc SMrw;
+  Integer i,rwcnt,trcnt;
+  LongInt newnr;
+  Boolean onemore,savesm,testf,allrowstransfered;
+  Date curdate;
+  val nilv;  
+  Date td;
+  val fr,to1,to2,br1,br2;
+  val nfr,nto1,nto2,nbr1,nbr2;
+  string 255 crncy;
+  Integer typeofcur,oldstyle;
+  record DBLockBlock DBLockb;
+
+  nilv = -1;
+  RecordCopy(oldSMr,SMp);
+  RecordCopy(theoldSMr,SMp);
+  TRr.IntYc = 0;
+  BlockLoad(SRRec);
+  BlockLoad(DBLockb);
+  curdate = CurrentDate;
+  savesm = false;
+LBEGINLOOP:;
+  allrowstransfered = true;
+  RecordClear(TRr);
+  TRr.TransDate = SMp.TransDate;
+  TRr.RegDate = curdate;
+  rwcnt = MatRowCnt(SMp);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(SMp,i,SMrw);
+    if (SMrw.RowSimStat==0) then begin
+      allrowstransfered = false;
+      if (nonblankdate(SMrw.TransDate)) then begin
+        TRr.TransDate = SMrw.TransDate;
+      end;
+      if ((TRr.TransDate<=untildatp) or (blankdate(untildatp))) then begin
+        i = rwcnt;
+      end;  
+    end;
+  end;
+  if ((TRr.TransDate>untildatp) and (nonblankdate(untildatp))) then begin
+    goto LENDLOOP;
+  end; 
+  if (allrowstransfered) then begin
+    goto LENDLOOP;
+  end;
+  if (nonblank(DBLockb.TRLock)) then begin 
+    if (TRr.TransDate<=DBLockb.TRLock) then begin
+      goto LENDLOOP;
+    end;  
+  end;
+  newnr = SRRec.LastTRNr;
+/*
+  if (gCurSlot>=0) then
+    if (appSlotArr[gCurSlot].LastTRNr!=BlankM4Long) then
+      newnr = appSlotArr[gCurSlot].LastTRNr;
+*/
+  if (lmod==0) then begin
+    TRr.Number = NextSerNr("TRVc",TRr.TransDate,-1,false,"");
+    if (TRr.Number==-1) then begin
+      Beep; //
+      goto LENDLOOP; // It needs to save the lines that managed to transfer... jumping out is BAD. LSMBookTR; //## somehow give an error message 
+    end;
+  end else begin
+/*  
+    if (trsernr==-1) then begin
+      trsernr = NextSerNr("TRVc",TRr.TransDate,-1,false,"");
+      TRr.Number = trsernr;
+    end else begin
+      trsernr = trsernr + 1;
+      TRr.Number = trsernr;
+    end;
+*/    
+  end;  
+  onemore = false;
+  TRr.Comment = SMp.Comment;
+  TRr.RefStr = SMp.RefStr;
+  trcnt = 0;
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(SMp,i,SMrw);
+    testf = true;
+//    if ((SMrw.RowSimStat==0) or (SMrw.RowSimStat==3) or (SMrw.RowSimStat==4)) then begin
+    if (SMrw.RowSimStat!=0) then begin testf = false; end;
+    if (nonblankdate(SMrw.TransDate)) then begin
+      if (SMrw.TransDate!=TRr.TransDate) then begin testf = false; end;
+    end else begin
+      if (SMp.TransDate!=TRr.TransDate) then begin testf = false; end;
+    end;
+    if (nonblank(objects)) then begin
+      if (SetInSet(SMrw.Objects,objects)==false) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      ClearRow(TRr,TRrw,1);
+      TRrw.stp = 1;
+      TRrw.ovst = 0;
+      TRrw.AccNumber = SMrw.AccNumber;
+      TRrw.Objects = SMrw.Objects;
+      TRrw.Comment = SMrw.Comment;
+      TRrw.VATCode = SMrw.VATCode;
+      td = SMrw.TransDate;
+      if (blankdate(td)) then begin
+        td = SMp.TransDate;
+      end;
+
+      SaveExchangeRate(SMrw.FrRate,SMrw.ToRateB1,SMrw.ToRateB2,SMrw.BaseRate1,SMrw.BaseRate2,fr,to1,to2,br1,br2);
+      crncy = SMrw.CurncyCode;
+      GetFullCurncyRate(crncy,td,nfr,nto1,nto2,nbr1,nbr2);
+//        if (OtherExchangeRate(nfr,nto1,nto2,nbr1,nbr2,fr,to1,to2,br1,br2)) then begin         
+      if (false) then begin         
+        TRrw.Curncy = crncy;
+        TRrw.FrRate = nfr;
+        TRrw.ToRateB1 = nto1;
+        TRrw.ToRateB2 = nto2;
+        TRrw.BaseRate1 = nbr1;
+        TRrw.BaseRate2 = nbr2;  
+        typeofcur = TypeOfCurncy(crncy,oldstyle);   
+        switch (typeofcur) begin
+          case 0://Foreign
+            TRrw.CurCredVal = SMrw.CurCredVal;
+            TRrw.CurDebVal = SMrw.CurDebVal;
+            TRrw.CredVal = MulRateToBase1(TRrw.Curncy,SMrw.CurCredVal,TRrw.FrRate,TRrw.ToRateB1,TRrw.ToRateB2,TRrw.BaseRate1,TRrw.BaseRate2,DefaultCurRoundOff);
+            TRrw.DebVal = MulRateToBase1(TRrw.Curncy,SMrw.CurDebVal,TRrw.FrRate,TRrw.ToRateB1,TRrw.ToRateB2,TRrw.BaseRate1,TRrw.BaseRate2,DefaultCurRoundOff);
+            TRrw.CredVal2 = MulRateToBase2(TRrw.Curncy,SMrw.CurCredVal,TRrw.FrRate,TRrw.ToRateB1,TRrw.ToRateB2,TRrw.BaseRate1,TRrw.BaseRate2,DefaultCurRoundOff);
+            TRrw.DebVal2 = MulRateToBase2(TRrw.Curncy,SMrw.CurDebVal,TRrw.FrRate,TRrw.ToRateB1,TRrw.ToRateB2,TRrw.BaseRate1,TRrw.BaseRate2,DefaultCurRoundOff);
+          case 1://Base Curncy 1 
+            TRrw.DebVal = SMrw.DebVal;
+            TRrw.CredVal = SMrw.CredVal;
+            TRrw.DebVal2 = SMrw.DebVal2;
+            TRrw.CredVal2 = SMrw.CredVal2;
+            TRrw.CurCredVal = SMrw.CurCredVal;
+            TRrw.CurDebVal = SMrw.CurDebVal;
+          case 2://Base Curncy 2
+            TRrw.DebVal2 = SMrw.DebVal2;
+            TRrw.CredVal2 = SMrw.CredVal2;
+            TRrw.CredVal = MulRateToBase1(TRrw.Curncy,SMrw.CredVal2,TRrw.FrRate,TRrw.ToRateB1,TRrw.ToRateB2,TRrw.BaseRate1,TRrw.BaseRate2,DefaultCurRoundOff);
+            TRrw.DebVal = MulRateToBase1(TRrw.Curncy,SMrw.DebVal2,TRrw.FrRate,TRrw.ToRateB1,TRrw.ToRateB2,TRrw.BaseRate1,TRrw.BaseRate2,DefaultCurRoundOff);
+          case 3://Blank Currency, old style 
+            TRrw.DebVal = SMrw.DebVal;
+            TRrw.CredVal = SMrw.CredVal;
+        end;
+      end else begin
+        TRrw.Curncy = SMrw.CurncyCode;
+        TRrw.FrRate = SMrw.FrRate;
+        TRrw.ToRateB1 = SMrw.ToRateB1;
+        TRrw.ToRateB2 = SMrw.ToRateB2;
+        TRrw.BaseRate1 = SMrw.BaseRate1;
+        TRrw.BaseRate2 = SMrw.BaseRate2;
+
+        TRrw.DebVal = SMrw.DebVal;
+        TRrw.CredVal = SMrw.CredVal;
+        TRrw.DebVal2 = SMrw.DebVal2;
+        TRrw.CredVal2 = SMrw.CredVal2;
+        TRrw.CurCredVal = SMrw.CurCredVal;
+        TRrw.CurDebVal = SMrw.CurDebVal;
+        if (TRrw.DebVal2==0) then begin
+          TRrw.DebVal2 = MulWithRateToBase2(TRrw.Curncy,TRr.TransDate,TRrw.DebVal,DefaultCurRoundOff);          
+          if (TRrw.DebVal2==0) then begin
+            TRrw.DebVal2 = blankval;
+          end;
+        end;
+        if (TRrw.CredVal2==0) then begin
+          TRrw.CredVal2 = MulWithRateToBase2(TRrw.Curncy,TRr.TransDate,TRrw.CredVal,DefaultCurRoundOff);
+          if (TRrw.CredVal2==0) then begin
+            TRrw.CredVal2 = blankval;
+          end;
+        end;
+      end;        
+      MatRowPut(TRr,trcnt,TRrw);
+      trcnt = trcnt + 1;
+      SMrw.RowSimStat = 1;
+      MatRowPut(SMp,i,SMrw);
+      savesm = true;
+    end else begin
+      onemore = true;
+    end;
+  end;
+  if (trcnt>0) then begin
+    TRSumup(TRr,nilv);
+    if (lmod==0) then begin  
+      TRr.FileName = "SMVc";
+      TRr.TransNr = SMp.SerNr;
+      SaveTrans(TRr);
+      LinkTRtoVI(SMp,TRr);
+      CheckFlush(flushcnt,10);
+    end else begin
+      if (trsernr==-1) then begin
+        trsernr = NextSerNr("TRVc",TRr.TransDate,-1,false,"");
+        TRr.Number = trsernr;
+      end else begin
+        trsernr = trsernr + 1;
+        TRr.Number = trsernr;
+      end;
+    end;  
+    if (printf) then begin    
+      PrintTRRecord(TRr,0); 
+    end;
+  end;
+  if (onemore) then begin
+    if (lmod==0) then begin  
+//      if (RecordUpdate(oldSMr,SMp,false)==0) then begin
+//        AddSM(oldSMr,true);//cannot uodate here cause it goeas through all lines always
+//        AddSM(SMp,false);//cannot uodate here cause it goeas through all lines always
+//      end;
+//      CheckFlush(flushcnt,10);
+    end;  
+    goto LBEGINLOOP;
+  end;
+LENDLOOP:;
+  if (savesm) then begin
+    if (lmod==0) then begin  
+      if (RecordUpdate(oldSMr,SMp,false)==0) then begin
+        AddSM(oldSMr,true);
+        AddSM(SMp,false);
+      end;
+      CheckFlush(flushcnt,10);
+    end;      
+  end;
+LSMBookTR:;
+  return;
+END;
+
+global
+updating procedure SMBookTR(record SMVc SMp,string objects,Date untildatp,Integer lmod,var LongInt trsernr,var Integer flushcnt)
+begin
+  
+  SMBookTR2(SMp,objects,untildatp,lmod,trsernr,flushcnt,true);
+  
+  return;
+end;
+
+function Date SimLastDay(record SMVc SMr)
+begin
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Date res;
+  
+  res = SMr.TransDate;
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+//    if ((SMrw.RowSimStat==0) or (SMrw.RowSimStat==3) or (SMrw.RowSimStat==4)) then begin//Anabela says
+    if (SMrw.RowSimStat==0) then begin
+      if (nonblankdate(SMrw.TransDate)) then begin
+        if (SMrw.TransDate>res) then begin
+          res = SMrw.TransDate;
+        end;
+      end;
+    end;
+  end;
+  SimLastDay = res;
+  return;
+end;
+
+global
+updating procedure GenPerTRMn(record RcVc RepSpec)
+BEGIN
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Boolean TrHs, testf;
+  LongInt frsm,tosm,trsernr;
+  Integer flushcnt;
+  
+  frsm = FirstInRange(RepSpec.f1,10);
+  tosm = LastInRange(RepSpec.f1,10);
+  SMr.SerNr = frsm; 
+  SMr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",SMr,2,TrHs)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (SMr.SerNr<frsm) then begin TrHs = false; end;
+      if (SMr.SerNr>tosm) then begin TrHs = false; end;
+    end;
+    testf = true;
+    if (TrHs==false) then begin testf = false; end;
+    if (SimLastDay(SMr)<RepSpec.sStartDate) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      testf = false;
+      rwcnt = MatRowCnt(SMr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(SMr,i,SMrw);
+        if (SMrw.RowSimStat==0) then begin
+          testf = true;
+          i = rwcnt;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      if (nonblank(RepSpec.ObjStr)) then begin
+        testf = false;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(SMr,i,SMrw);
+          if (SetInSet(SMrw.Objects,RepSpec.ObjStr)) then begin
+            testf = true;
+            i = rwcnt;
+          end;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      SMBookTR2(SMr,RepSpec.ObjStr,RepSpec.d1,0,trsernr,flushcnt,false);
+    end;
+  end;
+  RETURN;
+END;

@@ -1,0 +1,688 @@
+external function boolean IsDocNumPPR(string);
+external function roundmode GetVATRoundMode(record RoundBlock);
+external function roundmode GetTotalRoundMode(record RoundBlock);
+external function roundmode SetRoundModeD(Integer);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure FindPurchVATAccs(string,var string, var string);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external procedure GetFullCurncyRate(var string,Date,var val,var val,var val,var val,var val);
+external procedure getcurrentrate(record RcVc,record BaseCurBlock,string,val,val,val,string,var val, var val);
+external procedure GetVECurrncyVal(record RcVc,string ,date,val,var val,var string );
+external procedure getcurrentrate(record RcVc,record BaseCurBlock,string,val,val,val,string,var val, var val);
+external function val FindValFromVAT(string,val);
+external function val GetVIPayVal(record VIVc,integer);
+external function val AbsoluteVal(val);
+// This function already exists and it checks for CurncyCode instead of DutiesCode.
+// If I knew that we wanted DutiesCode and which functions that wanted that, I would keep it...but I don't
+/*
+global 
+procedure GetVECurrncyVal(string vecode,date td,val bval,var val cval,var string ccode)
+begin
+  val frrate,torate,torate2,br1,br2;
+  record CUVc Ver;
+  record CountryVc Countryr;
+  
+  Ver.Code = vecode;
+  if (Readfirstmain(VEr,1,true)) then begin
+    Countryr.Code = Ver.CountryCode;
+    if (readfirstmain(Countryr,1,true)) then begin
+      if (nonblank(Countryr.DutiesCodes)) then begin
+        ccode = Countryr.DutiesCodes;
+        GetFullCurncyRate(ccode,td,frrate,torate,torate2,br1,br2);
+        cval = DivRateToBase1(ccode,bval,frrate,torate,torate2,br1,br2,1);
+        
+      end;
+    end;
+  end;
+return;
+end;
+*/
+// Same as above...
+/*
+global
+function val FindValFromVAT(string VATCode,val vat)
+begin
+  record VATCodeBlock VATCodebl;
+  row VATCodeBlock VATCoderw;
+  val res;
+  integer rwc,rw;
+  BlockLoad(VATCodebl);
+  rwc = MAtrowCnt(VATCodebl);
+  for (rw = 0; rw < rwc; rw  = rw+1) begin
+    MatRowGet(VATCodebl,rw,VATCoderw);
+    if (VATCoderw.VATCode==VATCode) then begin
+      res = 100 * vat / VATCoderw.ExVatpr;
+    end; 
+  end;
+  FindValFromVAT = res;
+  return;
+end;
+*/
+
+// Function names should NEVER be with small characters only, better name would be GetCurrentRate, or as this is only used for you, perhaps PLVATGetCurRate.
+// Same as above
+/*
+global
+procedure getcurrentrate(record RcVc RepSpec,record BaseCurBlock bcb,string curncyCode,val FrRate,val ToRateB1,val ToRateB2,string transdate,var val newfrRate, var val newtorate)
+begin
+  record ERVc ERr;
+  boolean TrHs;
+  val to2,br1,br2;
+  newfrrate = 1;
+  newtorate = 1;
+  if (CurncyCode != bcb.BaseCur1) and RepSpec.basecurncy == 0 then begin
+    if (blank(ToRateB1) or torateb1 == 0) then begin  
+      resetloop(ERr);
+      GetFullCurncyRate(CurncyCode,TransDate,newfrrate,newtorate,to2,br1,br2);
+    end
+    else begin
+      newtorate = ToRateB1;
+      newfrrate = FrRate;
+    end;
+  end;
+  if (CurncyCode != bcb.BaseCur2 and RepSpec.basecurncy ==1 ) then  begin
+    if (blank(ToRateB2) or torateb2==0) then begin  
+      GetFullCurncyRate(CurncyCode,TransDate,newfrrate,to2,newtorate,br1,br2);
+    end
+    else begin
+      newtorate = ToRateB2;
+      newfrrate = FrRate;
+    end;
+  end;
+  return;
+end;
+*/
+procedure StripSpaces(string source,var string res)
+begin
+  integer i,l;
+  boolean testf;
+  l = len(source);
+  for (i = 0; i < l; i= i +1) begin
+    testf = true;
+    if (mid(source,i,1)==" ") then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      res = res & mid(source,i,1);
+    end;
+  end;
+return;
+end;
+
+function string 20 StripDigits(string src)
+begin
+  integer l,i;
+  string 255 res;
+  l = len(src);
+  for (i = 0; i < l; i = i + 1) begin
+    if not ((mid(src,i,1)<="9" and mid(src,i,1)>="0") or mid(src,i,1)==" ") then begin
+      res = res & mid(src,i,1);
+    end;
+  end;
+  StripDigits = res;
+return;
+end;
+
+function string 255 LatStripNonChars(string passed)
+begin
+  string 1 c;
+  string 255 res;
+  integer i;
+  
+  res = "";
+  
+  for (i = 0; i < len(passed); i=i+1) begin
+    c = mid(passed,i,1);
+    if (UpperCase(c) >= "A" and UpperCase(c) <= "Z") then begin
+      res = res & c;
+    end;
+  end;
+
+  LatStripNonChars = res;
+  return;
+end;
+
+global
+procedure SeperateSerAndNr(string passedstr, var string ser, var string nr)
+begin
+  integer i, start, step, fin;
+  string 255 passed;
+  boolean endloop;
+  
+  endloop = false;
+  ser = "";
+  nr = "";
+  passed = UpperCase(passedstr);
+
+  step = 0;
+
+  if (left(passed,1) >= "A" and left(passed,1) <= "Z") then begin // ser in beginning
+    start = -1;
+    step = 1;
+    fin = len(passed);
+  end else begin
+    if (right(passed,1) >= "A" and right(passed,1) <= "Z") then begin // ser in end
+      start = len(passed) + 1;
+      fin = -1;
+      step = -1;
+    end;  
+  end;
+
+  if (step != 0) then begin
+    i = start;
+    while (i != fin and !endloop) begin
+      i = i + step;
+      if (mid(passed,i,1) >= "0" and mid(passed,i,1) <= "9") then begin
+        endloop = true;
+      end else begin
+        ser = ser & mid(passed,i,1);
+      end;
+    end;
+  
+    if (step = -1) then begin
+      nr = right(passed,len(passed)-i);
+    end else begin
+      nr = left(passed,i);
+    end;
+  end else begin
+    nr = passed;
+  end;
+
+  return;
+end;
+  
+global
+procedure GetVIInvXML(record TRVc TRr,
+                      record RcVc RepSpec, 
+                      record BaseCurBlock bcb,
+                      integer Trrownr,
+                      string vatcode,
+                      var string supp,
+                      var string rcode,
+                      var string docnr,
+                      var string docnr2,
+                      var string docdate,
+                      var val payvat,
+                      var val paysum,
+                      var val curpaysum,
+                      var string curcode,
+                      var string country)
+begin
+  record VATCodeBLock VATCodebl;
+  record VIVc Vir;
+  record CUVc VEr;
+  record VATBlock VATbl;
+  row VIVc Virw;
+  row TRVc TRrw;
+  row VATCodeBlock VATCoderw;
+  integer r,rwcnt;
+  integer rwc,rw,i;
+  val fromrate,torate;
+  boolean testf;
+  boolean showf,custf;
+  
+  custf = false;
+  supp ="";
+  rcode = "";
+  docdate = "";
+  docnr = "";
+  blockLoad(VATCodebl);
+  matrowget(TRr,Trrownr,TRrw);
+  VIr.SerNr = TRr.Number;  
+  testf = ReadFirstMain(VIr,1,true); 
+  VEr.Code = VIr.VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+    supp = VEr.Name;//--------
+    StripSpaces(VEr.VATNr,rcode);
+    country = Ver.CountryCode;
+  end;
+  
+  docdate = VIr.InvDate;
+  if (vir.ExportFlag<>0) then begin
+    docnr2 = VIr.InvoiceNr;//numurs
+  end else begin
+    if (left(UpperCase(VIr.InvoiceNr),4) == "AKTS") then begin
+      docnr = "AKTS";
+      docnr2 = Trim(right(VIr.InvoiceNr,len(VIr.InvoiceNr)-4));
+    end else begin
+      if (IsDocNumPPR(VIr.InvoiceNr)) then begin
+        SeperateSerAndNr(VIr.InvoiceNr,docnr,docnr2);
+      end else begin
+        docnr2 = VIr.InvoiceNr;
+      end;
+    end;
+//    docnr = StripDigits(VIr.InvoiceNr);
+//    docnr2 = StripnonDigits(VIr.InvoiceNr);
+    //docnr2 = VIr.InvoiceNr;
+    //docnr = Vir.BarCode;
+  end;
+  getcurrentrate(RepSpec,bcb,VIr.CurncyCode,Vir.FrRate,Vir.ToRateB1,Vir.ToRateB2,VIr.TransDate,fromRate,ToRate);
+
+/*
+  if (Vir.InvType ==3) then begin
+    payvat = -Vir.CalcVATVal / fromrate * torate;
+    if (Vir.ExportFlag==0) then begin
+      paysum = (-Vir.PayVal+Vir.CalcVATVal) / fromrate * torate;
+    end else begin
+      paysum = (-Vir.PayVal) / fromrate * torate;
+    end;
+  end else begin
+    payvat = Vir.CalcVATVal / fromrate * torate;
+    if (Vir.ExportFlag==0) then begin
+      paysum = (Vir.PayVal-Vir.CalcVATVal) / fromrate * torate;
+    end else begin
+      paysum = (Vir.PayVal) / fromrate * torate;
+    end;
+  end;
+*/
+  payvat = 0;
+  rwc = matrowcnt(Trr);
+  for (rw = rw;rw <rwc;rw = rw+1) begin
+    MatRowGet(TRr,rw,TRrw);
+    rwcnt = matrowcnt(VATCodeBl);
+    showf = false;
+    for (i = 0;i < rwcnt; i = i + 1) begin
+      Matrowget(VATCodebl,i,VATCoderw);
+      if (SetInSet(VATCoderw.VATCode,RepSPec.f1)==false) or blank(RepSpec.f1) then begin
+        if (custf==false) then begin
+          if setinset(TRrw.AccNumber,VATbl.VATCustomsAcc)==false and 
+                ((TRrw.AccNumber == VATCoderw.PurchVATAcc and blank(VATCoderw.PayPurchVATAcc) or TRrw.AccNumber == VATCoderw.PayPurchVATAcc)) then begin
+            i = rwcnt;
+            showf = true;            
+          end;
+        end else begin
+          if setinset(TRrw.AccNumber,VATbl.VATCustomsAcc) then begin
+            i = rwcnt;
+            showf = true;            
+          end;
+        end;
+      end;
+    end;
+    if (showf) then begin
+      payvat = payvat + TRrw.DebVal-TRrw.CredVal;
+    end;
+  end;
+  payvat = round(payvat,SetRoundModeD(2));
+  if (Vir.ExportFlag==0) then begin
+//    paysum = (Vir.PayVal-Vir.VATVal) / fromrate * torate;
+    paysum = GetVIPayVal(VIr,0) / fromrate * torate;
+  end else begin
+//    paysum = (Vir.PayVal) / fromrate * torate;
+    paysum = (Vir.PayVal) / fromrate * torate;
+  end;
+  if (Vir.InvType==3 and RepSpec.flags[21]<>1) then begin
+    payvat = 0;
+    paysum = 0;
+  end;
+  GetVECurrncyVal(RepSpec,VEr.Code,docdate,paysum,curpaysum,curcode);    
+  return;
+end;
+ 
+ 
+function val GetVIRatio(record ViVc Vir,val opval)
+begin
+  val res;
+  row VIVC Virw;
+  integer rw,rwc;
+  rwc = matrowcnt(Vir);
+  res = Vir.PayVal;
+  GetVIRatio = res / opval;
+return;
+end;
+
+
+global
+procedure GetXMLOP(record TRVc TRr,record RcVc RepSpec,
+                       record BaseCurBlock bcb,
+                       string vatcode,
+                       integer TrRwnr,
+                       var val payvat2,
+                       var val paysum2,
+                       var val totvat, 
+                       var val mintot, 
+                       var val minvat,
+                       var integer num,
+                       array string col0,
+                       array string col1,
+                       array string col2,
+                       array string col3,
+                       array string col4,
+                       array string col5,
+                       array string col6,
+                       array string col7,
+                       array string col8,
+                       array string col9,
+                       var integer size)
+begin
+  record VATCodeBlock VATCodebl;
+  record VATBlock VATbl;
+  record VIVc VIr;
+  record OPVc OPr;
+  record CUVc VEr;
+  row TRVc TRrw;
+  row VATCodeBlock VATCoderw;
+  row OPVc OPrw;
+  row VIVc VIrw;
+  boolean testf;
+  boolean showf;
+  integer rwc,rw,rwcnt,r,i;
+  val paysum,payvat;
+  string 50 supp;
+  string 20 rcode;
+  string 10 docdate;
+  string 50 docnr;
+  string 100 tstr;
+  val fromrate,torate,ratio,ratio2;
+  string 20 vatacc1,vatacc2;
+  
+  blockLoad(VATCodebl);
+  blockLoad(VATbl);
+ 
+  MatrowGet(TRr,TrRwnr,TRRw);
+  OPr.SerNr = TRr.Number;
+  testf = ReadFirstMain(OPr,1,true);
+  rwc = MatRowCnt(OPr);
+  minvat = 0;
+  mintot = 0;
+  paysum2 = 0;
+  payvat2 = 0;
+  for (rw = 0;rw<rwc;rw = rw+1) begin
+    matrowget(OPr,rw,OPrw);
+    VEr.Code = OPrw.VECode;           
+    if (readFirstMain(VEr,1,true)) then  begin
+      supp = VEr.Name;
+      rcode = VEr.VATNr;
+    end
+    else begin
+      supp = "";
+      rcode = "";
+    end;
+    testf = true;
+    fromrate = 1;
+    torate = 1;
+    payvat = 0;
+    paysum = 0;
+    Vir.SerNr = OPrw.VISerNr;
+    testf = readfirstmain(Vir,1,true);
+    ratio = 1;
+    ratio2 = 1;
+    if (nonblank(OPrw.VISerNr)) then begin
+      getcurrentrate(RepSpec,bcb,OPrw.RecCurncy,0,0,0,VIr.TransDate,fromRate,ToRate);
+      ratio = GetVIRatio(Vir,Oprw.RecVal);
+      ratio2 = GetVIRatio(Vir,Oprw.RecVal);
+    end else begin
+      getcurrentrate(RepSpec,bcb,OPrw.RecCurncy,0,0,0,OPr.TransDate,fromRate,ToRate);
+    end;
+
+    if (testf) then begin
+      rwcnt = matrowcnt(Vir);
+      for (i = 0; i <rwcnt; i = i + 1) begin
+        matrowget(Vir,i,VIrw);
+        if (Virw.stp==1) then begin
+          if (SetInSet(Virw.VATCode,RepSPec.f1)==false) or blank(RepSPec.f1) then begin
+            FindPurchVATAccs(Virw.VATCode,vatacc1,vatacc2);
+            if (vatacc2<>"") then begin
+              payvat = payvat + FindVAT(VIrw.VATCode,Virw.Sum,0,0);
+              paysum = paysum + Virw.Sum;
+            end;
+          end;
+        end;
+      end;
+      payvat = payvat / fromrate * torate;
+      paysum = paysum / fromrate * torate;      
+      payvat = payvat / ratio;
+      paysum = paysum / ratio2;
+      payvat = round(payvat,SetRoundModeD(2));
+      paysum = round(paysum,SetRoundModeD(2));
+      docdate = Vir.TransDate;
+    end else begin
+      docdate = OPr.TransDate;
+      payvat = Oprw.VATVal / fromrate * torate;
+//      paysum = OPrw.RecVal / fromrate * torate;
+      paysum = (OPrw.RecVal - OPrw.VATVal) / fromrate * torate; // excl. VAT
+      payvat = round(payvat,SetRoundModeD(2));
+      paysum = round(paysum,SetRoundModeD(2));
+    end;
+    showf = true;
+    if (payvat <> 0) then begin
+      payvat2 = payvat2 + payvat;
+      paysum2 = paysum2 + paysum;
+      if (AbsoluteVal(paysum) < AbsoluteVal(RepSpec.vals0) and nonblank(RepSpec.vals0)) then begin
+        minvat = minvat + payvat;
+        mintot = mintot + paysum;
+        showf = false;
+      end;
+      if (showf) then begin
+        col0[size] = num;
+        col1[size] = left(rcode,2);
+        col2[size] = right(rcode,len(rcode)-2);
+        col3[size] = left(supp,120);
+        col4[size] = valtostring(round(paysum,SetRoundModeD(2)),M4Val,"",",",0);          
+        col5[size] = valtostring(round(payvat,SetRoundModeD(2)),M4Val,"",",",0);
+//        col6[size] = "3";
+        col7[size] = "";
+//        col8[size] = OPr.SerNr;
+//        col9[size] = DatetoString(docdate,"DD.MM.YYYY");        
+        if (RepSpec.flags[11] != 0) then begin // KSO
+          if (OPrw.VISerNr != blankval and OPrw.VISerNr != -1) then begin
+            col8[size] = OPrw.VISerNr;
+            col9[size] = DateToString(VIr.TransDate,"DD.MM.YYYY");
+            col8[size] = VIr.InvoiceNr;
+            if (IsDocNumPPR(VIr.InvoiceNr)) then begin
+              col6[size] = "2";
+            end else begin
+              col6[size] = "6";
+            end;
+          end else begin
+            col6[size] = "3";
+            col8[size] = OPr.SerNr;
+            col9[size] = DatetoString(docdate,"DD.MM.YYYY");        
+          end;
+        end else begin
+          col6[size] = "3";
+          col8[size] = OPr.SerNr;
+          col9[size] = DatetoString(docdate,"DD.MM.YYYY");        
+        end; // end KSO
+        size = size +1;
+        num = num + 1;
+      end;        
+    end;
+  end;
+  return;
+end;
+
+
+
+
+global
+procedure GetXMLExpVc(record TRVc TRr,record RcVc RepSpec,
+                       record BaseCurBlock bcb,
+                       string vatcode,
+                       integer TrRwnr,
+                       var val payvat2,
+                       var val paysum2,
+                       var val totvat, 
+                       var val mintot, 
+                       var val minvat,
+                       var integer num,
+                       array string col0,
+                       array string col1,
+                       array string col2,
+                       array string col3,
+                       array string col4,
+                       array string col5,
+                       array string col6,
+                       array string col7,
+                       array string col8,
+                       array string col9,
+                       var integer size)
+begin
+
+  record VATCodeBlock VATCodebl;
+  record CUVc VEr;
+  record ExpVc Expr;
+  record VATBlock VATbl;
+  row ExpVc Exprw;
+  row VATCodeBlock VATCoderw;
+  row TRVc TRrw;
+  boolean testf;
+  boolean showf;
+  boolean payf;
+  integer rwc,rw;
+  integer rwcnt,r;
+  val fromrate,torate;
+  val paysum, payvat;
+  string 10 prevvatcode;
+  
+  BlockLoad(VATbl);
+  blockLoad(VATCodebl);
+  payvat2 = 0;
+  paysum2 = 0;
+  minvat = 0;
+  mintot = 0;
+  fromrate = 1;
+  torate = 1;
+  Expr.SerNr = TRr.Number;
+  testf = ReadFirstMain(Expr,1,true);
+  getcurrentrate(RepSpec,bcb,Expr.CurncyCode,Expr.FrRate,Expr.ToRateB1,Expr.ToRateB2,Expr.TransDate,fromRate,ToRate);
+
+  rwc = MatrowCnt(Expr);
+  for (rw = 0; rw < rwc; rw=rw+1) begin
+    matrowGet(Expr,rw,Exprw);
+    rwcnt = Matrowcnt(VATCodebl);
+    if (exprw.VATSum>0) then begin
+      payvat = Exprw.VATSum;
+      paysum = Exprw.Sum - Exprw.VATSum;
+     
+      payvat = payvat * torate / fromrate;
+      paysum = paysum * torate / fromrate;
+   
+      payvat2 = payvat2 + payvat;
+      paysum2 = paysum2 + paysum;
+ 
+      showf = true;
+      if (AbsoluteVal(paysum) < AbsoluteVal(RepSpec.vals0) and nonblank(RepSpec.vals0)) then begin
+        minvat = minvat + payvat;
+        mintot = mintot + paysum;
+        showf  = false;
+      end;
+      if (showf) then begin  
+        VEr.Code = Exprw.VECode;
+        if (readfirstMain(VEr,1,true)) then begin
+          col1[size] = left(Ver.VATNr,2);
+          col2[size] = right(Ver.VATNr,len(Ver.VATNr)-2);
+          col3[size] = left(Ver.Name,120);
+        end;
+        col0[size] = num;
+        col4[size] = valtostring(round(paysum,SetRoundModeD(2)),M4Val,"",",",0);          
+        col5[size] = valtostring(round(payvat,SetRoundModeD(2)),M4Val,"",",",0);
+        col6[size] = "4";
+        col7[size] = "";
+        
+        col8[size] = Exprw.DocNr;
+        if (Exprw.DocNr =="") then begin
+        col8[size] = Exprw.Identifier;
+        
+        end;
+        col9[size] = DatetoString(Expr.TransDate,"DD.MM.YYYY");
+        size = size + 1;
+        //totvat = totvat + payvat;
+
+        num = num + 1;
+      end;
+    end;
+  end;
+  return;
+end;       
+
+
+global
+procedure GetXMLCredIVVc(record TRVc TRr,record RcVc RepSpec,integer rw,var string supp,var string rcode,var string docnr,var string docdate,var val payvat,var val paysum)
+begin
+  record IVVc CredIVr;
+  record CUVc CUr;
+  record IVVc IVr;
+  row VATcodeBlock VATCoderw;
+  row TRVc TRrw;
+  row IVVc IVrw;
+  boolean testf;
+  boolean showf;
+  integer rwc,r,rwcnt,i;
+  record RoundBlock Rb;
+  
+  BlockLoad(Rb);
+  IVr.SerNr = TRr.Number;
+  testf = readfirstmain(IVr,1,true);
+  CUr.Code = IVr.CustCode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    supp = CUr.Name;
+    rcode = CUr.VATNr;  
+  end
+  else begin
+    supp ="";
+    rcode = "";
+  end;      
+  paysum = 0;
+  payvat = 0;
+  docdate = IVr.InvDate;
+  docnr = IVr.SerNr;
+  if (Ivr.InvType ==3) then begin
+    matrowget(IVr,0,IVrw);
+    credIVr.SerNr = IVrw.OrdRow;
+    if (readfirstmain(credIVr,1,true)) then begin
+      if (repSpec.basecurncy==0) then begin
+        payvat = MulRateToBase1(IVr.CurncyCode,Ivr.Sum3,credIVr.FrRate,credIVr.ToRateB1,credIVr.ToRateB2,credIVr.BaseRate1,credIVr.BaseRate2,GetVATRoundMode(Rb));
+        paysum = MulRateToBase1(IVr.CurncyCode,Ivr.Sum1,credIVr.FrRate,credIVr.ToRateB1,credIVr.ToRateB2,credIVr.BaseRate1,credIVr.BaseRate2,GetTotalRoundMode(Rb));
+      end else begin
+        payvat = MulRateToBase2(IVr.CurncyCode,Ivr.Sum3,credIVr.FrRate,credIVr.ToRateB1,credIVr.ToRateB2,credIVr.BaseRate1,credIVr.BaseRate2,GetVATRoundMode(Rb));
+        paysum = MulRateToBase2(IVr.CurncyCode,Ivr.Sum1,credIVr.FrRate,credIVr.ToRateB1,credIVr.ToRateB2,credIVr.BaseRate1,credIVr.BaseRate2,GetTotalRoundMode(Rb));
+      end; 
+    end else begin
+      if (repSpec.basecurncy==0) then begin
+        payvat = MulRateToBase1(IVr.CurncyCode,Ivr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,GetVATRoundMode(Rb));
+        paysum = MulRateToBase1(IVr.CurncyCode,Ivr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,GetTotalRoundMode(Rb));
+      end else begin
+        payvat = MulRateToBase2(IVr.CurncyCode,Ivr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,GetVATRoundMode(Rb));
+        paysum = MulRateToBase2(IVr.CurncyCode,Ivr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,GetTotalRoundMode(Rb));
+      end; 
+    end;
+  end;
+  
+  return;
+end;
+
+
+global
+procedure GetXMLCLOut(record TRVc TRr,record RcVc RepSpec,integer rw,val vatproc,var string supp, var string rcode,var string docnr,var string docdate,var val payvat,var val paysum)
+begin
+  record CLOutVc CLOutr;
+  record CUVc VEr;
+  row TRVc TRrw;
+  boolean testf;
+  boolean TrHs;
+  
+  CLOutr.SerNr = TRr.Number;
+  testf = readFirstmain(CLOutr,1,true);
+  docnr = CLOutr.Comment;
+  docdate = TRr.TransDate;
+  VEr.Code = CLOutr.CUCode;
+  matrowget(TRr,rw,TRrw);
+  if (readFirstMain(VEr,1,true))then begin
+    supp = VEr.Name;
+    rcode = VEr.VATNr;           
+  end
+  else begin
+    supp ="";
+    rcode = "";
+  end;
+  if (repSpec.basecurncy==0) then begin
+    payvat = TRrw.DebVal ;
+  end
+  else begin
+    payvat = TRrw.DebVal2;
+  end;
+  paysum = payvat * 100 / vatproc;     
+  return;
+end;

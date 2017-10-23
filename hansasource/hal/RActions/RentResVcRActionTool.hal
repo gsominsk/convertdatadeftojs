@@ -1,0 +1,305 @@
+external function LongInt DateDiff(Date,Date);
+external function LongInt DateM42Days(Date);
+
+function Boolean TestInsideRentRes(date dp,time tp,record RentResVc RentResp)
+begin
+  Boolean res;
+  
+  res = false;
+  if (dp<RentResp.TransDate) then begin goto LTestInsideRentRes; end;
+  if (dp>RentResp.EndDate) then begin goto LTestInsideRentRes; end;
+//  if (TimeComp(tp,RentResp.StartTime)<0) then begin goto LTestInsideRentRes; end;
+//  if (TimeComp(tp,RentResp.EndTime)<0) then begin goto LTestInsideRentRes; end;
+  if (tp<=RentResp.StartTime) then begin goto LTestInsideRentRes; end;
+  if (tp>=RentResp.EndTime) then begin goto LTestInsideRentRes; end;
+  res = true;
+LTestInsideRentRes:;
+  TestInsideRentRes = res;
+  return;
+end;
+
+/* This compare if the dates between the startdate and enddate is anywhere inside the startdate and enddate of the comparing RentRes */
+function Boolean DateRangeInsideRentRes(date sp,date ep,record RentResVc RentResp)
+begin
+  Boolean res;
+  LongInt fr,to,i;
+  LongInt compfr,compto;
+  
+  res = false;
+  fr = DateM42Days(sp);
+  to = DateM42Days(ep);
+  compfr = DateM42Days(RentResp.TransDate);
+  compto = DateM42Days(RentResp.EndDate);
+  for (i=fr;i<=to;i=i+1) begin
+    if ((i>=compfr) and (i<=compto)) then begin
+      res = true;
+      i = to;
+    end;
+  end;
+  DateRangeInsideRentRes = res;
+  return;
+end;
+
+global
+function Boolean CheckDblRentRes(record RentResVc aRentResp)
+begin
+  Boolean bres;
+  record RentResBookVc RentResp;
+  record RentControlBlock RentControlr;
+  Boolean TrHs;
+  Boolean testf;
+  LongInt daycnt;
+  LongInt ddif;
+  Integer lenclass;
+  LongInt maxdays;
+  date bldat;
+  
+  BlockLoad(RentControlr);
+  bres = false;
+  daycnt = 0;
+  maxdays = DateDiff(aRentResp.EndDate,aRentResp.TransDate);
+  if (blankdate(aRentResp.EndDate)) then begin
+    maxdays = 999999999;
+  end;
+  if (blank(aRentResp.Code)) then begin
+    goto LCheckDblRentRes99;
+  end;
+  lenclass = 4;
+LCheckDblRentRes22:;
+  RentResp.Code = aRentResp.Code;
+  RentResp.SerialNr = aRentResp.SerialNr;
+  RentResp.LengthClass = lenclass;
+  RentResp.TransDate = aRentResp.TransDate;
+  switch (lenclass) begin
+    case 4:
+      RentResp.TransDate = bldat;
+    case 3: 
+      RentResp.TransDate = AddDay(RentResp.TransDate,-366);
+    case 2:
+      RentResp.TransDate = AddDay(RentResp.TransDate,-31);
+    case 1:
+      RentResp.TransDate = AddDay(RentResp.TransDate,-7);
+  end;
+  TrHs = true;
+  ResetLoop(RentResp);
+  while (LoopKey("AgreeStartTime",RentResp,4,TrHs)) begin
+    ddif = DateDiff(RentResp.TransDate,aRentResp.TransDate);
+    if (ddif>maxdays) then begin
+      TrHs = false;
+    end;
+    if (RentResp.LengthClass<>lenclass) then begin
+      TrHs = false;
+    end;
+    if (RentResp.Code<>aRentResp.Code) then begin
+      TrHs = false;
+    end;
+    if (RentResp.SerialNr<>aRentResp.SerialNr) then begin
+      TrHs = false;
+    end;
+    testf = false;
+    if (TrHs) then begin
+      testf = true;
+//      if (DateComp(RentResp.EndDate,aRentResp.TransDate)<0) then testf = false;
+      if (aRentResp.SerNr==RentResp.SerNr) then begin
+        testf = false;
+      end;
+      if (nonblank(RentControlr.AgreeStatusReturned)) then begin
+        if (RentResp.AgreeStatus==RentControlr.AgreeStatusReturned) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblank(RentControlr.AgreeStatusDone)) then begin
+        if (RentResp.AgreeStatus==RentControlr.AgreeStatusDone) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        if ((TestInsideRentRes(RentResp.TransDate,RentResp.StartTime,aRentResp)) or
+            (TestInsideRentRes(RentResp.EndDate,RentResp.EndTime,aRentResp)) or
+            (DateRangeInsideRentRes(RentResp.TransDate,RentResp.EndDate,aRentResp)) or
+            (blankdate(aRentResp.EndDate)) or
+            (blankdate(RentResp.EndDate))) then begin
+          bres = true;
+          goto LCheckDblRentRes99;
+        end;
+      end;
+    end;
+  end;
+  lenclass = lenclass - 1;
+  if (lenclass>=0) then begin
+    goto LCheckDblRentRes22;
+  end;
+LCheckDblRentRes99:;
+  CheckDblRentRes = bres;
+  return;
+end;
+
+global
+Function Boolean FindClosestRent(record RentResVc aRentResp,var record RentResVc resRentResp,Integer days,Boolean prevf)
+begin
+  record RentResBookVc RentResp;
+  Boolean bres;
+  Boolean TrHs;
+  Boolean testf;
+  LongInt daycnt;
+  LongInt ddif;
+  Integer lenclass;
+  LongInt maxdays;
+  date bldat;
+  record RentResVc localRentResp;
+  
+  bres = false;
+  daycnt = 0;
+  RecordCopy(localRentResp,aRentResp);
+  if (prevf) then begin
+    localRentResp.TransDate = AddDay(aRentResp.TransDate,-(days+1));
+    localRentResp.EndDate = AddDay(aRentResp.TransDate,-1);
+  end else begin
+    localRentResp.TransDate = AddDay(aRentResp.EndDate,1);
+    localRentResp.EndDate = AddDay(aRentResp.EndDate,days+1);
+  end;
+  maxdays = DateDiff(localRentResp.EndDate,localRentResp.TransDate);
+  if (blankdate(localRentResp.EndDate)) then begin
+    maxdays = 999999999;
+  end;
+  if (blank(localRentResp.Code)) then begin
+    goto LFindClosestRent99;
+  end;
+  lenclass = 4;
+LFindClosestRent22:;
+  RentResp.Code = localRentResp.Code;
+  RentResp.SerialNr = localRentResp.SerialNr;
+  RentResp.LengthClass = lenclass;
+  RentResp.TransDate = localRentResp.TransDate;
+  switch (lenclass) begin
+    case 4:
+      RentResp.TransDate = bldat;
+    case 3: 
+      RentResp.TransDate = AddDay(RentResp.TransDate,-366);
+    case 2:
+      RentResp.TransDate = AddDay(RentResp.TransDate,-31);
+    case 1:
+      RentResp.TransDate = AddDay(RentResp.TransDate,-7);
+  end;
+  TrHs = true;
+  ResetLoop(RentResp);
+  while (LoopKey("AgreeStartTime",RentResp,4,TrHs)) begin
+    ddif = DateDiff(RentResp.TransDate,localRentResp.TransDate);
+    if (ddif>maxdays) then begin
+      TrHs = false;
+    end;
+    if (RentResp.LengthClass<>lenclass) then begin
+      TrHs = false;
+    end;
+    if (RentResp.Code<>localRentResp.Code) then begin
+      TrHs = false;
+    end;
+    if (RentResp.SerialNr<>localRentResp.SerialNr) then begin
+      TrHs = false;
+    end;
+    testf = false;
+    if (TrHs) then begin
+      testf = true;
+//      if (DateComp(RentResp.EndDate,localRentResp.TransDate)<0) then testf = false;
+      if (localRentResp.SerNr==RentResp.SerNr) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        if ((TestInsideRentRes(RentResp.TransDate,RentResp.StartTime,localRentResp)) or
+            (TestInsideRentRes(RentResp.EndDate,RentResp.EndTime,localRentResp)) or
+            (DateRangeInsideRentRes(RentResp.TransDate,RentResp.EndDate,localRentResp)) or
+            (blankdate(localRentResp.EndDate)) or
+            (blankdate(RentResp.EndDate))) then begin
+          resRentResp.SerNr = RentResp.SerNr;
+          if (ReadFirstMain(resRentResp,1,true)) then begin end;
+          if (prevf) then begin
+            bres = true;
+//            goto LFindClosestRent99;
+          end else begin
+            bres = true;
+            goto LFindClosestRent99;
+          end;
+        end;
+      end;
+    end;
+  end;
+  lenclass = lenclass - 1;
+  if (lenclass>=0) then begin
+    goto LFindClosestRent22;
+  end;
+LFindClosestRent99:;
+  FindClosestRent = bres;
+  return;
+end;
+
+// Should be rewritten to do update on existing records rather than remove all of them and then add all.....
+global
+updating procedure UpdateRentResBook(record RentResVc RentResr,Boolean delf)
+begin
+
+  record RentResBookVc RentBookr;
+  record AgreementVc Agreementr;
+  row RentResVc RentResrw;
+  Integer i,rwcnt;
+  Boolean resb;
+  
+  if (delf) then begin
+    RentBookr.SerNr = RentResr.SerNr;
+    RentBookr.RowNr = -1;
+    if (ReadFirstMain(RentBookr,1,true)) then begin
+      RecordDelete(RentBookr);
+    end;
+    rwcnt = MatRowCnt(RentResr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentResr,i,RentResrw);
+      RentBookr.SerNr = RentResr.SerNr;
+      RentBookr.RowNr = i;
+      if (ReadFirstMain(RentBookr,1,true)) then begin
+        RecordDelete(RentBookr);
+      end;
+    end;
+  end else begin
+    if (RentResr.RecepyItem==0) then begin
+      RentBookr.SerNr = RentResr.SerNr;
+      RentBookr.RowNr = -1;
+      RentBookr.AgreementNr = RentResr.AgreementNr;
+      RentBookr.Code = RentResr.Code;
+      RentBookr.SerialNr = RentResr.SerialNr;
+      RentBookr.LengthClass = RentResr.LengthClass;
+      RentBookr.Location = RentResr.Location;
+      RentBookr.TransDate = RentResr.TransDate;
+      RentBookr.EndDate = RentResr.EndDate;
+      RentBookr.StartTime = RentResr.StartTime;
+      RentBookr.EndTime = RentResr.EndTime;
+      RentBookr.AgreeStatus = RentResr.AgreeStatus;
+      Agreementr.SerNr = RentResr.AgreementNr;
+      if (ReadFirstMain(Agreementr,1,true)==false) then begin
+        Agreementr.CustCode = "";
+      end;
+      RentBookr.CustCode = Agreementr.CustCode;
+      RentBookr.OpenRentQuant = RentResr.RentQuant-RentResr.RentResDel;
+      resb = RecordInsert(RentBookr,true);
+    end;
+    rwcnt = MatRowCnt(RentResr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(RentResr,i,RentResrw);
+      RentBookr.SerNr = RentResr.SerNr;
+      RentBookr.RowNr = i;
+      RentBookr.AgreementNr = RentResr.AgreementNr;
+      RentBookr.Code = RentResrw.ArtCode;
+      RentBookr.SerialNr = RentResrw.SerialNr;
+      RentBookr.LengthClass = RentResr.LengthClass;
+      RentBookr.Location = RentResr.Location;
+      RentBookr.TransDate = RentResr.TransDate;
+      RentBookr.EndDate = RentResr.EndDate;
+      RentBookr.StartTime = RentResr.StartTime;
+      RentBookr.EndTime = RentResr.EndTime;
+      RentBookr.AgreeStatus = RentResr.AgreeStatus;
+      RentBookr.CustCode = Agreementr.CustCode;
+      RentBookr.OpenRentQuant = RentResrw.Quant-RentResrw.Del;
+      resb = RecordInsert(RentBookr,true);
+    end;
+  end;
+  return;
+end;
+

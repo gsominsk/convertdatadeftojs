@@ -1,0 +1,181 @@
+external function string 20 FindJobCustomerCode(record JobVc);
+external function LongInt FindReservation(string,Date,Time);
+external updating procedure StoreInShopBask(Integer,LongInt,String,String,Val,Val,Val,String,String,LongInt,String,Boolean,string,string,longint,string,val,val,val,val,val);
+external function val CalculatePyTelCost(Val,String); //LO
+external procedure GetTelCallType( string, var string ); //LO
+external function val GetCallPrice(record TelCallsVc);
+
+
+updating
+procedure TelCallToShopBask(string invitem,string type,time durat,val cost,LongInt jobsernr,string cucode,string PhoneNr)
+BEGIN  
+  record CallTypeVc CallTyper;
+  string 20 InvoiceItem;
+  val t,qty;
+  string 60 Comment,tstr;
+
+  CallTyper.Code = type;
+  if (ReadFirstMain(CallTyper,1,true)) then begin
+    InvoiceItem = CallTyper.ArtCode;
+  end;
+  if (blank(InvoiceItem)) then begin
+    InvoiceItem = invitem;
+  end;
+  qty = 1;
+  if (nonblank(InvoiceItem)) then begin
+    tstr = durat; tstr = mid(tstr,3,10);
+    Comment = CallTyper.Comment & " " & tstr & " : " & PhoneNr;
+    StoreInShopBask(1,jobsernr,InvoiceItem,Comment,qty,cost,blankval,cucode,"",-1,"",true,"","",-1,"",blankval,blankval,blankval,blankval,blankval);
+  end;
+  RETURN;
+END;
+
+global
+function LongInt TelCallsVcRecordDuplicate(var record TelCallsVc r1,record TelCallsVc r2,LongInt long3,LongInt long4)
+begin
+  r1.SerNr = -1;
+  return;
+end;
+
+global
+function LongInt TelCallsVcRecordDefaults(var record TelCallsVc TelCallsr,record TelCallsVc TelCalls2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  TelCallsr.TransDate = CurrentDate;
+  TelCallsr.TransTime = CurrentTime;
+  if (SingleUserMode) then begin
+    TelCallsr.SerNr = NextSerNr("TelCallsVc",TelCallsr.TransDate,-1,false,"");
+  end;
+  TelCallsVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+updating function LongInt TelCallsVcRecordCheck(record TelCallsVc TelCallsr,record TelCallsVc TelCalls2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 0;
+  if (TelCallsr.SerNr==-1) then begin
+    TelCallsr.SerNr = NextSerNr("TelCallsVc",TelCallsr.TransDate,-1,false,"");
+  end;
+LTelCallsVcRecordCheck:;
+  TelCallsVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function val CalcTelCost(record TelCallsVc TelCallr,val PulsPrice)
+BEGIN
+  record CYBlock Info;
+  val Secs,Costo;
+  
+  Blockload(Info);
+  Secs = gethour(TelCallr.Duration) * 3600;
+  Secs = Secs + getminute(TelCallr.Duration) * 60;
+  Secs = Secs + getsecond(TelCallr.Duration);
+  //LO Added country structure
+  switch (Info.CountryCode) begin
+    case "PY"  : Costo = CalculatePyTelCost(Secs,TelCallr.Number);
+    case "AR" : 
+    case "HN" : 
+    case "BO" : 
+    otherwise
+                 Costo = TelCallr.Pulses * PulsPrice;
+  end;  
+  CalcTelCost = Costo;
+  RETURN;
+END;
+
+
+//LO CHANGED A LOT
+//Dont fill in values if they are already filled in by an external program
+updating procedure FillInTelCallBlanks(var record TelCallsVc TelCallr)
+begin
+  record PhoneBlock PhoneRec;
+  record JobVc Jobr;
+  Integer SaveConsf;
+  record CallRegTypeVc CallRegTyper;
+  String 60 tstr;
+  Record ResComVc ResComr;
+  Record TelPersCodesVc TelPersCodesr;
+  val CallPrice;
+
+  BlockLoad(PhoneRec);
+  if (TelCallr.SerNr==-1) then begin  
+    TelCallr.SerNr = NextSerNr("TelCallsVc",CurrentDate,-1,false,""); 
+  end;
+  if (blank(TelCallr.Type) or (TelCallr.Type=="0")) then begin
+    GetTelCallType(TelCallr.Number,tstr);
+    TelCallr.Type = tstr;
+  end;    
+  if (TelCallr.Cost==0) then begin     
+    if (PhoneRec.EnableCharging==1) then begin
+      TelCallr.Cost = CalcTelCost(TelCallr,PhoneRec.PulsPrice);
+    end;
+  end;
+  if blank(TelCallr.ResCode) then begin
+    if (PhoneRec.EnableCharging==2) then begin
+      ResComr.Internal = TelCallr.ExtNo;
+      if (ReadFirstMain(ResComr,1,true)) then begin
+        TelCallr.ResCode = ResComr.ResCode;      
+        CallPrice = GetCallPrice(TelCallr);
+        if (nonblank(TelCallr.ResCode) and (ResComr.SaveCons==0)) then begin  
+          Jobr.SerNr = FindReservation(TelCallr.ResCode,CurrentDate,CurrentTime);
+          if (ReadFirstMain(Jobr,1,true)) then begin
+            TelCallToShopBask(PhoneRec.ArtCode,TelCallr.Type,TelCallr.Duration,CallPrice,Jobr.SerNr,FindJobCustomerCode(Jobr),TelCallr.Number);
+          end;
+        end;
+      end;
+    end;
+  end;
+  if blank(TelCallr.RegCode) then begin
+    CallRegTyper.Number = TelCallr.Number;
+    if readfirstkey("Number",CallRegTyper,1,true) then begin
+      TelCallr.RegCode = CallRegTyper.Code;
+      TelCallr.RegType = CallRegTyper.RegType;
+    end;
+  end;
+  // if accesscodes are stored use personal codes instead (so that the records can be viewed)
+  if nonblank(TelCallr.Person) then begin
+    TelPersCodesr.Code = TelCallr.Person;
+    if readfirstmain(TelPersCodesr,1,true) then begin
+      TelCallr.Person = TelPersCodesr.Person;
+    end;
+  end;
+  if blank(TelCallr.Number) then begin    //LO
+    TelCallr.Direction = 1; //incoming
+  end else begin
+    ResetLoop(ResComr);
+    ResComr.Internal = TelCallr.Number;
+    if readfirstmain(ResComr,1,true) then begin
+      TelCallr.Direction = 2;
+    end else begin
+      TelCallr.Direction = 0;
+    end;
+  end;
+  return;
+end;
+
+global
+updating
+function LongInt TelCallsVcRecordSave(var record TelCallsVc r1,record TelCallsVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  FillInTelCallBlanks(r1);
+  TelCallsVcRecordSave= res;
+  return;
+end;
+
+global
+updating
+function LongInt TelCallsVcRecordImport(var record TelCallsVc r1,record TelCallsVc r2,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  FillInTelCallBlanks(r1);
+  TelCallsVcRecordImport = res;
+  return;
+end;

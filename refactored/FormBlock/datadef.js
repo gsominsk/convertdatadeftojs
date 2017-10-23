@@ -1,0 +1,15 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fPrintBlankLines: { public: true, type: 'INTEGER' },
+     fPrintOrgName: { public: true, type: 'INTEGER' },
+     fAddr0NoNewLine: { public: true, type: 'INTEGER' },
+     fAddr0TrailingSep: { public: true, type: 'TEXT' },
+     fAddr1NoNewLine: { public: true, type: 'INTEGER' },
+     fAddr1TrailingSep: { public: true, type: 'TEXT' },
+     fAddr2NoNewLine: { public: true, type: 'INTEGER' },
+     fAddr2TrailingSep: { public: true, type: 'TEXT' },
+     fAddr3NoNewLine: { public: true, type: 'INTEGER' },
+     fAddr3TrailingSep: { public: true, type: 'TEXT' },
+     fAddr4NoNewLine: { public: true, type: 'INTEGER' },
+     fAddr4TrailingSep: { public: true, type: 'TEXT' },
+     fPerceptionTax: { public: true, type: 'INTEGER' } } }

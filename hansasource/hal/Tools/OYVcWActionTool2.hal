@@ -1,0 +1,515 @@
+external procedure GetPriceList(string,Date,Time,var string,var Integer);
+external function roundmode DefaultRoundMode();
+external function Boolean FindRPCUTax(string,Date,var record RPCUTaxVc);
+external function roundmode SetRoundModeD(Integer);
+external procedure RecalcOYSubtotal(var record OYVc);
+external procedure MulM4ProcVal(val,val,var val);
+external function val CalcTax2BaseTax2(Boolean,record SMVc,Integer);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddTAX2Base(Boolean,record SMVc,string,val,val,val,Integer,string);
+external function Boolean RPCUTax_TaxedAmount(val,val,string,record RPCUTaxVc);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external function Boolean UseTaxTemplatesforTaxCalc();
+external function val CalculateTotalVATFromTaxMatrix(record TaxMatrixVc,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure AddRowTaxMatrixToSumTaxMatrix(record TaxMatrixVc,var record TaxMatrixVc,Integer);
+external procedure OYGetRate(var record OYVc);
+external function Boolean GetFirstItem(var string,var record INVc);
+external procedure GetPRItemCost(string,string,string,string,Integer,var val);
+external procedure GetProjectPrice(string,string,string,string,string,val,var val,var val,var string,var val,var string);
+external function Boolean GetTimeClassPrice(string,string,var val,var val);
+external function Boolean OYDchrsum(var record OYVc,Integer,Integer);
+external procedure OYSumup(var record OYVc);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean INVc_AllowSales(record INVc,var LongInt);
+
+global
+procedure OYVc_PasteTimeClass(var record OYVc OYr,Integer rownr,var Boolean chsum)
+BEGIN
+  row OYVc OYrw;
+  Boolean chrsum;
+  record GeneralOptionBlock GenOptRec;
+  val price,cost;
+
+  BlockLoad(GenOptRec);
+  chrsum = false;
+  MatRowGet(OYr,rownr,OYrw);
+  if (nonblank(OYrw.TimeClass)) then begin
+    price = OYrw.Price;
+    Cost = OYrw.BasePrice;
+    if (GetTimeClassPrice(OYrw.TimeClass,OYrw.ArtCode,price,cost)) then begin
+      OYrw.Price = price;
+      OYrw.BasePrice = Cost;
+      MatRowPut(OYr,rownr,OYrw);
+//      pritemf = false;
+      chrsum = true;
+    end;
+  end;
+  if (chrsum) then begin
+    chsum = OYDchrsum(OYr,rownr,GenOptRec.UseDiscount);
+  end;
+  RETURN;
+END;
+
+global
+procedure OYVc_PasteEMCode(var record OYVc OYr,Integer rownr,var Boolean chsum)
+BEGIN
+  record INVc INr;
+  row OYVc OYrw;
+  Boolean chrsum;
+  val price,vreb,priceincur;
+  string 10 markup,markupincur;
+  record GeneralOptionBlock GenOptRec;
+
+  BlockLoad(GenOptRec);
+  chsum = false;
+  chrsum = false;
+  MatRowGet(OYr,rownr,OYrw);
+  if (GetFirstItem(OYrw.ArtCode,INr)) then begin  
+    if (blank(INr.CalcPrice)) then begin
+      GetProjectPrice(OYr.PRCode,OYrw.ArtCode,OYrw.EMCode,OYrw.TimeClass,OYr.CurncyCode,OYrw.Quant,price,vreb,markup,priceincur,markupincur);
+      OYrw.Price = priceincur;
+      if (OYrw.Price==0) then begin OYrw.Price = price; end;
+      OYrw.vRebate = vreb;
+      OYrw.Markup = markupincur;
+      if (blank(OYrw.Markup)) then begin OYrw.Markup = markup; end;
+      price = OYrw.BasePrice;
+      GetPRItemCost(OYr.PRCode,OYrw.EMCode,OYrw.ArtCode,OYrw.TimeClass,INr.ItemType,price);
+      OYrw.BasePrice = price;
+      MatRowPut(OYr,rownr,OYrw);
+      chrsum = true;
+    end;
+  end;
+  if (chrsum) then begin
+    chsum = OYDchrsum(OYr,rownr,GenOptRec.UseDiscount);
+    chsum = true;//not only sum must change to recalculate GP
+  end;
+  RETURN;
+END;
+
+procedure OYUpdateTax1Reb(var record OYVc OYp,Date td)
+BEGIN
+  row OYVc OYrw;
+  Integer i,rwcnt;
+  record Tax1RebVc Tax1Rebr;
+  
+  rwcnt = MatRowCnt(OYp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OYp,i,OYrw);
+    Tax1Rebr.Code = OYrw.VATCode;
+    Tax1Rebr.CustCode = OYp.CustCode;
+    if (ReadFirstMain(Tax1Rebr,2,true)) then begin end;
+    if (td>=Tax1Rebr.From) then begin
+      OYrw.TAX1Reb = Tax1Rebr.TAX1Reb;
+    end;
+    MatRowPut(OYp,i,OYrw);
+  end;
+  RETURN;
+END;
+
+global
+procedure OYVc_PasteOYDate(var record OYVc OYp)
+BEGIN
+  Time blankt;
+
+  OYGetRate(OYp);
+  GetPriceList(OYp.CustCat,OYp.OYDate,blankt,OYp.PriceList,OYp.InclVAT);
+  OYUpdateTax1Reb(OYp,OYp.OYDate);
+  OYSumup(OYp);
+  return;
+end;
+
+global
+function Boolean OYVc_AllowSales(record OYVc OYr,var Integer rownr,var LongInt ErrorCode)
+begin
+  Boolean res;
+  row OYVc OYrw;
+  Integer i,rwcnt;
+  record INVc INr;
+  
+  res = true;
+  rwcnt = MatRowCnt(OYr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OYr,i,OYrw);
+    switch (OYrw.stp) begin
+      case 1:
+        if (nonblank(OYrw.ArtCode)) then begin
+          if (ReadFirstItem(OYrw.ArtCode,INr,true,false)) then begin
+            if (!INVc_AllowSales(INr,ErrorCode)) then begin
+              res = false; 
+              rownr = i;
+              goto LOYVc_AllowSales;
+            end;
+          end;
+        end;
+    end;
+  end;
+  
+LOYVc_AllowSales:;
+  OYVc_AllowSales = res;
+  return;
+end;
+
+procedure OYSumup_TaxTemplate(var record OYVc OYp)
+begin
+  Integer i,rwcnt;
+  row OYVc OYrw;
+  record TaxMatrixVc TMr;
+  record TaxMatrixVc sumTMr;
+  roundmode roundlines,rndtotal,rndvat;
+  val t;
+
+  OYp.Sum1 = blankval; //Subtotal
+  OYp.Sum3 = blankval; //VAT
+  OYp.Sum4 = blankval; //Total
+  OYp.TotGP = blankval;
+  UnpackFieldMatrix(OYp,"TaxMatrix",sumTMr);
+  RecordClear(sumTMr);
+  rwcnt = MatRowCnt(OYp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OYp,i,OYrw);
+    switch (OYrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeInterest:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeRetention:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;      
+        if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,OYp.InclVAT);
+        end;
+        OYp.Sum1 = OYp.Sum1 + OYrw.Sum;
+        OYp.TotGP = OYp.TotGP + OYrw.rowGP;
+      case kInvoiceRowTypeCorrection:
+        if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,OYp.InclVAT);
+        end;
+        OYp.Sum1 = OYp.Sum1 + OYrw.Sum;
+        OYp.TotGP = OYp.TotGP + OYrw.rowGP;
+      case kInvoiceRowTypeGiftVoucherSold:
+        if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,OYp.InclVAT);
+        end;
+        switch (OYp.InclVAT) begin
+          case kBasePriceNotInclVAT:
+            OYp.Sum1 = OYp.Sum1 + OYrw.Sum;
+            if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+              OYp.Sum1 = OYp.Sum1 - CalculateTotalVATFromTaxMatrix(TMr,OYp.InclVAT);
+            end;
+          case kBasePriceInclVAT:
+            OYp.Sum1 = OYp.Sum1 + OYrw.Sum;
+        end;
+      case kInvoiceRowTypeDownpayment:
+        if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+          UnpackRowFieldMatrix(OYrw,"TaxMatrix",TMr);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,OYp.InclVAT);
+        end;
+        OYp.Sum1 = OYp.Sum1 + OYrw.Sum;      
+      
+//  kInvoiceRowTypePrepayment = 6,
+//  kInvoiceRowTypeLoan = 7,
+//  kInvoiceRowTypeLoanInterest = 8,
+
+//  kInvoiceRowTypeGiftVoucherPayment = 14,
+//  kInvoiceRowTypeCashPayment = 15,
+//  kInvoiceRowTypeCreditCardPayment = 16,
+
+//  kInvoiceRowTypePreviousDownpayment = 20,
+//  kInvoiceRowTypeChequePayment = 21,
+
+//  kInvoiceRowTypePerceptionTax = 22, //how to handle Perception Taxes ?
+//  kInvoiceRowTypeWithholdingTax = 24  //how to handle Withholding Taxes ?
+    end;
+  end;
+  if (OYp.FrPrice!=0) then begin
+    if (OYp.InclVAT==0) then begin
+      OYp.Sum1 = OYp.FrPrice + OYp.Sum1;
+/*      
+      if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+        t = FindVAT (OYp.FrVATCode,OYp.FrPrice,OYp.InclVAT,OYp.NoTAXonVAT);
+        if (t==0) then begin
+          s2 = OYp.FrPrice + s2;
+        end;  
+        OYp.Sum3 = t + OYp.Sum3;
+        AddVATBase(SMr,OYp.FrVATCode,OYp.FrPrice,tax1reb,vatcnt,OYp.InclVAT,OYp.NoTAXonVAT);
+      end;
+*/      
+    end else begin
+      if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+        OYp.Sum4 = OYp.FrPrice + OYp.Sum4;
+/*        
+        t = FindVAT (OYp.FrVATCode,OYp.FrPrice,OYp.InclVAT,OYp.NoTAXonVAT);
+        OYp.Sum3 = t + OYp.Sum3;
+        AddVATBase(SMr,OYp.FrVATCode,OYp.FrPrice,tax1reb,vatcnt,OYp.InclVAT,OYp.NoTAXonVAT);
+*/        
+        if (t==0) then begin
+          OYp.Sum2 = OYp.FrPrice + OYp.Sum2;
+        end else begin
+          OYp.Sum1 = OYp.FrPrice + OYp.Sum1;
+        end;  
+      end else begin
+        OYp.Sum4 = OYp.FrPrice + OYp.Sum4;     
+/*         
+        t = FindVAT (OYp.FrVATCode,OYp.FrPrice,OYp.InclVAT,OYp.NoTAXonVAT);
+        OYp.Sum3 = t + OYp.Sum3;
+        AddVATBase(SMr,OYp.FrVATCode,OYp.FrPrice,tax1reb,vatcnt,OYp.InclVAT,OYp.NoTAXonVAT);
+        OYp.Sum4 = OYp.Sum4 - t;
+        if (t==0) then begin
+          OYp.Sum2 = OYp.FrPrice + OYp.Sum2;
+        end else begin
+          OYp.Sum1 = OYp.FrPrice + OYp.Sum1;
+        end;  
+*/        
+      end;
+    end;
+//Freight VAT needs  to be added as well
+  end;
+
+  if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+    OYp.Sum3 = CalculateTotalVATFromTaxMatrix(sumTMr,OYp.InclVAT);
+  end;
+  PackFieldMatrix(OYp,"TaxMatrix",sumTMr);
+  GetCurncyRoundoff(OYp.CurncyCode,OYp.PayDeal,"OYVc",rndtotal,roundlines,rndvat);
+
+/*Rounding should be tested carefully*/
+
+  OYp.Sum3 = Round(OYp.Sum3,rndvat);
+  OYp.Sum1 = Round(OYp.Sum1,rndtotal);
+  switch (OYp.InclVAT) begin
+    case kBasePriceNotInclVAT:
+      OYp.Sum4 = OYp.Sum1 + OYp.Sum3;
+    case kBasePriceInclVATandTAX:
+      OYp.Sum4 = OYp.Sum1;
+    case kBasePriceInclVAT:
+      OYp.Sum4 = OYp.Sum1;
+  end;  
+  OYp.Sum3 = Round(OYp.Sum3,rndvat);
+  OYp.Sum4 = Round(OYp.Sum4,rndtotal);
+  OYp.BaseSum4 = MulRateToBase1(OYp.CurncyCode,OYp.Sum4,OYp.FrRate,OYp.ToRateB1,OYp.ToRateB2,OYp.BaseRate1,OYp.BaseRate2,DefaultCurRoundOff);
+  OYp.TotGP = Round(OYp.TotGP,rndtotal);
+  return;
+end;
+
+function val OYVc_CalcTax2perCustomer(record RPCUTaxVc RPCUTaxr,var record OYVc OYp)
+begin
+  val res;
+  Integer i,rwcnt;
+  row OYVc OYrw;
+  val tax2base,tax2baseb1,tax1reb,tax1sum,t;
+  record INVc INr;
+  record SMVc VATr;
+  Integer vatcnt;
+  
+  SetupVATBase(VATr,vatcnt);
+  rwcnt = MatRowCnt(OYp);
+
+// OY2Sumup should look in item and make another SetupVATBase and SMr
+
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OYp,i,OYrw);
+    switch (OYrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal2;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal2:;
+        if (OYrw.Perceptions!=0) then begin       
+          if ((OYp.ExportFlag==0) or (OYp.ExportFlag==3) or (OYp.ExportFlag==4)) then begin
+            AddVATBase(VATr,OYrw.VATCode,OYrw.Sum,tax1reb,vatcnt,OYp.InclVAT,OYp.NoTAXonVAT);
+            tax2base = tax2base + OYrw.Sum;
+          end;
+        end;
+    end;
+  end;
+  CalcVATBaseVAT(VATr,OYp.InclVAT,OYp.NoTAXonVAT,vatcnt,t,tax1sum);  
+  switch (OYp.InclVAT) begin
+    case 0:
+      switch (OYp.NoTAXonVAT) begin
+        case 2:
+        case 1:
+        otherwise
+          tax2base = tax2base - t;
+      end;
+    otherwise
+      tax2base = tax2base - t;
+  end;
+/*
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OYp,i,OYrw);
+    switch (OYrw.stp) begin
+      case kInvoiceRowTypePerceptionTax: ;
+      otherwise
+        if (OYrw.Perceptions!=0) then begin
+          tax2base = tax2base + OYrw.Sum;
+        end;
+    end;
+  end;
+*/
+  tax2baseb1 = MulRateToBase1(OYp.CurncyCode,tax2base,OYp.FrRate,OYp.ToRateB1,OYp.ToRateB2,OYp.BaseRate1,OYp.BaseRate2,DefaultCurRoundOff);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OYp,i,OYrw);
+    if (OYrw.stp==kInvoiceRowTypePerceptionTax) then begin
+      if (RPCUTax_TaxedAmount(tax2base,tax2baseb1,OYrw.Region,RPCUTaxr)) then begin
+        OYrw.Sum = (tax2base*OYrw.TAX2Prc)/100.00;
+        res = res + Round(OYrw.Sum,SetRoundModeD(2));
+        MatRowPut(OYp,i,OYrw);
+      end else begin
+        OYrw.Sum = (tax2base*0.00)/100.00;
+        res = res + Round(OYrw.Sum,SetRoundModeD(2));
+        MatRowPut(OYp,i,OYrw);
+      end;
+    end;
+  end;
+  OYVc_CalcTax2perCustomer = res;
+  return;
+end;
+
+global
+procedure OYSumup(var record OYVc OYp)
+BEGIN
+  row OYVc OYrw;
+  val s,s2,ms,ms2,temp;
+  Integer i,rwcnt;
+  roundmode roundlines,rndtotal,roundvat;
+  record SMVc SMr;/*VATBaseRowType*/
+  record SMVc SMTax2r;
+  Integer vatcnt;  
+  string 255 tstr;  
+  val tt,ot,mt,st,tax1sum,tax2sum;  
+  val subtotv,tax1reb;
+  record Tax1RebVc Tax1Rebr;
+  val tms,ttax1sum;
+  record RPCUTaxVc RPCUTaxr;
+  Boolean calcperceppercuf;
+
+  if (UseTaxTemplatesforTaxCalc) then begin
+    OYSumup_TaxTemplate(OYp);
+    goto LOYSumup;
+  end;
+  calcperceppercuf = FindRPCUTax(OYp.CustCode,OYp.OYDate,RPCUTaxr);
+  SetupVATBase(SMr,vatcnt);
+  OYp.TotGP = blankval;
+  rwcnt = MatRowCnt(OYp);
+  for (i = 0 ; i<rwcnt ;i=i+1) begin
+    MatRowGet(OYp,i,OYrw);
+    if (OYrw.stp!=9) then begin
+      tax1reb = OYrw.TAX1Reb;
+//      tax1reb = 0;
+//      Tax1Rebr.Code = OYrw.VATCode;
+//      Tax1Rebr.CustCode = OYp.CustCode;
+//      if (ReadFirstMain(Tax1Rebr,2,true)) then begin end;
+//      if (OYp.OYDate>=Tax1Rebr.From) then begin
+//        tax1reb = Tax1Rebr.TAX1Reb;
+//      end;
+      OYp.TotGP = OYp.TotGP + OYrw.rowGP;
+      s = s + OYrw.Sum;
+      s2 = s2 + MulRateToBase1(OYp.CurncyCode,OYrw.Sum,OYp.FrRate,OYp.ToRateB1,OYp.ToRateB2,OYp.BaseRate1,OYp.BaseRate2,DefaultCurRoundOff);
+      AddVATBase(SMr,OYrw.VATCode,OYrw.Sum,tax1reb,vatcnt,OYp.InclVAT,OYp.NoTAXonVAT);
+      AddTAX2Base(calcperceppercuf,SMTax2r,OYrw.TAX2Code,OYrw.TAX2Prc,OYrw.TAX2Reb,OYrw.Sum,OYp.InclVAT,OYrw.VATCode);        
+      switch (OYrw.ItemType) begin
+        case 0: ot = ot + OYrw.Sum;
+        case 1: st = st + OYrw.Sum;
+        case 3: tt = tt + OYrw.Sum;
+        case 5: mt = mt + OYrw.Sum;
+      end;
+      subtotv = subtotv + OYrw.Sum;
+    end else begin
+      if (OYrw.Sum!=subtotv) then begin
+        OYrw.Sum = subtotv;
+        MatRowPut(OYp,i,OYrw);
+      end;
+      subtotv = blankval;
+    end;
+  end;
+  CalcVATBaseVAT(SMr,OYp.InclVAT,OYp.NoTAXonVAT,vatcnt,ms,tax1sum);    
+  if (calcperceppercuf) then begin
+    tax2sum = OYVc_CalcTax2perCustomer(RPCUTaxr,OYp);  
+  end else begin
+    tax2sum = CalcTax2BaseTax2(false,SMTax2r,OYp.InclVAT);  
+  end;
+  OYp.TAX1Sum = Round(tax1sum,DefaultRoundMode);
+  OYp.TAX2Sum = Round(tax2sum,DefaultRoundMode);  
+  if (OYp.TAX1Sum==0) then begin OYp.TAX1Sum = blankval; end;
+  if (OYp.TAX2Sum==0) then begin OYp.TAX2Sum = blankval; end;
+  if (OYp.NoTax1!=0) then begin OYp.TAX1Sum = blankval; end;
+  if (OYp.NoTax2!=0) then begin OYp.TAX2Sum = blankval; end;
+  GetCurncyRoundoff(OYp.CurncyCode,OYp.PayDeal,"OYVc",rndtotal,roundlines,roundvat);
+  ms = Round(ms,roundvat);
+    
+  if ((OYp.ExportFlag==1) or (OYp.ExportFlag==2)) then begin
+    if (OYp.InclVAT>0) then begin
+      ms2 = s - ms;
+    end else begin
+      ms2 = s;
+    end;  
+    ms = blankval;
+  end else begin
+    if (OYp.InclVAT>0) then begin
+      ms2 = s;
+    end else begin
+      ms2 = s + ms;    
+    end;  
+
+    switch (OYp.InclVAT) begin
+      case 1:
+        switch (OYp.NoTAXonVAT) begin
+          case 1:
+          case 2:
+          otherwise
+        end;
+      case 2:
+        switch (OYp.NoTAXonVAT) begin
+          case 2:
+            if (OYp.TotalwoTAX==0) then begin
+              ms2 = ms2 + tax1sum;
+            end;
+            CalcVATBaseVAT(SMr,OYp.InclVAT,1,vatcnt,tms,ttax1sum);  
+            ms2 = ms2 + ms-tms;
+          otherwise
+            if (OYp.TotalwoTAX==0) then begin
+              ms2 = ms2 + tax1sum;
+            end;
+        end;
+      otherwise
+        switch (OYp.NoTAXonVAT) begin
+          otherwise
+            if (OYp.TotalwoTAX==0) then begin
+              ms2 = ms2 + tax1sum;
+            end;
+        end;
+    end;
+  end;
+  ms2 = ms2 + OYp.TAX2Sum;
+  ms2 = Round(ms2,rndtotal);
+
+  if (OYp.DiscPerc!=blankval) then begin    
+    MulM4ProcVal(OYp.DiscPerc,s,temp);
+    OYp.DiscSum = temp;    
+  end;  
+  OYp.DiscSum = Round(OYp.DiscSum,DefaultRoundMode);
+  OYp.Sum1 = s;
+  OYp.Sum3 = ms;
+  OYp.Sum4 = ms2;
+  if (nonblank(OYp.CurncyCode)) then begin
+    OYp.BaseSum4 = MulRateToBase1(OYp.CurncyCode,OYp.Sum4,OYp.FrRate,OYp.ToRateB1,OYp.ToRateB2,OYp.BaseRate1,OYp.BaseRate2,DefaultCurRoundOff);
+  end;
+  OYp.SumTime = tt;
+  OYp.SumOther = ot;
+  OYp.SumStocked = st;
+  OYp.SumMaterial = mt;    
+  if (OYp.InclVAT==0) then begin
+    temp = OYp.TotGP/s2;
+  end else begin
+    temp = OYp.TotGP/(s2-MulRateToBase1(OYp.CurncyCode,OYp.Sum3,OYp.FrRate,OYp.ToRateB1,OYp.ToRateB2,OYp.BaseRate1,OYp.BaseRate2,DefaultCurRoundOff));
+  end; 
+  OYp.GPProc = temp*100;
+  RecalcOYSubtotal(OYp);
+LOYSumup:;  
+  RETURN;
+END;

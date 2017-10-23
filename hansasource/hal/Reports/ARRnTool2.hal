@@ -1,0 +1,1778 @@
+external procedure FindAllPrepayLosses(string,Date,val,LongInt,val,var val,record IVVc,LongInt,LongInt,Boolean,record BaseCurBlock,val,string);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure SumAged(Date,Integer,Integer,var val,var val,var val,var val,var val,var val,var val,var val,var val,var val);
+external function Boolean GetARPayRate(LongInt,LongInt,var val,var val,var val,var val,var val,string,Date);
+external function LongInt CalculateLateDays(Date,Date,Date,Boolean,Boolean);
+external function Boolean HasBase2();
+external function Boolean HasMultiCurrency();
+external procedure YcToStr(Integer,var string);
+external function Integer GetIntYc(Date);
+external procedure PrintAgedLine(val,val,val,val,val,val,val,val,val,val,val,Integer,Integer,string);
+external function string 255 GetCustomerOnAccountAC(string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Boolean FindAccPeriod(Date,var record AccPeriodr);
+external function Integer TypeOfCurncy(var string,var Integer);
+external procedure PSFindPaydAmount2(record IVVc,record IPrsVc,Boolean,var val,var val,var Date);
+external function string 255 CreateInvoiceNumber(LongInt,string);
+external function Boolean ObjectTypeMatch(string,string);
+external function LongInt DateDiff(Date,Date);
+external procedure PrintCurTotalsRow(record SMVc,Integer,Integer,Integer,Integer,Integer);
+external function LongInt CalcARRnColumnSpacing(LongInt,Integer,var LongInt,var LongInt,var LongInt);
+external function val MulRateToBase2(var string,val,val,val,val,val,val,roundmode);
+
+global
+function string 255 CreateInvoiceNumberDisputedMark(LongInt SerNr, string OfficialSerNr, Integer Disputed)
+begin
+  string 255 tstr;
+  
+  tstr = CreateInvoiceNumber(SerNr,OfficialSerNr);
+  if (Disputed==1) then begin 
+    tstr = tstr & "(*)";
+  end;
+  CreateInvoiceNumberDisputedMark = tstr;
+  return;
+end;  
+
+
+procedure CalcVATElement(val invval,val invsum3,val recval,var val vatel)
+BEGIN
+  val t;
+  
+  t = recval/invval;
+  vatel = invsum3*t;
+  RETURN;
+END;
+
+global
+function val FindInstalmentPaidAmount(record IVVc IVp,LongInt InvoiceNr,LongInt InstallNr,Date td,var val rescur)
+begin
+  val res;
+  record IPrsVc IPrsr;
+  record IPVc IPr;
+  row IPVc IPrw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  val tinivcurrate,rategain,totrategain,t,t3;
+  record BaseCurBlock BCb;  
+  
+  BlockLoad(BCb);  
+  rescur = blankval;
+  found = true;
+  IPrsr.IVNr = InvoiceNr;
+  IPrsr.TransType = kIPrsTransTypeReceipt;
+  while (LoopKey("IVKey",IPrsr,2,found)) begin
+    if (IPrsr.IVNr!=InvoiceNr) then begin found = false;end;
+    if (IPrsr.TransType!=kIPrsTransTypeReceipt) then begin found = false;end;
+    if (found) then begin
+      testf = true;
+      if (InstallNr>=0) then begin
+        if (IPrsr.InstNr!=InstallNr) then begin testf = false; end;
+      end;
+      if (IPrsr.TransDate>td) then begin testf = false; end;
+      if (testf) then begin
+        IPr.SerNr = IPrsr.TransNr;
+        if (ReadFirstMain(IPr,1,true)) then begin
+          if (IPr.RejectedFlag==0) then begin
+            t = 0;
+            totrategain = 0;
+            rwcnt = MatRowCnt(IPr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(IPr,i,IPrw);
+              testf = true;
+              if (IPrw.ovst!=0) then begin testf = false; end;
+              if (IPrw.InvoiceNr!=IPrsr.IVNr) then begin testf = false; end;
+              if (IPrw.InstNr!=IPrsr.InstNr) then begin testf = false; end;
+              if (IPrw.PayDate!=IPrsr.CustDate) then begin testf = false; end;
+              if (testf) then begin
+                rescur = rescur + IPrw.InvVal;
+                if (IPrw.BankCurncy==BCb.BaseCur1) then begin
+                  tinivcurrate = MulRateToBase1(IPrw.InvCurncy,IPrw.InvVal,IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,DefaultCurRoundOff);
+                  rategain = tinivcurrate - IPrw.BankVal;
+                  t = t + IPrw.BankVal;
+                  totrategain = totrategain + rategain;
+                end else begin
+                  tinivcurrate = MulRateToBase1(IPrw.InvCurncy,IPrw.InvVal,IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,DefaultCurRoundOff);
+                  t3 = MulWithRateToBase1(IPrw.InvCurncy,IPrw.PayDate,IPrw.InvVal,DefaultCurRoundOff);   
+                  t = t + t3;
+                  rategain = tinivcurrate - t3;
+                  totrategain = totrategain + rategain;
+                end;
+              end;
+            end;
+            res = res + t + totrategain;
+          end;
+        end;
+      end;
+    end;
+  end;
+  FindInstalmentPaidAmount = res;
+  return;
+end;
+
+global
+procedure FindInstalmentInvoiceBalance(record RcVc RepSpec,record IVVc IVr,Date td,
+          var val rval,var val rvalb1)
+begin
+  val res;
+  record ARInstallVc ARIr;
+  record ARInstallHistVc ARIHr;
+  Boolean TrHs,testf;
+  LongInt latedays;
+  val t,tcur;
+  
+  rval = blankval;
+  rvalb1 = blankval;
+  if (nonblankdate(td)) then begin
+    ARIHr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIHr,1,TrHs)) begin
+      if (ARIHr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIHr.DueDate,td,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          rval = rval + ARIHr.RVal;
+          rvalb1 = rvalb1 + ARIHr.BookRVal;
+          t = FindInstalmentPaidAmount(IVr,ARIHr.InvoiceNr,ARIHr.InstallNr,td,tcur);
+          rval = rval - tcur;
+          rvalb1 = rvalb1 - t;
+        end;
+      end;
+    end;
+  end else begin
+    ARIr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIr,1,TrHs)) begin
+      if (ARIr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIr.DueDate,CurrentDate,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          rval = rval + ARIr.RVal;
+          rvalb1 = rvalb1 + ARIr.BookRVal;
+          t = FindInstalmentPaidAmount(IVr,ARIr.InvoiceNr,ARIr.InstallNr,CurrentDate,tcur);
+          rval = rval - tcur;
+          rvalb1 = rvalb1 - t;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AddInstalmentInvoiceBalanceTotals(record RcVc RepSpec,record IVVc IVr,Date td,var Array val overduetot,var Array val currenttot,var Array val notduetot)
+begin
+  val res;
+  record ARInstallVc ARIr;
+  record ARInstallHistVc ARIHr;
+  Boolean TrHs,testf;
+  LongInt latedays;
+  val t,tcur,rval,rvalb1,rvalb2;
+  record AgedBlock Agedb;
+  
+  BlockLoad(Agedb);
+  
+  if (nonblankdate(td)) then begin
+    ARIHr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIHr,1,TrHs)) begin
+      if (ARIHr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIHr.DueDate,td,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          rval = ARIHr.RVal;
+          rvalb1 = ARIHr.BookRVal;
+          t = FindInstalmentPaidAmount(IVr,ARIHr.InvoiceNr,ARIHr.InstallNr,td,tcur);
+          rval = rval - tcur;
+          rvalb1 = rvalb1 - t;
+          rvalb2 = MulRateToBase2(IVr.CurncyCode,rval,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          if (latedays<0) then begin
+            overduetot[1] = overduetot[1] + rvalb1;
+            overduetot[2] = overduetot[2] + rvalb2;
+            overduetot[0] = overduetot[0] + rval;
+          end else begin
+            if (latedays==0) and (Agedb.ActualInvoices!=0) then begin
+              currenttot[1] = currenttot[1] + rvalb1;
+              currenttot[2] = currenttot[2] + rvalb2;
+              currenttot[0] = currenttot[0] + rval;
+            end else begin
+              notduetot[1] = notduetot[1] + rvalb1;
+              notduetot[2] = notduetot[2] + rvalb2;
+              notduetot[0] = notduetot[0] + rval;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    ARIr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIr,1,TrHs)) begin
+      if (ARIr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIr.DueDate,CurrentDate,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          rval = ARIr.RVal;
+          rvalb1 = ARIr.BookRVal;
+          t = FindInstalmentPaidAmount(IVr,ARIr.InvoiceNr,ARIr.InstallNr,CurrentDate,tcur);
+          rval = rval - tcur;
+          rvalb1 = rvalb1 - t;
+          rvalb2 = MulRateToBase2(IVr.CurncyCode,rval,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          if (latedays<0) then begin
+            overduetot[1] = overduetot[1] + rvalb1;
+            overduetot[2] = overduetot[2] + rvalb2;
+            overduetot[0] = overduetot[0] + rval;
+          end else begin
+            if (latedays==0) and (Agedb.ActualInvoices!=0) then begin
+              currenttot[1] = currenttot[1] + rvalb1;
+              currenttot[2] = currenttot[2] + rvalb2;
+              currenttot[0] = currenttot[0] + rval;
+            end else begin
+              notduetot[1] = notduetot[1] + rvalb1;
+              notduetot[2] = notduetot[2] + rvalb2;
+              notduetot[0] = notduetot[0] + rval;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+end;
+
+procedure PrintInstallments(record RcVc RepSpec,record AgedBlock Ab,record IVVc IVr,record CUVc CUr,val rval,val rs)
+BEGIN
+  record ARInstallVc ARIr;
+  record ARInstallHistVc ARIHr;
+  Boolean TrHs,testf;
+  LongInt latedays;
+  string 255 tstr;
+  val bookrval;
+  val t,tcur;
+
+  if (nonblankdate(RepSpec.d1)) then begin
+    ARIHr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIHr,1,TrHs)) begin
+      if (ARIHr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIHr.DueDate,RepSpec.d1,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+  //      ARSump = ARSump + ARIHr.BookRVal;
+        if (testf) then begin
+          t = FindInstalmentPaidAmount(IVr,ARIHr.InvoiceNr,ARIHr.InstallNr,RepSpec.d1,tcur);
+          if (RepSpec.flags[2]==1) then begin
+            if (nonblank(CUr.CurncyCode)) then begin
+              bookrval = ARIHr.RVal - tcur;
+            end else begin
+              bookrval = ARIHr.BookRVal - t;
+            end;
+          end else begin
+            bookrval = ARIHr.BookRVal - t;
+          end;
+          if (bookrval!=0) then begin
+            StartFormat(15);
+            tstr = CreateInvoiceNumberDisputedMark(ARIHr.InvoiceNr,"",IVr.DisputedFlag);
+            OutStringID(90,"DblAR",tstr,false,IVr.SerNr);
+            OutDate(160,0,IVr.InvDate,false);
+            OutString(220,0,IVr.PayDeal,false);
+            OutDate(240,0,ARIHr.DueDate,false);
+            tstr = "DblBadCU";
+            if ((ProgramType==9) or (ProgramType==15) or (ProgramType==20) or (IsBooks)) then begin
+              tstr = "";
+            end;
+            if (Ab.ShowDelayDays!=0) then begin
+              if (latedays<0) then begin
+                OutStringID(345,tstr,-latedays,true,IVr.SerNr);
+              end else begin
+                OutStringID(345,tstr,0,true,IVr.SerNr);
+              end;
+            end else begin      
+              OutStringID(345,tstr,latedays,true,IVr.SerNr);
+            end;
+            OutLongInt(350,0,IVr.LastRemndr,true);
+            OutValBiDi(450,0,bookrval,M4Val,true,490);
+            EndFormat;
+          end;
+        end;
+      end;
+    end;
+  end else begin
+    ARIr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIr,1,TrHs)) begin
+      if (ARIr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIr.DueDate,CurrentDate,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          StartFormat(15);
+          tstr = CreateInvoiceNumberDisputedMark(ARIr.InvoiceNr,"",IVr.DisputedFlag);
+          OutStringID(90,"DblAR",tstr,false,IVr.SerNr);
+          OutDate(160,0,IVr.InvDate,false);
+          OutString(220,0,IVr.PayDeal,false);
+          OutDate(240,0,ARIr.DueDate,false);
+          tstr = "DblBadCU";
+          if ((ProgramType==9) or (ProgramType==15) or (ProgramType==20) or (IsBooks)) then begin
+            tstr = "";
+          end;
+          if (Ab.ShowDelayDays!=0) then begin
+            if (latedays<0) then begin
+              OutStringID(345,tstr,-latedays,true,IVr.SerNr);
+            end else begin
+              OutStringID(345,tstr,0,true,IVr.SerNr);
+            end;
+          end else begin      
+            OutStringID(345,tstr,latedays,true,IVr.SerNr);
+          end;
+          OutLongInt(350,0,IVr.LastRemndr,true);  
+          if (RepSpec.flags[2]==1) then begin
+            if (nonblank(CUr.CurncyCode)) then begin
+              OutValBiDi(450,0,ARIr.RVal,M4Val,true,490);
+            end else begin
+              OutValBiDi(450,0,ARIr.BookRVal,M4Val,true,490);
+            end;
+          end else begin
+            OutValBiDi(450,0,ARIr.BookRVal,M4Val,true,490);
+          end;
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function LongInt CalculateLateDaysInstallmentInv(LongInt ivnr,Date invdate,Date duedate,Date asofdate,Boolean basedoninvdate)
+begin
+  record ARInstallVc ARIr;
+  Boolean TrHs;
+  LongInt res,latedays;
+
+  res = 0;
+  ARIr.InvoiceNr = ivnr;
+  TrHs = true;
+  while (LoopMain(ARIr,1,TrHs)) begin
+    if (ARIr.InvoiceNr!=ivnr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      latedays = CalculateLateDays(invdate,ARIr.DueDate,asofdate,basedoninvdate,true);
+      if (res>latedays) then begin res = latedays; end;
+    end;
+  end;
+  latedays = CalculateLateDays(invdate,duedate,asofdate,basedoninvdate,true);
+  if (res>latedays) then begin res = latedays; end;
+  CalculateLateDaysInstallmentInv = res;
+  return;
+end;
+
+global
+procedure ARRPrintOverView(record CUVc CUr,record IVVc IVr,record IPrsVc IPrsr,record TRVc TRr,record RcVc RepSpec,val rval,val rs,LongInt latedays)
+BEGIN
+  string 255 tstr,tstr2,dblstr;
+  record AgedBlock Ab;
+  
+  BlockLoad(Ab);
+  if ((IVr.InstallmentInv==1) and (RepSpec.flags[19]!=0)) then begin
+    PrintInstallments(RepSpec,Ab,IVr,CUr,rval,rs);
+    goto LARRPrintOverView;
+  end;
+  
+  switch (IPrsr.TransType) begin
+    case kIPrsTransTypeInvoice:
+      tstr = IVr.SerNr;
+      if (nonblank(IVr.InvoiceNr)) then begin
+        tstr = tstr & ", (";
+        tstr = tstr & IVr.InvoiceNr;
+        tstr = tstr & ")";
+      end;
+      dblstr = "DblAR";
+      tstr2 = IVr.SerNr;
+    case kIPrsTransTypePurgeNLTransaction:
+      tstr = IVr.SerNr;
+      if (nonblank(IVr.InvoiceNr)) then begin
+        tstr = tstr & ", (";
+        tstr = tstr & IVr.InvoiceNr;
+        tstr = tstr & ")";
+      end;
+      dblstr = "DblTrans2";
+      YcToStr(TRr.IntYc,tstr2);     
+      tstr2 = tstr2 & "." & TRr.Number;
+    case kIPrsTransTypeNLTransaction:
+      tstr = IVr.SerNr;
+      if (nonblank(IVr.InvoiceNr)) then begin
+        tstr = tstr & ", (";
+        tstr = tstr & IVr.InvoiceNr;
+        tstr = tstr & ")";
+      end;
+      dblstr = "DblTrans2";
+      YcToStr(TRr.IntYc,tstr2);     
+      tstr2 = tstr2 & "." & TRr.Number;
+  end;
+  
+   StartFormat(15);
+    if (RepSpec.flags[23]!=0) then begin
+      if (IVr.DisputedFlag==1) then begin 
+        OutStringID(15,"DblIVVc",IVr.OfficialSerNr & "(*)",false,IVr.SerNr);
+      end else begin 
+        OutStringID(15,"DblIVVc",IVr.OfficialSerNr,false,IVr.SerNr);
+      end;  
+//      OutString(100,"DblAR",IVr.SerNr,false);
+    end else begin
+      tstr = CreateInvoiceNumberDisputedMark(IVr.SerNr,IVr.OfficialSerNr,IVr.DisputedFlag);
+      OutStringID(90,dblstr,tstr,false,tstr2);
+    end;
+    OutDate(160,0,IVr.InvDate,false);
+    OutString(220,0,IVr.PayDeal,false);
+    OutDate(240,0,IVr.PayDate,false);
+//    OutLongInt(310,0,latedays,true);
+    tstr = "DblBadCU";
+    if ((ProgramType==9) or (ProgramType==15) or (ProgramType==20) or (IsBooks)) then begin
+      tstr = "";
+    end;
+    if (Ab.ShowDelayDays!=0) then begin
+      if (latedays<0) then begin
+        OutStringID(345,tstr,-latedays,true,IVr.SerNr);
+      end else begin
+        OutStringID(345,tstr,0,true,IVr.SerNr);
+      end;
+    end else begin      
+      OutStringID(345,tstr,latedays,true,IVr.SerNr);
+    end;
+    OutLongInt(360,0,IVr.LastRemndr,true);
+    if (RepSpec.flags[2]==1) then begin
+      OutValBiDi(450,0,rval,M4Val,true,490);
+      OutString(480,0,IVr.CurncyCode,true);
+    end else begin
+      OutValBiDi(450,0,rs,M4Val,true,490);
+    end;
+   EndFormat;
+LARRPrintOverView:;   
+  if ((RepSpec.flags[14]!=0) and (IVr.InvComment<>"")) then begin
+    StartFormat(15);
+    OutString(150,0,IVr.InvComment,false);
+    EndFormat;
+  end;
+  RETURN;         
+END;
+
+global
+procedure GetAccPeriodComments(Integer future,Date ondat,var string tstr1,var string tstr2,var string tstr3,var string tstr4,var string tstr5,var string tstr6,var string tstr7)
+begin
+  record AccPeriodVc prevAccPeriodr,nextAccPeriodr,AccPeriodr;
+  row AccPeriodVc AccPeriodrw;
+  Integer rwcnt,rwcnt2,i;
+  Integer periodzero,thisperiod,nrofperiods;
+  Date dt;
+  
+  periodzero = 0;
+  if (future==0) then begin    
+    if (FindAccPeriod(ondat,AccPeriodr)) then begin
+      dt = AddDay(AccPeriodr.FiscalStartDate,-1);
+      rwcnt = MatRowCnt(AccPeriodr);
+  // Merge previous and current Accounting Periods so previous year is first..
+      if (FindAccPeriod(dt,prevAccPeriodr)) then begin
+        rwcnt2 = MatRowCnt(prevAccPeriodr);
+        for (i=0;i<rwcnt2;i=i+1) begin
+          MatRowGet(prevAccPeriodr,i,AccPeriodrw);
+          if (rwcnt>0) then begin
+            MatRowInsert(AccPeriodr,i,AccPeriodrw);
+          end else begin
+            MatRowPut(AccPeriodr,i,AccPeriodrw);
+          end;
+        end;
+      end;
+      rwcnt = MatRowCnt(AccPeriodr);
+      for (i=rwcnt-1;i>=0;i=i-1) begin
+        MatRowGet(AccPeriodr,i,AccPeriodrw);
+        if (blankdate(AccPeriodrw.DueDate)) then begin
+          AccPeriodrw.DueDate = AccPeriodrw.EndDate;
+        end;
+        if (periodzero==0) then begin
+          if (ondat>=AccPeriodrw.DueDate) then begin
+            if (i+1<rwcnt) then begin
+              i = i + 1;
+              periodzero = i;
+            end;
+          end;
+        end;
+      end;
+  /*    
+      Startformat(15);
+      Outstring(0,0,"periodzero = " & periodzero,false);
+      EndFormat;
+  */    
+      if (periodzero>=0) then begin
+        MatRowGet(AccPeriodr,periodzero,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr1 = AccPeriodrw.Comment;
+        end else begin
+          tstr1 = USetStr(2540) & "1";
+        end;
+      end;
+      if (periodzero-1>=0) then begin
+        MatRowGet(AccPeriodr,periodzero-1,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr2 = AccPeriodrw.Comment;
+        end else begin
+          tstr2 = USetStr(2540) & "2";
+        end;
+      end;
+      if (periodzero-2>=0) then begin
+        MatRowGet(AccPeriodr,periodzero-2,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr3 = AccPeriodrw.Comment;
+        end else begin
+          tstr3 = USetStr(2540) & "3";
+        end;
+      end;
+      if (periodzero-3>=0) then begin
+        MatRowGet(AccPeriodr,periodzero-3,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr4 = AccPeriodrw.Comment;
+        end else begin
+          tstr4 = USetStr(2540) & "4";
+        end;
+      end;
+      if (periodzero-4>=0) then begin
+        MatRowGet(AccPeriodr,periodzero-4,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr5 = AccPeriodrw.Comment;
+        end else begin
+          tstr5 = USetStr(2540) & "5";
+        end;
+      end;
+      if (periodzero-5>=0) then begin
+        MatRowGet(AccPeriodr,periodzero-5,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr6 = AccPeriodrw.Comment;
+        end else begin
+          tstr6 = USetStr(2540) & "6";
+        end;
+      end;
+      if (periodzero-6>=0) then begin
+        MatRowGet(AccPeriodr,periodzero-6,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr7 = AccPeriodrw.Comment;
+        end else begin
+          tstr7 = USetStr(2540) & "7";
+        end;
+      end;
+    end;
+  end else begin
+    if (FindAccPeriod(ondat,AccPeriodr)) then begin
+      dt = AddDay(AccPeriodr.FiscalEndDate,1);
+      rwcnt = MatRowCnt(AccPeriodr);
+  // Merge previous and current Accounting Periods so previous year is first..
+      if (FindAccPeriod(dt,nextAccPeriodr)) then begin
+        rwcnt2 = MatRowCnt(nextAccPeriodr);
+        for (i=0;i<rwcnt2;i=i+1) begin
+          MatRowGet(nextAccPeriodr,i,AccPeriodrw);
+          MatRowPut(AccPeriodr,MatRowCnt(AccPeriodr),AccPeriodrw);
+        end;
+      end;
+      rwcnt = MatRowCnt(AccPeriodr);
+      for (i=rwcnt-1;i>=0;i=i-1) begin
+        MatRowGet(AccPeriodr,i,AccPeriodrw);
+        if (blankdate(AccPeriodrw.DueDate)) then begin
+          AccPeriodrw.DueDate = AccPeriodrw.EndDate;
+        end;
+        if (periodzero==0) then begin
+          if (ondat>=AccPeriodrw.DueDate) then begin
+            if (i+1<rwcnt) then begin
+              i = i + 1;
+              periodzero = i;
+            end;
+          end;
+        end;
+      end;
+      if (periodzero<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr1 = AccPeriodrw.Comment;
+        end else begin
+          tstr1 = USetStr(2540) & "1";
+        end;
+      end;
+      if (periodzero+1<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero+1,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr2 = AccPeriodrw.Comment;
+        end else begin
+          tstr2 = USetStr(2540) & "2";
+        end;
+      end;
+      if (periodzero+2<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero+2,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr3 = AccPeriodrw.Comment;
+        end else begin
+          tstr3 = USetStr(2540) & "3";
+        end;
+      end;
+      if (periodzero+3<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero+3,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr4 = AccPeriodrw.Comment;
+        end else begin
+          tstr4 = USetStr(2540) & "4";
+        end;
+      end;
+      if (periodzero+4<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero+4,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr5 = AccPeriodrw.Comment;
+        end else begin
+          tstr5 = USetStr(2540) & "5";
+        end;
+      end;
+      if (periodzero+5<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero+5,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr6 = AccPeriodrw.Comment;
+        end else begin
+          tstr6 = USetStr(2540) & "6";
+        end;
+      end;
+      if (periodzero+6<rwcnt) then begin
+        MatRowGet(AccPeriodr,periodzero+6,AccPeriodrw);
+        if (nonblank(AccPeriodrw.Comment)) then begin
+          tstr7 = AccPeriodrw.Comment;
+        end else begin
+          tstr7 = USetStr(2540) & "7";
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure PrintSLAgedHeader(record RcVc RepSpec,Date agedate,Integer nrofper,Integer ActualInvoices,Integer SeparateOnAcc)
+begin
+  record AgedBlock AgedRec;
+  string 30 tstr1,tstr2,tstr3,tstr4,tstr5,tstr6,tstr7;
+  LongInt p1,p2;
+  LongInt totcols,colwidth,colstart,col2start;
+  
+  BlockLoad(AgedRec);
+  if (AgedRec.UseAccPeriod) then begin
+    GetAccPeriodComments(0,agedate,tstr1,tstr2,tstr3,tstr4,tstr5,tstr6,tstr7);
+    if (nrofper<=1) then begin
+      tstr2 = tstr2 & " - ";
+    end;
+    if (nrofper<=2) then begin
+      tstr3 = tstr3 & " - ";
+    end;
+    if (nrofper<=3) then begin
+      tstr4 = tstr4 & " - ";
+    end;
+    if (nrofper<=4) then begin
+      tstr5 = tstr5 & " - ";
+    end;
+    if (nrofper<=5) then begin
+      tstr6 = tstr6 & " - ";
+    end;
+    tstr7 = tstr7 & " - ";
+    StartFormat(15);
+    OutString(0,0,USetStr(2426),false);
+    if (RepSpec.ArtMode==5) then begin
+      if (RepSpec.flags[23]!=0) then begin
+        OutString(100,0,USetStr(2707),false);
+        OutString(155,0,USetStr(4044),false);
+      end else begin
+        OutString(70,0,USetStr(2707),false);
+        OutString(105,0,USetStr(4044),false);
+      end;
+    end;
+    
+    totcols = CalcARRnColumnSpacing(nrofper,AgedRec.UseAccPeriod,colwidth,colstart,col2start);
+    
+    if (AgedRec.ActualInvoices==0 and AgedRec.SeparateOnAcc==0) then begin
+      OutStringAdjust(2,0,USetStr(2521),true,M4Val);
+    end;
+    
+    if (AgedRec.ActualInvoices==1 and AgedRec.SeparateOnAcc==0) then begin
+      OutStringAdjust(colstart - colwidth,0,USetStr(2521),true,M4Val);
+      OutStringAdjust(2,0,USetStr(2519),true,M4Val);
+    end;
+    
+    if (AgedRec.ActualInvoices==0 and AgedRec.SeparateOnAcc==1) then begin
+      if (RepSpec.ArtMode==2) then begin OutStringAdjust(colstart - colwidth,0,USetStr(2518),true,M4Val); end;
+      OutStringAdjust(2,0,USetStr(2521),true,M4Val);
+    end;
+    
+    if (AgedRec.ActualInvoices==1 and AgedRec.SeparateOnAcc==1) then begin
+      if (RepSpec.ArtMode==2) then begin OutStringAdjust(colstart - (colwidth * 2),0,USetStr(2518),true,M4Val); end;
+      OutStringAdjust(colstart - colwidth,0,USetStr(2521),true,M4Val);
+      OutStringAdjust(2,0,USetStr(2519),true,M4Val);
+    end;
+    
+    OutStringAdjust(3,0,tstr1,true,M4Val);
+    OutStringAdjust(4,0,tstr2,true,M4Val);
+    OutStringAdjust(5,0,tstr3,true,M4Val);
+    if (nrofper>3) then begin
+      OutStringAdjust(6,0,tstr4,true,M4Val);
+    end;
+    if (nrofper>4) then begin
+      OutStringAdjust(7,0,tstr5,true,M4Val);
+    end;
+    if (nrofper>5) then begin
+      OutStringAdjust(8,0,tstr6,true,M4Val);
+    end;
+    if (nrofper>6) then begin
+      OutStringAdjust(9,0,tstr7,true,M4Val);
+    end;
+    if (RepSpec.ArtMode==5) then begin
+      OutStringAdjustBiDi(480,0,USetStr(2434),true,M4Val,520);
+    end else begin
+      OutStringAdjustBiDi(480,0,USetStr(2424),true,M4Val,520);
+    end;
+    EndFormat;
+  end else begin
+    p1 = AgedRec.Per1;
+    p2 = AgedRec.Per2;
+    if (p1==-1) then begin p1 = 15; end;
+    if (p2==-1) then begin p2 = 30; end;
+    tstr1 = "0 - " & p1;
+    tstr2 = "" & p1+1 & " - " & p2;
+    tstr3 = "" & p2+1 & " - ";
+    if (AgedRec.Per3>-1) then begin tstr3 = tstr3 & AgedRec.Per3; end;
+    tstr4 = "" & AgedRec.Per3+1 & " - ";
+    if (AgedRec.Per4>-1) then begin tstr4 = tstr4 & AgedRec.Per4; end;
+    tstr5 = "" & AgedRec.Per4+1 & " - ";
+    if (AgedRec.Per5>-1) then begin tstr5 = tstr5 & AgedRec.Per5; end;
+    tstr6 = "" & AgedRec.Per5+1 & " - ";
+    if (AgedRec.Per6>-1) then begin tstr6 = tstr6 & AgedRec.Per6; end;
+    tstr7 = "" & AgedRec.Per6+1 & " - ";
+    StartFormat(15);
+    OutString(0,0,USetStr(2426),false);
+    if (RepSpec.ArtMode==2) then begin
+      OutString(48,0,USetStr(2606),false);
+    end;
+    if (RepSpec.ArtMode==5) then begin
+      if (RepSpec.flags[23]!=0) then begin
+        OutString(100,0,USetStr(2707),false);
+        OutString(155,0,USetStr(4044),false);
+      end else begin
+        OutString(70,0,USetStr(2707),false);
+        OutString(105,0,USetStr(4044),false);
+      end;
+    end;
+    if (ActualInvoices!=0) then begin
+      if ((RepSpec.ArtMode==2) or (RepSpec.ArtMode==5)) then begin
+        OutString(175,0,USetStr(2521),true);
+      end else begin
+        OutString(195,0,USetStr(2521),true);
+      end;
+      OutStringAdjust(2,0,USetStr(2519),true,M4Val);
+    end else begin
+      if (AgedRec.SeparateOnAcc!=0) then begin
+        OutStringAdjust(169,0,USetStr(2518),true,M4Val);
+      end;
+      OutStringAdjust(2,0,USetStr(2521),true,M4Val);
+    end;
+    OutStringAdjust(3,0,tstr1,true,M4Val);
+    OutStringAdjust(4,0,tstr2,true,M4Val);
+    OutStringAdjust(5,0,tstr3,true,M4Val);
+    if (nrofper>2) then begin
+      OutStringAdjust(6,0,tstr4,true,M4Val);
+    end;
+    if (nrofper>3) then begin
+      OutStringAdjust(7,0,tstr5,true,M4Val);
+    end;
+    if (nrofper>4) then begin
+      OutStringAdjust(8,0,tstr6,true,M4Val);
+    end;
+    if (nrofper>5) then begin
+      OutStringAdjust(9,0,tstr7,true,M4Val);
+    end;
+    OutStringAdjustBiDi(480,0,USetStr(2424),true,M4Val,520);
+    EndFormat;
+  end;
+  Gray_Divider(0,1);
+  return;
+end;
+
+global
+procedure ARPrintDueDetailedInstalmenInvoice(record IVVc IVr,record RcVc RepSpec,record CUVc CUr,Integer actualinvoices,Integer nrofper)
+BEGIN
+  val t,blval,tcur;
+  string 255 tstr1;
+  val sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,totinv;
+  record ARInstallVc ARIr;
+  record ARInstallHistVc ARIHr;
+  Boolean TrHs,testf;
+  LongInt latedays;
+  
+  if (nonblankdate(RepSpec.d1)) then begin
+    ARIHr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIHr,1,TrHs)) begin
+      if (ARIHr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIHr.DueDate,RepSpec.d1,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          sactinv = 0;
+          s0inv = 0;
+          s1inv = 0;
+          s2inv = 0;
+          s3inv = 0;
+          s4inv = 0;
+          s5inv = 0;
+          s6inv = 0;
+          s7inv = 0;
+          t = FindInstalmentPaidAmount(IVr,ARIHr.InvoiceNr,ARIHr.InstallNr,RepSpec.d1,tcur);
+          if (RepSpec.flags[2]==1) then begin
+            if (nonblank(CUr.CurncyCode)) then begin
+              t = ARIHr.RVal - tcur;
+            end else begin
+              t = ARIHr.BookRVal - t;
+            end;
+          end else begin
+            t = ARIHr.BookRVal - t;
+          end;
+          SumAged(RepSpec.d1,latedays,actualinvoices,t,sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv);
+          totinv = s0inv + s1inv;
+          totinv = totinv + s2inv;
+          totinv = totinv + s3inv;
+          totinv = totinv + s4inv;
+          totinv = totinv + s5inv;
+          totinv = totinv + s6inv;
+          totinv = totinv + s7inv;
+          totinv = totinv + sactinv;
+          tstr1 = CreateInvoiceNumberDisputedMark(IVr.SerNr,IVr.OfficialSerNr,IVr.DisputedFlag);
+          StartFormat(15);
+          if (RepSpec.flags[23]!=0) then begin
+            if (IVr.DisputedFlag==1) then begin 
+              OutStringID(11,"DblAR",IVr.OfficialSerNr & "*",false,IVr.SerNr);
+            end else begin
+              OutStringID(11,"DblAR",IVr.OfficialSerNr,false,IVr.SerNr);
+            end;  
+            OutDate(100,0,IVr.InvDate,false);
+            OutDate(155,0,ARIHr.DueDate,false);
+          end else begin
+            OutStringID(11,"DblAR",tstr1,false,IVr.SerNr);
+            OutDate(70,0,IVr.InvDate,false);
+            OutDate(115,0,ARIHr.DueDate,false);
+          end;
+          if (RepSpec.flags[2]==1) then begin
+            PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,465,"");
+            OutString(464,0,CUr.CurncyCode,false);
+          end else begin
+            PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,480,"");
+          end;
+          EndFormat;
+        end;
+      end;
+    end;
+  end else begin
+    ARIr.InvoiceNr = IVr.SerNr;
+    TrHs = true;
+    while (LoopMain(ARIr,1,TrHs)) begin
+      if (ARIr.InvoiceNr!=IVr.SerNr) then begin TrHs = false; end;
+      if (TrHs) then begin
+        testf = true;
+        latedays = CalculateLateDays(IVr.InvDate,ARIr.DueDate,CurrentDate,RepSpec.flags[22]!=0,RepSpec.ArtMode!=2 and RepSpec.ArtMode!=5);
+        if (RepSpec.flags[0]<>0) then begin 
+          if (latedays>=0) then begin testf = false; end;
+        end;
+        if (RepSpec.long1>0) then begin          
+          if (-latedays<=RepSpec.long1) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          sactinv = 0;
+          s0inv = 0;
+          s1inv = 0;
+          s2inv = 0;
+          s3inv = 0;
+          s4inv = 0;
+          s5inv = 0;
+          s6inv = 0;
+          s7inv = 0;
+//          t = FindInstalmentPaidAmount(IVr,ARIr.InvoiceNr,ARIr.InstallNr,CurrentDate,tcur);
+          if (RepSpec.flags[2]==1) then begin
+            if (nonblank(CUr.CurncyCode)) then begin
+              t = ARIr.RVal;
+            end else begin
+              t = ARIr.BookRVal;
+            end;
+          end else begin
+            t = ARIr.BookRVal;
+          end;
+          SumAged(RepSpec.d1,latedays,actualinvoices,t,sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv);
+          totinv = s0inv + s1inv;
+          totinv = totinv + s2inv;
+          totinv = totinv + s3inv;
+          totinv = totinv + s4inv;
+          totinv = totinv + s5inv;
+          totinv = totinv + s6inv;
+          totinv = totinv + s7inv;
+          totinv = totinv + sactinv;
+          tstr1 = CreateInvoiceNumberDisputedMark(IVr.SerNr,IVr.OfficialSerNr,IVr.DisputedFlag);
+          StartFormat(15);
+          if (RepSpec.flags[23]!=0) then begin
+            if (IVr.DisputedFlag==1) then begin 
+              OutStringID(11,"DblIVVc",IVr.OfficialSerNr & "(*)",false,IVr.SerNr);
+            end else begin 
+              OutStringID(11,"DblIVVc",IVr.OfficialSerNr,false,IVr.SerNr);
+            end;  
+            OutDate(100,0,IVr.InvDate,false);
+            OutDate(155,0,ARIr.DueDate,false);
+          end else begin
+            OutStringID(11,"DblAR",tstr1,false,IVr.SerNr);
+            OutDate(70,0,IVr.InvDate,false);
+            OutDate(115,0,ARIr.DueDate,false);
+          end;
+          if (RepSpec.flags[2]==1) then begin
+            PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,465,"");
+            OutString(464,0,CUr.CurncyCode,false);
+          end else begin
+            PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,480,"");
+          end;
+          EndFormat;
+        end;
+      end;
+    end;
+  end;
+  RETURN;            
+END;
+
+global
+procedure ARPrintDueDetailed(record IVVc IVr,record RcVc RepSpec,string curcode,string objects,val sactinv,val s0inv,val s1inv,val s2inv,val s3inv,val s4inv,val s5inv,val s6inv,val s7inv,var val totinv,Integer nrofper)
+BEGIN
+  record ARVc AR2r;
+  val t,vatel,blval;
+  string 255 tstr1;
+  
+  tstr1 = CreateInvoiceNumberDisputedMark(IVr.SerNr,IVr.OfficialSerNr,IVr.DisputedFlag);
+  StartFormat(15);
+  if (RepSpec.flags[23]!=0) then begin
+    if (IVr.DisputedFlag==1) then begin 
+      OutStringID(11,"DblIVVc",IVr.OfficialSerNr & "(*)",false,IVr.SerNr);
+    end else begin 
+      OutStringID(11,"DblIVVc",IVr.OfficialSerNr,false,IVr.SerNr);
+    end;  
+    OutDate(100,0,IVr.InvDate,false);
+    OutDate(155,0,IVr.PayDate,false);
+  end else begin
+    OutString(11,"DblAR",tstr1,false);
+    OutDate(70,0,IVr.InvDate,false);
+    OutDate(115,0,IVr.PayDate,false);
+  end;
+  if (RepSpec.flags[2]==1) then begin
+    if (blank(curcode)) then begin
+      PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,480,"");
+    end else begin
+      PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,465,"");
+      OutString(464,0,curcode,false);
+    end;
+  end else begin
+    PrintAgedLine(sactinv,s0inv,s1inv,s2inv,s3inv,s4inv,s5inv,s6inv,s7inv,blval,totinv,nrofper,480,"");
+  end;
+  EndFormat;
+  RETURN;            
+END;
+
+procedure PrintARTotals(record RcVc RepSpec,Integer tabs,string curcode,Integer ActualInvoices,val ivtot,val ivdue,val ivnotdue,val onacc,val current)
+BEGIN
+  Integer j;
+  
+  StartFormat(15);
+  for (j=0;j<tabs;j=j+1) begin
+    OutString(0,0,"",false);
+  end;
+  OutString(290,0,USetStr(2429),false);
+  OutValBiDi(450,0,ivtot,M4Val,true,490);
+  if (HasMultiCurrency) then begin
+    OutString(460,0,curcode,false);
+  end;
+  EndFormat;
+  StartFormat(15);
+  for (j=0;j<tabs;j=j+1) begin
+    OutString(0,0,"",false);
+  end;
+  OutString(290,0,USetStr(2527),false);
+  OutValBiDi(450,0,ivdue,M4Val,true,490);
+  if (HasMultiCurrency) then begin
+    OutString(460,0,curcode,false);
+  end;
+  EndFormat;
+  if (ActualInvoices!=0) then begin
+    StartFormat(15);
+    for (j=0;j<tabs;j=j+1) begin
+      OutString(0,0,"",false);
+    end;
+    OutString(290,0,USetStr(2520),false);
+    OutValBiDi(450,0,current,M4Val,true,490);
+    if (HasMultiCurrency) then begin
+      OutString(460,0,curcode,false);
+    end;
+    EndFormat;
+  end;
+  StartFormat(15);
+  for (j=0;j<tabs;j=j+1) begin
+    OutString(0,0,"",false);
+  end;
+  OutString(290,0,USetStr(2521),false);
+  OutValBiDi(450,0,ivnotdue,M4Val,true,490);
+  if (HasMultiCurrency) then begin
+    OutString(460,0,curcode,false);
+  end;
+  EndFormat;
+  
+  if (onacc!=0) then begin
+    StartFormat(15);
+    for (j=0;j<tabs;j=j+1) begin
+      OutString(0,0,"",false);
+    end;
+    OutString(290,0,USetStr(2497),false);
+    OutValBiDi(450,0,onacc,M4Val,true,490);
+    if (HasMultiCurrency) then begin
+      OutString(460,0,curcode,false);
+    end;
+    EndFormat;
+  end;
+  RETURN;
+END;
+
+global
+procedure PrintHeaderAR2(record RcVc RepSpec,Date agedate,Integer nrofper,Integer ActualInvoices,Integer SeparateOnAcc)
+BEGIN  
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(2426),false);
+     OutString(55,0,USetStr(2435),false);
+     OutString(100,0,USetStr(2436),false);
+     OutString(170,0,USetStr(2707),false);
+     OutString(240,0,USetStr(2438),false);
+     if (RepSpec.flags[2]==1) then begin
+       OutStringAdjustBiDi(360,0,USetStr(2425),true,M4Val,400);
+       OutStringAdjustBiDi(410,0,USetStr(3201),true,M4Val,450);
+       OutString(470,0,USetStr(2434),true);
+     end else begin
+       OutStringAdjustBiDi(380,0,USetStr(2425),true,M4Val,420);
+       if (RepSpec.ArtMode==0) then begin
+         OutStringAdjustBiDi(425,0,USetStr(3201),true,M4Val,465);
+         OutString(480,0,USetStr(2434),true);
+       end else begin
+         OutString(450,0,USetStr(2434),true);
+       end;
+     end;
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(2426),false);
+     if (RepSpec.flags[23]!=0) then begin
+//       OutString(100,0,USetStr(2423),false);
+     end else begin
+       OutString(90,0,USetStr(2423),false);
+     end;
+     OutString(160,0,USetStr(2707),false);
+     OutString(240,0,USetStr(2422),false);
+     OutString(345,0,USetStr(2428),true);
+//     if (lightFlag==false) then begin
+//       OutString(350,0,USetStr(2711),true);
+//     end;  
+     OutString(450,0,USetStr(2434),true);
+    EndFormat;       
+  end;
+  if ((RepSpec.ArtMode==2) or (RepSpec.ArtMode==5)) then begin
+    PrintSLAgedHeader(RepSpec,agedate,nrofper,ActualInvoices,SeparateOnAcc);
+  end;
+  if (RepSpec.ArtMode==3) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(2426),false);
+     OutStringAdjustBiDi(480,0,USetStr(2424),true,M4Val,520);
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==4) or (RepSpec.ArtMode==6) then begin
+    StartFormat(15);
+     OutString(0,0,USetStr(2426),false);
+     OutString(240,0,USetStr(2528),true); 
+     OutString(320,0,USetStr(2440),true);
+     OutString(400,0,USetStr(2439),true);
+     OutString(480,0,USetStr(2529),true);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  RETURN;
+END;  
+
+function Boolean IsOpenARPayHist(record RcVc RepSpec,LongInt cupnr,val v,Boolean backdate,var val openv)
+begin
+  Boolean res;
+  record ARPayHistVc ARPayHistr;
+  Boolean found,testf;
+  val t;
+
+  t = v;
+  found = true;
+  ARPayHistr.CUPNr = cupnr;
+  while (LoopKey("MainKey",ARPayHistr,1,found)) begin
+    if (ARPayHistr.CUPNr!=cupnr) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (ARPayHistr.FileName!="IPVc") and (ARPayHistr.FileName!="CLInVc") then begin
+        if (backdate) then begin
+          if (RepSpec.d1<ARPayHistr.TransDate) then begin
+            testf = false;
+          end;
+        end;
+        if (testf) then begin
+          t = t - ARPayHistr.Val;
+        end;
+      end;
+    end;
+  end;
+  if (t!=0) then begin res = true; end;
+  openv = t;
+  IsOpenARPayHist = res;
+  return;
+end;
+
+global
+procedure PrintPrepaymentsNrsIP(Integer amntincurncy,record RcVc RepSpec,string custcode,Boolean backdate,Integer pos1,Integer pos2)
+BEGIN
+  record ARPayHistVc ARPayHistr;
+  record ARPayVc ARPayr;
+  Boolean found,testf;
+  string 255 tstr,curncycode;
+  record IPVc IPr;
+  row IPVc IPrw;
+  record CLInVc CLInr;
+  row CLInVc CLInrw;
+  record CLOutVc CLOutr;
+  row CLOutVc CLOutrw;
+  Integer i,rwcnt;
+  LongInt prepno;
+  val prepbal,t,lossv;
+  val frrate,torate1,torate2,baserate1,baserate2;
+  record BaseCurBlock BCb;  
+  record IVVc IVr;
+  
+  if (backdate==false) then begin
+    found = true;
+    ARPayr.CustCode = custcode;
+    while LoopKey("CustCode",ARPayr,1,found) begin
+      if (ARPayr.CustCode<>custcode) then begin 
+        found = false; 
+      end;
+      if (found) then begin
+        testf = true;
+        ARPayHistr.CUPNr = ARPayr.CUPNr;
+        ReadFirstMain(ARPayHistr,1,true);
+        if (nonblank(RepSpec.AccStr)) then begin
+          if (nonblank(ARPayHistr.ARAcc)) then begin
+            if (RepSpec.AccStr!=ARPayHistr.ARAcc) then begin
+              testf = false;
+            end;
+          end else begin
+            if (GetCustomerOnAccountAC(ARPayHistr.CustCode)!=RepSpec.AccStr) then begin
+              testf = false;
+            end;
+          end;
+        end;
+        if (testf) then begin
+          StartFormat(15);
+          tstr = ARPayr.CUPNr;
+          OutStringID(pos1,"DblPrHisSL",tstr,false,custcode);
+          if (amntincurncy==0) then begin
+            OutVal(pos2,0,-ARPayr.BookRVal,M4Val,true);
+          end else begin
+            OutVal(pos2,0,-ARPayr.RVal,M4Val,true);
+            OutString(pos2+10,0,ARPayr.CurncyCode,false);
+          end;
+          EndFormat;
+        end;
+      end;
+    end;
+  end else begin
+    BlockLoad(BCb);
+    ARPayHistr.CustCode = custcode;
+    found = true;
+    ResetLoop(ARPayHistr);
+    while (LoopKey("CUPNrCustCode",ARPayHistr,1,found)) begin
+      if (found) then begin
+        testf = true;
+        if (ARPayHistr.CustCode<>custcode) then begin 
+          found = false; 
+          testf = false;
+        end;
+        if (RepSpec.d1<ARPayHistr.TransDate) then begin
+          testf = false;
+        end;
+        if (nonblank(RepSpec.AccStr)) then begin
+          if (nonblank(ARPayHistr.ARAcc)) then begin
+            if (RepSpec.AccStr!=ARPayHistr.ARAcc) then begin
+              testf = false;
+            end;
+          end else begin
+            if (GetCustomerOnAccountAC(ARPayHistr.CustCode)!=RepSpec.AccStr) then begin
+              testf = false;
+            end;
+          end;
+        end;
+        if (testf) then begin
+          if (ARPayHistr.FileName=="IPVc") then begin
+            if ((nonblank(RepSpec.ObjType)) or (nonblank(RepSpec.ObjStr))) then begin
+              IPr.SerNr = ARPayHistr.SerNr;
+              if (ReadFirstMain(IPr,1,true)) then begin
+                rwcnt = MatRowCnt(IPr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(IPr,i,IPrw);
+                  if (IPrw.CUPNr==ARPayHistr.CUPNr) then begin
+                    if (nonblank(RepSpec.ObjType)) then begin
+                      testf = ObjectTypeMatch(IPrw.Objects,RepSpec.ObjType);
+                    end;
+                    if (nonblank(RepSpec.ObjStr)) then begin
+                      testf = SetInSet(RepSpec.ObjStr,IPrw.Objects);
+                    end;
+                  end;
+                end;
+              end;
+            end;
+            /*if (testf) then begin
+              testf = IsOpenARPayHist(RepSpec,ARPayHistr.CUPNr,ARPayHistr.Val,backdate);
+           end;*/
+          end;
+          if (ARPayHistr.FileName=="CLInVc") then begin
+            if ((nonblank(RepSpec.ObjType)) or (nonblank(RepSpec.ObjStr))) then begin
+              CLInr.SerNr = ARPayHistr.SerNr;
+              if (ReadFirstMain(CLInr,1,true)) then begin
+                rwcnt = MatRowCnt(CLInr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(CLInr,i,CLInrw);
+                  if (CLInrw.Type==4) then begin
+                    if (CLInrw.TransNr==ARPayHistr.CUPNr) then begin
+                      if (nonblank(RepSpec.ObjType)) then begin
+                        testf = ObjectTypeMatch(CLInr.Objects,RepSpec.ObjType);
+                      end;
+                      if (nonblank(RepSpec.ObjStr)) then begin
+                        testf = SetInSet(RepSpec.ObjStr,CLInr.Objects);
+                      end;
+                      i = rwcnt;
+                    end;
+                  end;
+                end;
+              end;
+            end;
+            /*if (testf) then begin
+              testf = IsOpenARPayHist(RepSpec,ARPayHistr.CUPNr,ARPayHistr.Val,backdate);
+            end;*/
+          end;
+          
+          if (ARPayHistr.FileName=="CLOutVc") then begin
+            if ((nonblank(RepSpec.ObjType)) or (nonblank(RepSpec.ObjStr))) then begin
+              CLOutr.SerNr = ARPayHistr.SerNr;
+              if (ReadFirstMain(CLOutr,1,true)) then begin
+                rwcnt = MatRowCnt(CLOutr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(CLOutr,i,CLOutrw);
+                  if (CLOutrw.Type==5) then begin
+                    if (CLOutrw.TransNr==ARPayHistr.CUPNr) then begin
+                      if (nonblank(RepSpec.ObjType)) then begin
+                        testf = ObjectTypeMatch(CLOutr.Objects,RepSpec.ObjType);
+                      end;
+                      if (nonblank(RepSpec.ObjStr)) then begin
+                        testf = SetInSet(RepSpec.ObjStr,CLOutr.Objects);
+                      end;
+                      i = rwcnt;
+                    end;
+                  end;
+                end;
+              end;
+            end;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        if (prepno<>ARPayHistr.CUPNr) then begin
+          if ((prepno<>-1) and (prepbal<>0)) then begin
+            StartFormat(15);
+            tstr = prepno;
+            OutStringID(pos1,"DblPrHisSL",tstr,false,custcode);
+            OutVal(pos2,0,-prepbal,M4Val,true);
+            if (amntincurncy!=0) then begin
+              OutString(pos2+10,0,curncycode,false);
+            end;
+            EndFormat;
+            prepbal = 0;
+          end;
+        end;
+        prepno = ARPayHistr.CUPNr;
+        curncycode = ARPayHistr.CurncyCode;
+        if ((ARPayHistr.FileName=="IVVc") or (ARPayHistr.FileName=="CLOutVc")) then begin
+          if (amntincurncy==0) then begin
+            prepbal = prepbal - ARPayHistr.BookVal;
+          end else begin
+            prepbal = prepbal - ARPayHistr.Val;
+          end;
+        end else begin
+          if (amntincurncy==0) then begin
+            if (GetARPayRate(-1,ARPayHistr.CUPNr,frrate,torate1,torate2,baserate1,baserate2,ARPayHistr.CurncyCode,ARPayHistr.TransDate)) then begin
+              t = MulRateToBase1(ARPayHistr.CurncyCode,ARPayHistr.Val,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            end else begin            
+              t = MulWithRateToBase1(ARPayHistr.CurncyCode,ARPayHistr.TransDate,ARPayHistr.Val,DefaultCurRoundOff);
+            end;
+            prepbal = prepbal + t;
+            lossv = blankval;
+            if (ARPayHistr.CurncyCode==BCb.BaseCur1) then begin
+            end else begin
+              IPr.SerNr = ARPayHistr.SerNr;
+              if (ReadFirstMain(IPr,1,true)) then begin
+                rwcnt = MatRowCnt(IPr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(IPr,i,IPrw);
+                  if (IPrw.CUPNr==ARPayHistr.CUPNr) then begin
+                    if (nonblank(IPrw.B1BankVal)) then begin
+                      prepbal = prepbal - t;
+                      prepbal = prepbal + IPrw.B1BankVal;
+                    end;
+                    FindAllPrepayLosses(IPrw.InvCurncy,IPr.TransDate,IPrw.InvVal,IPrw.CUPNr,IPrw.InvVal,lossv,IVr,IPrw.InvoiceNr,-1,false,BCb,IPrw.B1BankVal,IPrw.BankCurncy);
+                    if (lossv!=t) then begin
+                      prepbal = prepbal - lossv;
+                    end;
+                  end;
+                end;
+              end;
+            end;
+          end else begin
+            prepbal = prepbal + ARPayHistr.Val;
+          end;
+        end;  
+      end;
+    end;
+    if ((prepno<>-1) and (prepbal<>0)) then begin
+      StartFormat(15);
+      tstr = prepno;
+      OutStringID(pos1,"DblPrHisSL",tstr,false,custcode);
+      OutVal(pos2,0,-prepbal,M4Val,true);
+      if (amntincurncy!=0) then begin
+        OutString(pos2+10,0,curncycode,false);
+      end;
+      EndFormat;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure PrintOnAccountInfo(record CUVc CUp,val rval,val sum,var Boolean CustOut,record RcVc RepSpec,record SMVc CurTotalsr,Boolean backdatf)
+BEGIN
+  if (CustOut==false) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(0,0,CUp.Code,false);
+    OutString(100,0,CUp.Name,false);
+    OutString(280,0,CUp.Phone,false);
+    if (RepSpec.flags[2]==1) then begin
+      OutString(480,0,CUp.CurncyCode,true);
+    end;  
+    EndFormat;
+    CustOut = true;
+  end;
+  if (blank(CUp.CurncyCode)) then begin
+    if (RepSpec.ArtMode==5) then begin
+      PrintCurTotalsRow(CurTotalsr,2497,150,2,-1,-1);
+    end else begin
+      PrintCurTotalsRow(CurTotalsr,2497,150,450,-1,-1);
+    end;
+  end else begin
+    StartFormat(15);
+    OutString(140,0,USetStr(11857),false);
+    if (RepSpec.flags[2]==1) then begin
+      OutValBiDi(360,0,rval,M4Val,true,380);
+      OutString(480,0,CUp.CurncyCode,true);
+    end else begin
+      OutVal(380,0,sum,M4Val,true);
+    end;
+    EndFormat;
+  end;  
+  if (RepSpec.flags[20]!=0) then begin
+    if (RepSpec.flags[2]==1) then begin
+      PrintPrepaymentsNrsIP(RepSpec.flags[2],RepSpec,CUp.Code,backdatf,140,360);
+    end else begin
+      PrintPrepaymentsNrsIP(RepSpec.flags[2],RepSpec,CUp.Code,backdatf,140,380);
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure ARRnGetInvBalance(record IVVc orgIVp,var Date baldatep,Integer invtype,var val rvalp,var val rvalb1,var LongInt latedays)
+BEGIN
+  record IVVc IVr;
+  record IPrsVc IPrsr;
+  record PurgeTRVc PurgeTRr;
+  record TRVc TRr;
+  record CLInVc CLInr;
+  record CLOutVc CLOutr;
+  record CredManVc CredManr;
+  row TRVc TRrw;
+  row CLInVc CLInrw;
+  row CLOutVc CLOutrw;
+  Boolean found;
+  val amnt,amntb1,t,t2,rategain,tinivcurrate;
+  Integer i,rwcnt,oldstyle;  
+  Date dt;
+  Boolean ivcredf;
+
+  IPrsr.IVNr = orgIVp.SerNr;
+  if (orgIVp.SerNr>0) then begin
+    found = true;
+  end;
+  while (LoopKey("IVKey",IPrsr,1,found)) begin
+    if (IPrsr.IVNr<>orgIVp.SerNr) then begin found = false; end;
+    if (found) then begin
+      if (IPrsr.TransDate<=baldatep) then begin
+        if (IPrsr.TransType==kIPrsTransTypeInvoice) then begin
+          if (IPrsr.TransNr<>orgIVp.SerNr) then begin
+            IVr.SerNr = IPrsr.TransNr;
+            if (ReadFirstMain(IVr,1,true)) then begin
+              if (IVr.Invalid==0) then begin
+                if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                  if (invtype!=kInvoiceTypeCash and invtype!=kInvoiceTypeCashInvoiceReceiptPRT) then begin
+                    t = -IVr.Sum4;
+                    rvalp = rvalp + t;
+                    if (IVr.BaseSum4==0) then begin
+                      rvalb1 = rvalb1 + MulRateToBase1(orgIVp.CurncyCode,t,orgIVp.FrRate,orgIVp.ToRateB1,orgIVp.ToRateB2,orgIVp.BaseRate1,orgIVp.BaseRate2,DefaultCurRoundOff);
+                    end else begin
+                      rvalb1 = rvalb1 - IVr.BaseSum4;
+                    end;
+                    ivcredf = true;
+                    if (rvalp<0) then begin
+                      if (latedays>0) then begin latedays = 0; end;
+                    end;
+                  end;
+                end else begin
+                  rvalp = rvalp + IVr.Sum4;
+                  if (IVr.BaseSum4==0) then begin
+                    rvalb1 = rvalb1 + MulRateToBase1(IVr.CurncyCode,IVr.Sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+                  end else begin
+                    rvalb1 = rvalb1 + IVr.BaseSum4;
+                  end;
+                end;
+              end;  
+            end;
+          end;
+        end;
+        if (IPrsr.TransType==kIPrsTransTypeReceipt) then begin            
+          PSFindPaydAmount2(orgIVp,IPrsr,true,amnt,amntb1,dt);
+          t = -amnt;
+          rvalp = rvalp + t;
+          rvalb1 = rvalb1 - amntb1;
+          if (ivcredf) then begin
+            if (rvalp<0) then begin
+              if (latedays>0) then begin latedays = 0; end;
+            end;
+          end;
+        end;
+        if (IPrsr.TransType==kIPrsTransTypePurgeNLTransaction) then begin            
+          PurgeTRr.Number = IPrsr.TransNr;
+          PurgeTRr.IntYc = GetIntYc(IPrsr.TransDate);
+          PurgeTRr.TransRow = IPrsr.TransRow;
+          if (ReadFirstMain(PurgeTRr,3,true)) then begin
+            if ((PurgeTRr.TransDate==IPrsr.TransDate) and (PurgeTRr.TransDate<=baldatep)) then begin
+
+              if (PurgeTRr.Typ==1) then begin
+                if (PurgeTRr.SerNr==orgIVp.SerNr) then begin
+                  t = PurgeTRr.CurDebVal - PurgeTRr.CurCredVal;
+                  t2 = PurgeTRr.DebVal - PurgeTRr.CredVal;
+                  if ((PurgeTRr.CurDebVal==0) and (PurgeTRr.CurCredVal==0)) then begin
+                    t = t2;
+                  end;                    
+                  if (TypeOfCurncy(PurgeTRr.Curncy,oldstyle)==2) then begin
+                    t = PurgeTRr.DebVal2 - PurgeTRr.CredVal2;
+                  end;
+                  rvalp = rvalp  + t;
+                  rvalb1 = rvalb1  + (PurgeTRr.DebVal - PurgeTRr.CredVal);
+                  if (ivcredf) then begin
+                    if (rvalp<0) then begin
+                      if (latedays>0) then begin latedays = 0; end;
+                    end;
+                  end;
+                end;
+              end;
+            end;  
+          end;
+        end;
+        if (IPrsr.TransType==kIPrsTransTypeNLTransaction) then begin            
+          TRr.Number = IPrsr.TransNr;
+          TRr.IntYc = GetIntYc(IPrsr.TransDate);
+          if (ReadFirstMain(TRr,2,true)) then begin
+            if ((TRr.TransDate==IPrsr.TransDate) and (TRr.TransDate<=baldatep)) then begin
+              rwcnt = MatRowCnt(TRr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(TRr,i,TRrw);
+                if (TRrw.ovst==0) then begin
+                  if (TRrw.stp==1) and (TRrw.Typ==1) then begin
+                    if (TRrw.SerNr==orgIVp.SerNr) then begin
+                      t = TRrw.CurDebVal - TRrw.CurCredVal;
+                      t2 = TRrw.DebVal - TRrw.CredVal;
+                      if ((TRrw.CurDebVal==0) and (TRrw.CurCredVal==0)) then begin
+                        t = t2;
+                      end;                        
+                      if (TypeOfCurncy(TRrw.Curncy,oldstyle)==2) then begin
+                        t = TRrw.DebVal2 - TRrw.CredVal2;
+                      end;
+                      rvalp = rvalp  + t;
+                      rvalb1 = rvalb1  + (TRrw.DebVal - TRrw.CredVal);
+                      if (ivcredf) then begin
+                        if (rvalp<0) then begin
+                          if (latedays>0) then begin latedays = 0; end;
+                        end;
+                      end;
+                    end;
+                  end;
+                end;
+              end;
+            end;  
+          end;
+        end;
+        if (IPrsr.TransType==kIPrsTransTypeCashIn) then begin            
+          CLInr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(CLInr,1,true)) then begin
+            if ((CLInr.TransDate==IPrsr.TransDate) and (CLInr.TransDate<=baldatep) and (CLInr.Invalid==0)) then begin
+              rwcnt = MatRowCnt(CLInr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(CLInr,i,CLInrw);
+                if (CLInrw.TransNr==orgIVp.SerNr) then begin
+                  rvalp = -CLInrw.Sum + rvalp;
+                  
+                  tinivcurrate = MulRateToBase1(CLInr.CurncyCode,CLInrw.Sum,orgIVp.FrRate,orgIVp.ToRateB1,orgIVp.ToRateB2,orgIVp.BaseRate1,orgIVp.BaseRate2,DefaultCurRoundOff);
+                  t2 = MulRateToBase1(CLInr.CurncyCode,CLInrw.Sum,CLInr.FrRate,CLInr.ToRateB1,CLInr.ToRateB2,CLInr.BaseRate1,CLInr.BaseRate2,DefaultCurRoundOff);
+                  rategain = tinivcurrate - t2;
+                  rvalb1 = rvalb1 - t2 - rategain;
+/*                
+                  t = -CLInrw.Sum;
+//                  t2 = MulRateToBase1(CLInr.CurncyCode,t,CLInr.FrRate,CLInr.ToRateB1,CLInr.ToRateB2,CLInr.BaseRate1,CLInr.BaseRate2,DefaultCurRoundOff);
+                  rvalp = t + rvalp;
+                  rvalb1 = rvalb1 + MulRateToBase1(CLInr.CurncyCode,t,CLInr.FrRate,CLInr.ToRateB1,CLInr.ToRateB2,CLInr.BaseRate1,CLInr.BaseRate2,DefaultCurRoundOff);
+*/                  
+                  if (ivcredf) then begin
+                    if (rvalp<0) then begin
+                      if (latedays>0) then begin latedays = 0; end;
+                    end;
+                  end;
+                end;
+              end;
+            end;  
+          end;
+        end;
+        if (IPrsr.TransType==kIPrsTransTypeCashOut) then begin
+          CLOutr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(CLOutr,1,true)) then begin
+            if ((CLOutr.TransDate==IPrsr.TransDate) and (CLOutr.TransDate<=baldatep) and (CLOutr.Invalid==0)) then begin
+              rwcnt = MatRowCnt(CLOutr);
+              for (i=0; i<rwcnt; i=i+1) begin
+                MatRowGet(CLOutr,i,CLOutrw);
+                if (CLOutrw.Type==1) then begin
+                  if (CLOutrw.TransNr==orgIVp.SerNr) then begin
+                    rvalp = rvalp + CLOutrw.Sum;
+                    rvalb1 = rvalb1 + MulRateToBase1(CLOutr.CurncyCode,CLOutrw.Sum,CLOutr.FrRate,CLOutr.ToRateB1,CLOutr.ToRateB2,CLOutr.BaseRate1,CLOutr.BaseRate2,DefaultCurRoundOff);
+                    if (ivcredf) then begin
+                      if (rvalp<0) then begin
+                        if (latedays>0) then begin latedays = 0; end;
+                      end;
+                    end;
+                  end;  
+                end;    
+              end;
+            end;
+          end;
+        end;
+        if (IPrsr.TransType==6) then begin
+          CredManr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(CredManr,1,true)) then begin
+            if ((CredManr.TransDate<=baldatep) and (CredManr.Invalid==0)) then begin
+              rvalp = rvalp - CredManr.InvSum4;
+              rvalb1 = rvalb1 - CredManr.BaseTotalSum;
+              if (ivcredf) then begin
+                if (rvalp<0) then begin
+                  if (latedays>0) then begin latedays = 0; end;
+                end;    
+              end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  RETURN; 
+END;
+
+global
+procedure ARRnPrintDebtorsAccounts(Array string debaccs,Array val debbal,var Integer debcnt)
+BEGIN
+  Integer i;
+  
+  Gray_Divider(290,1);
+  for (i=0;i<=debcnt;i=i+1) begin
+    StartFormat(15);
+    OutString(290,0,debaccs[i],false);
+    OutVal(480,0,debbal[i],M4Val,true);
+    EndFormat;
+  end;
+  RETURN;
+END;
+
+global
+procedure ARRnAddToDebtorsAccounts(string aracc,Integer invtype,val vp,Array string debaccs,Array val debbal,var Integer debcnt)
+BEGIN
+  Integer i;
+  
+  for (i=0;i<=debcnt;i=i+1) begin
+    if (aracc==debaccs[i]) then begin
+      switch (invtype) begin
+        case kInvoiceTypeCredit:
+          debbal[i] = debbal[i] + vp;
+        case kInvoiceTypeCreditSpecialSales:
+          debbal[i] = debbal[i] + vp;
+        otherwise
+          debbal[i] = debbal[i] + vp;          
+      end;
+      goto LAddToDebtorsAccounts;
+    end;
+  end;
+  debcnt = debcnt + 1;
+  debaccs[debcnt] = aracc;
+  switch (invtype) begin
+    case kInvoiceTypeCredit:
+      debbal[debcnt] = vp;
+    case kInvoiceTypeCreditSpecialSales:
+      debbal[debcnt] = vp;
+    otherwise
+      debbal[debcnt] = vp;
+  end;
+LAddToDebtorsAccounts:;  
+  RETURN
+END;
+
+global
+function Boolean TestObjType(string ObjType,string Objects)
+BEGIN
+  Boolean res;
+  record ObjVc OBr;
+  Boolean Accs;
+  
+  OBr.OTCode = ObjType;
+  OBr.Code = "";
+  Accs = true;
+  ResetLoop(OBr);
+  while (LoopKey("OTCode",OBr,1,Accs)) begin
+    if ((Accs==true) and (ObjType==OBr.OTCode)) then begin              
+      if (SetInSet(OBr.Code,Objects)==true) then begin
+        res = true;
+        Accs = false;
+      end;
+    end;
+  end; 
+  TestObjType = res;
+  RETURN
+END;
+
+global
+procedure PrintARReportTotals(record RcVc RepSpec,Integer ActualInvoices,val tot1Sum,val Total1Due,val Total1NotDue,val TotOnAcc,
+           val tot2Sum,val Total2Due,val Total2NotDue,val totCurSum,val TotalCurDue,val TotalCurNotDue,Array val TotalCurrent)
+begin
+  record BaseCurBlock BCb;  
+  val blval;
+  
+  BlockLoad(BCb);
+  if (RepSpec.ArtMode<>4) and (RepSpec.ArtMode<>6) then begin
+    if (nonblank(RepSpec.CurncyCode)) and (RepSpec.flags[2]==1) then begin
+      PrintARTotals(RepSpec,5,RepSpec.CurncyCode,ActualInvoices,totCurSum,TotalCurDue,TotalCurNotDue,TotOnAcc,TotalCurrent[0]);
+    end else begin
+      PrintARTotals(RepSpec,5,BCb.BaseCur1,ActualInvoices,tot1Sum,Total1Due,Total1NotDue,TotOnAcc,TotalCurrent[1]);
+    end;
+    if (HasBase2) then begin
+      if ((BCb.BaseCur1<>BCb.BaseCur2) and (RepSpec.flags[12]==1)) then begin
+        Gray_Divider(290,1);
+        PrintARTotals(RepSpec,5,BCb.BaseCur2,ActualInvoices,tot2Sum,Total2Due,Total2NotDue,blval,TotalCurrent[2]);
+      end;
+    end;
+  end;
+
+  return;
+end;
+
+global
+procedure PrintARAged(record RcVc RepSpec,val ssact,val ss0,val ss1,val ss2,val ss3,val ss4,val ss5,val ss6,val ss7,val onacc,val tot,Integer nrofper,
+                      val ssactb2,val ss0b2,val ss1b2,val ss2b2,val ss3b2,val ss4b2,val ss5b2,val ss6b2,val ss7b2,val totb2)
+begin
+  val sssum,blval;
+  
+  StartFormat(15);
+  if (RepSpec.Media==mtFile or RepSpec.Media==mtExcel) then begin
+    OutString(0,0,"",false);
+    OutString(0,0,"",false);
+  end;
+  PrintAgedLine(ssact,ss0,ss1,ss2,ss3,ss4,ss5,ss6,ss7,onacc,tot,nrofper,480,"");
+  EndFormat;
+  if (RepSpec.flags[12]!=0) then begin
+    StartFormat(15);
+    PrintAgedLine(ssactb2,ss0b2,ss1b2,ss2b2,ss3b2,ss4b2,ss5b2,ss6b2,ss7b2,blval,totb2,nrofper,480,"");
+    EndFormat;
+  end;
+  StartFormat(10);
+  EndFormat;
+  
+
+  StartFormat(15);
+  if (RepSpec.Media==mtFile or RepSpec.Media==mtExcel) then begin
+    OutString(0,0,"",false);
+  end;
+  OutString(100,0,USetStr(2539),false);
+  sssum = ssact + ss0 + ss1 + ss2 + ss3 + ss4 + ss5 + ss6 + ss7 + onacc; // + onaccsum
+  PrintAgedLine(100*ssact/tot,100*ss0/tot,100*ss1/tot,100*ss2/tot,100*ss3/tot,100*ss4/tot,100*ss5/tot,100*ss6/tot,100*ss7/tot,100*onacc/tot,100*sssum/tot,nrofper,480,"")
+  EndFormat;
+  StartFormat(10);
+  EndFormat;
+  return;
+end;

@@ -1,0 +1,28 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fSerNr: { public: true, type: 'INTEGER' },
+     fTransDate: { public: true, type: 'DATE' },
+     fRegDate: { public: true, type: 'DATE' },
+     fComment: { public: true, type: 'TEXT' },
+     fFrLocation: { public: true, type: 'TEXT' },
+     fToLocation: { public: true, type: 'TEXT' },
+     fOKFlag: { public: true, type: 'INTEGER' },
+     fSign: { public: true, type: 'TEXT' },
+     InternMovVcMatrix: 
+      { public: true,
+        type: 'MATRIX',
+        label: 'Math',
+        fields: 
+         { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+           fArtCode: { public: true, type: 'TEXT' },
+           fQuant: { public: true, type: 'FLOAT' },
+           fSpec: { public: true, type: 'TEXT' },
+           fSerialNr: { public: true, type: 'TEXT' },
+           fCost: { public: true, type: 'FLOAT' } } },
+     fExportedFlag: { public: true, type: 'INTEGER' },
+     fSumQuant: { public: true, type: 'FLOAT' },
+     fTotCost: { public: true, type: 'FLOAT' },
+     fAgreementNr: { public: true, type: 'INTEGER' },
+     fSVONr: { public: true, type: 'INTEGER' },
+     fLangCode: { public: true, type: 'TEXT' } },
+  indexes: { SerNrIndex348: { fields: [ 'fSerNr' ], indicesType: 'UNIQUE' } } }

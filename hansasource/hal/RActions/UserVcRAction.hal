@@ -1,0 +1,528 @@
+external procedure AutomatedSalesOrderly(string);
+external function Boolean CodeTest(string);
+external procedure FindUserMailboxName(string,var string,var string);
+external procedure ExtractObj(string,var Integer,var string);
+external function string 20 ObjectsExist(string);
+external updating procedure CheckUserAdminStatus(Integer,Integer,string);
+external function Boolean CheckEmailStr(string);
+external updating procedure SetDefaultUserAdminAccess(string,string);
+
+// the c code should be switched to calling this function
+// should be moved to amainhal and made "final"
+// need to look at global users as well
+global
+function Integer VerifyAccessGroups(string accessgroups,var string accessgroup)
+begin
+  Integer res;
+  Integer pos;
+  record AccessVc Accessr;
+  
+  res = 0;
+  ExtractObj(accessgroups,pos,accessgroup);
+  while (nonblank(accessgroup)) begin
+    Accessr.Code = accessgroup;
+    if (ReadFirstMain(Accessr,1,true)==false) then begin
+      res = 1290;
+      goto LVerifyAccessGroups;
+    end;
+    ExtractObj(accessgroups,pos,accessgroup);
+  end;
+LVerifyAccessGroups:;  
+  VerifyAccessGroups = res;  
+  return; 
+end;
+
+
+procedure CountOneUser(record UserVc Userr,Boolean addf,var integer named,var integer concurent,var integer bcuser,var integer tkuser,var integer singlefunuser,var integer singlefuncs)
+begin
+  record ConfVc Confr;
+  record OneFunctionVc OneFunctionr;
+  Integer scale;
+  record GlobalUserVc GlobalUserr;
+  record ModuleBlock Mbl;
+  
+  BlockLoad(Mbl);
+  GlobalUserr.Code = Userr.Code;
+  if (ReadFirstMain(GlobalUserr,1,true)==false or Mbl.UseGlobalUsers==0) then begin
+    if (addf) then begin
+      scale = 1;
+    end else begin
+      scale = -1;
+    end;
+  
+    switch (Userr.TypeOfUser) begin
+      case kTypeOfUserNamed:
+        if (Userr.OneFunction=="") then begin
+          Confr.AddrCode = Userr.Code;
+          if (ReadFirstKey("AddrCode",Confr,1,true) and IsStandardProduct==false) then begin //This test should be changed to still be true for any Standard products that actually use mailboxes, when we add such products.
+            named = named + (1 * scale);
+          end;
+        end else begin
+          OneFunctionr.Code = Userr.OneFunction;
+          if (ReadFirstMain(OneFunctionr,1,true)) then begin
+            singlefuncs = singlefuncs + (MatRowCnt(OneFunctionr) * scale);
+          end;
+          singlefunuser = singlefunuser + (1 * scale);
+        end;
+      case kTypeOfUserConcurrent: concurent = concurent + (1 * scale);
+      case kTypeOfUserBusinessCommunicator: bcuser = bcuser + (1 * scale);
+      case kTypeOfUserTimekeeper: tkuser = tkuser + (1 * scale);
+    end;
+  end;
+  
+  return;
+end;
+
+procedure CntGlobalUsers(var integer named,var integer concurent,var integer bcuser,var integer tkuser,var integer singlefunuser,var integer singlefuncs)
+begin
+  record GlobalUserVc Userr;
+  record ConfVc Confr;
+  record OneFunctionVc OneFunctionr;
+  record ModuleBlock Mbl;
+
+  named = 0;
+  concurent = 0;
+  bcuser = 0;
+  tkuser = 0;
+  singlefunuser = 0;
+  singlefuncs = 0;
+  
+  BlockLoad(Mbl);
+  if (Mbl.UseGlobalUsers==1) then begin
+    while (LoopMain(Userr,1,true)) begin
+      if (Userr.Closed==0) then begin
+        switch (Userr.TypeOfUser) begin
+          case kTypeOfUserNamed:
+            if (Userr.OneFunction=="") then begin
+              Confr.AddrCode = Userr.Code;
+              if (ReadFirstKey("AddrCode",Confr,1,true) and IsStandardProduct==false) then begin //This test should be changed to still be true for any Standard products that actually use mailboxes, when we add such products.
+                named = named + 1;
+              end;
+            end else begin
+              OneFunctionr.Code = Userr.OneFunction;
+              if (ReadFirstMain(OneFunctionr,1,true)) then begin
+                singlefuncs = singlefuncs + (MatRowCnt(OneFunctionr));
+              end;
+              singlefunuser = singlefunuser + 1;
+            end;
+          case kTypeOfUserConcurrent: concurent = concurent + 1;
+          case kTypeOfUserBusinessCommunicator: bcuser = bcuser + 1;
+          case kTypeOfUserTimekeeper: tkuser = tkuser + 1;
+        end;
+      end;
+    end;  
+  end;
+        
+  return;
+end;
+
+procedure CntUsers(var integer named,var integer concurent,var integer bcuser,var integer tkuser,var integer singlefunuser,var integer singlefuncs)
+begin
+  Integer res;
+  record UserVc Userr;
+  Integer curcomp;
+  record CompaniesBlock Compb;
+  row CompaniesBlock Compbrw;
+  Integer i,rwcnt;
+  Boolean found;
+    
+  curcomp = CurrentCompany;
+  BlockLoad(Compb);
+  rwcnt = MatRowCnt(Compb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Compb,i,Compbrw);
+    if (Compbrw.ActiveStatus==0) then begin
+       if (SetCompanyCode(Compbrw.CompCode,false)) then begin
+         ResetLoop(Userr);
+         Userr.Code = "";
+         found = true;
+         while (LoopMain(Userr,1,found)) begin
+           if (found) then begin
+             if (Userr.Closed==0) and (Userr.TerminatedFlag==0) then begin
+               CountOneUser(Userr,true,named,concurent,bcuser,tkuser,singlefunuser,singlefuncs);
+             end;
+           end;
+         end;
+       end;
+    end;
+  end;
+  ResetCompany(curcomp);
+  return;
+end;
+
+global
+function LongInt UserVcRecordInIndex(record UserVc Userr,string indexname)
+BEGIN
+  LongInt res;
+  
+  res = 1;
+  if (Userr.Closed!=0) then begin 
+    if (indexname=="ActCode")  then begin res = 0; end;
+    if (indexname=="ActName")  then begin res = 0; end;
+    if (indexname=="OneFunction")  then begin res = 0; end;
+  end;
+  UserVcRecordInIndex = res;
+  RETURN;
+END;
+
+global
+function LongInt UserVcRecordDefaults(var record UserVc Userr,record UserVc User2r,LongInt stat,LongInt long4)
+BEGIN
+  record ModuleBlock MBr;
+  LongInt res;
+  
+  BlockLoad(MBr);
+  Userr.LastOrdNr = -1;
+  Userr.LastShipNr = -1;
+  Userr.LastInvNr = -1;
+  Userr.LastPurNr = -1;
+  Userr.LastPayNr = -1;
+  Userr.LastTRNr = -1;
+  Userr.LastVINr = -1;
+  Userr.LastOPNr = -1;      
+  Userr.LastCLInNr = -1;
+  Userr.LastCLOutNr = -1;
+  Userr.LastIVCashNr = -1;
+  Userr.LastPONr = -1;      
+  Userr.LastOfficialSerNr = "";
+  Userr.NewPassWord = 0;
+  if (MBr.AllConcurrent!=0) then begin
+//    Userr.TypeOfUser = 1; // All users must be named,  
+  end;
+  if (IsStandardProduct) then begin
+    Userr.TypeOfUser = kTypeOfUserConcurrent;
+  end;
+  UserVcRecordDefaults = res; 
+  RETURN;
+END;
+
+global
+function LongInt UserVcRecordDuplicate(var record UserVc Userr,record UserVc User2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  
+  Userr.LastOrdNr = -1;
+  Userr.LastShipNr = -1;
+  Userr.LastInvNr = -1;
+  Userr.LastPurNr = -1;
+  Userr.LastPayNr = -1;
+  Userr.LastTRNr = -1;
+  Userr.LastVINr = -1;
+  Userr.LastOPNr = -1;      
+  Userr.LastPONr = -1;      
+  Userr.LastCLInNr = -1;
+  Userr.LastCLOutNr = -1;
+  Userr.LastIVCashNr = -1;
+  Userr.LastOfficialSerNr = "";
+  Userr.NewPassWord = 0;
+  Userr.Newf = 0;
+  Userr.RegistrationNumber = -1;
+  
+  if (IsStandardProduct) then begin
+    Userr.TypeOfUser = kTypeOfUserConcurrent;
+  end;
+  UserVcRecordDuplicate = res; 
+  RETURN;
+END;
+
+global
+function Boolean ValidatePhone(string Phone,var string InvalidChar)
+begin
+  Boolean res;
+  Integer i,cnt;
+  
+  res = true;
+  cnt = Len(Phone);
+  for (i=0;i<cnt;i=i+1) begin
+    if (!SetInSet(Mid(Phone,i,1),"0,1,2,3,4,5,6,7,8,9, ,+,-,(,),/")) then begin
+      InvalidChar = Mid(Phone,i,1);
+      res = false;
+      i = cnt;
+    end;
+  end;
+  
+  ValidatePhone = res;
+  return;
+end;
+
+function Integer NrOfNotClosedUsers()
+begin
+  record UserVc Userr;
+  Boolean found;
+  Integer res;
+  
+  found = true; 
+  while (LoopKey("ActCode",Userr,1,found)) begin
+    if (found) then begin
+      res = res + 1;
+    end;
+  end;
+  NrOfNotClosedUsers = res;
+  return;
+end;
+
+global
+updating function LongInt UserVcRecordCheck(record UserVc Userr,record UserVc User2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  record ModuleBlock MTb;
+  string 255 tstr;
+  record UserVc locUserr;
+  Boolean foundf,testf;
+  Integer named,concurent,bcuser,tkuser,singlefunuser,singlefuncs;
+  Integer licnamed,licconcurent,licsinglefuncs;
+  record ConfVc Confr;
+  
+  BlockLoad(MTb);
+  res = 0;
+  if (len(Userr.Code)<1) then begin
+    RecordCheckError(1058,"",-1,"Code");      
+    res = -1;
+    goto LUserVcRecordCheck;
+  end;
+  if (CodeTest(Userr.Code)==false and stat==Rs_insert) then begin
+    RecordCheckError(1059,"",-1,"Code");      
+    res = -1;
+    goto LUserVcRecordCheck;
+  end;
+  if ((Userr.TypeOfUser==1) or (MTb.AllConcurrent!=0)) then begin
+    if (nonblank(Userr.OneFunction)) then begin
+      RecordCheckError(1484,"",-1,"OneFunction");      
+      res = -1;
+      goto LUserVcRecordCheck;
+    end;
+  end;
+  if (MTb.ExternalUser==0) then begin
+    if (Userr.limitedAccess!=0) then begin
+      RecordCheckError(1375,"",-1,"Code");      
+      res = -1;
+      goto LUserVcRecordCheck;
+    end;
+  end;
+  tstr = ObjectsExist(Userr.PersObjx);
+  if (nonblank(tstr)) then begin
+    RecordCheckError(1043," " & tstr,-1,"PersObjx");      
+    res = -1;
+    goto LUserVcRecordCheck;
+  end;
+  if (Userr.Closed!=0) then begin
+    locUserr.Code = "";
+    testf = false;
+    foundf = true;
+    while (LoopKey("ActCode",locUserr,1,foundf)) begin
+      if (locUserr.Closed==0) then begin
+        testf = true;
+        foundf = false;
+      end;
+    end;
+    if (testf==false) then begin
+      RecordCheckError(1668,"",-1,"Code");      
+      res = -1;
+      goto LUserVcRecordCheck;
+    end;
+  end;  
+  if (nonblank(USerr.AccessGroup)) then begin
+    res = VerifyAccessGroups(USerr.AccessGroup,tstr);
+    if (res!=0) then begin
+      RecordCheckError(res,": " & tstr,-1,"AccessGroup");
+      res = -1; 
+      goto LUserVcRecordCheck;
+    end;
+  end;
+  if (!ValidatePhone(USerr.Phone1,tstr)) then begin
+    RecordCheckError(1008,": " & tstr,-1,"Phone1");
+    res = -1;
+    goto LUserVcRecordCheck;
+  end;
+  if (!ValidatePhone(USerr.Phone2,tstr)) then begin
+    RecordCheckError(1008,": " & tstr,-1,"Phone2");
+    res = -1;
+    goto LUserVcRecordCheck;
+  end;
+  if (nonblank(Userr.LoginEmailAddr)) then begin
+    if (CheckEmailStr(Userr.LoginEmailAddr)==false) then begin
+      RecordCheckError(31342,"",-1,"LoginEmailAddr");
+      res = -1;
+      goto LUserVcRecordCheck;
+    end;
+  end;
+  if (IsStandardProduct and stat==Rs_update) then begin
+    if (Userr.Closed!=0 and NrOfNotClosedUsers==1) then begin
+      RecordCheckError(1067,"",-1,"Code");
+      res = -1;
+      goto LUserVcRecordCheck;
+    end;
+  end;
+  if (Userr.Closed==0 and Userr.TerminatedFlag==0 and Userr.TypeOfUser!=kTypeOfUserConcurrent and IsSyncing==false) then begin
+    CntGlobalUsers(named,concurent,bcuser,tkuser,singlefunuser,singlefuncs);
+    CntUsers(named,concurent,bcuser,tkuser,singlefunuser,singlefuncs);
+    
+    if (stat==Rs_update) then begin
+      if (User2r.Closed==0 and User2r.TerminatedFlag==0) then begin
+        CountOneUser(User2r,false,named,concurent,bcuser,tkuser,singlefunuser,singlefuncs);
+      end;
+    end;
+    
+    CountOneUser(Userr,true,named,concurent,bcuser,tkuser,singlefunuser,singlefuncs);
+    
+    licnamed = MTb.NumberOfUsers;
+    if (licnamed<0) then begin licnamed = 0; end;
+    
+    licconcurent = MTb.ConcurrentUserNo;
+    if (licconcurent<0) then begin licconcurent = 0; end;
+    
+    licsinglefuncs = MTb.ThinClients;
+    if (licsinglefuncs<0) then begin licsinglefuncs = 0; end;
+    if (IsStandardProduct==false) then begin
+      if (named>(licnamed-licconcurent)) then begin //total users - concurrent ENABLERS = named users (as per pre-6.0 days)
+        RecordCheckError(1648," " & named & " > " & (licnamed-licconcurent),-1,"Code");      
+        res = -1;
+        goto LUserVcRecordCheck;
+      end;
+    
+      if (singlefuncs>licsinglefuncs) then begin
+        RecordCheckError(1643,"",-1,"OneFunction");      
+        res = -1;
+        goto LUserVcRecordCheck;
+      end;
+    end;
+  end;
+LUserVcRecordCheck:;
+  UserVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt UserVcRecordSave(var record UserVc Userr,record UserVc User2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  Userr.DateCreated = CurrentDate;
+  Userr.Newf = 1;
+  AutomatedSalesOrderly("User");
+  UserVcRecordSave = res;  
+  return;
+end;
+
+global
+updating function LongInt UserVcRecordSaveAfter(var record UserVc Userr,record UserVc User2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record ConfVc Confr;
+  string 60 mailboxcode,mailboxname;  
+  record SetupStatusBlock StSb;
+
+  if (IsStandardProduct) then begin
+//same as in CreateMailboxUserLsm  
+    FindUserMailboxName(Userr.Code,mailboxcode,mailboxname);
+    if (nonblank(mailboxcode)) then begin
+      MessageBox(1645,"");
+    end else begin
+      RecordNew(Confr);
+      Confr.AddrCode = Userr.Code;
+      Confr.AddrName = Userr.Name;
+      Confr.Class = kConfClassMailbox;
+      Confr.MotherConf = -1;
+      if (RecordStore(Confr,false)) then begin
+      end;
+    end;
+  end;
+  CheckUserAdminStatus(Userr.AdminFlag,0,Userr.Code);
+
+
+  BlockLoad(StSb);
+  if (StSb.UserSetup==0) then begin
+    StSb.UserSetup = 1;
+    BlockStore(StSb);
+  end;
+  UserVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+updating function LongInt UserVcRecordUpdateAfter(var record UserVc Userr,record UserVc User2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record ConfVc Confr;
+  record ConfVc oldConfr;
+  
+  if (Userr.Closed!=User2r.Closed or Userr.Name!=User2r.Name) then begin
+/*
+it is considered to be bug  , talk to Anneli
+    Confr.AddrCode = Userr.Code;
+    if (ReadFirstKey("AddrCode",Confr,1,true)) then begin
+      RecordCopy(oldConfr,Confr);
+      Confr.Closed = Userr.Closed;
+      Confr.AddrName = Userr.Name;
+      RecordUpdate(oldConfr,Confr,false);
+    end;
+*/  
+  end;
+  CheckUserAdminStatus(Userr.AdminFlag,User2r.AdminFlag,Userr.Code);
+  SetDefaultUserAdminAccess(Userr.LoginEmailAddr,User2r.LoginEmailAddr);
+
+  UserVcRecordUpdateAfter = res;  
+  return;
+end;
+
+global
+updating function LongInt UserVcRecordImport(var record UserVc Userr,record UserVc User2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  if (IsStandardProduct) then begin
+    if (Userr.TypeOfUser==kTypeOfUserNamed) then begin
+      Userr.TypeOfUser = kTypeOfUserConcurrent;
+    end;
+  end;
+
+  UserVcRecordImport = res;
+  return;
+end;
+
+global 
+function Boolean UserVcRecordShouldBeSynchronised(record UserVc Userr,string tagstr)
+begin
+  Boolean res;
+  
+  res = true;
+  UserVcRecordShouldBeSynchronised = res;
+  return;
+end;
+
+global 
+function Boolean UserVcRecordSync(record UserVc Userr,string tagstr)
+begin
+  Boolean res;
+  
+  res = true;
+  UserVcRecordSync = res;
+  return;
+end;
+
+global
+function LongInt UserLoginVcRecordSave(var record UserLoginVc UserLoginr,record UserLoginVc UserLogin2r,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+
+  UserLoginr.SerNr = NextSerNr("UserLoginVc",UserLoginr.evDate,-1,false,"");
+  UserLoginVcRecordSave = res; 
+  RETURN;
+END;
+
+global
+function LongInt UserVcRecordRemoveTest(var record UserVc Userr,record UserVc User2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+
+  res = 1;
+  if (IsStandardProduct) then begin
+    if (CountRecords("UserVc")<=1) then begin 
+      MessageBox(1560,"");
+      res = 0; 
+    end;
+  end;
+LUserVcRecordRemoveTest:;
+  UserVcRecordRemoveTest = res; 
+  return;
+end;

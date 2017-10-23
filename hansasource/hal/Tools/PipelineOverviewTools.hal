@@ -1,0 +1,2567 @@
+external function Integer ActApprovalStatus(record ActVc,var record AcceptanceRulesVc);
+external procedure QTVc_PasteSalesMan(var record QTVc,string);
+external procedure ORVc_PasteSalesMan(var record ORVc,string);
+external function Integer InString2(string,string);
+external function string 60 AddStringToStringList(string,string);
+external procedure QTVc_PasteCurncyCode(var record QTVc,string);
+external procedure ORVc_PasteCurncyCode(var record ORVc,string);
+external function Boolean PasteCustInOrder(var record ORVc,string,string,var string,var string);
+external function Boolean PasteCustInQT(var record QTVc,string,string,var string,Boolean);
+external updating procedure SMSWhenOR(record ORVc,Integer);
+external function Boolean QTVc_AllowSales(record QTVc,var Integer,var LongInt);
+external function Integer QTTestApprovalStatus(record QTVc);
+external updating function Integer RecordAction_raPasteQTInOrder2(var record ORVc,var record QTVc,Boolean,string);
+external function LongInt AddTime(Time,LongInt,var Time);
+external function LongInt TimeToMinutes(Time);
+external function Time ValToTime(val);
+external function LongInt TimeDiffinMinutes(Time,Time);
+external function Boolean GetGlobalUserMainCompany(string,var string);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure CurValToOtherCurWithRate(Date,string,val,val,val,val,val,val,string,var val,roundmode);
+external function Boolean PasteActTypeInAct(string,var record ActVc);
+external procedure In2Period(var string,var Date,var Date);
+external function string 255 GetGlobalUserMainCompanies(string);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+
+function LongInt MAX(LongInt a,LongInt b)
+begin
+  LongInt res;
+  
+  if (a>=b) then begin
+    res = a;
+  end else begin
+    res = b;
+  end;
+  Max = res;
+  return;
+end;
+
+procedure AddMemReaderStringToArea(string str,var Area a)
+begin
+  AddByteToArea(0,a);
+  AddByteToArea(0,a);
+  AddByteToArea(0,a);
+  AddStringToArea(str,a);
+  if (MOD(GetAreaLength(a),2)!=0) then begin
+    AddByteToArea(0,a);
+  end;
+end;
+
+procedure AddToArray(string tstr,Array string atstr,var Integer atstrcnt)
+begin
+  Integer i;
+  
+  for (i=0;i<atstrcnt;i=i+1) begin
+    if (atstr[i]==tstr) then begin
+      goto LAddToArray;
+    end;
+  end;
+  atstr[atstrcnt] = tstr;
+  atstrcnt = atstrcnt + 1;
+LAddToArray:;  
+  return;
+end;
+
+procedure SortValArray(var vector val vcurnr,vector val vcurv,var Array string atstr,Integer atstrcnt)
+begin
+  Integer i;
+  Boolean changef;
+  string 255 tstr;
+  val v;
+    
+  changef = true;
+  while (changef) begin
+    changef = false;
+    for (i=0;i<atstrcnt-1;i=i+1) begin
+      if (vcurnr[atstr[i]]<vcurnr[atstr[i+1]]) then begin
+        changef = true;
+        tstr = atstr[i];
+        atstr[i] = atstr[i+1];
+        atstr[i+1] = tstr;
+      end;
+    end;
+  end;
+  switch (atstrcnt) begin
+    case 1:
+    case 2:
+    otherwise
+      for (i=1;i<atstrcnt;i=i+1) begin
+        vcurnr["other"] = vcurnr["other"] + vcurnr[atstr[i]];
+        vcurv["other"] = vcurv["other"] + vcurv[atstr[i]];
+      end;
+      atstr[1] = "other";
+  end;
+  
+  return;
+end;
+
+procedure AddPipelineItemToArea(string filename,string recid,string caption,string value,string customer,longint iconno,longint rownr,date dt,LongInt colnr,var area a)
+begin
+  AddLongToArea(kPipelineItemTypeRecordId,a);   // Item type
+  AddMemReaderStringToArea(recid,a);            // Record ID
+  AddMemReaderStringToArea(caption,a);          // Caption
+  AddMemReaderStringToArea(value,a);            // Value
+  AddMemReaderStringToArea(customer,a);         // Customer
+  AddLongToArea(iconno,a);                      // Iconno
+  AddLongToArea(rownr,a);                       // row number
+  AddDateToArea(dt,a);                          // date
+  AddLongToArea(colnr,a);                       // colnr
+end;
+
+procedure AddPipelineItemToTemporaryArray(string filename,string recid,string caption,string value,val vvalue,string customer,longint iconno,val sum,LongInt rownr,date dt,LongInt colnr,var record ORVc tempORr)
+begin
+  row ORVc ORrw;
+  string 255 tstr;
+  
+  ClearRow(tempORr,ORrw,1);
+  ORrw.ShipNote = filename;
+  ORrw.SerialNr = recid;
+  ORrw.Spec = caption;
+  ORrw.ShipNote = value;
+  ORrw.PlanShipRow = customer;
+  ORrw.GroupOrdRow = iconno;
+  ORrw.CUServiceHistNr = rownr;
+  M4PadString(ValToString(sum*100,M40Val,"","",0),20,"0",true,tstr); 
+  ORrw.UnitComment = iconno & "_" & tstr & "_" & MatRowCnt(tempORr);
+  ORrw.ServiceDelDate = dt;
+  ORrw.Sum = vvalue;
+  ORrw.Perceptions = colnr;
+
+  MatRowPut(tempORr,MatRowCnt(tempORr),ORrw);
+  return;
+end;
+
+procedure AddTemporaryArrayToArea(record ORVc tempORr,Area a,record RcVc RepSpec)
+begin
+  row ORVc ORrw;
+  Integer i,rwcnt,sortdirection;
+
+  rwcnt = MatRowCnt(tempORr);
+  switch (RepSpec.flags[0]) begin
+    case 0:
+      SortRows(tempORr,"UnitComment",RepSpec.flags[1]); // icon+value
+    case 1:
+      SortRows(tempORr,"Sum",RepSpec.flags[1]); // value
+    case 2:
+      SortRows(tempORr,"Spec",RepSpec.flags[1]); // caption
+    case 3:
+      SortRows(tempORr,"ServiceDelDate",RepSpec.flags[1]); // date
+    case 4:
+      SortRows(tempORr,"PlanShipRow",RepSpec.flags[1]); // customer
+  end;
+
+  for (i = 0; i<rwcnt; i = i + 1) begin
+    MatRowGet(tempORr,i,ORrw);
+    AddPipelineItemToArea(ORrw.ShipNote,ORrw.SerialNr,ORrw.Spec,ORrw.ShipNote,ORrw.PlanShipRow,ORrw.GroupOrdRow,ORrw.CUServiceHistNr,ORrw.ServiceDelDate,ORrw.Perceptions,a);
+  end;
+  return;
+end;
+
+procedure AddPipelineKOItemToArea(LongInt kitorder_cnt,record RcVc RepSpec,string BaseCur1,record KitchenOrderVc KOr,Integer rownr,row KitchenOrderVc KOrw,
+                                  var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                  var record ORVc tempORr)
+begin
+  string 255 value,spec;
+  LongInt iconno,diff;
+  string 255 recid,curncy;
+  val sum4;
+
+  iconno = 1112; //yellow
+  diff = TimeDiffinMinutes(CurrentTime,KOr.TransTime);
+  if (diff>10) then begin
+    iconno = 1113; // red
+  end;
+  if (diff>=5 and diff<=10) then begin
+    iconno = 1111; // green
+  end;
+  if (iconno==1112) then begin
+    iconno = 1110; // gray
+  end;
+/*  
+  curncy = BaseCur1;
+  if (blank(curncy)) then begin
+    curncy = "EUR";
+  end;
+*/  
+  curncy = "";
+  if (kitorder_cnt<100) then begin
+    value = ValToString(KOrw.Quant,M4Val,ThousandSeparator,DecimalSeparator,0);
+    recid = BuildRecordIdStr(KOr,CurrentCompany);
+    spec = KOr.TransDate & " " & KOr.TransTime;
+    AddPipelineItemToTemporaryArray("KitchenOrderVc",recid,spec,value,KOrw.Quant,KOrw.Spec,iconno,blankval,rownr,KOr.TransDate,kButtonColourDefault,tempORr);
+  end;
+  vcurnr[curncy] = vcurnr[curncy] + 1;
+  vcurv[curncy] = vcurv[curncy] + sum4;
+  AddToArray(curncy,acur,acnt);
+end;
+
+procedure FillPipeline_KitchenOrders(record RcVc RepSpec,string kostatuses,var area akitchenorders,var LongInt kitorder_cnt,
+                                 var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  record KitchenOrderVc KOr;
+  row KitchenOrderVc KOrw;
+  Integer i,rwcnt;
+  Boolean found;
+  Boolean testf;
+  string 255 index,kostatus;
+  Integer segs,pos;
+  record BaseCurBlock BCb;
+
+  if (blank(kostatuses)) then begin
+    goto LFillPipeline_KitchenOrders;
+  end;
+  BlockLoad(BCb);
+  pos = 0;
+  ExtractObj(kostatuses,pos,kostatus);
+  while (nonblank(kostatus)) begin
+    segs = 1;
+    index = "OKFlag";
+    RecordClear(KOr);
+    ResetLoop(KOr);    
+    found = true;
+    KOr.OKFlag = 0;
+    while (LoopBackKey(index,KOr,segs,found)) begin
+      if (KOr.OKFlag!=0) then begin found = false; end;      
+      if (found) then begin
+        testf = true;
+        if (KOr.Invalid!=0) then begin testf = false; end; 
+        if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+          if (DateInRange(KOr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            testf = false;
+          end;
+        end;
+        if (UserCanViewRecord(KOr)==false) then begin testf = false; end;
+        if (testf) then begin
+          rwcnt = MatRowCnt(KOr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(KOr,i,KOrw);
+            if (KOrw.DishStatus==kostatus) then begin
+              AddPipelineKOItemToArea(kitorder_cnt,RepSpec,BCb.BaseCur1,KOr,i,KOrw,vcurnr,vcurv,acur,acnt,tempORr);
+              kitorder_cnt = kitorder_cnt + 1;
+            end;
+          end;
+        end;
+      end;
+    end;
+    ExtractObj(kostatuses,pos,kostatus);
+  end;
+LFillPipeline_KitchenOrders:;  
+  return;
+end;
+
+procedure AddPipelineORItemToArea(record CompanyTimezoneBlock CTb,var Area a,var LongInt quotation_cnt,record RcVc RepSpec,Integer amounts,record ORVc ORr,var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                  var record ORVc tempORr)
+begin
+  row ORVc ORrw;
+  string 255 value,spec;
+  LongInt iconno;
+  Integer actnr;
+  record ActVc nextstepActr;
+  record ActVc firstnextstepActr;
+  record RLinkVc RLr;
+  Boolean nextstepactfound;
+  string 255 recid,cuncy,valstr;
+  val sum4;
+  Date cd,nextdate;
+  Time t,tt;
+  
+  iconno = 1112; //yellow
+  actnr = 1;
+  nextdate = ORr.PlanShip;
+  if (blankdate(nextdate)) then begin
+    nextdate = ORr.OrdDate;
+  end;
+
+  while (ReadRecordLink(ORr,actnr,nextstepActr,RLr)) begin
+    if (nextstepActr.OKFlag==0) then begin
+      nextstepactfound = true;
+      if (nextstepActr.TransDate<firstnextstepActr.TransDate) or (blankdate(firstnextstepActr.TransDate)) then begin
+        firstnextstepActr = nextstepActr;
+      end;
+    end;
+    actnr = actnr + 1;
+  end;
+  
+  if (nextstepactfound) then begin
+    nextdate = firstnextstepActr.TransDate;
+    cd = CurrentDate;
+    t = ValToTime(CTb.OffsetFromServer);
+    if (CTb.OffsetFromServer<0) then begin
+      cd = AddDay(cd,-AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end else begin
+      cd = AddDay(cd,AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end;
+    if (firstnextstepActr.TransDate<cd) then begin
+      iconno = 1113; // red
+    end;
+    if (firstnextstepActr.TransDate==cd) then begin
+      iconno = 1111; // green
+    end;
+    if (firstnextstepActr .TransDate>cd) then begin
+      iconno = 1110; // gray
+    end;
+  end;
+
+  switch (amounts) begin
+    case kAmountIncludingVAT:
+      sum4 = ORr.Sum4;
+    case kAmountExcludingVAT:
+      sum4 = ORr.Sum1;
+  end;
+  if (blank(RepSpec.CurncyCode)) then begin
+    cuncy = ORr.CurncyCode;
+  end else begin 
+    cuncy = RepSpec.CurncyCode;
+    CurValToOtherCurWithRate(ORr.OrdDate,ORr.CurncyCode,sum4,ORr.FrRate,ORr.ToRateB1,ORr.ToRateB2,ORr.BaseRate1,ORr.BaseRate2,
+                             cuncy,sum4,DefaultCurRoundOff);    
+  end;
+  if (quotation_cnt<100) then begin
+    valstr = ValToString(sum4,M40Val,ThousandSeparator,"",0);
+    if (nonblank(valstr)) then begin
+      value = cuncy & " " & valstr;
+    end;
+    if (MatRowCnt(ORr)>0) then begin
+      MatRowGet(ORr,0,ORrw);
+    end;
+    recid = BuildRecordIdStr(ORr,CurrentCompany);
+    if (blank(RepSpec.f1)) then begin
+      spec = ORr.SalesMan & ", " & ORrw.Spec;
+    end else begin
+      spec = ORrw.Spec;
+    end;
+    AddPipelineItemToTemporaryArray("ORVc",recid,spec,value,sum4,ORr.Addr0,iconno,sum4,-1,nextdate,kButtonColourDefault,tempORr);
+//    AddPipelineItemToArea("ORVc",recid,spec,value,ORr.Addr0,iconno,kButtonColourDefault,a);
+  end;
+  vcurnr[cuncy] = vcurnr[cuncy] + 1;
+  vcurv[cuncy] = vcurv[cuncy] + sum4;
+  AddToArray(cuncy,acur,acnt);
+end;
+
+procedure FillPipeline_Order(record CompanyTimezoneBlock CTb,record RcVc RepSpec,string orclasses,Integer amounts,var area aquotation,var LongInt quotation_cnt,
+                             var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  record ORVc ORr;
+  Boolean found;
+  Boolean testf;
+  string 255 index,qclass;
+  Integer segs,pos;
+
+  if (blank(orclasses)) then begin
+    goto LFillPipeline_Order;
+  end;
+  pos = 0;
+  ExtractObj(orclasses,pos,qclass);
+  while (nonblank(qclass)) begin
+    segs = 1;
+    index = "OrderClass";
+    if (nonblank(RepSpec.f1)) then begin
+      index = "OrderClass:" & RepSpec.f1;
+    end;
+    RecordClear(ORr);
+    ResetLoop(ORr);    
+    found = true;
+    ORr.OrderClass = qclass;
+    ORr.OrdDate = RepSpec.sEndDate;
+    while (LoopBackKey(index,ORr,segs,found)) begin
+      if (ORr.OrderClass!=qclass) then begin found = false; end;      
+/*      
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        if (DateInRange(ORr.OrdDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          found = false;
+        end;
+      end;
+*/      
+      if (found) then begin
+        testf = true;
+        if (ORr.Closed!=0) then begin testf = false; end; 
+        if (nonblank(RepSpec.f2)) then begin
+          if (ORr.CustCode!=RepSpec.f2) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+          if (DateInRange(ORr.OrdDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            testf = false;
+          end;
+        end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (ORr.SalesGroup!=RepSpec.f4) then begin testf = false; end;
+        end;
+        if (UserCanViewRecord(ORr)==false) then begin testf = false; end;
+        if (nonblank(RepSpec.f7)) then begin
+          if (InString2(ORr.Comment,RepSpec.f7)<0) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          AddPipelineORItemToArea(CTb,aquotation,quotation_cnt,RepSpec,amounts,ORr,vcurnr,vcurv,acur,acnt,tempORr);
+          quotation_cnt = quotation_cnt + 1;
+        end;
+      end;
+    end;
+    ExtractObj(orclasses,pos,qclass);
+  end;
+LFillPipeline_Order:;  
+  return;
+end;
+
+procedure AddPipelineQTItemToArea(record CompanyTimezoneBlock CTb,var Area a,var LongInt quotation_cnt,record RcVc RepSpec,Integer amounts,record QTVc QTr,var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                  var record ORVc tempORr)
+begin
+  row QTVc QTrw;
+  string 255 value,spec;
+  LongInt iconno;
+  Integer actnr;
+  record ActVc nextstepActr;
+  record ActVc firstnextstepActr;
+  record RLinkVc RLr;
+  Boolean nextstepactfound;
+  string 255 recid,cuncy,valstr;
+  val sum4;
+  Date cd,nextdate;
+  Time t,tt;
+
+  iconno = 1112; //yellow
+  actnr = 1;
+  nextdate = QTr.RejectDate;
+  if (blankdate(nextdate)) then begin
+    nextdate = QTr.QTDate;
+  end;
+
+  while (ReadRecordLink(QTr,actnr,nextstepActr,RLr)) begin
+    if (nextstepActr.OKFlag==0) then begin
+      nextstepactfound = true;
+      if (nextstepActr.TransDate<firstnextstepActr.TransDate) or (blankdate(firstnextstepActr.TransDate)) then begin
+        firstnextstepActr = nextstepActr;
+      end;
+    end;
+    actnr = actnr + 1;
+  end;
+
+  if (nextstepactfound) then begin
+    nextdate = firstnextstepActr.TransDate;
+    cd = CurrentDate;
+    t = ValToTime(CTb.OffsetFromServer);
+    if (CTb.OffsetFromServer<0) then begin
+      cd = AddDay(cd,-AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end else begin
+      cd = AddDay(cd,AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end;
+    if (firstnextstepActr.TransDate<cd) then begin
+      iconno = 1113; // red
+    end;
+    if (firstnextstepActr.TransDate==cd) then begin
+      iconno = 1111; // green
+    end;
+    if (firstnextstepActr.TransDate>cd) then begin
+      iconno = 1110; // gray
+    end;
+  end;
+
+  switch (amounts) begin
+    case kAmountIncludingVAT:
+      sum4 = QTr.Sum4;
+    case kAmountExcludingVAT:
+      sum4 = QTr.Sum1;
+  end;
+  if (blank(RepSpec.CurncyCode)) then begin
+    cuncy = QTr.CurncyCode;
+  end else begin 
+    cuncy = RepSpec.CurncyCode;
+    CurValToOtherCurWithRate(QTr.QTDate,QTr.CurncyCode,sum4,QTr.FrRate,QTr.ToRateB1,QTr.ToRateB2,QTr.BaseRate1,QTr.BaseRate2,
+                             cuncy,sum4,DefaultCurRoundOff);    
+  end;
+  if (quotation_cnt<100) then begin
+    valstr = ValToString(sum4,M40Val,ThousandSeparator,"",0);
+    if (nonblank(valstr)) then begin
+      value = cuncy & " " & valstr;
+    end;
+    if (MatRowCnt(QTr)>0) then begin
+      MatRowGet(QTr,0,QTrw);
+    end;
+    recid = BuildRecordIdStr(QTr,CurrentCompany);
+    if (blank(RepSpec.f1)) then begin
+      spec = QTr.SalesMan & ", " & QTrw.Spec;
+    end else begin
+      spec = QTrw.Spec;
+    end;
+    AddPipelineItemToTemporaryArray("QTVc",recid,spec,value,sum4,QTr.Addr0,iconno,sum4,-1,nextdate,kButtonColourDefault,tempORr);
+//    AddPipelineItemToArea("QTVc",recid,spec,value,QTr.Addr0,iconno,kButtonColourDefault,a);
+  end;
+  vcurnr[cuncy] = vcurnr[cuncy] + 1;
+  vcurv[cuncy] = vcurv[cuncy] + sum4;
+  AddToArray(cuncy,acur,acnt);
+end;
+
+procedure FillPipeline_Quotation(record CompanyTimezoneBlock CTb,record RcVc RepSpec,string qclasses,Integer amounts,var area aquotation,var LongInt quotation_cnt,
+                                 var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  record QTVc QTr;
+  Boolean found;
+  Boolean testf;
+  string 255 index,qclass;
+  Integer segs,pos;
+
+  if (blank(qclasses)) then begin
+    goto LFillPipeline_Quotation;
+  end;
+  pos = 0;
+  ExtractObj(qclasses,pos,qclass);
+  while (nonblank(qclass)) begin
+    segs = 1;
+    index = "QuoteClass";
+    if (nonblank(RepSpec.f1)) then begin
+      index = "OpenQuoteClass:" & RepSpec.f1;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        segs = 2;
+      end;
+    end else begin
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        index = "OpenQuoteClass";
+        segs = 2;
+      end;
+    end;
+    RecordClear(QTr);
+    ResetLoop(QTr);    
+    found = true;
+    QTr.QuoteClass = qclass;
+    QTr.QTDate = RepSpec.sEndDate;
+    while (LoopBackKey(index,QTr,segs,found)) begin
+      if (QTr.QuoteClass!=qclass) then begin found = false; end;      
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        if (DateInRange(QTr.QTDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          found = false;
+        end;
+      end;
+      if (found) then begin
+        testf = true;
+        if (QTr.Closed!=0) then begin testf = false; end; 
+        if (QTr.Rejected!=0) then begin testf = false; end; 
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          if (QTr.Priority!=StringToLongInt(RepSpec.FirstAcc)) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f2)) then begin
+          if (QTr.CustCode!=RepSpec.f2) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (QTr.SalesGroup!=RepSpec.f4) then begin testf = false; end;
+        end;
+        if (UserCanViewRecord(QTr)==false) then begin testf = false; end;
+        if (nonblank(RepSpec.f7)) then begin
+          if (InString2(QTr.Comment,RepSpec.f7)<0) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          AddPipelineQTItemToArea(CTb,aquotation,quotation_cnt,RepSpec,amounts,QTr,vcurnr,vcurv,acur,acnt,tempORr);
+          quotation_cnt = quotation_cnt + 1;
+        end;
+      end;
+    end;
+    ExtractObj(qclasses,pos,qclass);
+  end;
+LFillPipeline_Quotation:;  
+  return;
+end;
+
+procedure AddPipelineOYItemToArea(record CompanyTimezoneBlock CTb,var Area a,var LongInt quotation_cnt,record RcVc RepSpec,Integer amounts,record OYVc OYr,var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                  var record ORVc tempORr)
+begin
+  row OYVc OYrw;
+  string 255 value,spec;
+  LongInt iconno;
+  Integer actnr;
+  record ActVc nextstepActr;
+  record ActVc firstnextstepActr;
+  record RLinkVc RLr;
+  Boolean nextstepactfound;
+  string 255 recid,cuncy,valstr;
+  val sum4;
+  Date cd,nextdate;
+  Time t,tt;
+
+  iconno = 1112; //yellow
+  actnr = 1;
+  nextdate = OYr.RejectDate;
+  if (blankdate(nextdate)) then begin
+    nextdate = OYr.OYDate;
+  end;
+
+  while (ReadRecordLink(OYr,actnr,nextstepActr,RLr)) begin
+    if (nextstepActr.OKFlag==0) then begin
+      nextstepactfound = true;
+      if (nextstepActr.TransDate<firstnextstepActr.TransDate) or (blankdate(firstnextstepActr.TransDate)) then begin
+        firstnextstepActr = nextstepActr;
+      end;
+    end;
+    actnr = actnr + 1;
+  end;
+
+  if (nextstepactfound) then begin
+    nextdate = firstnextstepActr.TransDate;
+    cd = CurrentDate;
+    t = ValToTime(CTb.OffsetFromServer);
+    if (CTb.OffsetFromServer<0) then begin
+      cd = AddDay(cd,-AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end else begin
+      cd = AddDay(cd,AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end;
+    if (firstnextstepActr.TransDate<cd) then begin
+      iconno = 1113; // red
+    end;
+    if (firstnextstepActr.TransDate==cd) then begin
+      iconno = 1111; // green
+    end;
+    if (firstnextstepActr.TransDate>cd) then begin
+      iconno = 1110; // gray
+    end;
+  end;
+
+  switch (amounts) begin
+    case kAmountIncludingVAT:
+      sum4 = OYr.Sum4;
+    case kAmountExcludingVAT:
+      sum4 = OYr.Sum1;
+  end;
+  if (blank(RepSpec.CurncyCode)) then begin
+    cuncy = OYr.CurncyCode;
+  end else begin 
+    cuncy = RepSpec.CurncyCode;
+    CurValToOtherCurWithRate(OYr.OYDate,OYr.CurncyCode,sum4,OYr.FrRate,OYr.ToRateB1,OYr.ToRateB2,OYr.BaseRate1,OYr.BaseRate2,
+                             cuncy,sum4,DefaultCurRoundOff);    
+  end;
+  if (quotation_cnt<100) then begin
+    valstr = ValToString(sum4,M40Val,ThousandSeparator,"",0);
+    if (nonblank(valstr)) then begin
+      value = cuncy & " " & valstr;
+    end;
+    if (MatRowCnt(OYr)>0) then begin
+      MatRowGet(OYr,0,OYrw);
+    end;
+    recid = BuildRecordIdStr(OYr,CurrentCompany);
+    if (blank(RepSpec.f1)) then begin
+      spec = OYr.SalesMan & ", " & OYrw.Spec;
+    end else begin
+      spec = OYrw.Spec;
+    end;
+    AddPipelineItemToTemporaryArray("OYVc",recid,spec,value,sum4,OYr.Addr0,iconno,sum4,-1,nextdate,kButtonColourDefault,tempORr);
+//    AddPipelineItemToArea("OYVc",recid,spec,value,OYr.Addr0,iconno,kButtonColourDefault,a);
+  end;
+  vcurnr[cuncy] = vcurnr[cuncy] + 1;
+  vcurv[cuncy] = vcurv[cuncy] + sum4;
+  AddToArray(cuncy,acur,acnt);
+end;
+
+procedure FillPipeline_Opportunity(record CompanyTimezoneBlock CTb,record RcVc RepSpec,string qclasses,Integer amounts,var area aquotation,var LongInt quotation_cnt,
+                                 var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  record OYVc OYr;
+  Boolean found;
+  Boolean testf;
+  string 255 index,qclass;
+  Integer segs,pos;
+
+  if (blank(qclasses)) then begin
+    goto LFillPipeline_Opportunity;
+  end;
+  pos = 0;
+  ExtractObj(qclasses,pos,qclass);
+  while (nonblank(qclass)) begin
+    segs = 1;
+    index = "QuoteClass";
+    if (nonblank(RepSpec.f1)) then begin
+      index = "OpenQuoteClass:" & RepSpec.f1;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        segs = 2;
+      end;
+    end else begin
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        index = "OpenQuoteClass";
+        segs = 2;
+      end;
+    end;
+    RecordClear(OYr);
+    ResetLoop(OYr);    
+    found = true;
+    OYr.QuoteClass = qclass;
+    OYr.OYDate = RepSpec.sEndDate;
+    while (LoopBackKey(index,OYr,segs,found)) begin
+      if (OYr.QuoteClass!=qclass) then begin found = false; end;      
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        if (DateInRange(OYr.OYDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          found = false;
+        end;
+      end;
+      if (found) then begin
+        testf = true;
+        if (OYr.Closed!=0) then begin testf = false; end; 
+        if (OYr.Rejected!=0) then begin testf = false; end; 
+        if (nonblank(RepSpec.f2)) then begin
+          if (OYr.CustCode!=RepSpec.f2) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (OYr.SalesGroup!=RepSpec.f4) then begin testf = false; end;
+        end;
+        if (UserCanViewRecord(OYr)==false) then begin testf = false; end;
+        if (nonblank(RepSpec.f7)) then begin
+          if (InString2(OYr.Comment,RepSpec.f7)<0) then begin testf = false; end;
+        end;
+        if (testf) then begin
+          AddPipelineOYItemToArea(CTb,aquotation,quotation_cnt,RepSpec,amounts,OYr,vcurnr,vcurv,acur,acnt,tempORr);
+          quotation_cnt = quotation_cnt + 1;
+        end;
+      end;
+    end;
+    ExtractObj(qclasses,pos,qclass);
+  end;
+LFillPipeline_Opportunity:;  
+  return;
+end;
+
+procedure AddPipelinePRItemToArea(record CompanyTimezoneBlock CTb,var Area a,var LongInt pr_cnt,record RcVc RepSpec,Integer amounts,record PRVc PRr,var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                  var record ORVc tempORr)
+begin
+  row PRVc PRrw;
+  string 255 value,spec;
+  LongInt iconno;
+  Integer actnr;
+  record ActVc nextstepActr;
+  record ActVc firstnextstepActr;
+  record RLinkVc RLr;
+  Boolean nextstepactfound;
+  string 255 recid,cuncy,valstr;
+  val sum4;
+  Date cd,nextdate;
+  Time t,tt;
+
+  iconno = 1112; //yellow
+  actnr = 1;
+  nextdate = PRr.StartDate;
+
+  while (ReadRecordLink(PRr,actnr,nextstepActr,RLr)) begin
+    if (nextstepActr.OKFlag==0) then begin
+      nextstepactfound = true;
+      if (nextstepActr.TransDate<firstnextstepActr.TransDate) or (blankdate(firstnextstepActr.TransDate)) then begin
+        firstnextstepActr = nextstepActr;
+      end;
+    end;
+    actnr = actnr + 1;
+  end;
+
+  if (nextstepactfound) then begin
+    nextdate = firstnextstepActr.TransDate;
+    cd = CurrentDate;
+    t = ValToTime(CTb.OffsetFromServer);
+    if (CTb.OffsetFromServer<0) then begin
+      cd = AddDay(cd,-AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end else begin
+      cd = AddDay(cd,AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end;
+    if (firstnextstepActr.TransDate<cd) then begin
+      iconno = 1113; // red
+    end;
+    if (firstnextstepActr.TransDate==cd) then begin
+      iconno = 1111; // green
+    end;
+    if (firstnextstepActr.TransDate>cd) then begin
+      iconno = 1110; // gray
+    end;
+  end;
+  cuncy = PRr.CurncyCode;
+/*
+  switch (amounts) begin
+    case kAmountIncludingVAT:
+      sum4 = PRr.Sum4;
+    case kAmountExcludingVAT:
+      sum4 = PRr.Sum1;
+  end;
+  if (blank(RepSpec.CurncyCode)) then begin
+    cuncy = PRr.CurncyCode;
+  end else begin 
+    cuncy = RepSpec.CurncyCode;
+    CurValToOtherCurWithRate(PRr.StartDate,PRr.CurncyCode,sum4,PRr.FrRate,PRr.ToRateB1,PRr.ToRateB2,PRr.BaseRate1,PRr.BaseRate2,
+                             cuncy,sum4,DefaultCurRoundOff);    
+  end;
+*/  
+  if (pr_cnt<100) then begin
+//    valstr = ValToString(sum4,M40Val,ThousandSeparator,"",0);
+    if (nonblank(valstr)) then begin
+      value = cuncy & " " & valstr;
+    end;
+    if (MatRowCnt(PRr)>0) then begin
+      MatRowGet(PRr,0,PRrw);
+    end;
+    recid = BuildRecordIdStr(PRr,CurrentCompany);
+    if (blank(RepSpec.f1)) then begin
+      spec = PRr.PrSalesMan & ", " & PRr.Name;
+    end else begin
+      spec = PRr.Name;
+    end;
+    AddPipelineItemToTemporaryArray("PRVc",recid,spec,value,sum4,PRr.CustName,iconno,sum4,-1,nextdate,kButtonColourDefault,tempORr);
+  end;
+  vcurnr[cuncy] = vcurnr[cuncy] + 1;
+  vcurv[cuncy] = vcurv[cuncy] + sum4;
+  AddToArray(cuncy,acur,acnt);
+end;
+
+procedure FillPipeline_Projects(record CompanyTimezoneBlock CTb,record RcVc RepSpec,string phases,Integer amounts,var area aprojects,var LongInt pr_cnt,
+                                var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  record PRVc PRr;
+  Boolean found;
+  Boolean testf;
+  string 255 index,phase;
+  Integer segs,pos;
+
+  if (blank(phases)) then begin
+    goto LFillPipeline_Projects;
+  end;
+  pos = 0;
+  ExtractObj(phases,pos,phase);
+  while (nonblank(phase)) begin
+    segs = 1;
+    index = "ActPRStage";
+    if (nonblank(RepSpec.f1)) then begin
+      index = "ActPRStage:" & RepSpec.f1;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        segs = 1;
+      end;
+    end else begin
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        index = "ActPRStage";
+        segs = 1;
+      end;
+    end;
+    RecordClear(PRr);
+    ResetLoop(PRr);    
+    found = true;
+    PRr.PRStage = phase;
+//    PRr.StartDate = RepSpec.sEndDate;
+    while (LoopBackKey(index,PRr,segs,found)) begin
+      if (PRr.PRStage!=phase) then begin found = false; end;      
+      if (found) then begin
+        testf = true;
+        if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+          if (DateInRange(PRr.StartDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+            testf = false;
+          end;
+        end;
+        if (PRr.Terminated==1) then begin testf = false; end; 
+        if (nonblank(RepSpec.f2)) then begin
+          if (PRr.CustCode!=RepSpec.f2) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f4)) then begin
+          if (PRr.SalesGroup!=RepSpec.f4) then begin testf = false; end;
+        end;
+        if (UserCanViewRecord(PRr)==false) then begin testf = false; end;
+        if (testf) then begin
+          AddPipelinePRItemToArea(CTb,aprojects,pr_cnt,RepSpec,amounts,PRr,vcurnr,vcurv,acur,acnt,tempORr);
+          pr_cnt = pr_cnt + 1;
+        end;
+      end;
+    end;
+    ExtractObj(phases,pos,phase);
+  end;
+LFillPipeline_Projects:;  
+  return;
+end;
+
+procedure AddIdeaToPipeline(record CompanyTimezoneBlock CTb,var Area a,var LongInt idea_cnt,record RcVc RepSpec,record ActVc Actr,string BaseCur1,var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  string 255 value,spec;
+  LongInt iconno;
+  Integer actnr;
+  record ActVc nextstepActr;
+  record ActVc firstnextstepActr;
+  record RLinkVc RLr;
+  Boolean nextstepactfound;
+  string 255 recid;
+  string 255 crncy,valstr;
+  val sum;
+  Date cd,nextdate;
+  Time t,tt;
+  
+  iconno = 1112; //yellow
+  actnr = 1;
+  nextdate = Actr.TransDate;
+
+  while (ReadRecordLink(Actr,actnr,nextstepActr,RLr)) begin
+    if (nextstepActr.OKFlag==0) then begin
+      nextstepactfound = true;
+      if (nextstepActr.TransDate<firstnextstepActr.TransDate) or (blankdate(firstnextstepActr.TransDate)) then begin
+        firstnextstepActr = nextstepActr;
+      end;
+    end;
+    actnr = actnr + 1;
+  end;
+  crncy = Actr.CurncyCode;
+  if (blank(crncy)) then begin
+    crncy = BaseCur1;
+  end;
+  if (blank(RepSpec.CurncyCode)) then begin
+    sum = Actr.Value;
+  end else begin 
+    CurValToOtherCur(Actr.TransDate,crncy,Actr.Value,RepSpec.CurncyCode,sum,DefaultCurRoundOff);
+    crncy = RepSpec.CurncyCode;  
+  end;
+  if (nextstepactfound) then begin
+    nextdate = firstnextstepActr.TransDate;
+    cd = CurrentDate;
+    t = ValToTime(CTb.OffsetFromServer);
+    if (CTb.OffsetFromServer<0) then begin
+      cd = AddDay(cd,-AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end else begin
+      cd = AddDay(cd,AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end;
+    if (firstnextstepActr.TransDate<cd) then begin
+      iconno = 1113; // red
+    end;
+    if (firstnextstepActr.TransDate==cd) then begin
+      iconno = 1111; // green
+    end;
+    if (firstnextstepActr .TransDate>cd) then begin
+      iconno = 1110; // gray
+    end;
+  end;
+  
+  if (idea_cnt<100) then begin
+    valstr = ValToString(sum,M40Val,ThousandSeparator,"",0);
+    if (nonblank(valstr)) then begin
+      value = crncy & " " & valstr;
+    end;
+    if (blank(RepSpec.f1)) then begin
+      spec = Actr.MainPersons & ", " & Actr.Comment;
+    end else begin
+      spec = Actr.Comment;
+    end;
+    recid = BuildRecordIdStr(Actr,CurrentCompany);
+//    AddPipelineItemToArea("ActVc",recid,spec,value,Actr.CUName,iconno,kButtonColourDefault,a);
+    AddPipelineItemToTemporaryArray("ActVc",recid,spec,value,sum,Actr.CUName,iconno,sum,-1,nextdate,kButtonColourDefault,tempORr);
+  end;
+  if (nonblank(crncy)) then begin
+    vcurnr[crncy] = vcurnr[crncy] + 1;
+    vcurv[crncy] = vcurv[crncy] + sum;
+    AddToArray(crncy,acur,acnt);
+  end else begin
+    vcurnr["other"] = vcurnr["other"] + 1;
+    vcurv["other"] = vcurv["other"] + sum;
+    AddToArray("other",acur,acnt);
+  end;
+  return;
+end;
+
+procedure AddProjActToPipeline(record CompanyTimezoneBlock CTb,var Area a,var LongInt idea_cnt,record RcVc RepSpec,record ActVc projActr,string BaseCur1,var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,var record ORVc tempORr)
+begin
+  string 255 value,spec;
+  LongInt iconno,colnr;
+  Integer actnr;
+  record ActVc nextstepActr;
+  record ActVc firstnextstepActr;
+  record RLinkVc RLr;
+  Boolean nextstepactfound;
+  string 255 recid;
+  string 255 crncy,valstr,cuname;
+  val sum;
+  Date cd,nextdate;
+  Time t,tt;
+  record AcceptanceRulesVc Acptr;
+  record ActStateVc ASr;
+  
+  iconno = 1112; //yellow
+  actnr = 1;
+  nextdate = projActr.TransDate;
+
+  while (ReadRecordLink(projActr,actnr,nextstepActr,RLr)) begin
+    if (nextstepActr.OKFlag==0) then begin
+      nextstepactfound = true;
+      if (nextstepActr.TransDate<firstnextstepActr.TransDate) or (blankdate(firstnextstepActr.TransDate)) then begin
+        firstnextstepActr = nextstepActr;
+      end;
+    end;
+    actnr = actnr + 1;
+  end;
+  crncy = projActr.CurncyCode;
+  if (blank(crncy)) then begin
+    crncy = BaseCur1;
+  end;
+  if (blank(RepSpec.CurncyCode)) then begin
+    sum = projActr.Value;
+  end else begin 
+    CurValToOtherCur(projActr.TransDate,crncy,projActr.Value,RepSpec.CurncyCode,sum,DefaultCurRoundOff);
+    crncy = RepSpec.CurncyCode;  
+  end;
+  cd = CurrentDate;
+  if (nextstepactfound) then begin
+    t = ValToTime(CTb.OffsetFromServer);
+    if (CTb.OffsetFromServer<0) then begin
+      cd = AddDay(cd,-AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end else begin
+      cd = AddDay(cd,AddTime(CurrentTime,TimeToMinutes(t),tt));
+    end;
+    if (firstnextstepActr.TransDate<cd) then begin
+      iconno = 1113; // red
+    end;
+    if (firstnextstepActr.TransDate==cd) then begin
+      iconno = 1111; // green
+    end;
+    if (firstnextstepActr .TransDate>cd) then begin
+      iconno = 1110; // gray
+    end;
+  end else begin
+    if (nonblankdate(projActr.PlannedDate)) then begin
+      if (projActr.PlannedDate<cd) then begin iconno = 1113; end;// red
+      if (projActr.PlannedDate==cd) then begin iconno = 1111; end;// green
+      if (projActr.PlannedDate>cd) then begin iconno = 1110; end;// gray
+    end;
+  end;
+  if (idea_cnt<100) then begin
+    valstr = ValToString(sum,M40Val,ThousandSeparator,"",0);
+    if (nonblank(valstr)) then begin
+      value = crncy & " " & valstr;
+    end;
+    if (blank(RepSpec.f1)) then begin
+      spec = projActr.MainPersons & ", " & projActr.Comment;
+    end else begin
+      spec = projActr.Comment;
+    end;
+    cuname = projActr.CUName;
+    if (blank(cuname)) then begin
+      if (iconno>0) then begin
+        cuname = Right(spec,len(spec)-30);
+      end else begin
+        cuname = Right(spec,len(spec)-34);
+      end;
+    end;
+    recid = BuildRecordIdStr(projActr,CurrentCompany);
+//    AddPipelineItemToArea("ActVc",recid,spec,value,projActr.CUName,iconno,a);
+    colnr = kButtonColourDefault;
+//    ASr.Code = projActr.ActState;
+//    if (ReadFirstMain(ASr,1,true)) then begin
+//      colnr = ASr.PipelineColNr;
+//    end;
+    if (ActApprovalStatus(projActr,Acptr)>=kAcceptanceStatePending) then begin
+      colnr = kButtonColourRed;
+    end;
+    AddPipelineItemToTemporaryArray("ActVc",recid,spec,value,sum,cuname,iconno,sum,-1,nextdate,colnr,tempORr);
+  end;
+  if (nonblank(crncy)) then begin
+    vcurnr[crncy] = vcurnr[crncy] + 1;
+    vcurv[crncy] = vcurv[crncy] + sum;
+    AddToArray(crncy,acur,acnt);
+  end else begin
+    vcurnr["other"] = vcurnr["other"] + 1;
+    vcurv["other"] = vcurv["other"] + sum;
+    AddToArray("other",acur,acnt);
+  end;
+  return;
+end;
+
+procedure AddHeader(vector val vcurnr,vector val vcurv,Array string acur,Integer acnt,Area ahdr,string type)
+begin
+  LongInt cnt,cnt2;
+  Boolean blankf;
+  string 255 tstr,tstr2;
+  
+  switch (acnt) begin
+    case 0:
+      AddMemReaderStringToArea(USetStr(34351),ahdr);
+      AddMemReaderStringToArea("",ahdr);
+      AddMemReaderStringToArea("",ahdr);
+      AddMemReaderStringToArea("",ahdr);
+    case 1:
+      AddMemReaderStringToArea("",ahdr);
+      AddMemReaderStringToArea("",ahdr);
+      cnt = vcurnr[acur[0]];
+      AddMemReaderStringToArea(acur[0] & " " & ValToString(vcurv[acur[0]],M40Val,ThousandSeparator,"",0),ahdr);
+      AddMemReaderStringToArea(cnt & " " & USetStr(36270),ahdr);
+    case 2:
+      switch (StringSetFromString(584,type)) begin
+        case "ORVc": tstr = USetStr(36272); tstr2 = USetStr(36269) & " " & USetStr(36272);
+        case "OYVc": tstr = USetStr(36273); tstr2 = USetStr(36269) & " " & USetStr(36273);
+        case "QTVc": tstr = USetStr(36274); tstr2 = USetStr(36269) & " " & USetStr(36274);
+        case "PRVc": tstr = USetStr(36275); tstr2 = USetStr(36269) & " " & USetStr(36275);
+        otherwise
+          tstr = USetStr(36270);
+          tstr2 = USetStr(36271);
+      end;
+      cnt = vcurnr[acur[1]];
+      if (nonblank(acur[0]) and nonblank(acur[1])) then begin
+        if (acur[0]=="other") then begin
+          cnt = vcurnr[acur[1]];
+          AddMemReaderStringToArea(acur[1] & " " & ValToString(vcurv[acur[1]],M40Val,ThousandSeparator,"",0),ahdr);
+          AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+          cnt = vcurnr[acur[0]];
+          AddMemReaderStringToArea(acur[0] & " " & ValToString(vcurv[acur[0]],M40Val,ThousandSeparator,"",0),ahdr);
+          AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+        end else begin
+          cnt = vcurnr[acur[0]];
+          AddMemReaderStringToArea(acur[0] & " " & ValToString(vcurv[acur[0]],M40Val,ThousandSeparator,"",0),ahdr);
+          AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+          cnt = vcurnr[acur[1]];
+          AddMemReaderStringToArea(acur[1] & " " & ValToString(vcurv[acur[1]],M40Val,ThousandSeparator,"",0),ahdr);
+          AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+        end;
+      end else begin
+        if (blank(acur[0]) and nonblank(acur[1])) then begin
+          cnt = vcurnr[acur[1]];
+          AddMemReaderStringToArea(acur[1] & " " & ValToString(vcurv[acur[1]],M40Val,ThousandSeparator,"",0),ahdr);
+          AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+          cnt = vcurnr[acur[0]];
+          AddMemReaderStringToArea("+ " & cnt & " " & tstr2,ahdr);
+          AddMemReaderStringToArea("",ahdr);
+        end else begin
+          if (blank(acur[1]) and nonblank(acur[0])) then begin
+            cnt = vcurnr[acur[0]];
+            AddMemReaderStringToArea(acur[0] & " " & ValToString(vcurv[acur[0]],M40Val,ThousandSeparator,"",0),ahdr);
+            AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+            cnt = vcurnr[acur[1]];
+            AddMemReaderStringToArea("+ " & cnt & " " & tstr2,ahdr);
+            AddMemReaderStringToArea("",ahdr);
+          end else begin
+            AddMemReaderStringToArea("",ahdr);
+            AddMemReaderStringToArea("",ahdr);
+            cnt = vcurnr[acur[0]];
+            cnt2 = vcurnr[acur[1]];
+            cnt = cnt + cnt2;
+            AddMemReaderStringToArea("" & cnt & " " & tstr,ahdr);
+            AddMemReaderStringToArea(cnt & " " & tstr,ahdr);
+          end;
+        end;
+      end;
+    otherwise
+      cnt = vcurnr[acur[0]];
+      AddMemReaderStringToArea(acur[0] & " " & ValToString(vcurv[acur[0]],M40Val,ThousandSeparator,"",0),ahdr);
+      AddMemReaderStringToArea(cnt & " " & USetStr(36270),ahdr);
+      cnt = vcurnr[acur[1]];
+      AddMemReaderStringToArea("+ " & cnt & " " & USetStr(36271),ahdr);
+      AddMemReaderStringToArea("",ahdr);
+  end;
+  return;
+end;
+
+function Boolean SearchInActivity(record ActVc Actr,string filter)
+begin
+  Boolean res;
+  record RLinkVc RLr;
+  record MailVc Mailr;
+  Integer mailnr;
+  
+  if (InString2(Actr.Comment,filter)>=0) then begin res = true; end;
+  if (res==false) then begin
+    mailnr = 1;
+    while (ReadRecordLink(Actr,mailnr,Mailr,RLr)) begin
+      if (StringInText(filter,Mailr)) then begin
+        res = true;
+        goto LSearchInActivity;
+      end;      
+      mailnr = mailnr + 1;
+    end;
+  end;
+LSearchInActivity:;  
+  SearchInActivity = res;
+  return;
+end;
+
+procedure FillPipeline_Activity(record CompanyTimezoneBlock CTb,record RcVc RepSpec,string acttypes,string actstates,var area aidea,var LongInt idea_cnt,
+                                var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                record ORVc tempORr)
+begin
+  record ActVc Actr;
+  Boolean found,testf;
+  string 255 index,acttype;
+  Integer segs,pos;
+  record BaseCurBlock BCb;
+  
+  if (blank(acttypes)) then begin
+    goto LFillPipeline_Activity;
+  end;
+  BlockLoad(BCb);
+  pos = 0;
+  ExtractObj(acttypes,pos,acttype);
+  while (nonblank(acttype)) begin  
+    index = "ActActType";
+    segs = 1;
+    if (nonblank(RepSpec.f1)) then begin
+      index = "ActDateTypeUserMain:" & RepSpec.f1;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        segs = 2;
+      end;
+    end else begin
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        index = "ActActType";
+        segs = 2;
+      end;
+    end;
+    RecordClear(Actr);
+    ResetLoop(Actr);
+    Actr.ActType = acttype;
+    Actr.TransDate = RepSpec.sEndDate;
+    found = true;
+    while (LoopBackKey(index,Actr,segs,found)) begin
+      if (Actr.ActType!=acttype) then begin found = false; end;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          found = false;
+        end;
+      end;
+      if (found) then begin
+        testf = true;
+        if (Actr.OKFlag!=0) then begin testf = false; end;
+        if (nonblank(actstates)) then begin
+          if (SetInSet(Actr.ActState,actstates)==false) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          if (Actr.PrioLevel!=StringToLongInt(RepSpec.FirstAcc)) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f1)) then begin
+          if (SetInSet(RepSpec.f1,Actr.MainPersons)==false) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f2)) then begin
+          if (Actr.CUCode!=RepSpec.f2) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f6)) then begin
+          if (Actr.PRCode!=RepSpec.f6) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f7)) then begin
+          if (SearchInActivity(Actr,RepSpec.f7)==false) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f8)) then begin
+          if (SetInSet(RepSpec.f8,Actr.CCPersons)==false) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f9)) then begin
+          if (SetInSet(RepSpec.f9,Actr.Supervisor)==false) then begin testf = false; end;
+        end;
+        if (Actr.TodoFlag==kTodoFlagProject) then begin testf = false; end;
+        if (testf) then begin
+          AddIdeaToPipeline(CTb,aidea,idea_cnt,RepSpec,Actr,BCb.BaseCur1,vcurnr,vcurv,acur,acnt,tempORr);
+          idea_cnt = idea_cnt + 1;
+        end;
+      end;
+    end;
+    ExtractObj(acttypes,pos,acttype);
+  end;
+LFillPipeline_Activity:;  
+  return;
+end;
+
+procedure FillPipeline_IntProjManActivity(record CompanyTimezoneBlock CTb,record RcVc RepSpec,string actstates,string acttypes,var area aidea,var LongInt idea_cnt,
+                                var vector val vcurnr,vector val vcurv,var Array string acur,var Integer acnt,
+                                record ORVc tempORr)
+begin
+  record ActVc Actr;
+  row ActVc Actrw;
+  Boolean found,testf;
+  string 255 index,actstate,devclasses;
+  Integer segs,pos;
+  record BaseCurBlock BCb;
+  Integer i,rwcnt;
+  
+  if (blank(actstates)) then begin
+    goto LFillPipeline_IntProjManActivity;
+  end;
+  BlockLoad(BCb);
+  pos = 0;
+  ExtractObj(actstates,pos,actstate);
+  while (nonblank(actstate)) begin  
+    index = "ActActState";
+    segs = 1;
+    if (nonblank(RepSpec.f1)) then begin
+      index = "ActDateStateUserMain:" & RepSpec.f1;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        segs = 2;
+      end;
+    end else begin
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        index = "ActActState";
+        segs = 2;
+      end;
+    end;
+    RecordClear(Actr);
+    ResetLoop(Actr);
+    Actr.ActState = actstate;
+    Actr.TransDate = RepSpec.sEndDate;
+    found = true;
+    while (LoopBackKey(index,Actr,segs,found)) begin
+      if (Actr.ActState!=actstate) then begin found = false; end;
+      if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+        if (DateInRange(Actr.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          found = false;
+        end;
+      end;
+      if (found) then begin
+        testf = true;
+        if (Actr.OKFlag!=0) then begin testf = false; end;
+        if (Actr.TodoFlag!=kTodoFlagProject) then begin testf = false; end;
+        if (nonblank(acttypes)) then begin
+          if (SetInSet(Actr.ActType,acttypes)==false) then begin testf = false; end;      
+          if (blank(Actr.ActType)) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.FirstAcc)) then begin
+          if (Actr.PrioLevel!=StringToLongInt(RepSpec.FirstAcc)) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f1)) then begin
+          if (SetInSet(RepSpec.f1,Actr.MainPersons)==false) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f2)) then begin
+          if (Actr.CUCode!=RepSpec.f2) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f5)) then begin
+          rwcnt = MatRowCnt(Actr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(Actr,i,Actrw);
+            devclasses = AddStringToStringList(devclasses,Actrw.TextCode);
+          end;
+          if (SetInSet(RepSpec.f5,devclasses)==false) then begin testf = false; end;      
+        end;
+        if (nonblank(RepSpec.f6)) then begin
+          if (Actr.PRCode!=RepSpec.f6) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f7)) then begin
+          if (SearchInActivity(Actr,RepSpec.f7)==false) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f8)) then begin
+          if (SetInSet(RepSpec.f8,Actr.CCPersons)==false) then begin testf = false; end;
+        end;
+        if (nonblank(RepSpec.f9)) then begin
+          if (SetInSet(RepSpec.f9,Actr.Supervisor)==false) then begin testf = false; end;
+        end;
+        if (testf) then begin
+//          AddIdeaToPipeline(CTb,aidea,idea_cnt,RepSpec,Actr,BCb.BaseCur1,vcurnr,vcurv,acur,acnt,tempORr);
+          AddProjActToPipeline(CTb,aidea,idea_cnt,RepSpec,Actr,BCb.BaseCur1,vcurnr,vcurv,acur,acnt,tempORr);
+          idea_cnt = idea_cnt + 1;
+        end;
+      end;
+    end;
+    ExtractObj(actstates,pos,actstate);
+  end;
+LFillPipeline_IntProjManActivity:;  
+  return;
+end;
+
+function Integer CountNumberOfColumns(record RcVc RepSpec,record PipelinOverviewBlock POb)
+begin
+  Integer res;
+  row PipelinOverviewBlock PObrw;
+  Integer i,rwcnt;
+  Boolean blankviewnamef;
+  
+  rwcnt = MatRowCnt(POb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POb,i,PObrw);
+    if (nonblank(RepSpec.f3)) then begin
+      if (PObrw.ViewName==RepSpec.f3) then begin
+        res = res + 1;
+      end;
+    end else begin
+      if (blankviewnamef==false) then begin
+        if (blank(RepSpec.f3)) then begin
+          RepSpec.f3 = PObrw.ViewName;
+        end;
+        if (PObrw.ViewName==RepSpec.f3) then begin
+          res = res + 1;
+        end;
+      end;
+    end;
+    if (blank(PObrw.ViewName)) then begin
+      blankviewnamef = true;
+    end;
+  end;  
+  CountNumberOfColumns = res;
+  return;
+end;
+
+global
+procedure FillPipelineOverview(var record RcVc RepSpec,var Area adhp)
+begin
+  area ahdr;
+  LongInt row_cnt,col0_cnt,col1_cnt,col2_cnt,col3_cnt,col4_cnt,col5_cnt,col6_cnt,col7_cnt,col8_cnt;
+  area acol0,acol1,acol2,acol3,acol4,acol5,acol6,acol7,acol8;
+  record PipelinOverviewBlock POb;
+  row PipelinOverviewBlock PObrw;
+  Integer i,rwcnt;
+  
+  vector val vcurnr0,vcurnr1,vcurnr2,vcurnr3,vcurnr4,vcurnr5,vcurnr6,vcurnr7,vcurnr8;
+  vector val vcurv0,vcurv1,vcurv2,vcurv3,vcurv4,vcurv5,vcurv6,vcurv7,vcurv8;
+  array string 255 acur0,acur1,acur2,acur3,acur4,acur5,acur6,acur7,acur8;
+  Integer acnt0,acnt1,acnt2,acnt3,acnt4,acnt5,acnt6,acnt7,acnt8;
+  
+  LongInt compno,comppos;
+  string 255 maincrmcompanies,compcode;
+  Integer oldcomp,curcomp;
+  Boolean compfoundf,columnnrchangedf,testf,blankviewnamef;
+  Integer columnnr,definedcolumn;
+  string 255 LastViewName,LastColumnName,usercode;
+  record UserPipelinOverviewVc UPOr;
+  row UserPipelinOverviewVc UPOrw;
+  Boolean UserPipelinOverviewf;
+  Boolean columndefFound;
+  
+  record ORVc tempORr;
+  record CompanyTimezoneBlock CTb;
+  
+  if (RepSpec.UsedOnly==0) then begin
+    if (nonblank(RepSpec.Period2Str) and len(RepSpec.Period2Str)>1) then begin
+      if (blankdate(RepSpec.sStartDate) or blankdate(RepSpec.sEndDate)) then begin
+        In2Period(RepSpec.Period2Str,RepSpec.sStartDate,RepSpec.sEndDate);
+      end;
+    end;
+  end;
+  RepSpec.UsedOnly = 1; 
+// after we opened Workflow Overview we dont want to change period when we change 
+// opened activity 
+  row_cnt = 0; col0_cnt = 0; col1_cnt = 0; col2_cnt = 0; col3_cnt = 0; col4_cnt = 0; 
+  col5_cnt = 0; col6_cnt = 0; col7_cnt = 0; col8_cnt = 0;
+  SetAreaZeroSize(acol0); SetAreaZeroSize(acol1); SetAreaZeroSize(acol2); SetAreaZeroSize(acol3);
+  SetAreaZeroSize(acol4); SetAreaZeroSize(acol5); SetAreaZeroSize(acol6); SetAreaZeroSize(acol7);
+  SetAreaZeroSize(acol8);
+  
+  usercode = RepSpec.f1;
+  if (blank(usercode)) then begin
+    usercode = CurrentUser;
+  end;
+  oldcomp = CurrentCompany;  
+  if (nonblank(usercode)) then begin
+    if (GetGlobalUserMainCompany(usercode,compcode)) then begin
+      if (SetCompanyCode(compcode,false)) then begin
+        UPOr.UserCode = usercode;
+        UserPipelinOverviewf = ReadFirstMain(UPOr,1,true);
+        if (UserPipelinOverviewf) then begin
+          rwcnt = MatRowCnt(UPOr);
+          for (i=0;i<rwcnt;i=i+1) begin
+            MatRowGet(UPOr,i,UPOrw);
+            PObrw.ViewName = UPOrw.ViewName;
+            PObrw.ColumnName = UPOrw.ColumnName;
+            PObrw.Register = UPOrw.Register;
+            PObrw.RegisterFilter = UPOrw.RegisterFilter;
+            PObrw.RegisterFilter2 = UPOrw.RegisterFilter2;
+            PObrw.Amounts = UPOrw.Amounts;
+            PObrw.colnr = UPOrw.colnr;
+            MatRowPut(POb,MatRowCnt(POb),PObrw);
+          end;
+        end;
+      end;
+    end else begin
+      UPOr.UserCode = usercode;
+      UserPipelinOverviewf = ReadFirstMain(UPOr,1,true);
+      if (UserPipelinOverviewf) then begin
+        rwcnt = MatRowCnt(UPOr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(UPOr,i,UPOrw);
+          PObrw.ViewName = UPOrw.ViewName;
+          PObrw.ColumnName = UPOrw.ColumnName;
+          PObrw.Register = UPOrw.Register;
+          PObrw.RegisterFilter = UPOrw.RegisterFilter;
+          PObrw.RegisterFilter2 = UPOrw.RegisterFilter2;
+          PObrw.Amounts = UPOrw.Amounts;
+          PObrw.colnr = UPOrw.colnr;
+          MatRowPut(POb,MatRowCnt(POb),PObrw);
+        end;
+      end;
+    end;
+  end;
+  rwcnt = MatRowCnt(POb);
+  if (rwcnt>9) then begin
+    RepSpec.long1 = 34352;
+    goto LFillPipelineOverview;
+  end;
+  maincrmcompanies = GetGlobalUserMainCompanies(usercode);
+  
+  blankviewnamef = false;
+  columndefFound = false;
+  comppos = 0;
+  definedcolumn = -1;
+  GetNextSubstring(maincrmcompanies,comppos,",",compcode);
+  compfoundf = true;  
+  while (compfoundf) begin
+    if (nonblank(compcode)) then begin
+      if (SetCompanyCode(compcode,false)==false) then begin
+        goto LSkipCompany;
+      end;
+    end else begin
+      compfoundf = false;
+    end;
+    if (columndefFound==false) then begin
+      if (UserPipelinOverviewf==false) then begin
+        BlockLoad(POb);
+        rwcnt = MatRowCnt(POb);
+        if (rwcnt==0) then begin
+          curcomp = CurrentCompany;
+          SetServerCompany(1);
+          BlockLoad(POb);
+          SetServerCompany(curcomp);
+        end;
+      end;
+      columndefFound = true;
+    end;
+
+    rwcnt = MatRowCnt(POb);
+    if (CountNumberOfColumns(RepSpec,POb)>9) then begin
+      RepSpec.long1 = 34352;
+      goto LFillPipelineOverview;
+    end;
+//    blankviewnamef = false;
+    columnnr = -1;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(POb,i,PObrw);
+      if (blankviewnamef==false) then begin
+        if (blank(RepSpec.f3)) then begin
+          RepSpec.f3 = PObrw.ViewName;
+        end;
+      end;
+      testf = false;
+      if (nonblank(PObrw.ViewName)) then begin
+        if (PObrw.ViewName==RepSpec.f3) then begin
+          testf = true;
+        end;
+      end else begin
+        if (LastViewName==RepSpec.f3) then begin
+          testf = true;
+        end;      
+      end;
+      if (testf) then begin
+        BlockLoad(CTb);
+        if (blank(PObrw.ViewName)) then begin
+          blankviewnamef = true;
+        end;
+        columnnrchangedf = false;
+        if (nonblank(PObrw.ColumnName)) then begin
+          if (PObrw.ColumnName!=LastColumnName) then begin
+            columnnr = columnnr + 1;
+            columnnrchangedf = true;
+            LastColumnName = "";
+          end;
+        end;
+        RecordClear(tempORr);
+        switch (columnnr) begin
+          case 0:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol0,col0_cnt,vcurnr0,vcurv0,acur0,acnt0,tempORr);
+            end;            
+            AddTemporaryArrayToArea(tempORr,acol0,RepSpec);
+          case 1:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol1,col1_cnt,vcurnr1,vcurv1,acur1,acnt1,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol1,RepSpec);
+          case 2:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol2,col2_cnt,vcurnr2,vcurv2,acur2,acnt2,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol2,RepSpec);
+          case 3:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol3,col3_cnt,vcurnr3,vcurv3,acur3,acnt3,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol3,RepSpec);
+          case 4:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol4,col4_cnt,vcurnr4,vcurv4,acur4,acnt4,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol4,RepSpec);
+          case 5:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol5,col5_cnt,vcurnr5,vcurv5,acur5,acnt5,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol5,RepSpec);
+          case 6:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol6,col6_cnt,vcurnr6,vcurv6,acur6,acnt6,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol6,RepSpec);
+          case 7:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol7,col7_cnt,vcurnr7,vcurv7,acur7,acnt7,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol7,RepSpec);
+          case 8:
+            switch (StringSetFromString(584,PObrw.Register)) begin
+              case "ActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "IntProjManActVc":
+                FillPipeline_IntProjManActivity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "IntProjManToDoActVc":
+                FillPipeline_Activity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.RegisterFilter2,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "KitchenOrderVc":
+                FillPipeline_KitchenOrders(RepSpec,PObrw.RegisterFilter,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "ORVc":
+                FillPipeline_Order(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "OYVc":
+                FillPipeline_Opportunity(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "PRVc":
+                FillPipeline_Projects(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+              case "QTVc":
+                FillPipeline_Quotation(CTb,RepSpec,PObrw.RegisterFilter,PObrw.Amounts,acol8,col8_cnt,vcurnr8,vcurv8,acur8,acnt8,tempORr);
+            end;
+            AddTemporaryArrayToArea(tempORr,acol8,RepSpec);
+        end;
+      end;
+      if (nonblank(PObrw.ViewName)) then begin
+        LastViewName = PObrw.ViewName;
+      end;
+      if (nonblank(PObrw.ColumnName)) then begin
+        LastColumnName = PObrw.ColumnName;
+      end;
+    end;
+    if (definedcolumn<0) then begin
+      definedcolumn = columnnr;
+    end;
+LSkipCompany:;    
+    GetNextSubstring(maincrmcompanies,comppos,",",compcode);
+    compfoundf = blank(compcode)==false;
+  end;
+  
+  SortValArray(vcurnr0,vcurv0,acur0,acnt0);
+  SortValArray(vcurnr1,vcurv1,acur1,acnt1);
+  SortValArray(vcurnr2,vcurv2,acur2,acnt2);
+  SortValArray(vcurnr3,vcurv3,acur3,acnt3);
+  SortValArray(vcurnr4,vcurv4,acur4,acnt4);
+  SortValArray(vcurnr5,vcurv5,acur5,acnt5);
+  SortValArray(vcurnr6,vcurv6,acur6,acnt6);
+  SortValArray(vcurnr7,vcurv7,acur7,acnt7);
+  SortValArray(vcurnr8,vcurv8,acur8,acnt8);
+  
+  if (col0_cnt>100) then begin col0_cnt = 100; end;
+  if (col1_cnt>100) then begin col1_cnt = 100; end;
+  if (col2_cnt>100) then begin col2_cnt = 100; end;
+  if (col3_cnt>100) then begin col3_cnt = 100; end;
+  if (col4_cnt>100) then begin col4_cnt = 100; end;
+  if (col5_cnt>100) then begin col5_cnt = 100; end;
+  if (col6_cnt>100) then begin col6_cnt = 100; end;
+  if (col7_cnt>100) then begin col7_cnt = 100; end;
+  if (col8_cnt>100) then begin col8_cnt = 100; end;
+  row_cnt = MAX(row_cnt,col0_cnt);
+  row_cnt = MAX(row_cnt,col1_cnt);
+  row_cnt = MAX(row_cnt,col2_cnt);
+  row_cnt = MAX(row_cnt,col3_cnt);
+  row_cnt = MAX(row_cnt,col4_cnt);
+  row_cnt = MAX(row_cnt,col5_cnt);
+  row_cnt = MAX(row_cnt,col6_cnt);
+  row_cnt = MAX(row_cnt,col7_cnt);
+  row_cnt = MAX(row_cnt,col8_cnt);
+  
+  if (row_cnt==0 and rwcnt==0) then begin
+    rwcnt = 1;
+    row_cnt = 1;
+    AddLongToArea(rwcnt,ahdr);  // Number of columns
+    AddLongToArea(row_cnt,ahdr);  // Number of rows of the biggest column
+    AddMemReaderStringToArea(USetStr(34350),ahdr);
+    AddHeader(vcurnr0,vcurv0,acur0,acnt0,ahdr,"0");
+    AddLongToArea(kButtonColourGray,ahdr);
+  end else begin
+    AddLongToArea(definedcolumn+1,ahdr);  // Number of columns
+    AddLongToArea(row_cnt,ahdr);  // Number of rows of the biggest column
+    columnnr = -1;
+    LastViewName = "";
+    LastColumnName = "";
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(POb,i,PObrw);
+      testf = false;
+      if (nonblank(PObrw.ViewName)) then begin
+        if (PObrw.ViewName==RepSpec.f3) then begin
+          testf = true;
+        end;
+      end else begin
+        if (LastViewName==RepSpec.f3) then begin
+          testf = true;
+        end;      
+      end;
+      if (testf) then begin
+        columnnrchangedf = false;
+        if (nonblank(PObrw.ColumnName)) then begin
+          if (PObrw.ColumnName!=LastColumnName) then begin
+            columnnr = columnnr + 1;
+            columnnrchangedf = true;
+            LastColumnName = "";
+          end;
+        end;
+        if (columnnrchangedf) then begin
+          AddMemReaderStringToArea(PObrw.ColumnName,ahdr);
+          switch (columnnr) begin
+            case 0:
+              AddHeader(vcurnr0,vcurv0,acur0,acnt0,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col0_cnt,ahdr);
+            case 1:
+              AddHeader(vcurnr1,vcurv1,acur1,acnt1,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col1_cnt,ahdr);
+            case 2:
+              AddHeader(vcurnr2,vcurv2,acur2,acnt2,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col2_cnt,ahdr);
+            case 3:
+              AddHeader(vcurnr3,vcurv3,acur3,acnt3,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col3_cnt,ahdr);
+            case 4:
+              AddHeader(vcurnr4,vcurv4,acur4,acnt4,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col4_cnt,ahdr);
+            case 5:
+              AddHeader(vcurnr5,vcurv5,acur5,acnt5,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col5_cnt,ahdr);
+            case 6:
+              AddHeader(vcurnr6,vcurv6,acur6,acnt6,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col6_cnt,ahdr);
+            case 7:
+              AddHeader(vcurnr7,vcurv7,acur7,acnt7,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col7_cnt,ahdr);
+            case 8:
+              AddHeader(vcurnr8,vcurv8,acur8,acnt8,ahdr,PObrw.Register);
+              AddLongToArea(PObrw.colnr,ahdr);
+              AddLongToArea(col8_cnt,ahdr);
+          end;
+        end;
+      end;
+      if (nonblank(PObrw.ViewName)) then begin
+        LastViewName = PObrw.ViewName;
+      end;
+      if (nonblank(PObrw.ColumnName)) then begin
+        LastColumnName = PObrw.ColumnName;
+      end;
+    end;  
+  end;  
+  
+  SetAreaZeroSize(adhp);
+  AddAreaToArea(ahdr,adhp);
+  AddAreaToArea(acol0,adhp);
+  AddAreaToArea(acol1,adhp);
+  AddAreaToArea(acol2,adhp);
+  AddAreaToArea(acol3,adhp);
+  AddAreaToArea(acol4,adhp);
+  AddAreaToArea(acol5,adhp);
+  AddAreaToArea(acol6,adhp);
+  AddAreaToArea(acol7,adhp);
+  AddAreaToArea(acol8,adhp);
+  ResetCompany(oldcomp);
+LFillPipelineOverview:;  
+  return;
+end;
+
+/*
+//the below i would like to have
+global
+procedure FillPipelineOverview(record RcVc RepSpec,var Area adhp)
+begin
+  area ahdr;
+  LongInt row_cnt,col0_cnt,col1_cnt,col2_cnt,col3_cnt,col4_cnt,col5_cnt,col6_cnt,col7_cnt,col8_cnt;
+  area acol0,acol1,acol2,acol3,acol4,acol5,acol6,acol7,acol8;
+  record PipelinOverviewBlock POb;
+  row PipelinOverviewBlock PObrw;
+  Integer i,rwcnt;
+
+  vector val vcurnr0,vcurnr1,vcurnr2,vcurnr3,vcurnr4,vcurnr5,vcurnr6,vcurnr7,vcurnr8;
+  vector val vcurv0,vcurv1,vcurv2,vcurv3,vcurv4,vcurv5,vcurv6,vcurv7,vcurv8;
+  array string 255 acur0,acur1,acur2,acur3,acur4,acur5,acur6,acur7,acur8;
+  Integer acnt0,acnt1,acnt2,acnt3,acnt4,acnt5,acnt6,acnt7,acnt8;
+  
+  LongInt compno,comppos;
+  string 255 maincrmcompanies,compcode;
+  Integer oldcomp,curcomp;
+  Boolean compfoundf;
+  
+  vector val vcurnr,vcurv;
+  Area acol;
+  array string 255 acur;
+  Integer acnt;
+  LongInt col_cnt;
+  
+
+  if (nonblank(RepSpec.Period2Str)) then begin
+    if (blankdate(RepSpec.sStartDate) or blankdate(RepSpec.sEndDate)) then begin
+      In2Period(RepSpec.Period2Str,RepSpec.sStartDate,RepSpec.sEndDate);
+    end;
+  end;
+  row_cnt = 0; col0_cnt = 0; col1_cnt = 0; col2_cnt = 0; col3_cnt = 0; col4_cnt = 0; 
+  col5_cnt = 0; col6_cnt = 0; col7_cnt = 0; col8_cnt = 0;
+
+  oldcomp = CurrentCompany;  
+  maincrmcompanies = GetGlobalUserMainCompanies(RepSpec.f1);
+  comppos = 0;
+  GetNextSubstring(maincrmcompanies,comppos,",",compcode);
+  compfoundf = true;  
+  while (compfoundf) begin
+    if (nonblank(compcode)) then begin
+      if (SetCompanyCode(compcode,false)==false) then begin
+        goto LSkipCompany;
+      end;
+    end else begin
+      compfoundf = false;
+    end;
+  
+    BlockLoad(POb);
+    rwcnt = MatRowCnt(POb);
+      if (rwcnt==0) then begin
+        curcomp = CurrentCompany;
+        if (SetCompanyCode(1,false)) then begin
+          BlockLoad(POb);
+          rwcnt = MatRowCnt(POb);
+          ResetCompany(curcomp);
+        end;
+      end;
+
+    SetAreaZeroSize(acol0); SetAreaZeroSize(acol1); SetAreaZeroSize(acol2); SetAreaZeroSize(acol3);
+    SetAreaZeroSize(acol4); SetAreaZeroSize(acol5); SetAreaZeroSize(acol6); SetAreaZeroSize(acol7);
+    SetAreaZeroSize(acol8);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(POb,i,PObrw);
+      if (nonblank(PObrw.QuoteClass)) then begin
+        FillPipeline_Quotation(CTb,RepSpec,PObrw.QuoteClass,acol,col_cnt,vcurnr,vcurv,acur,acnt);
+      end;
+      if (nonblank(PObrw.ActType)) then begin
+        FillPipeline_Activity(CTb,RepSpec,PObrw.ActType,acol,col_cnt,vcurnr,vcurv,acur,acnt);
+      end;
+
+      switch (i) begin
+        case 0:
+          acol0 = acol;
+          col0_cnt = col_cnt;
+          vcurnr0 = vcurnr;
+          vcurv0 = vcurv;
+          acur0 = acur;
+          acnt0 = acnt;
+        case 1:
+          acol1 = acol;
+          col1_cnt = col_cnt;
+          vcurnr1 = vcurnr;
+          vcurv1 = vcurv;
+          acur1 = acur;
+          acnt1 = acnt;
+        case 2:
+          acol2 = acol;
+          col2_cnt = col_cnt;
+          vcurnr2 = vcurnr;
+          vcurv2 = vcurv;
+          acur2 = acur;
+          acnt2 = acnt;
+        case 3:
+          acol3 = acol;
+          col3_cnt = col_cnt;
+          vcurnr3 = vcurnr;
+          vcurv3 = vcurv;
+          acur3 = acur;
+          acnt3 = acnt;
+        case 4:
+          acol4 = acol;
+          col4_cnt = col_cnt;
+          vcurnr4 = vcurnr;
+          vcurv4 = vcurv;
+          acur4 = acur;
+          acnt4 = acnt;
+      end;
+      
+    end;
+    SortValArray(vcurnr0,vcurv0,acur0,acnt0);
+    SortValArray(vcurnr1,vcurv1,acur1,acnt1);
+    SortValArray(vcurnr2,vcurv2,acur2,acnt2);
+    SortValArray(vcurnr3,vcurv3,acur3,acnt3);
+    SortValArray(vcurnr4,vcurv4,acur4,acnt4);
+    SortValArray(vcurnr5,vcurv5,acur5,acnt5);
+    SortValArray(vcurnr6,vcurv6,acur6,acnt6);
+    SortValArray(vcurnr7,vcurv7,acur7,acnt7);
+    SortValArray(vcurnr8,vcurv8,acur8,acnt8);
+
+    if (col0_cnt>100) then begin col0_cnt = 100; end;
+    if (col1_cnt>100) then begin col1_cnt = 100; end;
+    if (col2_cnt>100) then begin col2_cnt = 100; end;
+    if (col3_cnt>100) then begin col3_cnt = 100; end;
+    if (col4_cnt>100) then begin col4_cnt = 100; end;
+    if (col5_cnt>100) then begin col5_cnt = 100; end;
+    if (col6_cnt>100) then begin col6_cnt = 100; end;
+    if (col7_cnt>100) then begin col7_cnt = 100; end;
+    if (col8_cnt>100) then begin col8_cnt = 100; end;
+    row_cnt = MAX(row_cnt,col0_cnt);
+    row_cnt = MAX(row_cnt,col1_cnt);
+    row_cnt = MAX(row_cnt,col2_cnt);
+    row_cnt = MAX(row_cnt,col3_cnt);
+    row_cnt = MAX(row_cnt,col4_cnt);
+    row_cnt = MAX(row_cnt,col5_cnt);
+    row_cnt = MAX(row_cnt,col6_cnt);
+    row_cnt = MAX(row_cnt,col7_cnt);
+    row_cnt = MAX(row_cnt,col8_cnt);
+    AddLongToArea(rwcnt,ahdr);  // Number of columns
+    AddLongToArea(row_cnt,ahdr);  // Number of rows of the biggest column
+
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(POb,i,PObrw);
+      AddMemReaderStringToArea(PObrw.ColumnName,ahdr);
+      switch (i) begin
+        case 0:
+          vcurnr = vcurnr0;
+          vcurv = vcurv0;
+          acur = acur0;
+          acnt = acnt0;
+          col_cnt = col0_cnt;
+        case 1:
+          vcurnr = vcurnr1;
+          vcurv = vcurv1;
+          acur = acur1;
+          acnt = acnt1;
+          col_cnt = col1_cnt;
+        case 2:
+          vcurnr = vcurnr2;
+          vcurv = vcurv2;
+          acur = acur2;
+          acnt = acnt2;
+          col_cnt = col2_cnt;
+        case 3:
+          vcurnr = vcurnr3;
+          vcurv = vcurv3;
+          acur = acur3;
+          acnt = acnt3;
+          col_cnt = col3_cnt;
+        case 4:
+          vcurnr = vcurnr4;
+          vcurv = vcurv4;
+          acur = acur4;
+          acnt = acnt4;
+          col_cnt = col4_cnt;
+        case 5:
+        case 6:
+        case 7:
+        case 8:
+      end;
+  
+      AddHeader(vcurnr0,vcurv0,acur0,acnt0,ahdr);
+      AddLongToArea(col0_cnt,ahdr);
+
+    end;
+
+
+    SetAreaZeroSize(adhp);
+    AddAreaToArea(ahdr,adhp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      AddAreaToArea(acol0,adhp);
+      AddAreaToArea(acol1,adhp);
+      AddAreaToArea(acol2,adhp);
+      AddAreaToArea(acol3,adhp);
+      AddAreaToArea(acol4,adhp);
+      AddAreaToArea(acol5,adhp);
+      AddAreaToArea(acol6,adhp);
+      AddAreaToArea(acol7,adhp);
+      AddAreaToArea(acol8,adhp);
+    end;
+LSkipCompany:;    
+    GetNextSubstring(maincrmcompanies,comppos,",",compcode);
+    compfoundf = blank(compcode)==false;
+  end;
+  
+  ResetCompany(oldcomp);
+  return;
+end;
+*/
+
+function
+string 255 FindMatchingTag(string otag,string otaglist,string ntaglist)
+begin
+  LongInt i,pos,charpos;
+  string 255 tstr;
+  
+  charpos = 0;
+  pos = 0;
+  while (GetNextSubstring(otaglist,charpos,",",tstr)) begin
+    if (tstr==otag) then begin
+      goto LFindMatchingTagFoundPos;
+    end;
+    pos = pos + 1;
+  end;
+  
+  pos = 0;
+LFindMatchingTagFoundPos:;
+  
+  charpos = 0;
+  i = 0;
+  while (i<=pos) begin
+    GetNextSubstring(ntaglist,charpos,",",tstr);
+    i = i + 1;
+  end;
+  
+  if (tstr=="") then begin
+    charpos = 0;
+    GetNextSubstring(ntaglist,charpos,",",tstr);
+  end;
+  
+//  StopAlert("FindMatchingTag(""" & otag & """,""" & otaglist & """,""" & ntaglist & """) -> " & tstr);
+  
+  FindMatchingTag = tstr;
+end;
+
+procedure FindPPOColumns(record RcVc RepSpec,record PipelinOverviewBlock POb,LongInt fromppocol,LongInt toppocol,var LongInt pofrom,var LongInt poto)
+begin
+  row PipelinOverviewBlock PObrw;
+  Integer i,rwcnt,columnnr,viewstart;
+  string 255 LastViewName,LastColumnName;
+  string 255 FirstViewName,FirstColumnName;
+  Boolean testf,columnnrchangedf;
+  
+  pofrom = -1; poto = -1; viewstart = -1;
+  rwcnt = MatRowCnt(POb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POb,i,PObrw);
+    testf = false;
+    if (nonblank(RepSpec.f3)) then begin
+      if (nonblank(PObrw.ViewName)) then begin
+        if (PObrw.ViewName==RepSpec.f3) then begin
+          testf = true;
+        end;
+      end else begin
+        if (LastViewName==RepSpec.f3) then begin
+          testf = true;
+        end;      
+      end;
+    end else begin
+      if (nonblank(PObrw.ViewName)) then begin
+        if (PObrw.ViewName==FirstViewName) then begin
+        end;
+      end else begin
+        if (LastViewName==FirstViewName) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      if (viewstart<0) then begin
+        viewstart = i;
+      end;
+      columnnrchangedf = false;
+      if (nonblank(PObrw.ColumnName)) then begin
+        if (PObrw.ColumnName!=LastColumnName) then begin
+          columnnr = columnnr + 1;
+          columnnrchangedf = true;
+          LastColumnName = "";
+        end;
+      end;
+      if (columnnrchangedf) then begin
+        if (columnnr==fromppocol+1) then begin
+          if (pofrom<0) then begin
+//            pofrom = i - viewstart;
+            pofrom = i;
+          end;
+        end;
+        if (columnnr==toppocol+1) then begin
+          if (poto<0) then begin
+//            poto = i - viewstart;
+            poto = i;
+          end;
+        end;
+        if (pofrom>=0) and (poto>=0) then begin
+          i = rwcnt;
+        end;
+      end;
+    end;
+    if (blank(FirstViewName)) then begin
+      FirstViewName = PObrw.ViewName;
+    end;
+    if (blank(FirstColumnName)) then begin
+      FirstColumnName = PObrw.ColumnName;
+    end;
+
+    if (nonblank(PObrw.ViewName)) then begin
+      LastViewName = PObrw.ViewName;
+    end;
+    if (nonblank(PObrw.ColumnName)) then begin
+      LastColumnName = PObrw.ColumnName;
+    end;
+  end;
+  return;
+end;
+
+function string 255 FindMatchingActType(record RcVc RepSpec,string acttype,LongInt fromppocol,LongInt toppocol,var string newclass)
+begin
+  record PipelinOverviewBlock POb;
+  row PipelinOverviewBlock POfromrw;
+  row PipelinOverviewBlock POtorw;
+  string 255 res;
+  LongInt pofrom,poto;
+  
+  BlockLoad(POb);
+  FindPPOColumns(RepSpec,POb,fromppocol,toppocol,pofrom,poto);
+  
+  MatRowGet(POb,pofrom,POfromrw);
+  MatRowGet(POb,poto,POtorw);
+  res = POtorw.Register;
+  
+  switch (POtorw.Register) begin
+    case "ActVc":
+      newclass = FindMatchingTag(acttype,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+    case "IntProjManActVc":
+      newclass = FindMatchingTag(acttype,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+    case "IntProjManToDoActVc":
+      newclass = FindMatchingTag(acttype,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+    case "QTVc":
+      newclass = FindMatchingTag(acttype,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+    case "ORVc":
+      newclass = FindMatchingTag(acttype,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+  end;
+  
+  FindMatchingActType = res;
+end;
+
+function string 255 FindMatchingQuotationClass(record RcVc RepSpec,string quoteclass,LongInt fromppocol,LongInt toppocol,var string newclass)
+begin
+  string 255 res;
+  record PipelinOverviewBlock POb;
+  row PipelinOverviewBlock POfromrw;
+  row PipelinOverviewBlock POtorw;
+  LongInt pofrom,poto;
+  
+  BlockLoad(POb);
+  FindPPOColumns(RepSpec,POb,fromppocol,toppocol,pofrom,poto);
+
+  MatRowGet(POb,pofrom,POfromrw);
+  MatRowGet(POb,poto,POtorw);
+  res = POtorw.Register;
+  switch (POtorw.Register) begin
+    case "QTVc":
+      newclass = FindMatchingTag(quoteclass,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+    case "ORVc":
+      newclass = FindMatchingTag(quoteclass,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+  end;  
+  FindMatchingQuotationClass = res;
+end;
+
+global
+updating function string 255 ColumnGridDraggedActivity2(Integer compnr,record RcVc RepSpec,record ActVc Actr,LongInt fromcol,LongInt tocol,var string newclass)
+begin
+  string 255 res;
+  record ActVc oldActr;
+  string 255 oldtype,newtype;
+  
+  if (ReadFirstMain(Actr,0,true)==false) then begin
+    goto LColumnGridDraggedActivity2;
+  end;
+  switch (Actr.TodoFlag) begin
+    case kTodoFlagProject:
+      oldtype = Actr.ActState;
+      res = FindMatchingActType(RepSpec,Actr.ActState,fromcol,tocol,newtype);
+      switch (res) begin
+        case "IntProjManActVc":
+          newclass = newtype;
+      end;
+    otherwise
+      oldtype = Actr.ActType;
+      res = FindMatchingActType(RepSpec,Actr.ActType,fromcol,tocol,newtype);  
+      switch (res) begin
+        case "ActVc":
+          if (nonblank(newtype)) then begin
+            RecordCopy(oldActr,Actr);
+            Actr.ActType = newtype;
+            PasteActTypeInAct(oldtype,Actr);
+            RecordUpdate(oldActr,Actr,true);
+          end;
+        case "IntProjManToDoActVc":
+          if (nonblank(newtype)) then begin
+            RecordCopy(oldActr,Actr);
+            Actr.ActType = newtype;
+            PasteActTypeInAct(oldtype,Actr);
+            RecordUpdate(oldActr,Actr,true);
+          end;
+        case "ORVc":
+          newclass = newtype;
+        case "QTVc":
+          newclass = newtype;
+      end;  
+  end;
+LColumnGridDraggedActivity2:;
+  ColumnGridDraggedActivity2 = res;
+  return;
+end;
+
+global
+updating procedure ColumnGridDraggedActivity(Integer compnr,record RcVc RepSpec,record ActVc Actr,LongInt fromcol,LongInt tocol)
+begin
+  string 255 newclass;
+  
+  ColumnGridDraggedActivity2(compnr,RepSpec,Actr,fromcol,tocol,newclass);
+  return;
+end;
+
+global
+updating procedure ColumnGridDraggedActivity_CreateOrder(var record ActVc Actr,var record ORVc ORr,string newclass)
+begin
+  string 255 tstr,errstr,t2;
+  Integer curcomp;
+  LongInt pos;
+  
+  RecordNew(ORr);
+  ORr.OrderClass = newclass;
+  ORr.CustCode = Actr.CUCode;
+  PasteCustInOrder(ORr,ORr.CustCode,"",tstr,errstr);
+  t2 = ORr.SalesMan;
+  if (nonblank(Actr.Contact)) then begin
+    ORr.CustContact = Actr.Contact;
+  end;
+  pos = 0;
+  GetNextSubstring(Actr.MainPersons,pos,",",tstr);
+  ORr.SalesMan = tstr;
+  ORVc_PasteSalesMan(ORr,t2)
+  ORr.CurncyCode = Actr.CurncyCode;
+  ORVc_PasteCurncyCode(ORr,"");
+  ORr.SerNr = NextSerNr("ORVc",ORr.OrdDate,-1,false,"");  
+  if (ORr.SerNr>0) then begin
+    if (RecordInsert(ORr,false)) then begin
+      curcomp = CurrentCompany;
+      CreateRecordLink(ORr,curcomp,Actr,curcomp);  
+      CreateRecordLink(Actr,curcomp,ORr,curcomp);  
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ColumnGridDraggedActivity_CreateQuotation(var record ActVc Actr,var record QTVc QTr,string newclass)
+begin
+  string 255 tstr,t2;
+  Integer curcomp;
+  LongInt pos;
+  RecordNew(QTr);
+  QTr.QuoteClass = newclass;
+  QTr.CustCode = Actr.CUCode;
+  PasteCustInQT(QTr,QTr.CustCode,"",tstr,true);
+  t2 = QTr.SalesMan;
+  if (nonblank(Actr.Contact)) then begin
+    QTr.CustContact = Actr.Contact;
+  end;
+  pos = 0;
+  GetNextSubstring(Actr.MainPersons,pos,",",tstr);
+  QTr.SalesMan = tstr;
+  QTVc_PasteSalesMan(QTr,t2)
+  QTr.CurncyCode = Actr.CurncyCode;
+  QTVc_PasteCurncyCode(QTr,"");
+  QTr.SerNr = NextSerNr("QTVc",QTr.QTDate,-1,false,"");  
+  if (QTr.SerNr>0) then begin
+    if (RecordInsert(QTr,false)) then begin
+      curcomp = CurrentCompany;
+      CreateRecordLink(QTr,curcomp,Actr,curcomp);  
+      CreateRecordLink(Actr,curcomp,QTr,curcomp);  
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure ColumnGridDraggedQuotation(Integer compnr,record RcVc RepSpec,record QTVc QTr,LongInt fromcol,LongInt tocol)
+begin
+  record QTVc oldQTr;
+  string 255 newclass,rgstr;
+  Integer nwn,rownr;
+  LongInt r;
+  Boolean testf;
+  record ORVc ORr;
+  
+  if (ReadFirstMain(QTr,0,true)==false) then begin
+    goto LColumnGridDraggedQuotation;
+  end;
+  
+  rgstr = FindMatchingQuotationClass(RepSpec,QTr.QuoteClass,fromcol,tocol,newclass);
+
+  switch (rgstr) begin
+    case "QTVc":
+      if (nonblank(newclass)) then begin
+        RecordCopy(oldQTr,QTr);
+        QTr.QuoteClass = newclass;
+        RecordUpdate(oldQTr,QTr,true);
+      end;
+    case "ORVc":
+      if (UserCanAction("QTToOrd",true)) then begin
+        if ((QTr.Closed==0) and ((QTr.Rejected==0) or (QTr.Rejected==2)) and (QTr.OrderNr<=0)) then begin
+          testf = true;
+          r = QTTestApprovalStatus(QTr);
+          if (r!=0) then begin
+            MessageBox(r,"");
+            testf = false;
+          end;
+          if (!QTVc_AllowSales(QTr,rownr,r)) then begin
+            MessageBox(r,"");
+            testf = false;
+          end;
+          if (testf) then begin
+            RecordCopy(oldQTr,QTr);
+            r = RecordAction_raPasteQTInOrder2(ORr,QTr,false,newclass);
+            
+            if (r==0) then begin
+              if (RecordUpdate(oldQTr,QTr,true)) then begin
+                CreateRecordLink(QTr,compnr,ORr,compnr);  
+                CreateRecordLink(ORr,compnr,QTr,compnr);  
+//                CustMessages("ORVc",ORr.CustCode);
+                SMSWhenOR(ORr,2);  
+              end;
+            end else begin
+              MessageBox(r,"");
+            end;
+          end;
+        end else begin
+          LogText2(0,"ColumnGridDraggedQuotation QTr.Closed=" & QTr.Closed & ", QTr.Rejected=" & QTr.Rejected & ", QTr.OrderNr=" & QTr.OrderNr,kVerbosityDebug);
+        end;
+      end else begin
+        MessageBox(1274,StringFromStringSet(3,"QTToOrd"));
+      end;
+  end;
+  
+LColumnGridDraggedQuotation:;
+end;
+
+global
+updating procedure ColumnGridDraggedOpportunity(Integer compnr,record RcVc RepSpec,record OYVc OYr,LongInt fromcol,LongInt tocol)
+begin
+  record OYVc oldOYr;
+  string 255 newclass,rgrs;
+  
+  if (ReadFirstMain(OYr,0,true)==false) then begin
+    goto LColumnGridDraggedOpportunity;
+  end;
+  
+  rgrs = FindMatchingQuotationClass(RepSpec,OYr.QuoteClass,fromcol,tocol,newclass);
+  
+  if (nonblank(newclass)) then begin
+    RecordCopy(oldOYr,OYr);
+    OYr.QuoteClass = newclass;
+    RecordUpdate(oldOYr,OYr,true);
+  end;
+  
+LColumnGridDraggedOpportunity:;
+end;
+
+function string 255 FindMatchingKitchenOrderRowStatus(string kostaus,LongInt fromcol,LongInt tocol)
+begin
+  record PipelinOverviewBlock POb;
+  row PipelinOverviewBlock POfromrw;
+  row PipelinOverviewBlock POtorw;
+  
+  BlockLoad(POb);
+  
+  MatRowGet(POb,fromcol,POfromrw);
+  MatRowGet(POb,tocol,POtorw);
+  
+  FindMatchingKitchenOrderRowStatus = FindMatchingTag(kostaus,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+  return;
+end;
+
+function Integer AllKitchenOrderRowsFinished(record KitchenOrderVc KOr)
+begin
+  row KitchenOrderVc KOrw;
+  Integer i,rwcnt;
+  Integer res;
+  record RestBlock Restb;
+  
+  BlockLoad(Restb);
+  if (blank(Restb.FinDishStatus)) then begin
+    goto LAllKitchenOrderRowsFinished;
+  end;
+  res = 1;
+  rwcnt = MatRowCnt(KOr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(KOr,i,KOrw);
+    if (KOrw.DishStatus!=Restb.FinDishStatus) then begin
+      res = 0;
+      goto LAllKitchenOrderRowsFinished;
+    end;
+  end;
+LAllKitchenOrderRowsFinished:;
+  AllKitchenOrderRowsFinished = res;  
+  return;
+end;
+
+global
+updating procedure ColumnGridDraggedKitchenOrder(Integer compnr,record RcVc RepSpec,record KitchenOrderVc KOr,LongInt rownr,LongInt fromcol,LongInt tocol)
+begin
+  record KitchenOrderVc oldKOr;
+  row KitchenOrderVc KOrw;
+  string 255 newkostatus;
+  
+  if (rownr<0) then begin
+    goto LColumnGridDraggedKitchenOrder;
+  end;
+  if (ReadFirstMain(KOr,0,true)==false) then begin
+    goto LColumnGridDraggedKitchenOrder;
+  end;
+  MatRowGet(KOr,rownr,KOrw);
+  newkostatus = FindMatchingKitchenOrderRowStatus(KOrw.DishStatus,fromcol,tocol);  
+  if (nonblank(newkostatus)) then begin
+    RecordCopy(oldKOr,KOr);
+    KOrw.DishStatus = newkostatus;
+    MatRowPut(KOr,rownr,KOrw);
+    KOr.OKFlag = AllKitchenOrderRowsFinished(KOr);
+    RecordUpdate(oldKOr,KOr,true);
+  end else begin
+  end;
+  
+LColumnGridDraggedKitchenOrder:;
+  return;
+end;
+
+function string 255 FindMatchingOrderClass(record RcVc RepSpec,string quoteclass,LongInt fromppocol,LongInt toppocol)
+begin
+  record PipelinOverviewBlock POb;
+  row PipelinOverviewBlock POfromrw;
+  row PipelinOverviewBlock POtorw;
+  LongInt pofrom,poto;
+  
+  BlockLoad(POb);
+  FindPPOColumns(RepSpec,POb,fromppocol,toppocol,pofrom,poto);
+  
+  MatRowGet(POb,pofrom,POfromrw);
+  MatRowGet(POb,poto,POtorw);
+  
+  FindMatchingOrderClass = FindMatchingTag(quoteclass,POfromrw.RegisterFilter,POtorw.RegisterFilter);
+end;
+
+global
+updating procedure ColumnGridDraggedOrder(Integer compnr,record RcVc RepSpec,record ORVc ORr,LongInt fromcol,LongInt tocol)
+begin
+  record ORVc oldORr;
+  string 255 newclass;
+  
+  if (ReadFirstMain(ORr,0,true)==false) then begin
+    goto LColumnGridDraggedOrder;
+  end;
+  
+  newclass = FindMatchingOrderClass(RepSpec,ORr.OrderClass,fromcol,tocol);
+  
+  if (nonblank(newclass)) then begin
+    RecordCopy(oldORr,ORr);
+    ORr.OrderClass = newclass;
+    RecordUpdate(oldORr,ORr,true);
+  end;
+  
+LColumnGridDraggedOrder:;
+end;
+
+global
+updating procedure ColumnGridDraggedProjectActivity(Integer compnr,record RcVc RepSpec,record ActVc Actr,LongInt fromcol,LongInt tocol,string newstate)
+begin
+  record ActVc oldActr;
+  
+  if (ReadFirstMain(Actr,0,true)==false) then begin
+    goto LColumnGridDraggedProjectActivity;
+  end;
+  
+//  newstate = FindMatchingOrderClass(RepSpec,ORr.OrderClass,fromcol,tocol);
+  
+  if (nonblank(newstate)) then begin
+    RecordCopy(oldActr,Actr);
+    Actr.ActState = newstate;
+    RecordUpdate(oldActr,Actr,true);
+  end;
+  
+LColumnGridDraggedProjectActivity:;
+end;
+

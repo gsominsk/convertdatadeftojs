@@ -1,0 +1,534 @@
+external procedure ExtractElemFromSet(string,integer,var string);
+external procedure FindOTforPRClass(string,var string);
+external function Boolean FindCustomerRelation(string,string,var record CUVc);
+external procedure ExtractElemFromSet(string,integer,var string);
+external function Integer CountObjects(string);
+external procedure FindClTypeforPRClass(string,var string);
+external function Boolean CheckVARSubsets(record VARVc,string,string);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure SplitVars(string,Array string,Array string,Array string);
+external procedure FillMaskVAR(string,string,string,Array string,Array string);
+external procedure FindBatchBestBeforeDate(string,string,var Date);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+
+global
+procedure CreateSBString(Integer SerNrf,string item,string serial,string location,val qty,Boolean qtyf,val cp,Boolean cpf,var string tstr)
+BEGIN
+  record SysFormatBlock SysFormatRec;
+  record ItemSettingBlock ItemSettingRec;
+  record QualConVc QCr;  
+  record BatchTextVc btr;  
+  record BatchStatusVc BSr;
+  Boolean found;  
+  val q;
+  string 255 qstr;
+  string 255 t2,t3;
+  Date td;
+
+  q = 1;
+  BlockLoad(ItemSettingRec);
+  BlockLoad(SysFormatRec);
+  btr.ArtCode = item;
+  btr.SerialNr = serial;
+  ReadFirstMain(btr,2,true);
+  if (ItemSettingRec.BestBefore!=0) then begin  
+    FindBatchBestBeforeDate(item,serial,td);
+    t2 = td;
+  end;
+  if (ItemSettingRec.BatchStatus!=0) then begin
+    QCr.OKFlag = 1;
+    QCr.ArtCode = item;
+    QCr.SerialNr = serial;
+    found = ReadLastKey("AnalyseDone",QCr,3,false);
+    if (found==true) then begin
+      if ((QCr.ArtCode==item) and (QCr.SerialNr==serial)) then begin
+        t3 = QCr.StatusCode;
+        BSr.Code = t3;
+        if (ReadFirstMain(BSr,1,true)) then begin
+          if (BSr.Warning==2) then begin
+            tstr = "";
+            goto LCreateSBString;
+          end;
+        end;
+      end;
+    end; 
+  end;
+  tstr = serial;
+  M4PadString(tstr,len(serial)+2," ",false,tstr);
+  tstr = tstr & location;
+  if (qtyf) then begin
+    if (qty!=q) or (SerNrf==2) then begin
+      qstr = ValToString(qty,M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,0);
+      M4PadString(tstr,42," ",false,tstr);
+      tstr = tstr & qstr;
+    end;
+  end;
+  if (nonblank(t2)) then begin
+    tstr = tstr & "   ";
+    tstr = tstr & t2;
+  end;
+  if (cpf) then begin
+    if (nonblank(cp)) then begin
+      qstr = ValToString(cp,M4UVal,SysFormatRec.thousSep,SysFormatRec.decimalPt,0);
+      M4PadString(tstr,62," ",false,tstr);
+      tstr = tstr & qstr;
+    end;
+    if (nonblank(t2)) then begin
+      tstr = tstr & "   ";
+      tstr = tstr & t2;
+    end;
+  end;
+  if (nonblank(t3)) then begin
+    tstr = tstr & "   ";
+    tstr = tstr & t3;
+  end;
+  if (nonblank(btr.Comment)) then begin
+    M4PadString(tstr,len(tstr)+5," ",false,tstr);
+    tstr = tstr & btr.Comment;
+  end;
+LCreateSBString:;
+  RETURN;
+END;
+
+global
+procedure PRClBTSClassArrayOnOpenRemote(string ctype,var Array string astr,var Integer acnt)
+BEGIN
+  record PRClVc PRClr; 
+  boolean TrHs,testf;
+  string 255 tstr;
+  
+  PRClr.CType=ctype; 
+  TrHs=true;
+  While (LoopKey("CType",PRClr,1,TrHs)) begin
+    testf = true;
+    if ( PRClr.CType<>ctype) then begin
+      testf = false;
+      TrHs = false;
+    end;
+    if (testf) then begin
+      M4PadString(PRClr.Code,15," ",false,tstr);
+      astr[acnt] = tstr;
+      astr[acnt] = astr[acnt] & PRClr.Comment;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+end;
+
+function string 255 FindVarietyGroup(string mask,Integer fn)
+begin
+  string 255 res;
+  Integer pos,cnt;
+  
+  cnt = 1;
+  pos = 0;
+  ExtractObj(mask,pos,res);
+  while (nonblank(res)) begin
+    if (cnt==fn) then begin
+      goto LFindVarietyGroup;
+    end;   
+    ExtractObj(mask,pos,res);
+    cnt = cnt + 1;
+  end;  
+LFindVarietyGroup:;  
+  FindVarietyGroup = res;
+  return;
+end;
+
+function Boolean IsSubsetLimited(Integer fn,string subset)
+begin
+  Boolean res;
+  LongInt pos;
+  string 255 set;
+  Integer cnt;
+  
+  cnt = 1;
+  pos = 0;
+  GetNextSubstring(subset,pos,";",set);
+  while (nonblank(set)) begin
+    if (set!="*") then begin
+      res = true;
+      goto LIsSubsetLimited;
+    end;
+    if (cnt>=fn) then begin
+      goto LIsSubsetLimited;
+    end;
+    GetNextSubstring(subset,pos,";",set);
+    cnt = cnt + 1;
+  end;
+LIsSubsetLimited:;  
+  IsSubsetLimited = res;
+  return;
+end;
+
+procedure VARsubSClassFillArray(Integer fn,string vargr,string subset,var Array string astr,var Integer acnt)
+begin
+  record VARVc VARr;
+  boolean found,testf;
+ 
+  found = true;
+  VARr.VARGCode = vargr; 
+  while (LoopKey("VARGCode",VARr,1,found)) begin
+    if (VARr.VARGCode!=vargr) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (nonblank(subset)) then begin
+        if (IsSubsetLimited(fn,subset)) then begin
+          if (CheckVARSubsets(VARr,subset,VARr.Code)==false) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        astr[acnt] = VARr.Code & "     ";
+        astr[acnt] = astr[acnt] & VARr.Comment;
+        acnt = acnt + 1;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure VARsubSClassArrayOnOpenRemote(string itemcode,string subset,string itemsize,string mask,Integer fn,var Array string astr,var Integer acnt)
+begin
+  string 255 vargr;
+  
+  vargr = FindVarietyGroup(mask,fn);
+  VARsubSClassFillArray(fn,vargr,subset,astr,acnt);
+  return;
+end;
+
+global
+procedure PRVc_AssPRClSClass(record PRVc PRr,var record RcVc  RepSpec)
+begin
+  record PRClVc PRClr;  
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject;
+
+  object=PRr.PRClassification;
+  if (nonblank(object)) then begin    
+    FindClTypeforPRClass(PRr.PRClass,typ);
+    if (nonblank(typ)) then begin
+      typeam=CountObjects(typ); 
+      objam=CountObjects(object); 
+      for (i=1;i<=objam;i=i+1) begin
+        ExtractElemFromSet(object,i,cobject);
+        PRClr.Code=cobject;
+        found = false;   
+        if (ReadFirstMain(PRClr,1,true)) then begin
+          for (j=1;j<=typeam;j=j+1) begin
+            ExtractElemFromSet(typ,j,ctype);
+            if (PRClr.CType==ctype) then begin
+              found=true;
+              switch (j) begin
+                case 1: RepSpec.f1=cobject;
+                case 2: RepSpec.f2=cobject;
+                case 3: RepSpec.f3=cobject;
+                case 4: RepSpec.f4=cobject;
+                case 5: RepSpec.f5=cobject;
+                case 6: RepSpec.ObjStr=cobject;
+                case 7: RepSpec.Stext=cobject;
+                case 8: RepSpec.LastAcc=cobject;
+              end;
+            end;
+          end;
+        end;
+        if (found == false) then begin
+          if (nonblank(RepSpec.f6)) then begin
+            RepSpec.f6=RepSpec.f6 & "," & cobject;
+          end else begin
+             RepSpec.f6=cobject;
+          end;
+        end;
+      end;
+    end;
+  end;    
+  return;
+end;
+
+
+global
+procedure ContactSClassOnOpenRemote(string custcode,var Array string acontact,var Integer acnt)
+BEGIN
+  Boolean found;
+  string 255 tstr,maincontact,spacertstr;
+  record CUVc CUr;
+  record CUVc ContactCUr;
+  record ContactRelVc ContactRelr;
+
+  spacertstr = "#";
+  if (nonblank(custcode)) then begin
+    CUr.Code = custcode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (nonblank(CUr.Person)) then begin
+        tstr = CUr.Person;
+        maincontact = CUr.Person;
+//        M4PadString(CUr.Person,60," ",false,tstr);
+        tstr = CUr.Person;
+        if (FindCustomerRelation(CUr.Code,CUr.Person,ContactCUr)) then begin
+          if (ContactCUr.blockedFlag==0) then begin
+            tstr = tstr & spacertstr & ContactCUr.Title & spacertstr & ContactCUr.Code;
+          end else begin
+            tstr = "";
+          end;
+        end else begin
+          tstr = tstr & spacertstr & CUr.Title & spacertstr & CUr.Code;
+        end;
+        if (nonblank(tstr)) then begin
+          acontact[acnt] = tstr;
+          acnt = acnt + 1;
+        end;
+      end;
+    end;
+    ContactRelr.CustCode = custcode;
+    found = true;
+    while (LoopKey("CompKey",ContactRelr,1,found)) begin
+      if ((ContactRelr.CustCode==custcode) or (blank(custcode))) then begin
+        if ((ContactRelr.ContactName!=maincontact)) then begin
+          if (ContactRelr.Invalid==0) then begin
+//            M4PadString(ContactRelr.ContactName,60," ",false,tstr);
+            tstr = ContactRelr.ContactName;
+            CUr.Code = ContactRelr.ContactCode;
+            if (ReadFirstMain(CUr,1,true)) then begin
+              if (nonblank(CUr.Title)) then begin
+                tstr = tstr & spacertstr & CUr.Title & spacertstr & CUr.Code;;
+              end;
+              if (CUr.blockedFlag==0) then begin
+                acontact[acnt] = tstr;
+                acnt = acnt + 1;
+              end;
+            end;
+          end;
+        end;
+      end else begin
+        found = false;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+
+global
+procedure ContactCustCodeSClassOnOpenRemote(string custcode,var Array string acontact,var Integer acnt)
+BEGIN
+  Boolean found;
+  string 255 tstr,maincontact;
+  record CUVc CUr;
+  record CUVc ContactCUr;
+  record ContactRelVc ContactRelr;
+  string 20 custcode1;
+  vector Boolean vcuaddef;
+
+  if (nonblank(custcode)) then begin
+    CUr.Code = custcode;
+    if (ReadFirstMain(CUr,1,true)) then begin
+      if (nonblank(CUr.Person)) then begin
+        tstr = CUr.Person;
+        maincontact = CUr.Person;
+        M4PadString(CUr.Person,60," ",false,tstr);
+        if (FindCustomerRelation(CUr.Code,CUr.Person,ContactCUr)) then begin
+          if (ContactCUr.blockedFlag==0) then begin
+            tstr = tstr & ContactCUr.Title;
+          end else begin
+            tstr = "";
+          end;
+        end else begin
+          tstr = tstr & CUr.Title;
+        end;
+        if (nonblank(tstr)) then begin
+          vcuaddef[CUr.Code] = true;
+          M4PadString(CUr.Code,20," ",false,custcode1);
+          acontact[acnt] = custcode1 & " " &  tstr;
+          acnt = acnt + 1;
+        end;
+      end;
+    end;
+    ContactRelr.CustCode = custcode;
+    found = true;
+    while (LoopKey("CompKey",ContactRelr,1,found)) begin
+      if ((ContactRelr.CustCode==custcode) or (blank(custcode))) then begin
+        if (vcuaddef[ContactRelr.ContactCode]==false) then begin
+          if (ContactRelr.Invalid==0) then begin
+            M4PadString(ContactRelr.ContactName,60," ",false,tstr);
+            CUr.Code = ContactRelr.ContactCode;
+            if (ReadFirstMain(CUr,1,true)) then begin
+              tstr = tstr & CUr.Title;
+              if (CUr.blockedFlag==0) then begin
+                vcuaddef[ContactRelr.ContactCode] = true;
+                M4PadString(CUr.Code,20," ",false,custcode1);
+                acontact[acnt] = custcode1 & " " & tstr;
+                acnt = acnt + 1;
+              end;
+            end;
+          end;
+        end;
+      end else begin
+        found = false;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure ContactSClassOnOpenRemote2(string custcode,var Array string acontact,var Integer acnt)
+begin
+  Boolean found;
+  string 255 tstr,maincontact,spacertstr;
+  record CUVc CUr;
+  record CUVc ContactCUr;
+  record ContactRelVc ContactRelr;
+
+  spacertstr = "#";
+  CUr.Code = custcode;
+  if (ReadFirstMain(CUr,1,true)) then begin
+    if (nonblank(CUr.Person)) then begin
+      tstr = CUr.Person;
+      maincontact = CUr.Person;
+//       M4PadString(CUr.Person,60," ",false,tstr);
+      tstr = CUr.Person;
+      if (FindCustomerRelation(CUr.Code,CUr.Person,ContactCUr)) then begin
+        tstr = tstr & spacertstr & ContactCUr.Title;
+      end else begin
+        tstr = tstr & spacertstr & CUr.Title;
+      end;
+      acontact[acnt] = tstr;
+      acnt = acnt + 1;
+    end;
+  end;
+  ContactRelr.CustCode = CUr.Code;
+  found = true;
+  while (LoopKey("CompKey",ContactRelr,1,found)) begin
+    if ((ContactRelr.CustCode==custcode) or (blank(custcode))) then begin
+      if (ContactRelr.ContactName!=maincontact) then begin
+        if (ContactRelr.Invalid==0) then begin
+          ContactCUr.Code = ContactRelr.ContactCode;
+          if (ReadFirstMain(ContactCUr,1,true)) then begin
+            if (ContactCUr.blockedFlag==0) then begin
+//               M4PadString(ContactCUr.Name,60," ",false,tstr);
+              tstr = ContactCUr.Name;
+              if (nonblank(ContactCUr.Title)) then begin 
+                tstr = tstr & spacertstr & ContactCUr.Title;
+              end; 
+              acontact[acnt] = tstr;
+              acnt = acnt + 1;
+            end;
+          end;
+        end;
+      end;
+    end else begin
+      found = false;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure PRVc_TRObjSClass(record PRVc PRr,var record RcVc  RepSpec)
+begin
+  record ObjVc Objr;  
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject;
+
+  object=PRr.Objects;
+  if (nonblank(object)) then begin    
+    FindOTforPRClass(PRr.PRClass,typ);
+    if (nonblank(typ)) then begin
+      typeam=CountObjects(typ); 
+      objam=CountObjects(object); 
+      for (i=1;i<=objam;i=i+1) begin
+        ExtractElemFromSet(object,i,cobject);
+        Objr.Code=cobject;
+        found = false;   
+        if (ReadFirstMain(Objr,1,true)) then begin
+          for (j=1;j<=typeam;j=j+1) begin
+            ExtractElemFromSet(typ,j,ctype);
+            if (Objr.OTCode==ctype) then begin
+              found=true;
+              switch (j) begin
+                case 1: RepSpec.f1=cobject;
+                case 2: RepSpec.f2=cobject;
+                case 3: RepSpec.f3=cobject;
+                case 4: RepSpec.f4=cobject;
+                case 5: RepSpec.f5=cobject;
+                case 6: RepSpec.AccStr=cobject;
+                case 7: RepSpec.FirstAcc=cobject;
+              end;
+            end;
+          end;
+        end;
+        if (found == false) then begin
+          if (nonblank(RepSpec.f6)) then begin
+            RepSpec.f6=RepSpec.f6 & "," & cobject;
+          end else begin
+             RepSpec.f6=cobject;
+          end;
+        end;
+      end;
+    end;
+  end;    
+  return;
+end;
+
+procedure CUListSClassonOpen(record JobVc Jobr,var Array string acusts,var Integer acnt)
+begin
+  row JobVc Jobrw;
+  Integer i,rwcnt;
+  string 255 tstr;
+  record CUVc CUr;
+
+  acnt = 0;
+  if (nonblank(Jobr.CUCode)) then begin
+    M4PadString(Jobr.CUCode,20," ",false,tstr);
+    tstr = tstr & Jobr.CUName;
+    acusts[acnt] = tstr;
+    acnt = acnt + 1;
+  end;
+  if (nonblank(Jobr.Source)) then begin
+    M4PadString(Jobr.Source,20," ",false,tstr);
+    tstr = tstr & Jobr.SourceName;
+    acusts[acnt] = tstr;
+    acnt = acnt + 1;
+  end;
+
+  rwcnt = MatRowCnt(Jobr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Jobr,i,Jobrw);
+    if (nonblank(Jobrw.GuestCode)) then begin
+      CUr.Code = Jobrw.GuestCode;
+      ReadFirstMain(CUr,1,true);
+      if (CUr.CUType!=0) then begin
+        M4PadString(Jobrw.GuestCode,20," ",false,tstr);
+        tstr = tstr & Jobrw.CUName;
+        acusts[acnt] = tstr;
+        acnt = acnt + 1;
+      end;
+    end;  
+  end;    
+  return;
+end;
+
+global
+procedure CUListSClassRemote(LongInt sernr,string s,var Array string acusts,var Integer acnt)
+begin 
+  record JobVc Jobr;
+  record HotelBlock Hotelb;
+
+  Jobr.SerNr = sernr;
+  if (Jobr.SerNr<=0) then begin
+    BlockLoad(Hotelb);
+    Jobr.ResStatus = Hotelb.ChInSt;
+    Jobr.ResCode = s;
+    if (ReadLastKey("ResCodeStatus",Jobr,2,true)) then  begin end;    
+  end else begin
+    ReadFirstMain(Jobr,1,true);
+  end;
+  CUListSClassonOpen(Jobr,acusts,acnt);
+  return;
+end;

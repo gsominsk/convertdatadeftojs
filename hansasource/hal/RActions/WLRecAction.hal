@@ -1,0 +1,227 @@
+external procedure StripEndingSpaces(var string);  
+external function Boolean SerNrTestWayListVc(LongInt,Date,var Boolean);
+external function LongInt GetCurUserLastNr(string);
+external function Boolean IsUnOKAllowed(string,Date);
+external procedure WLTotalsCalc(var record WayListVc);
+external updating procedure WayListVc_DeleteRecords;
+external procedure WayListVc_PasteCarCode(var record WayListVc);
+
+procedure WayListVc_GetLastValues(var string CarCode)
+begin
+  record WayListVc WayListr;
+  row WayListVc WayListrw;
+  record WLCarVc WLCarr;
+  
+  WayListr.SerNr = 2147483647;
+  if (ReadLastMain(WayListr,1,false)) then begin
+    CarCode = WayListr.CarCode;
+  end else begin
+    ReadFirstMain(WLCarr,1,false);
+    CarCode = WLCarr.CarCode;
+  end;
+  
+  return;
+end;
+
+global
+function LongInt WayListVcRecordDefaults(var record WayListVc WayListr,record WayListVc WayList2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Record WLSettingsBlock WLSetr;
+  string 20 CarCode;
+  val Endkm;
+  row WayListVc WayListrw;
+
+  BlockLoad(WLSetr);
+  WayListr.CostPerkm = WLSetr.CostPerkm;
+  WayListr.TransDate = CurrentDate;
+  WayListr.SDate = CurrentDate;
+  WayListr.EDate = CurrentDate;
+  WayListr.OKFlag = 0;
+  WayListr.SerNr = NextSerNr("WayListVc",WayListr.TransDate,-1,false,"");
+  
+  if (ProgramType==typDriveLog) then begin
+    ClearRow(WayListr,WayListrw,1);
+    WayListrw.WDate = CurrentDate;
+    MatRowPut(WayListr,0,WayListrw);
+    WayListVc_GetLastValues(CarCode);
+    WayListr.CarCode = CarCode;
+    WayListVc_PasteCarCode(WayListr);
+  end;
+  
+  WayListVcRecordDefaults = res;
+  return;
+end;
+
+global
+function LongInt WayListVcRecordDuplicate(var record WayListVc WayListr,record WayListVc WayList2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  WayListr.TransDate = CurrentDate;
+  WayListr.SDate = CurrentDate;
+  WayListr.EDate = CurrentDate;
+  WayListr.OKFlag = 0;
+  WayListr.SerNr = NextSerNr("WayListVc",WayListr.TransDate,-1,false,"");
+  
+  WayListVcRecordDuplicate = res;
+  return;
+end;
+
+global
+function LongInt WayListVcRecordRemoveTest(var record WayListVc WayListr,record WayListVc WayList2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+ 
+  res = 1;
+  if (WayListr.OKFlag!=0) then begin
+    res = 0;
+  end;
+  WayListVcRecordRemoveTest = res;
+  return;
+end;
+
+global
+function LongInt WayListVcRecordUpdate(var record WayListVc WayListr,record WayListVc WayList2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  
+  WLTotalsCalc(WayListr);
+  WayListVcRecordUpdate = res;
+  return;
+end;
+
+global
+updating function LongInt WayListVcRecordCheck(record WayListVc WayListr,record WayListVc WayList2r,LongInt stat,LongInt long4)
+begin
+  LongInt res;
+  Boolean gentrans,unokf;
+  Integer insertmode,updatemode,rwcnt,i;
+  row WayListVc WayListrw;
+  record PRVc PRr;
+  string 255 prcode;
+
+  updatemode = 2;//Rs_update
+  res = 0;
+  if (WayListr.OKFlag==0) then begin//unok
+    if (stat==updatemode) then begin
+      if (WayList2r.OKFlag==1) then begin unokf = true; end;
+    end;
+  end;
+  if (unokf) then begin
+    if (IsUnOKAllowed("WayListVc",WayListr.TransDate)==false) then begin
+      RecordCheckError(1046,"",-1,"TransDate");      
+      res = -1; 
+    end;    
+    goto LWayListVcRecordCheck;
+  end;
+  if (WayListr.SerNr<=0) then begin
+    WayListr.SerNr = NextSerNr("WayListVc",WayListr.TransDate,-1,false,"");
+  end;
+  if (SerNrTestWayListVc(WayListr.SerNr,WayListr.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,"",-1,"SerNr");      
+    res = -1; 
+    goto LWayListVcRecordCheck;
+  end;  
+  
+  if (nonblank(WayListr.PRCode)) then begin
+    PRr.Code = WayListr.PRCode;
+    if (ReadFirstMain(PRr,1,true)==false) then begin
+      RecordCheckError(1232,"",-1,"PRCode");      
+      res = -1;
+      goto LWayListVcRecordCheck;
+    end;    
+    if (PRr.Terminated!=0) then begin
+      RecordCheckError(2086,WayListr.PRCode,-1,"PRCode");      
+      res = -1;
+      goto LWayListVcRecordCheck;
+    end;        
+  end;
+  rwcnt = MatRowCnt(WayListr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(WayListr,i,WayListrw);
+    if (nonblank(WayListrw.PRCode)) then begin
+      PRr.Code = WayListrw.PRCode;
+      if (ReadFirstMain(PRr,1,true)==false) then begin
+        RecordCheckError(1232,": " & WayListrw.PRCode,i,"PRCode");      
+        res = -1;
+        goto LWayListVcRecordCheck;
+      end;    
+      if (PRr.Terminated!=0) then begin
+        RecordCheckError(2086,WayListrw.PRCode,i,"PRCode");      
+        res = -1;
+        goto LWayListVcRecordCheck;
+      end;        
+    end;
+    prcode = WayListrw.PRCode;
+    if (blank(prcode)) then begin
+      prcode = WayListr.PRCode;
+    end;
+    if (nonblank(prcode)) then begin
+      PRr.Code = prcode;
+      if (ReadFirstMain(PRr,1,true)) then begin
+        if (WayListrw.CUCode!=PRr.CustCode) then begin
+          RecordCheckError(1218,"",i,"CUCode");
+          res= -1;
+          goto LWayListVcRecordCheck;      
+        end;
+      end;    
+    end; 
+  end;
+  if (ProgramType==typDriveLog) then begin
+    if (MatRowCnt(WayListr)>0) then begin
+      MatRowGet(WayListr,i,WayListrw);  
+    end;
+    WayListr.Comment = WayListrw.WComment;
+    WayListr.SDate = WayListr.TransDate;
+    WayListr.EDate = WayListr.TransDate;
+  end;
+LWayListVcRecordCheck:;  
+  WayListVcRecordCheck = res;
+  return;
+end;
+
+global
+updating function LongInt WayListVcRecordSaveAfter(record WayListVc WayListr,record WayListVc WayList2r,LongInt stat,LongInt long4)
+begin
+  WayListVc_DeleteRecords;
+  return;
+end;
+
+global
+function Boolean WLPetrolListSClassOnOpenWindow(Integer wn)
+begin
+  record WLPetroilBlock Petrolr;
+  row WLPetroilBlock Petrolrw;
+  integer i,ar;
+  
+  BlockLoad(Petrolr);
+  ar=MatRowCnt(Petrolr);
+  for (i=0;i<ar;i=i+1) begin
+     MatRowGet(Petrolr,i,Petrolrw);
+     SetListString(wn,i+1,Left(Petrolrw.PCode & "            ",11) & Petrolrw.PName,false);     
+  end;
+  
+  WLPetrolListSClassOnOpenWindow = false;
+  return;
+end;
+
+global
+function Boolean WLPetrolListSClassOnOKWindow(Integer wn)
+begin
+  Integer mwn;
+  string 60 tstr;
+  
+  mwn = MotherWindow(wn);
+  if (SelectedListLine(wn)>=0) then begin
+      tstr = GetListString(wn,SelectedListLine(wn));
+      tstr = left(tstr,10);
+      StripEndingSpaces(tstr);
+  end else begin
+       tstr="";
+  end;        
+  CloseWindow(wn);
+  PasteString(mwn,tstr);
+  WLPetrolListSClassOnOKWindow = false;
+  return;
+end;

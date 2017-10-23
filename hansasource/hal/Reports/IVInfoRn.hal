@@ -1,0 +1,999 @@
+external function Boolean EInvoiceForCustomer(Integer,string,record CUVc);
+external function Boolean HasEInvoicing();
+external function Boolean WrapAndPrint(Integer,string,Integer);
+external function Boolean ReadAcceptanceRules(Integer,string,var record AcceptanceRulesVc);
+external procedure PrintApprovalAcivity(record AcceptanceRulesVc,record ActVc,var Boolean);
+external procedure PurgeTRExtYc(record PurgeTRVc,var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Integer GetIntYc(Date);
+external function string 255 CreateInvoiceNumber(LongInt,string);
+external procedure SubPrePayments(record IVVc,var val,var val);
+external procedure TRExtYc(record TRVc,var string);
+external function Integer TypeOfCurncy(var string,var Integer);
+
+function Integer FindERecordStatus(string filename,Integer status,string custid,LongInt ivnr,var string reason)
+begin
+  Integer res;
+  record ERecordStatusVc ERSr;
+  
+  res = -1;
+  ERSr.FileName = filename;
+  ERSr.Status = status;
+  ERSr.CustID = custid;
+  ERSr.CustSerNr = ivnr;
+  if (ReadLastKey("FileNameStatus",ERSr,4,true)) then begin
+    res = status;
+    if (ERSr.FileName!=filename) then begin res = -1; end;
+    if (ERSr.Status!=status) then begin res = -1; end;
+    if (ERSr.CustID!=custid) then begin res = -1; end;
+    if (StringToLongInt(ERSr.CustSerNr)!=ivnr) then begin res = -1; end;
+    if (res>=0) then begin
+      reason = ERSr.Comment;
+    end;    
+  end;
+  FindERecordStatus = res;
+  return; 
+end;
+
+function Integer FindERecordLastStatus(string filename,string custid,LongInt ivnr,var string reason)
+begin
+  Integer res;
+  record ERecordStatusVc ERSr;
+  
+  res = -1;
+  ERSr.FileName = filename;
+  ERSr.CustID = custid;
+  ERSr.CustSerNr = ivnr;
+  if (ReadLastKey("CustIDSerNr",ERSr,3,true)) then begin
+    res = ERSr.Status;
+    if (ERSr.FileName!=filename) then begin res = -1; end;
+    if (ERSr.CustID!=custid) then begin res = -1; end;
+    if (StringToLongInt(ERSr.CustSerNr)!=ivnr) then begin res = -1; end;
+    if (res>=0) then begin
+      reason = ERSr.Comment;
+    end;    
+  end;
+  FindERecordLastStatus = res;
+  return; 
+end;
+
+global
+procedure PrintEInvoiceStatus(LongInt ivnr,string custcode,Integer pos1,Integer pos2)
+BEGIN
+  record InternetEnablerBlock IEb;
+  Integer status;
+  string 255 reason,filename;
+  LongInt errcode;
+  record EInvoiceQueVc EIQuer;
+  
+  BlockLoad(IEb);
+  status = -1;
+  filename = "IVVc";
+  errcode = 20220;
+  if (HasLocalization("EST")) then begin
+    filename = "estIVVc";
+    errcode = 33530;
+  end;
+/*  
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,1,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,0,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,6,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,5,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,4,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,3,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+    status = FindERecordStatus(filename,2,IEb.CustomerCode,ivnr,reason);
+  end;
+  if (status==-1) then begin
+//for old wrong record statusess  
+    status = FindERecordStatus(filename,1,custcode,ivnr,reason);
+    if (status==-1) then begin
+      status = FindERecordStatus(filename,0,custcode,ivnr,reason);
+    end;
+    if (status==-1) then begin
+      status = FindERecordStatus(filename,6,custcode,ivnr,reason);
+    end;
+    if (status==-1) then begin
+      status = FindERecordStatus(filename,5,custcode,ivnr,reason);
+    end;
+    if (status==-1) then begin
+      status = FindERecordStatus(filename,4,custcode,ivnr,reason);
+    end;
+    if (status==-1) then begin
+      status = FindERecordStatus(filename,3,custcode,ivnr,reason);
+    end;
+    if (status==-1) then begin
+      status = FindERecordStatus(filename,2,custcode,ivnr,reason);
+    end;
+  end;
+*/  
+  status = FindERecordLastStatus(filename,IEb.CustomerCode,ivnr,reason);
+  if (status==-1) then begin
+//for old wrong record statusess  
+    status = FindERecordLastStatus(filename,custcode,ivnr,reason);
+  end;
+  if (status<0) then begin
+    if (HasLocalization("EST")) then begin
+      EIQuer.FileName = filename;
+      EIQuer.RecSerNr = ivnr;
+      if (ReadLastKey("FileName",EIQuer,2,true)) then begin
+        switch (EIQuer.Status) begin
+          case 0: status = 0;
+          case 1: status = 1;
+          case 45: status = 3;
+        end;
+      end;
+    end;
+  end;
+  if (status>=0) then begin
+    OutString(pos1,0,USetStr(errcode+status),false);
+    if (WrapAndPrint(pos2,reason,120-(pos2-140))) then begin
+      EndFormat;
+    end;
+  end;
+  RETURN; 
+END;
+
+procedure PrintAccruals(record IVVc IVp)
+begin
+  record SMVc SMr;
+  record TRVc TRr;
+  record RLinkVc RLinkr;
+  Integer notenr;
+  string 255 tstr;
+
+  notenr = 1;
+  while (ReadRecordLink(IVp,notenr,SMr,RLinkr)) begin
+    StartFormat(15);
+     OutString(20,0,USetStr(11370),false);
+    EndFormat;    
+    Gray_Divider(0,200);
+    StartFormat(15);
+     OutString(20,0,USetStr(1154),false);
+     OutLongInt(100,"DblSMVc",SMr.SerNr,false);
+     OutVal(380,0,SMr.DSum,M4Val,true);
+    EndFormat;    
+    notenr = notenr + 1;
+    goto LSMEND;
+  end;
+LSMEND:;  
+  notenr = 1;
+  while (ReadRecordLink(IVp,notenr,TRr,RLinkr)) begin
+    StartFormat(15);
+     OutString(20,0,USetStr(11371),false);
+     TRExtYc(TRr,tstr);
+     OutString(100,"DblTrans",tstr,false);
+     OutVal(450,0,TRr.DSum,M4Val,true);
+    EndFormat;    
+    notenr = notenr + 1;
+  end;
+  RETURN;
+END;
+
+
+procedure RepShipments(record IVVc IVr)
+BEGIN
+  record SHVc SHr;
+  Boolean TrHs,headerf;
+  
+  headerf = true;
+  TrHs = true;
+  SHr.SerNr = -1;
+  SHr.OrderNr = IVr.OrderNr;
+  while (LoopKey("OrderKey",SHr,1,TrHs)) begin
+    if (SHr.OrderNr<>IVr.OrderNr) then begin TrHs = false; end;
+    if (TrHs) then begin
+      if (headerf) then begin
+        Gray_Divider(0,1);
+        StartFormat(15);
+         OutString(0,0,USetStr(1334),false);
+        EndFormat;
+        StartFormat(15);
+         OutString(15,0,USetStr(5042),false);
+         OutString(130,0,USetStr(5043),false);
+         OutString(220,0,USetStr(7582),false);
+         OutString(330,0,USetStr(5047),true);
+        EndFormat;
+        headerf = false;
+      end;
+
+      StartFormat(15);
+       OutLongInt(15,"IVInfoSH",SHr.SerNr,false);
+       OutDate(130,0,SHr.ShipDate,false);
+       OutString(220,0,SHr.Location,false);
+       OutVal(330,0,SHr.TotQty,M4Qty,true);
+      EndFormat;
+    end;
+  end;
+  RETURN;
+END;
+
+// This layout is really ugly
+procedure RepOrders(record IVVc IVr)
+BEGIN
+  record ORVc ORr;
+  
+
+  ORr.SerNr = IVr.OrderNr;
+  if (ReadFirstMain(ORr,1,true)) begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutString(0,0,USetStr(5123),false);
+    EndFormat;
+    StartFormat(15);
+    OutString(15,0,USetStr(5042),false);
+    OutString(130,0,USetStr(5043),false);
+    OutString(220,0,USetStr(7582),false);
+    OutString(330,0,USetStr(5047),true);
+    EndFormat;
+
+    StartFormat(15);
+    OutLongInt(15,"DblORVc",ORr.SerNr,false);
+    OutDate(130,0,ORr.OrdDate,false);
+    OutString(220,0,ORr.Location,false);
+    OutVal(330,0,ORr.TotQty,M4Qty,true);
+    EndFormat;
+  end;
+  RETURN;
+END;
+
+procedure RepInvoice(record IVVc IVr,Integer com)
+begin
+  row IVVc IVrw;
+  string 255 tstr,t2;
+  Integer i,rwcnt;
+  val qty,sum1,sum3,totweight,t;
+  record INVc INr;
+  Boolean testf;
+
+  qty = 0;
+  totweight = 0;
+  StartFormat(15);
+  OutString(0,"DblIVVc",CreateInvoiceNumber(IVr.SerNr,IVr.OfficialSerNr),false);
+  tstr = "";
+  if (IVr.InvType==kInvoiceTypeNormal or IVr.InvType==kInvoiceTypeNormalSpecialSales) then begin
+    tstr = USetStr(1803);
+  end;
+  if (IVr.InvType==kInvoiceTypeCash or IVr.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+    tstr = USetStr(1804);
+  end;
+  if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    tstr = USetStr(1805);
+  end;
+  if (IVr.InvType==kInvoiceTypeInterest) then begin
+    tstr = USetStr(1810);
+  end;
+  if (IVr.InvType==kInvoiceTypeDebit) then begin
+    tstr = USetStr(23250);
+  end;
+  if (IVr.InvType==kInvoiceTypePrepayment) then begin
+    tstr = USetStr(1806);
+  end;
+  if (IVr.InvType==kInvoiceTypeDownpayment) then begin
+    tstr = USetStr(1818);
+  end;
+  OutString(50,0,tstr,false);
+  OutDate(130,0,IVr.InvDate,false);
+  OutString(220,"DblCUVc",IVr.CustCode,false);
+  OutString(270,0,IVr.pdComment,false);
+  OutLongInt(350,0,IVr.OrderNr,false);
+  if (IVr.OKFlag==0) then begin
+    OutString(480,0,USetStr(2366),true);
+  end;
+  EndFormat;
+  StartFormat(15);
+  OutString(50,0,IVr.CustCat,false);
+  OutDate(130,0,IVr.PayDate,false);
+  OutString(220,0,IVr.Addr0,false);
+  EndFormat;
+  testf = true;
+  if (nonblank(IVr.Addr1)) or (nonblank(IVr.OfficialSerNr)) then begin
+    StartFormat(15);
+    if (IsStandardProduct or IsSberbankProduct) then begin
+      if (HasLocalization("POL")) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      OutString(130,0,IVr.OfficialSerNr,false);
+    end;
+    OutString(220,0,IVr.Addr1,false);
+    EndFormat;
+  end;
+  StartFormat(15);
+  OutString(50,0,IVr.OurContact,false);
+  OutString(220,0,IVr.Addr2,false);
+  EndFormat;
+  if (IVr.Addr3<>"") then begin
+    StartFormat(15);
+    OutString(220,0,IVr.Addr3,false);
+    EndFormat;
+  end;
+  if (IVr.ClientContact<>"") then begin
+    StartFormat(15);
+    OutString(220,0,IVr.ClientContact,false);
+    EndFormat;
+  end;
+  if (HasLocalization("PRT")) then begin 
+    StartFormat(15);
+    if (IVr.IPBookVAT!=0) then begin 
+      tstr = "  [X]";
+    end else begin
+      tstr = "  [ ]";
+    end;
+    OutString(130,0,USetStr(33709),true);
+    OutString(130,0,tstr,false);
+    EndFormat;
+    StartFormat(15);
+    if (IVr.ThirdPartyBillMark!=0) then begin 
+      tstr = "  [X]";
+    end else begin
+      tstr = "  [ ]";
+    end;
+    OutString(130,0,USetStr(33710),true);
+    OutString(130,0,tstr,false);
+    EndFormat;    
+  end;  
+  if (IVr.CurncyCode<>"") then begin
+    StartFormat(15);
+    OutString(460,0,IVr.CurncyCode,true);
+    EndFormat;
+  end;
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    INr.Code = IVrw.ArtCode;
+    if (ReadFirstMain(INr,1,true)) then begin      
+      t = INr.Weight * IVrw.Quant;      
+      if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        totweight = totweight - t;
+      end else begin
+        totweight = totweight + t;
+      end;  
+    end;
+    if (IVrw.stp==3) then begin
+      StartFormat(15);
+      t2 = USetStr(1807);
+      tstr = CreateInvoiceNumber(IVrw.OrdRow,IVrw.CredOfficialSerNr);
+      t2 = t2 & tstr;
+      OutString(130,0,t2,false);
+      EndFormat;
+    end;
+    if ((IVrw.stp==kInvoiceRowTypeNormal) or (IVrw.stp==kInvoiceRowTypeStructuredItemComponent) or (IVrw.stp==4)) then begin
+      StartFormat(15);
+      qty = qty + IVrw.Quant;
+      OutString(20,0,IVrw.ArtCode,false);
+      OutVal(104,0,IVrw.Quant,M4UVal,true);
+      OutString(110,0,IVrw.Spec,false);
+      OutVal(350,0,IVrw.Price,M423Val,true);
+      OutVal(380,0,IVrw.vRebate,M41Val,true);
+      OutVal(460,0,IVrw.Sum,M4Val,true);
+      OutString(480,0,IVrw.VATCode,true);
+      EndFormat;
+    end;
+    if (IVrw.stp==5) then begin
+      StartFormat(15);
+      OutString(20,0,USetStr(4869),false);
+      OutString(130,0,IVrw.Spec,false);
+      OutVal(460,0,IVrw.Sum,M4Val,true);
+      OutString(480,0,IVrw.VATCode,true);
+      EndFormat;
+    end;
+  end;
+  if (IVr.FrPrice<>0) then begin
+    StartFormat(15);
+    OutString(20,0,IVr.FrItem,false);
+    OutString(104,0,"1",true);
+    OutVal(350,0,IVr.FrPrice,M4Val,true);
+    OutVal(460,0,IVr.FrPrice,M4Val,true);
+    OutString(480,0,IVr.FrVATCode,true);
+    EndFormat;
+  end;
+  Black_Divider(380,460);
+  StartFormat(15);
+  if (IVr.ExportFlag!=0) then begin
+    OutString(20,0,USetStr(2367),false);
+  end;
+  if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    sum1 = -IVr.Sum1;
+    sum3 = -IVr.Sum3;
+  end else begin
+    sum1 = IVr.Sum1;
+    sum3 = IVr.Sum3;
+  end;
+  if (IsBooks) and (ValuePack(1)==false) then begin
+    OutString(104,0,USetStr(2645),true);
+    OutString(230,0,USetStr(6707),true);
+    OutVal(460,0,sum1,M4Val,true);//280
+  end else begin
+    OutString(60,0,USetStr(6766),true);
+    OutString(104,0,USetStr(2645),true);
+    OutString(150,0,USetStr(3185),false);
+    OutString(240,0,USetStr(6707),true);
+    OutVal(460,0,sum1,M4Val,true);//280
+  end;
+  EndFormat;
+  StartFormat(15);
+  if (IsBooks) and (ValuePack(1)==false) then begin
+    OutVal(104,0,qty,M4UVal,true);
+    OutVal(230,0,sum3,M4Val,true);
+  end else begin
+    OutVal(60,0,totweight,M4Qty,true);
+    OutVal(104,0,qty,M4UVal,true);
+    OutString(150,0,IVr.Objects,false);
+    OutVal(240,0,sum3,M4Val,true);
+  end;
+  EndFormat;
+  if (com<>0) then begin
+    if (nonblank(IVr.InvComment)) then begin
+      StartFormat(15);
+      OutString(0,0,IVr.InvComment,false);
+      EndFormat;
+    end;
+  end;
+  RepOrders(IVr);
+  RepShipments(IVr);
+  return;
+end;
+
+function val FindPaidValueOnInvoice(record IVVc IVr)
+BEGIN
+  val res;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  
+
+  if ((IVr.RetnValue>0 and IVr.Sum4>0) or (IVr.RetnValue<0 and IVr.Sum4<0)) and (IVr.InvType!=kInvoiceTypeCredit) then begin
+    res = res - IVr.RetnValue;
+  end;  
+  rwcnt = MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeChequePayment: res = res + IVrw.Sum;
+      case kInvoiceRowTypeCreditCardPayment: res = res + IVrw.Sum;
+      case kInvoiceRowTypeCashPayment: res = res + MulRateToBase1(IVrw.CurncyCode,IVrw.Sum,IVrw.FrRate,IVrw.ToRateB1,IVrw.ToRateB2,IVrw.BaseRate1,IVrw.BaseRate2,DefaultCurRoundOff);
+      case kInvoiceRowTypeLoyaltyPointsPayment: res = res + MulRateToBase1(IVrw.CurncyCode,IVrw.Sum,IVrw.FrRate,IVrw.ToRateB1,IVrw.ToRateB2,IVrw.BaseRate1,IVrw.BaseRate2,DefaultCurRoundOff);
+      case kInvoiceRowTypeGiftVoucherPayment: res = res + IVrw.Sum;
+    end;
+  end;
+  FindPaidValueOnInvoice = res;
+  RETURN;
+END;
+
+global
+procedure IVPrintApprovalActivities(record IVVc IVr)
+begin
+  record ActVc Actr;
+  record AcceptanceRulesVc Acptr;
+  Integer actnr;
+  record RLinkVc RLr;
+  Boolean firstf;
+  Integer kregister;
+
+  switch (IVr.InvType) begin
+    case kInvoiceTypeCash:
+      kregister = kAcceptanceCashIV;
+    case kInvoiceTypeCredit:
+      kregister = kAcceptanceCredIV;
+    case kInvoiceTypeCreditSpecialSales:
+      kregister = kAcceptanceCredIV;
+    otherwise
+      kregister = kAcceptanceIV;
+  end;
+  ReadAcceptanceRules(kregister,IVr.CustCode,Acptr);
+  actnr = 1;
+  while (ReadRecordLink(IVr,actnr,Actr,RLr)) begin
+    PrintApprovalAcivity(Acptr,Actr,firstf);      
+    actnr = actnr + 1;
+  end;
+  return;
+end;
+
+global
+procedure IVInfoRn(record RcVc RepSpec)
+BEGIN
+  record IVVc theIVr;
+  record IVVc IVr;
+  record IPVc IPr;
+  record PurgeTRVc PurgeTRr;  
+  record TRVc TRr;  
+  record CLInVc CLInr;
+  record CLOutVc CLOutr;
+  record CredManVc CredManr;
+  row IPVc IPrw;
+  row TRVc TRrw;
+  row CLInVc CLInrw;
+  row CLOutVc CLOutrw;
+  Integer typeofcur,oldstyle,kregister;
+
+  Integer i,rwcnt;
+  Boolean found,testf;
+  record IPrsVc IPrsr;
+  string 255 tstr,t2;
+  val bal,temp,balb1;
+  Integer rw;
+  val ppval,cashv;
+
+  StartReportJob(USetStr(6760));
+   if (theIVr.Invalid<>0) then begin
+     rw = 1;      
+     tstr = USetStr(1282);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;  
+  EndHeader;
+  if (RepSpec.long1<=0) then begin goto L99; end;
+  theIVr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(theIVr,1,true)==false) then begin goto L99; end;
+  /* payments and credit invoices */
+  StartFormat(15);
+  OutString(15,0,USetStr(6761),false);
+  EndFormat;
+  StartFormat(15);
+   PrintEInvoiceStatus(theIVr.SerNr,theIVr.CustCode,40,140);
+  EndFormat;
+  StartFormat(15);
+  OutString(40,0,USetStr(6762),false);
+  OutString(150,0,USetStr(6763),false);
+  OutString(380,0,USetStr(6764),true);
+  OutString(480,0,USetStr(6765),true);
+  EndFormat;
+  IPrsr.IVNr = theIVr.SerNr;
+  found = true;
+  while (LoopKey("IVKey",IPrsr,1,found)) begin
+    if (IPrsr.IVNr<>theIVr.SerNr) then begin found = false; end;
+    if (found) then begin
+      if (IPrsr.TransType==kIPrsTransTypeInvoice) then begin/* invoice */
+        IVr.SerNr = IPrsr.TransNr;
+        if (ReadFirstMain(IVr,1,true)) then begin
+          if (IVr.Invalid==0) then begin
+            if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              tstr = USetStr(1324);
+            end else begin
+              tstr = USetStr(1150);
+            end;
+            tstr = tstr & ":";
+            t2 = CreateInvoiceNumber(IVr.SerNr,IVr.OfficialSerNr);
+            tstr = tstr & t2;
+            StartFormat(15);
+            OutString(40,"DblLiquid",tstr,false);
+            OutDate(150,0,IVr.InvDate,false);
+            if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              IVr.Sum4 = -IVr.Sum4;
+            end;  
+            ppval = 0;
+            cashv = 0;
+            OutVal(380,0,IVr.Sum4,M4Val,true);
+            switch (IVr.InvType) begin
+              case kInvoiceTypeCashInvoiceReceiptPRT:
+                goto LkInvoiceTypeCash;
+              case kInvoiceTypeCash:
+LkInvoiceTypeCash:;              
+    //             bal = bal + IVr.Sum4;//balance for cash note is 0, nothing to be paid
+                ppval = bal;
+                ppval = ppval - bal;
+                bal = bal + ppval;
+                OutVal(480,0,bal,M4Val,true);
+              case kInvoiceTypeCreditSpecialSales: 
+                goto LkInvoiceTypeCredit;
+              case kInvoiceTypeCredit:
+LkInvoiceTypeCredit:;
+                switch (theIVr.InvType) begin
+                  case kInvoiceTypeCash:
+                  otherwise
+                    bal = bal + IVr.Sum4;
+                    ppval = bal;
+                    SubPrePayments(IVr,bal,balb1);
+                    ppval = ppval - bal;
+                    bal = bal + ppval;
+                    OutVal(480,0,bal,M4Val,true);
+                end;
+              otherwise
+                bal = bal + IVr.Sum4;
+                ppval = bal;
+                SubPrePayments(IVr,bal,balb1);
+                ppval = ppval - bal;
+                bal = bal + ppval;
+                OutVal(480,0,bal,M4Val,true);
+            end;            
+            EndFormat;
+            if (ppval<>0) then begin
+              StartFormat(15);
+              OutString(150,0,USetStr(1875),false);
+              OutVal(380,0,ppval,M4NegVal,true);
+              bal = bal - ppval;
+              OutVal(480,0,bal,M4Val,true);
+              EndFormat;
+            end;
+            if (IVr.InvType!=kInvoiceTypeCash) then begin
+              if (IVr.SerNr==theIVr.SerNr) then begin
+                cashv = FindPaidValueOnInvoice(IVr);                     
+              end;
+            end;
+            if (cashv<>0) then begin
+              StartFormat(15);
+              OutString(150,0,USetStr(6768),false);
+              OutVal(380,0,cashv,M4NegVal,true);
+              if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+                bal = bal + cashv;
+              end else begin
+                bal = bal - cashv;
+              end;
+              OutVal(480,0,bal,M4Val,true);
+              EndFormat;
+            end;   
+          end;
+        end;
+      end;
+      if (IPrsr.TransType==kIPrsTransTypeReceipt) then begin/* receipt */      
+          IPr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(IPr,1,true)) then begin
+            if (IPr.RejectedFlag==0) then begin
+              rwcnt = MatRowCnt(IPr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(IPr,i,IPrw);
+                testf = true;
+                if (IPrw.ovst!=0) then begin testf = false; end;
+                if (IPrw.InvoiceNr!=theIVr.SerNr) then begin testf = false; end;
+                switch (IPrw.stp) begin
+                  case 5:
+                  case 7: testf = false;
+                  otherwise
+                    if (IPrw.PayDate!=IPrsr.CustDate) then begin testf = false; end;
+                end;                               
+                if (testf) then begin
+                  tstr = USetStr(1151);
+                  tstr = tstr & ":";
+                  t2 = IPr.SerNr;
+                  tstr = tstr & t2;
+                  StartFormat(15);
+                  OutString(40,"DblLiquid",tstr,false);
+                  OutDate(150,0,IPrw.PayDate,false);
+                  if (IPrw.stp==5) then begin
+                    OutString(220,0,USetStr(2449),false);
+                  end;
+                  if (IPrw.stp==6) then begin
+                    OutString(220,0,USetStr(2451),false);
+                  end;
+                  IPrw.InvVal = -IPrw.InvVal;
+                  OutVal(380,0,IPrw.InvVal,M4Val,true);
+                  bal = bal + IPrw.InvVal;
+                  OutVal(480,0,bal,M4Val,true);
+                  EndFormat;
+                end;
+              end;
+            end;
+          end;
+      end;   
+      if (IPrsr.TransType==kIPrsTransTypePurgeNLTransaction) then begin/*NL receipt */              
+          PurgeTRr.Number = IPrsr.TransNr;
+          PurgeTRr.IntYc = GetIntYc(IPrsr.TransDate);
+          PurgeTRr.TransRow = IPrsr.TransRow;
+          if (ReadFirstMain(PurgeTRr,3,true)) then begin            
+
+            if (PurgeTRr.Typ==1) then begin
+              testf = false;
+              if (PurgeTRr.CredVal<>0) then begin
+                if ((PurgeTRr.SerNr==theIVr.SerNr) and
+                    (PurgeTRr.TransDate==IPrsr.CustDate)) then begin
+                  tstr = USetStr(2530);
+                  tstr = tstr & ":";
+                  testf = true;
+                  PurgeTRExtYc(PurgeTRr,t2);
+                  tstr = tstr & t2;
+                  if (PurgeTRr.CurCredVal<>0) then begin
+                    temp = -PurgeTRr.CurCredVal;
+                  end else begin
+                    typeofcur = TypeOfCurncy(PurgeTRr.Curncy,oldstyle);   
+                    if (typeofcur==2) then begin
+                      temp = -PurgeTRr.CredVal2;
+                    end else begin
+                      temp = -PurgeTRr.CredVal;
+                    end;
+                  end;
+                end;
+              end;
+              if (PurgeTRr.DebVal<>0) then begin
+                if ((PurgeTRr.SerNr==theIVr.SerNr) and
+                    (PurgeTRr.TransDate==IPrsr.CustDate)) then begin
+                  tstr = USetStr(2530);
+                  tstr = tstr & ":";
+                  testf = true;
+                  PurgeTRExtYc(PurgeTRr,t2);
+                  tstr = tstr & t2;
+                  if (theIVr.InvType!=3) then begin
+                    if (nonblank(PurgeTRr.CurDebVal)) then begin
+                      temp = PurgeTRr.CurDebVal;
+                    end else begin
+                      typeofcur = TypeOfCurncy(PurgeTRr.Curncy,oldstyle);   
+                      if (typeofcur==2) then begin
+                        temp = PurgeTRr.DebVal2;
+                      end else begin
+                        temp = PurgeTRr.DebVal;
+                      end;
+                    end;
+                  end else begin
+                    if (nonblank(PurgeTRr.CurDebVal)) then begin
+                      temp = PurgeTRr.CurDebVal;
+                    end else begin
+                      typeofcur = TypeOfCurncy(PurgeTRr.Curncy,oldstyle);   
+                      if (typeofcur==2) then begin
+                        temp = PurgeTRr.DebVal2;
+                      end else begin
+                        temp = PurgeTRr.DebVal;
+                      end;
+                    end;
+                  end;  
+                end;
+              end;                
+              if (testf) then begin
+                StartFormat(15);
+                 OutString(40,"DblLiquid",tstr,false);
+                 OutDate(150,0,PurgeTRr.TransDate,false);
+                  OutVal(380,0,temp,M4Val,true);
+                 bal = bal + temp;
+                 OutVal(480,0,bal,M4Val,true);
+                EndFormat;                                
+              end;  
+            end;
+          end;
+      end;
+
+      if (IPrsr.TransType==kIPrsTransTypeNLTransaction) then begin/*NL receipt */              
+          TRr.Number = IPrsr.TransNr;
+          TRr.IntYc = GetIntYc(IPrsr.TransDate);
+          if (ReadFirstMain(TRr,2,true)) then begin            
+            rwcnt = MatRowCnt(TRr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(TRr,i,TRrw);
+              if (TRrw.Typ==1) then begin
+              testf = false;
+                if (TRrw.CredVal<>0) then begin
+                  if ((TRrw.SerNr==theIVr.SerNr) and
+                      (TRr.TransDate==IPrsr.CustDate)) then begin
+                    tstr = USetStr(2530);
+                    tstr = tstr & ":";
+                    testf = true;
+                    TRExtYc(TRr,t2);
+                    tstr = tstr & t2;
+                    if (TRrw.CurCredVal<>0) then begin
+                      temp = -TRrw.CurCredVal;
+                    end else begin
+                      typeofcur = TypeOfCurncy(TRrw.Curncy,oldstyle);   
+                      if (typeofcur==2) then begin
+                        temp = -TRrw.CredVal2;
+                      end else begin
+                        temp = -TRrw.CredVal;
+                      end;
+                    end;
+                  end;
+                end;
+                if (TRrw.DebVal<>0) then begin
+                  if ((TRrw.SerNr==theIVr.SerNr) and
+                      (TRr.TransDate==IPrsr.CustDate)) then begin
+                    tstr = USetStr(2530);
+                    tstr = tstr & ":";
+                    testf = true;
+                    TRExtYc(TRr,t2);
+                    tstr = tstr & t2;
+                    if (theIVr.InvType!=kInvoiceTypeCredit and theIVr.InvType!=kInvoiceTypeCreditSpecialSales) then begin
+                      if (nonblank(TRrw.CurDebVal)) then begin
+                        temp = TRrw.CurDebVal;
+                      end else begin
+                        typeofcur = TypeOfCurncy(TRrw.Curncy,oldstyle);   
+                        if (typeofcur==2) then begin
+                          temp = TRrw.DebVal2;
+                        end else begin
+                          temp = TRrw.DebVal;
+                        end;
+                      end;
+                    end else begin
+                      if (nonblank(TRrw.CurDebVal)) then begin
+                        temp = TRrw.CurDebVal;
+                      end else begin
+                        typeofcur = TypeOfCurncy(TRrw.Curncy,oldstyle);   
+                        if (typeofcur==2) then begin
+                          temp = TRrw.DebVal2;
+                        end else begin
+                          temp = TRrw.DebVal;
+                        end;
+                      end;
+                    end;  
+                  end;
+                end;                
+                if (testf) then begin
+                  StartFormat(15);
+                   OutString(40,"DblLiquid",tstr,false);
+                   OutDate(150,0,TRr.TransDate,false);
+                    OutVal(380,0,temp,M4Val,true);
+                   bal = bal + temp;
+                   OutVal(480,0,bal,M4Val,true);
+                  EndFormat;                                
+                end;  
+              end;
+            end;
+          end;
+      end;
+
+      if (IPrsr.TransType==kIPrsTransTypeCashIn) then begin/*cash in*/              
+          CLInr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(CLInr,1,true)) then begin            
+            if (CLInr.Invalid==0) then begin
+              rwcnt = MatRowCnt(CLInr);
+              for (i=0;i<rwcnt;i=i+1) begin
+                MatRowGet(CLInr,i,CLInrw);
+                if (CLInrw.Type==1) then begin
+                  testf = false;
+                  if (CLInrw.Sum<>0) then begin
+                    if ((CLInrw.TransNr==theIVr.SerNr) and
+                        (CLInr.TransDate==IPrsr.CustDate)) then begin
+                      tstr = USetStr(1193);
+                      tstr = tstr & ":";
+                      testf = true;
+                      tstr = tstr & CLInr.SerNr;
+                    end;
+                  end;                
+                  if (testf) then begin
+                    temp = -CLInrw.Sum;
+                    StartFormat(15);
+                     OutString(40,"DblLiquid",tstr,false);
+                     OutDate(150,0,CLInr.TransDate,false);
+                      OutVal(380,0,temp,M4Val,true);
+                     bal = bal + temp;
+                     OutVal(480,0,bal,M4Val,true);
+                    EndFormat;                                
+                  end;
+                end;  
+              end;
+            end;
+          end;
+      end;
+      if (IPrsr.TransType==kIPrsTransTypeCashOut) then begin/*cash out*/              
+          CLOutr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(CLOutr,1,true)) then begin            
+            if (CLOutr.Invalid==0) then begin
+            rwcnt = MatRowCnt(CLOutr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(CLOutr,i,CLOutrw);
+              if (CLOutrw.Type==1) then begin
+                testf = false;
+                if (CLOutrw.Sum<>0) then begin
+                  if ((CLOutrw.TransNr==theIVr.SerNr) and
+                      (CLOutr.TransDate==IPrsr.CustDate)) then begin
+                    tstr = USetStr(1194);
+                    tstr = tstr & ":";
+                    testf = true;
+                    tstr = tstr & CLOutr.SerNr;
+                  end;
+                end;                
+                if (testf) then begin
+                  temp = CLOutrw.Sum;
+                  StartFormat(15);
+                   OutString(40,"DblLiquid",tstr,false);
+                   OutDate(150,0,CLOutr.TransDate,false);
+                    OutVal(380,0,temp,M4Val,true);
+                   bal = bal + temp;
+                   OutVal(480,0,bal,M4Val,true);
+                  EndFormat;                                
+                end;  
+              end;
+            end;
+            end;
+          end;
+      end;            
+      if (IPrsr.TransType==6) then begin/* credit man */      
+          CredManr.SerNr = IPrsr.TransNr;
+          if (ReadFirstMain(CredManr,1,true)) then begin
+            if (CredManr.Invalid==0) then begin
+              tstr = USetStr(1635);
+              tstr = tstr & ":";
+              t2 = CredManr.SerNr;
+              tstr = tstr & t2;
+              StartFormat(15);
+              OutString(40,"DblLiquid",tstr,false);
+              OutDate(150,0,CredManr.TransDate,false);
+              CredManr.InvSum4 = -CredManr.InvSum4;
+              OutVal(380,0,CredManr.InvSum4,M4Val,true);
+              bal = bal + CredManr.InvSum4;
+              OutVal(480,0,bal,M4Val,true);
+              EndFormat;
+            end;
+          end;
+      end;   
+      
+    end;
+  end;
+  Black_Divider(380,480);
+  StartFormat(15);
+  OutVal(480,0,bal,M4Val,true);
+  EndFormat;
+  Gray_Divider(0,1);
+  StartFormat(15);
+  EndFormat;
+  StartFormat(15);
+  OutString(0,0,USetStr(2352),false);
+  OutString(50,0,USetStr(2358),false);
+  OutString(130,0,USetStr(2353),false);
+  OutString(220,0,USetStr(2354),false);
+  OutString(460,0,USetStr(2357),true);
+  EndFormat;
+  Gray_Divider(0,1);
+  RepInvoice(theIVr,1);
+  Gray_Divider(0,1);
+  StartFormat(15);
+  EndFormat;
+  PrintAccruals(theIVr);
+  IVPrintApprovalActivities(theIVr);
+L99:;
+  EndJob;
+  RETURN;
+END;
+
+global
+procedure EIVStatRn(record RcVc RepSpec)
+begin
+  record IVVc IVr;
+  record LicensesVc Lr;
+  record CUVc CUr;
+  Boolean found,einvf;
+  val q,uq,r;
+  
+  StartReportJob(USetStr(40080));
+  EndHeader;
+
+  if (HasEInvoicing==false) then begin goto LEIVInfoRn; end;
+  einvf = true;
+  if (RepSpec.long1>0) then begin
+    IVr.SerNr = RepSpec.long1;
+    if (ReadFirstMain(IVr,1,true)==false) then begin goto LEIVInfoRn; end;
+    CUr.Code = IVr.CustCode;
+    ReadFirstMain(CUr,1,true);
+    if (EInvoiceForCustomer(IVr.CAEAFlag,IVr.CurncyCode,CUr)==false) then begin 
+      einvf = false;
+    end;
+  end;
+  if (einvf) then begin
+    StartFormat(15);
+     OutString(60,0,USetStr(40081),true);
+     OutString(120,0,USetStr(40082),true);
+     OutString(180,0,USetStr(40083),true);
+    EndFormat;
+    Gray_Divider(0,1);
+    found = true;
+    Lr.Function = "HasEInvoicing";
+    while (LoopKey("ActiveFunction",Lr,1,found)) begin 
+      if (found) then begin
+        q = q + Lr.Qty;
+        uq = uq + Lr.UsedQty;
+      end;
+    end;
+    r = q - uq;
+    if (r<0) then begin r = 0; end;
+    StartFormat(15);
+     OutVal(60,0,q,M4Val,true);
+     OutVal(120,0,uq,M4Val,true);
+     OutVal(180,0,r,M4Val,true);
+    EndFormat;
+  end else begin
+    StartFormat(15);
+    OutString(0,0,USetStr(40084),false);
+    EndFormat;
+  end;
+  
+LEIVInfoRn:;  
+  EndJob;
+  return;
+end;

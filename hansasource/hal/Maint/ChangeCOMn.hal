@@ -1,0 +1,146 @@
+external procedure CalcPrice(val,val,val,var val,Integer);
+external procedure CheckFlush(var Integer,Integer);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure FindSalesExVat(record TaxMatrixVc,string,val,Integer,Integer,var val);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+external procedure COSumup(var record COVc);
+external procedure COVcGetCalcItemPrice(record COVc,Integer,var val);
+
+
+
+procedure RecalcRow(var record COVc COp,Integer rownr,var Boolean calcpricef,string toitem,Integer put,Integer UseDiscount)
+BEGIN
+  record INVc INr;
+  val t,s,rowsum,price,vreb,baseprice,tax2prc,p;
+  row COVc COrwp;
+  string 255 curitemname,salesacc,vatcode,tax2code,taxtemplatecode;
+  Boolean dummyf;
+  record TaxMatrixVc TMr;
+  Time blankt;
+
+  MatRowGet(COp,rownr,COrwp);
+  COrwp.ArtCode = toitem;
+  COrwp.Price = blankval;
+  COrwp.vRebate = blankval;     
+  if (GetItemPriceDiscount3(COrwp.ArtCode,COrwp.Quant,INr,COp.CurncyCode,
+                            COp.FrRate,COp.ToRateB1,COp.ToRateB2,COp.BaseRate1,COp.BaseRate2,
+                            COp.LangCode,COp.CustCat,COp.PriceList,COp.RebCode,
+                            price,curitemname,vreb,vatcode,baseprice,salesacc,
+                            COp.ExportFlag,calcpricef,COp.CODate,blankt,COp.CustCode,true,dummyf,COp.PayDeal,tax2code,tax2prc,"","",taxtemplatecode)) then
+      
+  begin  
+    COrwp.Price = price;
+    COrwp.Spec = curitemname;
+    COrwp.vRebate = vreb;
+    COrwp.VATCode = vatcode;
+    COrwp.BasePrice = baseprice;
+    COrwp.SalesAcc = salesacc;
+    COrwp.ArtCode = INr.Code;
+    if (nonblank(COp.CustVATCode)) then begin COrwp.VATCode = COp.CustVATCode; end;
+    p = COrwp.Price; 
+    CalcPrice(COrwp.BasePrice,COrwp.PriceFactor,COrwp.vRebate,p,UseDiscount);
+    COrwp.Price = p;  
+    CalcSum(COrwp.Quant,COrwp.Price,COrwp.PriceFactor,COrwp.vRebate,t,UseDiscount);
+    COrwp.Sum = t;
+    t = COrwp.Quant*COrwp.BasePrice;
+    s = MulRateToBase1(COp.CurncyCode,COrwp.Sum,COp.FrRate,COp.ToRateB1,COp.ToRateB2,COp.BaseRate1,COp.BaseRate2,DefaultCurRoundOff);                       
+    FindSalesExVat(TMr,COrwp.VATCode,s,COp.InclVAT,COp.NoTAXonVAT,rowsum);    
+    COrwp.rowGP = rowsum - t;
+  end;
+  if (put==1) then begin
+    MatRowPut(COp,rownr,COrwp);
+  end;
+  if (put==0) then begin
+    MatRowInsert(COp,rownr,COrwp);
+  end;    
+  RETURN;
+END;
+
+global
+updating procedure ChangeCOMn(record RcVc RepSpec)
+BEGIN
+  record COVc COr;
+  record COVc oldCOr;
+  row COVc COrw;
+  Boolean TrHs, testf;
+  Integer i,rwcnt;
+  Boolean calcpricef,recalcf;
+  val t;
+  record GeneralOptionBlock GenOptRec;
+  Integer flushcnt;
+
+  BlockLoad(GenOptRec); 
+  COr.SerNr = -1;
+  TrHs = true;
+  while (LoopMain(COr,1,TrHs)) begin
+    testf = true;
+    if (COr.ContractClass!=RepSpec.FirstAcc) then begin testf = false; end;
+    if (nonblankdate(COr.startDate)) then begin
+      if (COr.startDate<RepSpec.sStartDate) then begin testf = false; end;
+    end;
+    if (nonblankdate(COr.endDate)) then begin
+      if (COr.endDate>RepSpec.sEndDate) then begin testf = false; end;
+    end;  
+    if (testf) then begin
+      RecordCopy(oldCOr,COr);
+      if (nonblank(RepSpec.AccStr)) then begin COr.ContractClass = RepSpec.AccStr; end;
+      recalcf = false;
+      if (nonblank(RepSpec.f1)) then begin
+        if ((RepSpec.flags[1]==0) or (RepSpec.flags[1]==2)) then begin            
+            rwcnt = MatRowCnt(COr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(COr,i,COrw);
+              if (COrw.ArtCode==RepSpec.f1) then begin
+                if (RepSpec.flags[1]==0) then begin                 
+                  RecalcRow(COr,i,calcpricef,RepSpec.f2,1,GenOptRec.UseDiscount);
+                  if (calcpricef) then begin 
+                    t = -1;
+                    COVcGetCalcItemPrice(COr,i,t); 
+                  end;
+                end;
+                if (RepSpec.flags[1]==2) then begin
+                  MatRowDelete(COr,i); //HDelRow(&COr.Math,i,sizeof(CORowType));
+                end;
+                recalcf = true;
+              end;
+            end;     
+        end;
+        if (RepSpec.flags[1]==1) then begin            
+            if (nonblank(RepSpec.f2)) then begin
+              if (nonblank(RepSpec.f1)) then begin
+                testf = false;
+                rwcnt = MatRowCnt(COr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(COr,i,COrw);
+                  if (COrw.ArtCode==RepSpec.f1) then begin
+                    testf = true;
+                  end;
+                end;
+              end;            
+              if (testf) then begin
+                ClearRow(COr,COrw,1);
+                COrw.Quant = 1;
+                RecalcRow(COr,0,calcpricef,RepSpec.f2,0,GenOptRec.UseDiscount);
+                if (calcpricef) then begin 
+                  t = -1;
+                  COVcGetCalcItemPrice(COr,0,t); 
+                end;
+                recalcf = true;
+              end;
+            end;
+        end;
+      end;  
+      if (recalcf) then begin
+        COSumup(COr);
+      end;
+      if (RepSpec.flags[0]==1) then begin COr.OKFlag = 0; end;
+      if (RecordUpdate(oldCOr,COr,true)==0) then begin end;
+      CheckFlush(flushcnt,10);
+    end;
+    MaintTrace(COr.SerNr);                                      
+  end;
+  RETURN;
+END;

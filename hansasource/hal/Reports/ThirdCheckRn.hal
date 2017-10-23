@@ -1,0 +1,1060 @@
+external procedure ToStrTRCode(var string,Integer,LongInt);
+external procedure HTDetailLevel(Integer, var string);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external procedure PrintCurncyTotals(array string,array val,array val,array val,Integer,Integer,Integer,Integer,Integer,Boolean,Integer);
+external procedure BeginCurncyTotals(var Integer);
+external procedure AddCurncyTotals(var array string,var array val,var Integer,string,val);
+external procedure ChStateName(Integer,Boolean, var String, Boolean);
+external procedure HT2Per(Date,Date, var string );
+external procedure GetAccountName(string,var string);  //LO Added
+
+global
+procedure DepCheckRn(record RcVc RepSpec)
+begin
+  val tt;
+  record ChqDepVc Dep;
+  row ChqDepVc Deprw;
+  Record CheckVc Chq;
+  Record CUVc CUr;
+  Boolean found,OK,TrHs;
+  Integer p1,p2,p3,p4,p5,p6,p7,p8,j,rows,i,k;
+  String 20 AmntOfCheques;
+  String 100 HdrStr;
+  String 60 a;
+  Integer HdrLn;
+  Record PMBlock PMb;
+  Row PMBlock PMbrw;
+  String 80 CtaName,CtaBank;
+
+  // Positions
+  p1= 0;
+  p2= 160;
+  p3= 215;
+  p4= 360;
+  p5= 480;
+  p6= 490;
+  p7= 500;
+  p8= 520;
+  
+  // Get parameters & Init
+  if (blankdate(RepSpec.d1)) then begin
+    RepSpec.d1 = CurrentDate;
+  end;
+  
+  tt = 0; i = 0;
+  found = true;
+  
+  if (nonblank(RepSpec.long1)) then begin
+    Dep.SerNr = RepSpec.long1;
+    if ReadFirstMain(Dep,1,true) then begin
+      StartReportJob(USetStr(8455));
+      HdrLn = 1;
+      HdrStr = USetStr(8461) & Dep.TransDate;
+      Header(HdrLn,HdrStr,1);
+      EndHeader;
+      
+      Blockload(PMb);
+      rows = MatRowCnt(PMb);
+      for (k=0;k<rows;k=k+1) begin
+        MatRowGet(PMb,k,PMbrw);
+        if (PMbrw.Code==Dep.PayMode)then begin
+          CtaName  = PMbrw.Comment;
+          CtaBank  = PMbrw.BankNr;
+        end;
+      end;
+      StartFormat(15);
+      OutString(2,0,USetStr(8452) & ": " & CtaName,false);
+      OutString(300,0,USetStr(8451) & ": " & Dep.SerNr,false);
+      OutString(2,0,Dep.Comment,false);
+      EndFormat;
+      rows = MatRowCnt(Dep);
+      for (j=0;j<rows;j=j+1) begin
+        MatRowGet(Dep,j,Deprw);
+        Chq.SerNr = Deprw.ChqNr;
+        if ReadFirstMain(Chq,1,true) then begin
+          StartFormat(15);
+          a = left(Chq.CUName,1);
+          if ((a <> "2") and (a <> "3")) then begin
+            CUr.Code = Chq.CUCode; 
+            if (ReadFirstMain(CUr, 1, TrHs) == true) then begin
+              OutString(p1,0,CUr.VATNr & " " & Chq.CUName, true); 
+            end;
+          end else begin
+            OutString(p1,0,Chq.CUName,false);
+          end;
+          OutString(p2,0,left(Chq.BankName,30),false);
+          OutString(p3,0,left(Chq.BankCode,3),false);
+          OutString(p4,0,left(Chq.CheckNr,8),false);
+          OutString(p5,0,Chq.EffectDate,false);
+          OutString(p6,0,left(Chq.Desc,4),false);
+          OutVal(p7,0,Chq.Amount,M4Val,true);
+          OutString(p8,0,Chq.ECDate,false);                  // Fecha estimada de acreditaciÛn
+          EndFormat;
+          tt = tt + Chq.Amount;
+          i  = i + 1;
+        end;
+      end; 
+    end;
+    
+    // Footer
+    Gray_Divider(0,1);
+    StartFormat(15);
+    if (i > 0) then begin
+      AmntOfCheques = i;
+      AmntOfCheques = AmntOfCheques & USetStr(8459);
+      OutString(p1,0,USetStr(8460),false);
+      OutString(p2,0,AmntOfCheques,false);
+      OutVal(p5,0,tt,M4Val,true);
+    end;
+    EndFormat;
+  end;
+
+  if (nonblankdate(RepSpec.d1)) then begin
+    // Positions
+    p1= 0;
+    p2= 200;
+    p3= 320;
+    p4= 430;
+  
+    // Header
+    StartReportJob(USetStr(8455));
+    HdrLn = 1;
+    HdrStr = USetStr(8461) & RepSpec.d1;
+    Header(HdrLn,HdrStr,1);
+    EndHeader;
+  
+    StartFormat(15);
+    OutString(p1,0,USetStr(8456),false);
+    OutString(p2,0,USetStr(8457),false);
+    OutString(p3,0,USetStr(8458),true);
+    OutString(p4+30,0,USetStr(8450),true);
+    Gray_Divider(0,1);
+    EndFormat;
+    StartFormat(15);
+    
+    while (LoopKey("OpenSerNr",Chq,1,found)) begin
+      OK = false;
+      if (nonblankdate(Chq.ECDate)) then begin
+        If (nonblankdate(RepSpec.d1) and (RepSpec.d1>=Chq.ECDate)) then begin
+          OK = true;
+        end;
+      end else begin
+        If (nonblankdate(RepSpec.d1) and (RepSpec.d1>=Chq.EffectDate)) then begin
+          OK = true;
+        end;
+      end;
+      if (OK) then begin
+        // Print Data
+        StartFormat(15);
+        OutString(p1,0,Chq.BankName,false);
+        OutString(p2,"DblCheckVc",Chq.CheckNr,false);
+        OutVal(p3,0,Chq.Amount,M4Val,true);
+        OutString(p4,0,Chq.TargetAccNr,false);
+        EndFormat;
+        // Update totals
+        tt = tt + Chq.Amount;
+        i  = i + 1;
+      end; 
+    end;
+  
+    // Footer
+    Gray_Divider(0,1);
+    StartFormat(15);
+    AmntOfCheques = i;
+    AmntOfCheques = AmntOfCheques & USetStr(8459);
+    OutString(p1,0,USetStr(8460),false);
+    OutString(p2,0,AmntOfCheques,false);
+    OutVal(p3,0,tt,M4Val,true);
+    EndFormat;
+  end; 
+
+  EndJob;
+  return;
+end;
+
+global
+procedure OwnCheckRn(record RcVc RepSpec)
+begin
+  Integer i;
+  record OwnCheckVc Chq;
+  Boolean found,testf;
+  Val tt;
+  String 50 tstr;
+  Integer keys;
+  String 20 mykey;
+  String 100 HdrStr;
+  Integer HdrLn;
+  array val av1;
+  array val av2;
+  array val av3;
+  array string 20 acur;
+  Integer curcnt;
+  Date td;
+  string 255 fname;
+  record OwnCheckStatusHistVc OCSHr;
+  Boolean foundOCSH;  
+  
+  BeginCurncyTotals(curcnt);
+  tt = 0;
+  found = true;
+
+  ChStateName(RepSpec.flags[1],false,tstr,false);
+  StartReportJob(tstr);
+  HdrLn = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,HdrStr);
+  Header(HdrLn,HdrStr,1);
+  HTDetailLevel(RepSpec.ArtMode,tstr);
+  HdrLn = HdrLn + 1;
+  Header(HdrLn,tstr,0);
+   
+  if nonBlank(repSpec.FirstAcc) then begin
+    GetAccountName(repSpec.FirstAcc,tstr);
+    HdrStr = USetStr(8486) & repSpec.FirstAcc  & " - " & tstr;
+    Header(HdrLn,HdrStr,1);
+    HdrLn = HdrLn + 1;
+  end;
+  if nonBlank(repSpec.LastAcc) then begin
+    GetAccountName(repSpec.LastAcc,tstr);
+    HdrStr = USetStr(8487) & repSpec.LastAcc  & " - " & tstr;
+    Header(HdrLn,HdrStr,1);
+    HdrLn = HdrLn + 1;
+  end;
+  if nonBlank(repSpec.AccStr) then begin
+    GetAccountName(repSpec.AccStr,tstr);
+    HdrStr = USetStr(8488) & repSpec.AccStr  & " - " & tstr;
+    Header(HdrLn,HdrStr,1);
+    HdrLn = HdrLn + 1;
+  end;
+  If nonBlank(repSpec.d1) then begin
+    HdrStr = USetStr(8489) & repSpec.d1;
+    Header(HdrLn,HdrStr,1);
+    HdrLn = HdrLn + 1;
+  end;
+  if nonBlank(RepSpec.f3) then begin
+    HdrStr = USetStr(8500) & repSpec.f3;
+    Header(HdrLn,HdrStr,1);
+    HdrLn = HdrLn + 1;
+  end;
+  if (RepSpec.flags[4]==0) then begin
+    HdrStr =  USetStr(8501);
+  end;
+  if (RepSpec.flags[4]==1) then begin
+    HdrStr =  USetStr(8502);
+  end;
+  if (RepSpec.flags[4]==2) then begin
+    HdrStr =  USetStr(8503); 
+  end;
+  Header(HdrLn,HdrStr,1);
+  HdrLn = HdrLn +1;
+  if (RepSpec.flags[5]==0) then begin
+    HdrStr =  USetStr(8504);
+  end;
+  if (RepSpec.flags[5]==1) then begin
+    HdrStr =  USetStr(8472);
+  end;
+  if (RepSpec.flags[5]==2) then begin
+    HdrStr =  USetStr(18261);
+  end;
+  Header(HdrLn,HdrStr,1);
+  HdrLn = HdrLn +1;
+  switch (RepSpec.flags[2]) begin
+    case 0: HdrStr = USetStr(8473);
+    case 1: HdrStr = USetStr(8474);
+    case 2: HdrStr = USetStr(8462);
+    case 3: HdrStr = USetStr(8463);
+    case 4: HdrStr = USetStr(18260);
+  end;
+  Header(HdrLn,HdrStr,1);
+  HdrLn = HdrLn + 1;
+  EndHeader;
+  switch (RepSpec.ArtMode) begin
+    case 0:
+      SetRepCol(2,35);
+      SetRepColBiDi(3,135,170);  
+      SetRepCol(4,145); 
+      SetRepCol(5,190); 
+      SetRepCol(6,235);
+      SetRepCol(7,300); 
+      SetRepCol(8,360); 
+
+      StartFormat(15);
+      OutString(0,0,USetStr(8466),false);
+      OutString(2,0,USetStr(8467),false);
+      OutStringAdjust(3,0,USetStr(8468),true,M4Val);
+      OutString(4,0,USetStr(8480),false);
+      OutString(5,0,USetStr(8469),false);
+      OutString(6,0,USetStr(8470),false);
+      OutString(7,0,USetStr(8547),false);
+      OutString(8,0,USetStr(8471),false);
+      EndFormat;
+    case 1:
+      SetRepCol(2,35);
+      SetRepCol(3,95); 
+      SetRepCol(4,125); 
+      SetRepCol(5,210); 
+      SetRepCol(6,320);
+      SetRepCol(7,370);  
+
+      switch (RepSpec.Media) begin
+        case mtExcel:
+          goto LFileHeaderOC;
+        case mtFile:
+LFileHeaderOC:;  
+          StartFormat(15);
+          OutString(0,0,USetStr(8476),false);
+          OutString(2,0,USetStr(8467),false);
+          OutString(3,0,USetStr(8547),false);
+          OutString(4,0,USetStr(8548),false);
+          OutString(5,0,USetStr(8471),false);
+          OutString(6,0,USetStr(8480),false);
+          OutString(7,0,USetStr(8481),false);
+          OutString(7,0,USetStr(33440),false);
+          OutString(7,0,USetStr(8549),false);
+          OutString(7,0,USetStr(33441),false);
+          OutString(7,0,USetStr(33442),false);
+          OutString(7,0,USetStr(33443),false);          
+          OutStringAdjust(460,0,USetStr(8482),true,M4Val);
+          OutString(7,0,USetStr(8550),false);
+          EndFormat;
+        otherwise      
+          StartFormat(15);
+          OutString(0,0,USetStr(8476),false);
+          OutString(2,0,USetStr(8467),false);
+          OutString(3,0,USetStr(8547),false);
+          OutString(4,0,USetStr(8548),false);
+          OutString(5,0,USetStr(8471),false);
+          OutString(6,0,USetStr(8480),false);
+          OutString(7,0,USetStr(8481),false);
+          OutStringAdjust(460,0,USetStr(8482),true,M4Val);
+          EndFormat;
+          StartFormat(15);
+          OutString(2,0,USetStr(8485),false);
+          OutString(4,0,USetStr(8582),false);
+          OutString(5,0,USetStr(8777),false);
+          EndFormat;
+      end;
+  end;
+  Gray_Divider(0,1);
+
+   keys =2;
+   switch (RepSpec.flags[2]) begin
+     case 0: mykey = "SerNr";
+     case 1: mykey = "EffectDate";
+     case 2: mykey = "VECode";
+     case 3: mykey = "TransDate";
+     case 4: mykey = "ClearingDate";
+   end;
+
+   while (LoopKey(mykey,Chq,keys,found)) begin
+     testf = true;
+     switch (RepSpec.flags[5]) begin
+       case 0:
+        If (DateInRange(Chq.TransDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+          testf = false;
+        end;
+       case 2:
+         If (DateInRange(Chq.ClearingDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+           testf = false;
+         end;
+       otherwise
+         If (DateInRange(Chq.EffectDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin
+           testf = false;
+         end;
+     end;
+     
+      if (RepSpec.flags[1]<> 8) then begin                 // All states
+        if (RepSpec.flags[1]<>Chq.Openf) then begin
+          testf = false;
+        end;
+      end;
+      if (RepSpec.flags[6]<>2) then begin                 //LO Added
+        if ((Chq.Invalid<>0) and (RepSpec.flags[6]==0)) then begin
+          testf = false;
+        end;
+        if ((Chq.Invalid==0) and (RepSpec.flags[6]==1)) then begin
+          testf = false;
+        end;
+      end;
+      if ((RepSpec.FirstAcc <> Chq.OrigAccNr) and (not Blank(repSpec.FirstAcc)))then begin
+        testf = false;
+      end;
+      if ((RepSpec.LastAcc <> Chq.TempAccNr) and (not Blank(repSpec.LastAcc)))then begin
+        testf = false;
+      end;
+      if ((RepSpec.AccStr <> Chq.TargetAccNr) and (not Blank(repSpec.AccStr)))then begin
+        testf = false;
+      end;
+      If ((Chq.EffectDate<RepSpec.d1) and (not Blank(repSpec.d1))) then begin
+        testf = false;
+      end;
+      if ((RepSpec.f3<>Chq.VECode) and (not Blank(RepSpec.f3))) then begin
+        testf = false;
+      end;
+      if (RepSpec.flags[4] <> 2) and (RepSpec.flags[4] <> Chq.ChkMode) then begin
+        testf = false;
+      end;
+
+
+
+      if (testf) then begin
+        switch (RepSpec.ArtMode) begin
+          case 0:
+            StartFormat(15);
+            OutLongInt(0,"DblOwnCheckVc",Chq.SerNr,false);
+            OutString(2,"DblCheckVc",Chq.CheckNr,false);
+            OutVal(3,0,Chq.Amount,M4Val,true);
+            OutDate(4,0,Chq.TransDate,false); 
+            OutDate(5,0,Chq.EffectDate,false);
+            ChStateName(Chq.Openf,false,tstr,true);
+            OutString(6,0,tstr,false);
+            OutString(7,"DblBankVc",Chq.BankCode,false);
+            if (nonblank(Chq.VEName)) then begin
+              OutString(8,0,Left(Chq.VEName,30),false);
+            end;
+            if (nonblank(Chq.Comment)) then begin
+              OutString(8,0,Left(Chq.Comment,20),false);
+            end;
+            EndFormat;
+          case 1:
+          
+            if (RepSpec.Media==mtFile or RepSpec.Media==mtExcel) then begin
+              StartFormat(15);
+              OutString(0,0,Chq.SerNr,false);
+              OutString(2,"DblCheckVc",Chq.CheckNr,false);
+              OutString(3,"DblBankVc",Chq.BankCode,false);
+              OutString(4,0,Chq.BankName,false);
+              OutString(5,0,Chq.VEName,false);
+              OutDate(6,0,Chq.TransDate,false);
+              OutDate(7,0,Chq.EffectDate,false);
+
+              fname = "";
+              switch (Chq.ToFileName) begin
+                case "OPVc": 
+                  ToStrTRCode(fname,OPYc,Chq.ToNo);
+                case "PPVc": 
+                  ToStrTRCode(fname,PPYc,Chq.ToNo);
+                case "CLInVc": 
+                  ToStrTRCode(fname,CLInYc,Chq.ToNo);
+                case "CLOutVc": 
+                  ToStrTRCode(fname,CLOutYc,Chq.ToNo);
+              end;
+
+              OutDate(7,0,Chq.IssuedDate,false);
+              OutString(7,0,fname,false);
+              OutDate(7,0,Chq.ClearingDate,false);
+              OutDate(7,0,Chq.CancelledDate,false);
+              OutDate(7,0,Chq.BouncedDate,false);
+              
+              OutVal(460,0,Chq.Amount,M4Val,true);
+              OutString(465,0,Chq.CurncyCode,false);
+              EndFormat;
+
+            end else begin            
+              StartFormat(15);
+              OutString(0,0,Chq.SerNr,false);
+              OutString(2,"DblCheckVc",Chq.CheckNr,false);
+              OutString(3,"DblBankVc",Chq.BankCode,false);
+              OutString(4,0,Chq.BankName,false);
+              OutString(5,0,Left(Chq.VEName,30),false);
+              OutDate(6,0,Chq.TransDate,false);
+              OutDate(7,0,Chq.EffectDate,false);
+              OutVal(460,0,Chq.Amount,M4Val,true);
+              OutString(465,0,Chq.CurncyCode,false);
+              EndFormat;
+
+              ResetLoop(OCSHr);
+              foundOCSH = true;
+              OCSHr.CheckSerNr = Chq.SerNr;
+              while (LoopKey("CheckSerNr",OCSHr,1,foundOCSH)) begin
+                if (OCSHr.CheckSerNr!=Chq.SerNr) then begin foundOCSH = false; end;
+                if (foundOCSH) then begin
+                  ChStateName(OCSHr.Openf,true,tstr,false);   
+                  fname = "";
+                  switch (OCSHr.FileName) begin
+                    case "OPVc": 
+                      ToStrTRCode(fname,OPYc,OCSHr.TransNr);
+                    case "PPVc": 
+                      ToStrTRCode(fname,PPYc,OCSHr.TransNr);
+                    case "CLInVc": 
+                      ToStrTRCode(fname,CLInYc,OCSHr.TransNr);
+                    case "CLOutVc": 
+                      ToStrTRCode(fname,CLOutYc,OCSHr.TransNr);
+                  end;
+
+                  StartFormat(15);
+                  OutString(2,0,tstr,false);
+                  OutDate(4,0,OCSHr.StatusDate,false);
+                  OutString(5,"DblTrans3",fname,false);
+                  EndFormat;
+                end;
+              end;
+            end;
+        end;
+        tt = tt + MulWithRateToBase1(Chq.CurncyCode,Chq.TransDate,Chq.Amount,DefaultCurRoundOff);            
+        AddCurncyTotals(acur,av1,curcnt,Chq.CurncyCode,Chq.Amount);
+      end;
+   end;
+
+  // Footer
+  Gray_Divider(0,1);
+  switch (RepSpec.ArtMode) begin
+    case 0:
+      StartFormat(15);
+      OutString(0,0,USetStr(8513),false);
+      OutVal(3,0,tt,M4Val,true);
+      EndFormat;
+      Gray_Divider(0,1);
+      PrintCurncyTotals(acur,av1,av2,av3,curcnt,3,-1,-1,0,false,RepSpec.PocketPC);
+    case 1:
+      StartFormat(15);
+      OutString(0,0,USetStr(8513),false);
+      OutVal(460,0,tt,M4Val,true);
+      EndFormat;
+      Gray_Divider(0,1);
+      PrintCurncyTotals(acur,av1,av2,av3,curcnt,460,-1,-1,7,false,RepSpec.PocketPC);
+  end;
+
+  EndJob;
+  return;
+end;
+
+global
+procedure ThirdCheckRn(record RcVc RepSpec)
+begin
+  Integer i;
+  record CheckVc Chq;
+  record CouponVc Cr;
+  record CredCardTypeVc CCTr;
+  Boolean found,testf;
+  val tt;
+  val ValidVat;
+  string 50 tstr,fname;
+  Integer keys;
+  string 20 mykey;
+  string 100 HdrStr;
+  Integer rw;
+  string 255 lastcardtype;
+  val tttype;
+  array val av1;
+  array val av2;
+  array val av3;
+  array string 20 acur;
+  Integer curcnt;
+  Date td;
+  record CheckStatusHistVc CSHr;
+  Boolean foundCSH; 
+  LongInt frchq,tochq;
+
+  tt = 0;
+  found = true;
+  frchq = FirstInRange(RepSpec.f1,10);
+  tochq = LastInRange(RepSpec.f1,10);
+  
+  ChStateName(RepSpec.flags[1],true,tstr,false);
+  rw = 1;
+  StartReportJob(tstr);
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,HdrStr);
+  Header(rw,HdrStr,1);
+  rw = rw + 1;
+  HTDetailLevel(RepSpec.ArtMode,tstr);
+  Header(rw,tstr,0);
+   
+  if nonBlank(repSpec.FirstAcc) then begin
+    GetAccountName(repSpec.FirstAcc,tstr);             //LO Added
+    HdrStr = USetStr(8486) & repSpec.FirstAcc  & " - " & tstr; //LO Added
+    Header(rw,HdrStr,1);
+    rw = rw + 1;
+  end;
+  if nonBlank(repSpec.LastAcc) then begin
+    GetAccountName(repSpec.LastAcc,tstr);             //LO Added
+    HdrStr = USetStr(8487) & repSpec.LastAcc  & " - " & tstr; //LO Added
+    Header(rw,HdrStr,1);
+    rw = rw + 1;
+  end;
+  if nonBlank(repSpec.AccStr) then begin
+    GetAccountName(repSpec.AccStr,tstr);             //LO Added
+    HdrStr = USetStr(8488) & repSpec.AccStr  & " - " & tstr; //LO Added
+    Header(rw,HdrStr,1);
+    rw = rw + 1;
+  end;
+  If nonBlank(repSpec.d1) then begin
+    HdrStr = USetStr(8518) & repSpec.d1;
+    Header(rw,HdrStr,1);
+    rw = rw + 1;
+  end;
+  if nonBlank(RepSpec.f3) then begin
+    HdrStr = USetStr(8519) & repSpec.f3;
+    Header(rw,HdrStr,1);
+    rw = rw + 1;
+  end;
+  if (RepSpec.flags[4]==0) then begin
+    HdrStr =  USetStr(8453);        
+  end;
+  if (RepSpec.flags[4]==1) then begin
+    HdrStr =  USetStr(8454);        
+  end;
+  if (RepSpec.flags[4]==2) then begin
+    HdrStr =  USetStr(8465);        
+  end;
+  if (RepSpec.flags[4]==3) then begin
+    HdrStr =  USetStr(8514);        
+  end;
+  if (RepSpec.flags[4]==4) then begin
+    HdrStr =  USetStr(8503);        
+  end;
+  Header(rw,HdrStr,1);
+  rw = rw + 1;
+  if (RepSpec.flags[5]==0) then begin
+    HdrStr =  USetStr(8504);        
+  end;
+  if (RepSpec.flags[5]==1) then begin
+    HdrStr =  USetStr(8472);        
+  end;
+  Header(rw,HdrStr,1);
+  rw = rw + 1;
+  if (RepSpec.flags[2]==0) then begin
+    HdrStr = USetStr(8473);
+  end;
+  if (RepSpec.flags[2]==1) then begin
+    HdrStr = USetStr(8474);
+  end;
+  if (RepSpec.flags[2]==2) then begin
+    HdrStr =  USetStr(8464);
+  end;
+  if (RepSpec.flags[2]==3) then begin
+    HdrStr =  USetStr(8463);
+  end;
+  Header(rw,HdrStr,1);
+   
+  EndHeader;
+
+  BeginCurncyTotals(curcnt);
+  switch (RepSpec.ArtMode) begin
+    case 0:
+      SetRepCol(2,35);
+      SetRepColBiDi(3,135,170);  
+      SetRepCol(4,145); 
+      SetRepCol(5,190); 
+      SetRepCol(6,235);
+      SetRepCol(7,300);  
+      SetRepCol(8,360); 
+
+      StartFormat(15);
+      OutString(0,0,USetStr(8476),false);
+      OutString(2,0,USetStr(8467),false);
+      OutStringAdjust(3,0,USetStr(8482),true,M4Val);
+      OutString(4,0,USetStr(8480),false);
+      OutString(5,0,USetStr(8481),false);
+      
+      if (RepSpec.flags[3]!=0) then begin
+        OutString(6,0,USetStr(8485),false);
+      end else begin
+        OutString(6,0,USetStr(8483) & "/" & USetStr(8484),false);
+      end;
+      OutString(7,0,USetStr(8547),false);
+      OutString(8,0,USetStr(8479),false);
+
+      EndFormat;
+    case 1:
+      SetRepCol(2,35);
+      SetRepCol(3,95); 
+      SetRepCol(4,125); 
+      SetRepCol(5,210); 
+      SetRepCol(6,320);
+      SetRepCol(7,370);  
+
+      switch (RepSpec.Media) begin
+        case mtExcel:
+          goto LFileHeader;
+        case mtFile:
+LFileHeader:;  
+          StartFormat(15);
+          OutString(0,0,USetStr(8476),false);
+          OutString(2,0,USetStr(8467),false);
+          OutString(3,0,USetStr(8547),false);
+          OutString(4,0,USetStr(8548),false);
+          OutString(5,0,USetStr(8479),false);
+          OutString(6,0,USetStr(8480),false);
+          OutString(7,0,USetStr(8481),false);
+          OutString(7,0,USetStr(33444),false);
+          OutString(2,0,USetStr(8549),false);
+          OutString(4,0,USetStr(33445),false);
+          OutString(5,0,USetStr(33446),false);
+          OutString(5,0,USetStr(33447),false);
+          OutString(5,0,USetStr(33448),false);
+          OutString(5,0,USetStr(33442),false);
+          OutString(5,0,USetStr(33443),false);
+          OutString(5,0,USetStr(33449),false);
+          OutString(7,0,USetStr(8482),false);
+          OutString(7,0,USetStr(8550),false);
+          OutString(7,0,USetStr(8483),false);
+          EndFormat;
+        otherwise      
+          StartFormat(15);
+          OutString(0,0,USetStr(8476),false);
+          OutString(2,0,USetStr(8467),false);
+          OutString(3,0,USetStr(8547),false);
+          OutString(4,0,USetStr(8548),false);
+          OutString(5,0,USetStr(8479),false);
+          OutString(6,0,USetStr(8480),false);
+          OutString(7,0,USetStr(8481),false);
+          OutStringAdjust(460,0,USetStr(8482),true,M4Val);
+          EndFormat;
+          StartFormat(15);
+          OutString(2,0,USetStr(8485),false);
+          OutString(4,0,USetStr(8582),false);
+          OutString(5,0,USetStr(8777),false);
+          EndFormat;
+      end;
+  end;
+  Gray_Divider(0,1);
+
+   if (RepSpec.flags[4]!=3) then begin
+     keys = 2;
+     if (RepSpec.flags[2]==0) then begin
+       mykey = "SerNr";
+       Chq.SerNr = frchq;
+     end;
+     if (RepSpec.flags[2]==1) then begin
+       mykey = "OpenEffectDate";             
+       if (RepSpec.flags[1] <> 1) then begin
+         mykey = "EffectDate";
+       end;        
+     end;
+     if (RepSpec.flags[2]==2) then begin
+       mykey = "CUCode";
+     end;
+     if (RepSpec.flags[2]==3) then begin
+       mykey = "TransDate";
+     end;    
+     while (LoopKey(mykey,Chq,keys,found)) begin
+       switch (mykey) begin
+         case "SerNr":
+           if (nonblank(RepSpec.f1)) then begin
+             if (Chq.SerNr<frchq) then begin found = false; end;
+             if (Chq.SerNr>tochq) then begin found = false; end;
+           end;
+       end;
+       if (found) then begin
+         testf = true;                       
+         switch (mykey) begin
+           case "SerNr":
+           otherwise
+             if (nonblank(RepSpec.f1)) then begin
+               if (Chq.SerNr<frchq) then begin testf = false; end;
+               if (Chq.SerNr>tochq) then begin testf = false; end;
+             end;
+         end;
+         if (RepSpec.flags[5]==0) then begin
+           if ((Chq.TransDate>RepSpec.sEndDate) or (Chq.TransDate<RepSpec.sStartDate)) then begin
+             testf = false;
+           end;
+         end else begin // gbw - added else - start
+           If ((Chq.EffectDate>RepSpec.sEndDate) or (Chq.EffectDate<RepSpec.sStartDate)) then begin
+             testf = false;
+           end;
+         end;     // gbw - end
+         if (RepSpec.flags[6]<>2) then begin                 //LO Added
+           if ((Chq.Invalid<>0) and (RepSpec.flags[6]==0)) then begin
+             testf = false;
+           end;
+           if ((Chq.Invalid==0) and (RepSpec.flags[6]==1)) then begin
+             testf = false;
+           end;
+         end;
+         if (RepSpec.flags[1]<> 8) then begin                 // All states
+           if (RepSpec.flags[1]<>Chq.Openf) then begin
+             testf = false;
+           end;
+         end;
+         if ((RepSpec.FirstAcc <> Chq.OrigAccNr) and (not Blank(repSpec.FirstAcc)))then begin
+           testf = false;
+         end;
+         if ((RepSpec.LastAcc <> Chq.TempAccNr) and (not Blank(repSpec.LastAcc)))then begin
+           testf = false;
+         end;
+         if ((RepSpec.AccStr <> Chq.TargetAccNr) and (not Blank(repSpec.AccStr)))then begin
+           testf = false;
+         end;
+         If ((Chq.EffectDate<RepSpec.d1) and (not Blank(repSpec.d1))) then begin
+           testf = false;
+         end;
+         if ((RepSpec.f3<>Chq.CUCode) and (not Blank(RepSpec.f3))) then begin
+           testf = false;
+         end;
+         if (RepSpec.flags[4] <> 4) and (RepSpec.flags[4] <> Chq.ChkMode) then begin
+           testf = false;
+         end;
+        
+
+         if (testf) then begin
+           switch (RepSpec.ArtMode) begin
+             case 0:
+               StartFormat(15);
+               OutString(0,0,Chq.SerNr,false);
+               OutString(2,"DblCheckVc",Chq.CheckNr,false);  // Crash in cliente server ???
+               OutVal(3,0,Chq.Amount,M4Val,true);
+               Outdate(4,0,Chq.TransDate,false);
+               Outdate(5,0,Chq.EffectDate,false);
+               if (RepSpec.flags[3]!=0) then begin
+                 ChStateName(Chq.Openf,true, tstr, false);          
+                 OutString(6,0,tstr,false);
+               end else begin
+                 OutString(6,0,Chq.OrigAccNr & "/" & Chq.TargetAccNr,false);
+               end;
+               OutString(7,"DblBankVc",Chq.BankCode,false);
+               OutString(8,0,Left(Chq.CUName,30),false);
+               EndFormat;
+             case 1:
+             
+               if (RepSpec.Media==mtFile or RepSpec.Media==mtExcel) then begin            
+
+                StartFormat(15);
+                OutString(0,0,Chq.SerNr,false);
+                OutString(2,"DblCheckVc",Chq.CheckNr,false);
+                OutString(3,"DblBankVc",Chq.BankCode,false);
+                OutString(4,0,Chq.BankName,false);
+                OutString(5,0,Chq.CUName,false);
+                OutDate(6,0,Chq.TransDate,false);
+                OutDate(7,0,Chq.EffectDate,false);
+                OutDate(7,0,Chq.AcceptedDate,false);
+                fname = "";
+                if (Chq.FromNo>0) then begin
+                switch (Chq.FromFileName) begin
+                  case "IPVc": 
+                    ToStrTRCode(fname,IPYc,Chq.FromNo);
+                  case "OPVc": 
+                    ToStrTRCode(fname,OPYc,Chq.FromNo);
+                  case "PPVc": 
+                    ToStrTRCode(fname,PPYc,Chq.FromNo);
+                  case "CLInVc": 
+                    ToStrTRCode(fname,CLInYc,Chq.FromNo);
+                  case "CLOutVc": 
+                    ToStrTRCode(fname,CLOutYc,Chq.FromNo);
+                  case "ChqDepVc": 
+                    ToStrTRCode(fname,ChqDepYc,Chq.FromNo);
+                end;
+                end;
+                OutString(7,0,fname,false);
+                OutDate(7,0,Chq.ClearingDate,false);
+
+                fname = "";
+                CSHr.CheckSerNr = Chq.SerNr;
+                CSHr.FileName = "ChqDepVc";
+                ReadFirstKey("FNTransNr",CSHr,2,true);
+                ToStrTRCode(fname,ChqDepYc,CSHr.TransNr);
+                OutString(5,0,fname,false);                
+                OutDate(7,0,Chq.EndorsedDate,false);
+                fname = "";
+                if (Chq.ToNo>0) then begin
+                switch (Chq.ToFileName) begin
+                  case "IPVc": 
+                    ToStrTRCode(fname,IPYc,Chq.ToNo);
+                  case "OPVc": 
+                    ToStrTRCode(fname,OPYc,Chq.ToNo);
+                  case "PPVc": 
+                    ToStrTRCode(fname,PPYc,Chq.ToNo);
+                  case "CLInVc": 
+                    ToStrTRCode(fname,CLInYc,Chq.ToNo);
+                  case "CLOutVc": 
+                    ToStrTRCode(fname,CLOutYc,Chq.ToNo);
+                  case "ChqDepVc": 
+                    ToStrTRCode(fname,ChqDepYc,Chq.ToNo);
+                end;
+                end;
+                OutString(5,0,fname,false);
+                OutDate(7,0,Chq.CancelledDate,false);
+                OutDate(7,0,Chq.BouncedDate,false);
+                OutString(5,0,"",false);              
+                OutVal(460,0,Chq.Amount,M4Val,true);
+                OutString(465,0,Chq.CurncyCode,false);
+                OutString(5,0,Chq.OrigAccNr,false);              
+                EndFormat;
+               end else begin
+                 StartFormat(15);
+                 OutString(0,0,Chq.SerNr,false);
+                 OutString(2,"DblCheckVc",Chq.CheckNr,false);
+                 OutString(3,"DblBankVc",Chq.BankCode,false);
+                 OutString(4,0,Chq.BankName,false);
+                 OutString(5,0,Left(Chq.CUName,30),false);
+                 OutDate(6,0,Chq.TransDate,false);
+                 OutDate(7,0,Chq.EffectDate,false);
+                 OutVal(460,0,Chq.Amount,M4Val,true);
+                 OutString(465,0,Chq.CurncyCode,false);
+                 EndFormat;
+ 
+                 ResetLoop(CSHr);
+                 foundCSH = true;
+                 CSHr.CheckSerNr = Chq.SerNr;
+                 while (LoopKey("CheckSerNr",CSHr,1,foundCSH)) begin
+                   if (CSHr.CheckSerNr!=Chq.SerNr) then begin foundCSH = false; end;
+                   if (foundCSH) then begin
+                     ChStateName(CSHr.Openf,true,tstr,false);   
+                     fname = "";
+                     switch (CSHr.FileName) begin
+                       case "CheckVc": 
+                         ToStrTRCode(fname,Check2Yc,Chq.SerNr);
+                       case "IPVc": 
+                         ToStrTRCode(fname,IPYc,CSHr.TransNr);
+                       case "OPVc": 
+                         ToStrTRCode(fname,OPYc,CSHr.TransNr);
+                       case "PPVc": 
+                         ToStrTRCode(fname,PPYc,CSHr.TransNr);
+                       case "CLInVc": 
+                         ToStrTRCode(fname,CLInYc,CSHr.TransNr);
+                       case "CLOutVc": 
+                         ToStrTRCode(fname,CLOutYc,CSHr.TransNr);
+                       case "ChqDepVc": 
+                         ToStrTRCode(fname,ChqDepYc,CSHr.TransNr);
+                       otherwise
+                         if (blank(CSHr.FileName)) then begin
+                           switch (CSHr.Openf) begin
+                             case kCheckTypeBounced:
+                               ToStrTRCode(fname,Check2Yc,Chq.SerNr);
+                           end;
+                         end;
+                     end;
+ 
+                     StartFormat(15);
+                     OutString(2,0,tstr,false);
+                     OutDate(4,0,CSHr.StatusDate,false);
+                     OutString(5,"DblTrans3",fname,false);
+                     EndFormat;
+                   end;
+                 end;       
+               end;       
+           end;
+           tt = tt + MulWithRateToBase1(Chq.CurncyCode,Chq.TransDate,Chq.Amount,DefaultCurRoundOff);           
+           AddCurncyTotals(acur,av1,curcnt,Chq.CurncyCode,Chq.Amount);
+         end;
+       end;
+     end;
+   end else begin
+     found = true;
+     Cr.TransDate = RepSpec.sStartDate;
+     while (LoopKey("CardType",Cr,2,found)) begin
+       if (Cr.TransDate>RepSpec.sEndDate) then begin
+         found = false;
+       end;
+       if (found) then begin
+         testf = true;
+         if (nonblank(RepSpec.f3)) then begin
+           if (RepSpec.f3!=Cr.CUCode) then begin
+             testf = false;
+           end;
+         end;
+         switch (Cr.Status) begin
+           case 0:
+             if (RepSpec.flags[1]!=0) and (RepSpec.flags[1]!=8) then begin
+               testf = false;
+             end;
+           case 1:
+             if (RepSpec.flags[1]!=2) and (RepSpec.flags[1]!=8) then begin
+               testf = false;
+             end;
+           case 3:
+             if (RepSpec.flags[1]!=3) and (RepSpec.flags[1]!=8) then begin
+               testf = false;
+             end;
+           case 4:
+             if (RepSpec.flags[1]!=6) and (RepSpec.flags[1]!=8) then begin
+               testf = false;
+             end;
+           case 5:
+             if (RepSpec.flags[1]!=5) and (RepSpec.flags[1]!=8) then begin
+               testf = false;
+             end;
+         end;
+         if (testf) then begin
+           if (nonblank(lastcardtype)) then begin
+             if (lastcardtype!=Cr.CardType) then begin
+               Gray_Divider(0,1);
+               switch (RepSpec.ArtMode) begin
+                 case 0:
+                   StartFormat(15);
+                    OutString(0,0,lastcardtype,false);
+                    OutVal(7,0,tttype,M4Val,true);
+                   EndFormat;
+               end;
+               tttype = blankval;
+             end;
+           end;
+           CCTr.Code = Cr.CardType;
+           if (ReadFirstMain(CCTr,1,true)) then begin end;
+           switch (RepSpec.ArtMode) begin
+             case 0:
+               StartFormat(15);
+               OutLongInt(0,"DblCouponVc",Cr.SerNr,false);
+               OutString(2,0,Cr.CUCode,false);  // Crash in cliente server ???
+               OutString(3,0,Cr.CUName,false);
+               OutDate(5,0,Cr.TransDate,false);
+               OutDate(6,0,Cr.DepDate,false);
+               OutVal(7,0,Cr.Amount,M4Val,true);
+               OutString(8,0,CCTr.TargetAcc,true);
+               EndFormat;
+           end;
+           lastcardtype = Cr.CardType;
+           tt = tt + MulWithRateToBase1(Cr.CurncyCode,Cr.TransDate,Cr.Amount,DefaultCurRoundOff);           
+           tttype = tttype + MulWithRateToBase1(Cr.CurncyCode,Cr.TransDate,Cr.Amount,DefaultCurRoundOff);           
+           AddCurncyTotals(acur,av1,curcnt,Cr.CurncyCode,Cr.Amount);
+         end;
+       end;
+     end;
+   end;
+   if (RepSpec.flags[4]==3) then begin
+     if (tttype!=0) then begin
+       Gray_Divider(0,1);
+       StartFormat(15);
+        OutString(0,0,lastcardtype,false);
+        OutVal(7,0,tttype,M4Val,true);
+       EndFormat;
+       tttype = blankval;
+     end;
+   end;
+
+  // Footer
+  Gray_Divider(0,1);
+  switch (RepSpec.ArtMode) begin
+    case 0:
+      StartFormat(15);
+      OutString(0,0,USetStr(8513),false);
+      OutVal(3,0,tt,M4Val,true);
+      EndFormat;
+      Gray_Divider(0,1);
+      PrintCurncyTotals(acur,av1,av2,av3,curcnt,3,-1,-1,2,false,RepSpec.PocketPC);
+    case 1:
+      if (RepSpec.Media==mtFile or RepSpec.Media==mtExcel) then begin            
+        StartFormat(15);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutString(0,0,"",false);
+        OutVal(460,0,tt,M4Val,true);
+        EndFormat;
+      end else begin
+        StartFormat(15);
+        OutString(0,0,USetStr(8513),false);
+        OutVal(460,0,tt,M4Val,true);
+        EndFormat;
+        Gray_Divider(0,1);
+        PrintCurncyTotals(acur,av1,av2,av3,curcnt,460,-1,-1,7,false,RepSpec.PocketPC);        
+      end;
+  end;
+
+
+  EndJob;
+  return;
+end;
+

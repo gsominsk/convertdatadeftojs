@@ -1,0 +1,206 @@
+external function roundmode GetVATRoundModeRB();
+external function roundmode DefaultRoundMode();
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val FindVAT(string,val,Integer,Integer);
+
+procedure CalcVAT(record SMVc VATr,Integer inclvat,val vivatval,Boolean calcvatf)
+BEGIN
+  Integer i,vatcnt;
+  val t,lv,totvat;
+  row SMVc VATrw;
+  record RoundBlock RoundRec;
+  
+  BlockLoad(RoundRec);
+  vatcnt = MatRowCnt(VATr);
+  for (i=0;i<vatcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw); 
+    if (VATrw.CredVal!=0) then begin           
+      switch (RoundRec.VATCalcWay) begin
+        case 0:
+          if (calcvatf==false) then begin
+            t = -VATrw.DebVal;
+            if (VATrw.DebVal<0) then begin
+              VATrw.DebVal = -VATrw.DebVal;
+            end;
+          end else begin
+            lv = VATrw.CredVal;
+            if (lv<0) then begin
+              lv = -VATrw.CredVal;
+            end;
+            t = FindVAT(VATrw.VATCode,lv,inclvat,0);
+            t = Round(t,GetVATRoundModeRB);
+            if (VATrw.CredVal<0) then begin
+              t = -t;
+            end;
+            VATrw.DebVal = t;
+          end;
+        case 1:
+          t = -VATrw.DebVal;
+          if (VATrw.DebVal<0) then begin
+            VATrw.DebVal = -VATrw.DebVal;
+          end;
+        //already calculated
+      end;
+/*//this
+      if (vivatval<0) then begin
+        totvat = totvat - t;
+      end else begin
+        totvat = totvat + t;
+      end;
+*/      
+      totvat = totvat + t;
+      MatRowPut(VATr,i,VATrw);
+    end;
+  end;
+  if (nonblank(vivatval)) then begin
+  if (totvat!=vivatval) then begin
+    for (i=0;i<vatcnt;i=i+1) begin
+      MatRowGet(VATr,i,VATrw);
+      if ((VATrw.CurCredVal!=0) and (VATrw.CredVal!=0)) then begin
+        VATrw.DebVal = VATrw.DebVal + (vivatval-totvat);
+        MatRowPut(VATr,i,VATrw);
+        goto LCalcVAT;
+      end;
+    end;
+  end;  
+  end;
+LCalcVAT:;  
+  for (i=0;i<vatcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw);     
+    VATrw.DebVal = MulRateToBase1(VATrw.CurncyCode,VATrw.DebVal,VATrw.FrRate,VATrw.ToRateB1,VATrw.ToRateB2,VATrw.BaseRate1,VATrw.BaseRate2,DefaultCurRoundOff);
+    VATrw.CredVal = MulRateToBase1(VATrw.CurncyCode,VATrw.CredVal,VATrw.FrRate,VATrw.ToRateB1,VATrw.ToRateB2,VATrw.BaseRate1,VATrw.BaseRate2,DefaultCurRoundOff);
+    MatRowPut(VATr,i,VATrw);     
+  end;
+  RETURN;
+END;
+
+global
+procedure AddTRToVATArray(record TRVc TRr,var record SMVc VATr,Integer inclvat,val vivatval,Integer invalid,record BaseCurBlock bcur,Boolean calcvatf)
+BEGIN
+  row TRVc TRrw;
+  row SMVc VATrw;
+  Integer i,rwcnt;
+  Integer vi,vatcnt;
+  val v,lv,t;
+  val totvat;
+  Boolean testf,ratef;
+  
+  vatcnt = MatRowCnt(VATr);
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    ratef = false;
+    if (blank(TRrw.VATCode)) then begin goto LAddTRToVATArrayBreak; end;
+    if ((TRrw.Curncy!=bcur.BaseCur1) and (nonblank(bcur.BaseCur1)) and (nonblank(TRrw.Curncy))) then begin
+      v = TRrw.CurCredVal - TRrw.CurDebVal;
+      ratef = true;
+    end else begin
+      v = TRrw.CredVal - TRrw.DebVal;
+    end;
+    for (vi=0;vi<vatcnt;vi=vi+1) begin
+      MatRowGet(VATr,vi,VATrw);
+      testf = true;
+      if (testf) then begin
+      if (TRrw.VATCode==VATrw.VATCode) then begin
+        testf = true;
+        if (invalid==0) then begin
+          if (TRrw.ovst!=0) then begin
+            testf = false;
+          end;
+        end;
+        if (testf) then begin
+          if (v<0) then begin
+            lv = -v;
+          end else begin
+            lv = v;
+          end;
+          t = FindVAT(TRrw.VATCode,lv,inclvat,0);
+          t = Round(t,GetVATRoundModeRB);
+          if (v<0) then begin
+            t = -t;
+          end;
+          VATrw.CredVal = VATrw.CredVal - Round(v,DefaultRoundMode);
+          VATrw.DebVal = VATrw.DebVal - t;
+          VATrw.RowSimStat = invalid;
+          
+          VATrw.CurncyCode = TRrw.Curncy;
+          if (ratef) then begin
+            VATrw.FrRate = TRrw.FrRate;
+            VATrw.ToRateB1 = TRrw.ToRateB1;
+            VATrw.ToRateB2 = TRrw.ToRateB2;
+            VATrw.BaseRate1 = TRrw.BaseRate1;
+            VATrw.BaseRate2 = TRrw.BaseRate2;          
+          end;
+          MatRowPut(VATr,vi,VATrw);
+          totvat = totvat + t;
+        end;
+        goto LAddTRToVATArrayBreak;
+      end;
+      end;
+    end;    
+LAddTRToVATArrayBreak:;    
+  end;
+  if (calcvatf) then begin
+  if (totvat!=vivatval) then begin
+    for (vi=0;vi<vatcnt;vi=vi+1) begin
+      MatRowGet(VATr,vi,VATrw);
+      if ((VATrw.CurCredVal!=0) and (VATrw.CredVal!=0)) then begin
+        VATrw.DebVal = VATrw.DebVal - (vivatval-totvat);
+        VATrw.RowSimStat = invalid;
+        MatRowPut(VATr,vi,VATrw);
+        goto LAddTRToVATArray;
+      end;
+    end;
+  end;
+  end;
+LAddTRToVATArray:;  
+  if (calcvatf) then begin
+    CalcVAT(VATr,inclvat,vivatval,calcvatf);
+  end;
+  RETURN;
+END;
+
+global
+procedure AddExpToVATArray(record ExpVc Expr,row ExpVc Exprw,var record SMVc VATr,Integer inclvat,Integer invalid,record BaseCurBlock bcur)
+BEGIN
+  row SMVc VATrw;
+  Integer i,rwcnt;
+  Integer vi,vatcnt;
+  val v,t;
+  Boolean testf,ratef;
+  
+  vatcnt = MatRowCnt(VATr);
+
+  ratef = true;
+  if (blank(Exprw.VATCode)) then begin goto LAddExpToVATArrayBreak; end;
+//    v = MulRateToBase1(VIr.CurncyCode,VIrw.Sum,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+  v = Round(Exprw.Sum-Exprw.VATSum,DefaultRoundMode);
+  for (vi=0;vi<vatcnt;vi=vi+1) begin
+    MatRowGet(VATr,vi,VATrw);
+    testf = true;
+    if (testf) then begin
+    if (Exprw.VATCode==VATrw.VATCode) then begin
+      testf = true;
+      if (testf) then begin
+        t = Exprw.VATSum;
+        VATrw.CredVal = VATrw.CredVal + Round(v,DefaultRoundMode);
+        VATrw.DebVal = VATrw.DebVal + t;
+        VATrw.RowSimStat = invalid;
+          
+        VATrw.CurncyCode = Expr.CurncyCode;
+        if (ratef) then begin
+          VATrw.FrRate = Expr.FrRate;
+          VATrw.ToRateB1 = Expr.ToRateB1;
+          VATrw.ToRateB2 = Expr.ToRateB2;
+          VATrw.BaseRate1 = Expr.BaseRate1;
+          VATrw.BaseRate2 = Expr.BaseRate2;        
+        end;
+        MatRowPut(VATr,vi,VATrw);
+      end;
+      goto LAddExpToVATArrayBreak;
+    end;
+    end;
+  end;    
+LAddExpToVATArrayBreak:;    
+  RETURN;
+END;

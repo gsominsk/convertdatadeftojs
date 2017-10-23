@@ -1,0 +1,194 @@
+external function Boolean PasteCUCodeToJob(var record JobVc,Integer);
+external procedure JobSumup(var record JobVc);
+external function Integer JobPasteType(var record JobVc,string);
+
+updating procedure CreateJob(string cucode,Date td,string restype,LongInt NrOfJob,LongInt NrOfDays)
+begin
+  record JobVc Jobr;
+  record HotelBlock Hotelb;
+  LongInt cnt;
+  
+  BlockLoad(Hotelb);
+  RecordNew(Jobr);
+  Jobr.TransDate = td;
+  Jobr.Type = restype;      
+  JobPasteType(Jobr,"");
+  Jobr.NrOfDays = NrOfDays;
+  Jobr.EndDate = AddDay(Jobr.TransDate,Jobr.NrOfDays);
+  Jobr.CUCode = cucode;      
+  PasteCUCodeToJob(Jobr,-1);
+  Jobr.ResStatus = Hotelb.AllotmentSt;      
+  cnt = 1;
+
+  while (cnt<=NrOfJob) begin
+    Jobr.SerNr = NextSerNr("JobVc",Jobr.TransDate,-1,false,"");
+    if (Jobr.SerNr>0) then begin
+      JobSumup(Jobr);
+      if (RecordStore(Jobr,false)) then begin 
+      end;
+    end;
+    cnt = cnt + 1;
+  end;
+  return;
+end;
+
+updating procedure CreateAllotmentReservations_Dayly(Date sd,Date ed,string cucode,row HCUAVc HCUArw,record ScheduleRuleVc Scheduler)
+begin
+  Date td;
+  
+  if (Scheduler.DayInterval>0) then begin
+    td = sd;
+    while (td<=ed) begin
+      CreateJob(cucode,td,HCUArw.ResType,HCUArw.NrOfJob,HCUArw.NrOfDays);
+      td = AddDay(td,Scheduler.DayInterval);
+    end;
+  end;
+  return;
+end;
+
+updating procedure CreateAllotmentReservations_Weekly(Date sd,Date ed,string cucode,row HCUAVc HCUArw,record ScheduleRuleVc Scheduler)
+begin
+  Date td;
+  Date weekstart;
+  Boolean testf;
+  
+  if (Scheduler.WeekInterval>0) then begin
+    weekstart = sd;
+    while (weekstart<=ed) begin
+      td = weekstart;
+      while (td<=AddDay(weekstart,6)) begin
+        testf = false;
+        if (Scheduler.Mon!=0) then begin
+          if (GetDateId(td)==1) then begin testf = true; end;
+        end;
+        if (Scheduler.Tue!=0) then begin
+          if (GetDateId(td)==2) then begin testf = true; end;
+        end;
+        if (Scheduler.Wed!=0) then begin
+          if (GetDateId(td)==3) then begin testf = true; end;
+        end;
+        if (Scheduler.Thu!=0) then begin
+          if (GetDateId(td)==4) then begin testf = true; end;
+        end;
+        if (Scheduler.Fri!=0) then begin
+          if (GetDateId(td)==5) then begin testf = true; end;
+        end;
+        if (Scheduler.Sat!=0) then begin
+          if (GetDateId(td)==6) then begin testf = true; end;
+        end;
+        if (Scheduler.Sun!=0) then begin
+          if (GetDateId(td)==7) then begin testf = true; end;
+        end;
+        if (testf) then begin
+           CreateJob(cucode,td,HCUArw.ResType,HCUArw.NrOfJob,HCUArw.NrOfDays);
+        end; 
+        td = AddDay(td,1);
+      end;
+      weekstart = AddDay(weekstart,7*Scheduler.WeekInterval);
+    end;
+  end;
+  return;
+end;
+
+updating procedure CreateAllotmentReservations_Monthly(Date sd,Date ed,string cucode,row HCUAVc HCUArw,record ScheduleRuleVc Scheduler)
+begin
+  Date td;
+  Boolean testf;
+  Date d;
+  LongInt diff;
+ 
+  if (Scheduler.DayInterval>0) then begin
+    td = sd;
+    td.day = Scheduler.DayInterval;
+    if (td<sd) then begin
+      td = AddMonth(td,1);
+    end;
+    while (td<=ed) begin
+      testf = true;
+      switch (Scheduler.MonthType) begin
+        case 0:
+          if (td.day!=Scheduler.DayInterval) then begin testf = false; end;
+        case 1:
+          if (Scheduler.WeekDay!=GetDateId(td)) then begin testf = false; end;
+          if (testf) then begin
+            testf = false;
+            d = AddDay(td,-GetDay(td)+1);
+            diff = GetDay(td) - GetDay(d)+1;
+            if (diff>7*(Scheduler.DayInterval-1)) and (diff<=7*Scheduler.DayInterval) then begin
+              testf = true;
+            end;
+          end;
+      end;
+      if (testf) then begin
+         CreateJob(cucode,td,HCUArw.ResType,HCUArw.NrOfJob,HCUArw.NrOfDays);
+         td = AddMonth(td,Scheduler.MonthInterval);
+         td.day = 1;
+         td = AddDay(td,-1);
+      end; 
+      td = AddDay(td,1);
+    end;
+  end;
+  return;
+end;
+
+updating procedure CreateAllotmentReservations(Date sd,Date ed,string cucode,row HCUAVc HCUArw)
+begin
+  record ScheduleRuleVc Scheduler;
+  
+  Scheduler.Code = HCUArw.ScheduleRule;
+  ReadFirstMain(Scheduler,1,true);
+  switch (Scheduler.PeriodType) begin
+    case 0: CreateAllotmentReservations_Dayly(sd,ed,cucode,HCUArw,Scheduler);
+    case 1: CreateAllotmentReservations_Weekly(sd,ed,cucode,HCUArw,Scheduler);
+    case 2: CreateAllotmentReservations_Monthly(sd,ed,cucode,HCUArw,Scheduler);
+  end;
+  return;
+end;
+
+global
+updating procedure HCUAMn(record RcVc RepSpec)
+begin
+  record HCUAVc HCUAr;
+  row HCUAVc HCUArw;
+  Integer i,rwcnt;
+  Boolean found,testf;
+  string 255 ckey,frcu,tocu;
+  Date sd,ed;
+  
+  frcu = FirstInRange(RepSpec.f1,20);
+  tocu = LastInRange(RepSpec.f1,20);
+  found = true;
+  HCUAr.CUCode = frcu;
+  while (LoopMain(HCUAr,1,found)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (HCUAr.CUCode>tocu) then begin found = false; end;
+    end;
+    if (found) then begin
+      testf = false;
+      if (DateInRange(HCUAr.StartDate,RepSpec.sStartDate,RepSpec.sEndDate)) then begin
+        testf = true;
+      end;     
+      if (DateInRange(HCUAr.EndDate,RepSpec.sStartDate,RepSpec.sEndDate)) then begin
+        testf = true;
+      end;     
+      if (DateInRange(RepSpec.sStartDate,HCUAr.StartDate,HCUAr.EndDate)) then begin
+        testf = true;
+      end;     
+      if (DateInRange(RepSpec.sEndDate,HCUAr.StartDate,HCUAr.EndDate)) then begin
+        testf = true;
+      end;     
+      if (testf) then begin
+        sd = RepSpec.sStartDate;
+        if (sd<HCUAr.StartDate) then begin sd = HCUAr.StartDate; end;
+        ed = RepSpec.sEndDate;
+        if (ed>HCUAr.EndDate) then begin ed = HCUAr.EndDate; end;
+        rwcnt = MatRowCnt(HCUAr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(HCUAr,i,HCUArw);          
+          CreateAllotmentReservations(sd,ed,HCUAr.CUCode,HCUArw);
+        end;
+      end;
+    end;
+  end;
+  return;
+end;

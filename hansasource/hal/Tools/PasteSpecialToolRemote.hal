@@ -1,0 +1,2093 @@
+external procedure GetLegalInvNrRow(string,var row LegalInvNrBlock);
+external procedure ExtractObj(string,var Integer,var string);
+external procedure GetCurUser(var record UserVc);
+external function Boolean IsDigit(string);
+external procedure ReverseString(string,var string);
+external function string 255 FindOffSerNr(string);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external procedure NextNumber(string,var string);
+external procedure FindOTforAcc(string,var string);
+external function Integer CountObjects(string);
+external procedure ExtractElemFromSet(string,integer,var string);
+external function string 10 FindWithHoldAcc(string,string);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function Boolean GetCOSAcc(string,string,string,record AccBlock,record INVc,integer,Boolean,Integer,var string,var string);
+external procedure CreateSBString(Integer,string,string,string,val,Boolean,val,Boolean,var string);
+external function val GetORRowReserv(LongInt,string,string,var val,var string,var string,Boolean);
+external function val GetIntORRowReserv(LongInt,string,string,var val,var string,var string,var string,Boolean);
+
+function Boolean FindLastOffSerNrRecord(Date invdate,string filename,string serie,string tserstart,string tserend,var record OffSerNrIVVc resOffSNIVr)
+begin
+  Boolean res,found,testf;
+  record OffSerNrIVVc OffSNIVr;
+  string 255 lastofficialnr;
+  row LegalInvNrBlock LINrbrw;
+  row LegalInvNrBlock blankLINrbrw;
+  record IVVc IVr;
+  
+  RecordClear(resOffSNIVr);
+  OffSNIVr.FileName = filename;
+  OffSNIVr.OfficialSerNr = serie & tserend;
+  found = true;
+  while (LoopBackKey("FileNameOfficialSerNr",OffSNIVr,2,found)) begin
+    if (OffSNIVr.FileName!=filename) then begin found = false; end;
+    if (Left(OffSNIVr.OfficialSerNr,len(serie))!=serie) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      GetLegalInvNrRow(OffSNIVr.OfficialSerNr,LINrbrw);
+      if (DateInRange(invdate,LINrbrw.PurchDate,LINrbrw.EndDate)==false) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+//Trace("OffSNIVr.OfficialSerNr " & OffSNIVr.OfficialSerNr," invdate " & invdate & " testf " & testf & " LINrbrw.PurchDate " & LINrbrw.PurchDate & " LINrbrw.EndDate " & LINrbrw.EndDate);
+        if (len(OffSNIVr.OfficialSerNr)>len(resOffSNIVr.OfficialSerNr)) then begin
+          RecordCopy(resOffSNIVr,OffSNIVr);
+          res = true;
+        end;
+      end;
+    end;
+  end;
+  FindLastOffSerNrRecord = res;
+  return;
+end;
+
+global
+function string 50 NextLegalSerNr(string filename,LongInt curivnr,Date invdate,string serie,string tserstart,string tserend)
+BEGIN
+  string 50 res,tstr,pre,tstr3,tstr2;
+  string 1 c;
+  Integer i,l,seriel,a;
+  record OffSerNrIVVc OffSNIVr;
+  record OffSerNrIVVc tmpOffSNIVr;
+  LongInt nr,li;
+  record UserVc Userr;
+  Boolean testf;
+  
+  GetCurUser(Userr);
+  if (len(tserstart)!=len(tserend)) then begin
+    if (nonblank(tserend)) then begin
+      testf = false;
+      if (filename=="IVVc") then begin //for all ? 
+        testf = FindLastOffSerNrRecord(invdate,filename,serie,tserstart,tserend,OffSNIVr);
+      end else begin
+        OffSNIVr.FileName = filename;
+        OffSNIVr.OfficialSerNr = serie & tserend;
+        testf = ReadLastKey("FileNameOfficialSerNr",OffSNIVr,2,false);
+      end;
+      if (testf) then begin
+        if (OffSNIVr.IVNr!=curivnr) and (OffSNIVr.FileName==filename) then begin
+          seriel = len(serie);
+          if (Left(OffSNIVr.OfficialSerNr,seriel)==serie) then begin
+            l = len(OffSNIVr.OfficialSerNr);
+            for (i=seriel;i<l;i=i+1) begin
+              c = Mid(OffSNIVr.OfficialSerNr,i,1);
+              if (asc(c)>=asc("0")) and (asc(c)<=asc("9")) then begin
+                tstr = tstr & c;
+              end else begin
+                goto LBREAK1;
+              end;
+            end;
+          end;
+        end;
+      end;
+LBREAK1:;
+      if (StringToLongInt(tstr)<StringToLongInt(tserstart)) then begin tstr = ""; end;
+      if (blank(tstr)) then begin
+        res = serie & tserstart;
+      end else begin
+        res = "";
+        pre = Left(tserstart,len(tserstart)-len(FindOffSerNr(tserstart)));
+        nr = StringToLongInt(tstr) + 1;
+//  StopAlert(" pre " & pre & " nr " & nr & " serie " & serie & " res " & res);      
+        if (nr>StringToLongInt(tserend)) then begin
+          res = "";
+          goto LNextLegalSerNr;
+        end;
+        res = serie & pre & nr;
+      end;
+/*      
+      if (nonblank(Userr.LastOfficialSerNr)) then begin
+        if (res<Userr.LastOfficialSerNr) then begin
+          res = Userr.LastOfficialSerNr;
+        end;
+      end;
+*/      
+    end;
+  end else begin
+    if (nonblank(tserend)) then begin
+      OffSNIVr.FileName = filename;
+      OffSNIVr.OfficialSerNr = serie & tserend;
+      if (ReadLastKey("FileNameOfficialSerNr",OffSNIVr,2,false)) then begin
+//        if (OffSNIVr.IVNr!=curivnr) then begin//not good I think
+        if (OffSNIVr.FileName==filename) then begin
+          seriel = len(serie);
+          if (Left(OffSNIVr.OfficialSerNr,seriel)==serie) then begin
+            l = len(OffSNIVr.OfficialSerNr);
+            for (i=seriel;i<l;i=i+1) begin
+              c = Mid(OffSNIVr.OfficialSerNr,i,1);
+              if (asc(c)>=asc("0")) and (asc(c)<=asc("9")) then begin
+                tstr = tstr & c;
+              end else begin
+                goto LBREAK2;
+              end;
+            end;
+          end;
+        end;
+      end;
+LBREAK2:;
+      if (StringToLongInt(tstr)<StringToLongInt(tserstart)) then begin tstr = ""; end;
+      if (blank(tstr)) then begin
+        res = serie & tserstart;
+      end else begin
+        res = "";
+        NextNumber(tstr,res);
+        if ((len(tserstart))!=(len(tserend))) and (tstr>res) then begin
+          res = res & "0";
+        end;
+  //      res = StringToLongInt(tstr) + 1;
+        if (StringToLongInt(res)>StringToLongInt(tserend)) then begin
+          res = "";
+          goto LNextLegalSerNr;
+        end;
+        res = serie & res;
+      end;
+    end;
+/*    
+    if (nonblank(Userr.LastOfficialSerNr)) then begin
+      if (res<Userr.LastOfficialSerNr) then begin
+        res = Userr.LastOfficialSerNr;
+      end;
+    end;
+*/    
+  end;
+LNextLegalSerNr:;  
+  NextLegalSerNr = res;
+  RETURN;
+END;
+
+/*
+global
+function string 50 NextLegalSerNr(LongInt curivnr,Date invdate,string serie,string tserstart,string tserend)
+BEGIN
+  string 50 res,tstr;
+  string 1 c;
+  Integer i,l,seriel;
+  record OffSerNrIVVc OffSNIVr;
+  
+  if (nonblank(tserend)) then begin
+    OffSNIVr.OfficialSerNr = serie & tserend;
+    if (ReadLastKey("OfficialSerNr",OffSNIVr,1,false)) then begin
+      if (OffSNIVr.IVNr!=curivnr) then begin
+        seriel = len(serie);
+        if (Left(OffSNIVr.OfficialSerNr,seriel)==serie) then begin
+          l = len(OffSNIVr.OfficialSerNr);
+          for (i=seriel;i<l;i=i+1) begin
+            c = Mid(OffSNIVr.OfficialSerNr,i,1);
+            if (asc(c)>=asc("0")) and (asc(c)<=asc("9")) then begin
+              tstr = tstr & c;
+            end else begin
+              goto LBREAK;
+            end;
+          end;
+        end;
+      end;
+    end;
+LBREAK:;
+    if (StringToLongInt(tstr)<StringToLongInt(tserstart)) then begin tstr = ""; end;
+    if (blank(tstr)) then begin
+      res = serie & tserstart;
+    end else begin
+      res = "";
+      NextNumber(tstr,res);
+      if ((len(tserstart))!=(len(tserend))) and (tstr>res) then begin
+        res = res & "0";
+      end;
+//      res = StringToLongInt(tstr) + 1;
+      if (StringToLongInt(res)>StringToLongInt(tserend)) then begin
+        res = "";
+        goto LNextLegalSerNr;
+      end;
+      res = serie & res;
+    end;
+  end;
+LNextLegalSerNr:;  
+  NextLegalSerNr = res;
+  RETURN;
+END;
+*/
+
+/*
+look in TestNextOfficialSerialNr_IVVc when changing
+*/
+global
+procedure LegalInvNrSClassArrayOnOpen2(string filename,LongInt curivnr,Date invdate,string custcode,var Array string astr,var Integer acnt,Integer recordtype,Integer taxtype,string terminal,string branch,Integer status)
+begin
+  record LegalInvNrBlock LegalInvNrRec;
+  row LegalInvNrBlock LINrbrw;
+  Integer i,rwcnt;
+  record CUVc CUr;
+  Boolean testf;  
+  
+  if (nonblank(custcode)) then begin 
+    CUr.Code = custcode;
+    if (ReadFirstMain(CUr,1,true)) then begin end;
+  end;  
+  BlockLoad(LegalInvNrRec);
+  rwcnt = MatRowCnt(LegalInvNrRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LegalInvNrRec,i,LINrbrw);
+    testf = false;
+    switch (LINrbrw.RegType) begin
+      case kOfficialNumTypeAllIVVc:
+        if (recordtype<=kInvoiceTypeInterest or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) then begin
+          testf = true;
+        end;
+      case kOfficialNumTypeInterestIVVc:
+        if (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==kRecordStatusNone) then begin testf = true; end;
+      case kOfficialNumTypeManualInterestIVVc:
+        if (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdInterestIVVc:
+        if (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeCashIVVc:
+        if (recordtype==kInvoiceTypeCash) and (status!=kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeManualCashIVVc:
+        if (recordtype==kInvoiceTypeCash) and (status!=kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeCashInvoiceReceiptPRTIVVc:
+        if (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status!=kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeManualCashInvoiceReceiptIVVc:
+        if (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status!=kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdCashIVVc:
+        if (recordtype==kInvoiceTypeCash) and (status==kRecordStatusRecovered) then begin  testf = true; end;
+      case kOfficialNumTypeRecoverdCashInvoiceReceiptIVVc:
+        if (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeCreditIVVc:
+        if (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status!=kRecordStatusManual) then begin 
+          testf = true;
+        end; 
+      case kOfficialNumTypeRecoverdCreditIVVc:
+        if (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status!=kRecordStatusManual) then begin 
+          testf = true;
+        end; 
+      case kOfficialNumTypeManualCreditIVVc:
+        if (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status==kRecordStatusManual) then begin 
+          testf = true;
+        end; 
+      case kOfficialNumTypeLiquidationIVVc:
+        if (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) and (taxtype==kTaxInvTypeLiquidation) then begin 
+          testf = true;
+        end;
+      case kOfficialNumTypeReceiptIVVc:
+        if (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) and (taxtype==kTaxInvTypeReceipt) then begin 
+          testf = true;
+        end;
+      case kOfficialNumTypeIVVc:
+        if (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) and (taxtype==kTaxInvTypeNormal) then begin 
+          testf = true;
+        end;
+      case kOfficialNumTypeManualIVVc:
+        if (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) and (taxtype==kTaxInvTypeNormal) then begin 
+          testf = true;
+        end;
+      case kOfficialNumTypeRecoverdIVVc:
+        if (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) and (taxtype==kTaxInvTypeNormal) then begin 
+          testf = true;
+        end;
+      case kOfficialNumTypePOSIVVc:
+        if (recordtype==10) then begin testf = true; end;
+      case kOfficialNumTypeManualPOSIVVc:
+        if (recordtype==10) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdPOSIVVc:
+        if (recordtype==10) then begin testf = true; end;
+      case kOfficialNumTypeCreditIVCashVc:
+        if (recordtype==-10) then begin testf = true; end;
+      case kOfficialNumTypeManualCreditIVCashVc:
+        if (recordtype==-10) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdCreditIVCashVc:
+        if (recordtype==-10) then begin testf = true; end;
+      case kOfficialNumTypeRestAccVc:
+        if (recordtype==16) then begin testf = true; end;      
+      case kOfficialNumTypeSHVc:
+        if (recordtype==14) and (status!=kRecordStatusManual and status!=kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeManualSHVc:
+        if (recordtype==14) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdSHVc:
+        if (recordtype==14) and (status==kRecordStatusRecovered) then begin testf = true; end;    
+      case kOfficialNumTypeRetVc:
+        if (recordtype==13) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualRetVc:
+        if (recordtype==13) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdRetVc:
+        if (recordtype==13) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeStockMovVc:
+        if (recordtype==11) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualStockMovVc:
+        if (recordtype==11) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdStockMovVc:
+        if (recordtype==11) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeOwnGoodsTransStockMovVc:
+        if (recordtype==18) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualOwnGoodsTransStockMovVc:
+        if (recordtype==18) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdOwnGoodsTransStockMovVc:
+        if (recordtype==18) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeConsigmentStockMovVc:
+        if (recordtype==19) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualConsigmentStockMovVc:
+        if (recordtype==19) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdConsigmentStockMovVc:
+        if (recordtype==19) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeThirdEntGoodsTransStockMovVc:
+        if (recordtype==20) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualThirdEntGoodsTransStockMovVc:
+        if (recordtype==20) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdThirdEntGoodsTransStockMovVc:
+        if (recordtype==20) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeGlobalTransStockMovVc:
+        if (recordtype==21) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualGlobalTransStockMovVc:
+        if (recordtype==21) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdGlobalTransStockMovVc:
+        if (recordtype==21) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeORVc:
+        if (recordtype==12) then begin testf = true; end;
+      case kOfficialNumTypeSpecialSalesIVVc:
+        if (recordtype==kInvoiceTypeNormalSpecialSales) then begin testf = true; end;
+      case kOfficialNumTypeRetPUVc:
+        if (recordtype==15) and (status!=kRecordStatusRecovered and status!=kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeManualRetPUVc:
+        if (recordtype==15) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeRecoverdRetPUVc:
+        if (recordtype==15) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeRecoveredIPVc:
+        if (recordtype==17) and (status==kRecordStatusRecovered) then begin testf = true; end;
+      case kOfficialNumTypeManualIPVc:
+        if (recordtype==17) and (status==kRecordStatusManual) then begin testf = true; end;
+      case kOfficialNumTypeIPVc:
+        if (recordtype==17) and (status==kRecordStatusNone) then begin testf = true; end;
+    end;
+
+/*    
+    if (LINrbrw.RegType==kOfficialNumTypeAllIVVc) and ((recordtype<=kInvoiceTypeInterest) or (recordtype==kInvoiceTypeDownpayment) or (recordtype==kInvoiceTypePrepayment)) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeInterestIVVc) and (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==0) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualInterestIVVc) and (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdInterestIVVc) and ((recordtype==kInvoiceTypeInterest) or (recordtype==kInvoiceTypeDebit)) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeCashIVVc or LINrbrw.RegType==kOfficialNumTypeManualCashIVVc) and (recordtype==kInvoiceTypeCash) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeCashInvoiceReceiptPRTIVVc or LINrbrw.RegType==kOfficialNumTypeManualCashInvoiceReceiptIVVc) and (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdCashIVVc) and (recordtype==kInvoiceTypeCash) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdCashInvoiceReceiptIVVc) and (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeCreditIVVc or LINrbrw.RegType==kOfficialNumTypeRecoverdCreditIVVc) and (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status!=4) then begin 
+      testf = true;
+    end; 
+    if (LINrbrw.RegType==kOfficialNumTypeManualCreditIVVc) and (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status==4) then begin 
+      testf = true;
+    end; 
+    if (LINrbrw.RegType==kOfficialNumTypeIVVc or LINrbrw.RegType==kOfficialNumTypeManualIVVc or LINrbrw.RegType==kOfficialNumTypeRecoverdIVVc) and (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypePOSIVVc or LINrbrw.RegType==kOfficialNumTypeManualPOSIVVc or LINrbrw.RegType==kOfficialNumTypeRecoverdPOSIVVc) and (recordtype==10) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRestAccVc) and (recordtype==16) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeSHVc) and (recordtype==14) and (status!=4 and status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualSHVc and (recordtype==14) and (status==4)) then begin
+      testf = true;
+    end;
+     if (LINrbrw.RegType==kOfficialNumTypeRecoverdSHVc) and (recordtype==14) and (status==5) then begin 
+      testf = true;
+    end;    
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdSHVc) and (recordtype==14) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRetVc) and (recordtype==13) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualRetVc) and (recordtype==13) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdRetVc) and (recordtype==13) and (status==5) then begin 
+      testf = true;
+    end;
+    
+    if (LINrbrw.RegType==kOfficialNumTypeStockMovVc) and (recordtype==11) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualStockMovVc) and (recordtype==11) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdStockMovVc) and (recordtype==11) and (status==5) then begin 
+      testf = true;
+    end;        
+    if (LINrbrw.RegType==kOfficialNumTypeOwnGoodsTransStockMovVc) and (recordtype==18) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualOwnGoodsTransStockMovVc) and (recordtype==18) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdOwnGoodsTransStockMovVc) and (recordtype==18) and (status==5) then begin 
+      testf = true;
+    end;    
+    if (LINrbrw.RegType==kOfficialNumTypeConsigmentStockMovVc) and (recordtype==19) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualConsigmentStockMovVc) and (recordtype==19) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdConsigmentStockMovVc) and (recordtype==19) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeThirdEntGoodsTransStockMovVc) and (recordtype==20) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualThirdEntGoodsTransStockMovVc) and (recordtype==20) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdThirdEntGoodsTransStockMovVc) and (recordtype==20) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeGlobalTransStockMovVc) and (recordtype==21) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualGlobalTransStockMovVc) and (recordtype==21) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdGlobalTransStockMovVc) and (recordtype==21) and (status==5) then begin 
+      testf = true;
+    end;
+         
+    if (LINrbrw.RegType==kOfficialNumTypeORVc) and (recordtype==12) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeSpecialSalesIVVc) and (recordtype==kInvoiceTypeNormalSpecialSales) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRetPUVc) and (recordtype==15) and (status!=5 and status!=4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualRetPUVc) and (recordtype==15) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdRetPUVc) and (recordtype==15) and (status==5) then begin 
+      testf = true;
+    end;    
+    if (LINrbrw.RegType==kOfficialNumTypeRecoveredIPVc) and (recordtype==17) and (status==kRecordStatusRecovered) then begin 
+      testf = true;
+    end;   
+    if (LINrbrw.RegType==kOfficialNumTypeManualIPVc) and (recordtype==17) and (status==kRecordStatusManual) then begin
+      testf = true;
+    end;         
+    if (LINrbrw.RegType==kOfficialNumTypeIPVc) and (recordtype==17) and (status==kRecordStatusNone) then begin
+      testf = true;
+    end;         
+*/
+    if (testf==true) then begin 
+      if (nonblank(branch)) then begin 
+        if (nonblank(LINrbrw.Branch)) then begin 
+          if (LINrbrw.Branch!=branch) then begin 
+            testf = false; 
+          end;
+        end else begin 
+          testf = false; 
+        end;  
+      end;
+      if (nonblank(terminal)) then begin 
+        if (nonblank(LINrbrw.LocalMachineCode)) then begin 
+          if (LINrbrw.LocalMachineCode!=terminal) then begin 
+            testf = false; 
+          end;
+        end else begin 
+          testf = false; 
+        end;  
+      end;    
+/*      
+      if (HasLocalization("LVA")) then begin
+        if (invdate<LINrbrw.PurchDate) then begin testf = false; end;
+      end;
+      if (invdate>LINrbrw.EndDate) then begin testf = false; end;
+*/
+      if (DateInRange(invdate,LINrbrw.PurchDate,LINrbrw.EndDate)==false) then begin testf = false; end;
+      if (nonblank(custcode)) then begin 
+        if (nonblank(LINrbrw.CClass)) then begin
+          if (nonblank(CUr.Classification)) then begin
+            if (SetInSet(LINrbrw.CClass,CUr.Classification)==false) then begin testf = false; end;
+          end;
+        end;  
+      end;
+    end;  
+    if (testf) then begin
+      astr[acnt] = NextLegalSerNr(filename,curivnr,invdate,LINrbrw.Serie,LINrbrw.TSerStart,LINrbrw.TSerEnd);
+      astr[acnt] = astr[acnt] & "    ";
+      astr[acnt] = astr[acnt] & LINrbrw.TSerCom;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure LegalInvNrSClassArrayOnOpen(string filename,LongInt curivnr,Date invdate,string custcode,var Array string astr,var Integer acnt,Integer recordtype,string terminal,string branch,Integer status)
+begin
+  LegalInvNrSClassArrayOnOpen2(filename,curivnr,invdate,custcode,astr,acnt,recordtype,-1,terminal,branch,status);
+  return;
+end;
+
+
+/*
+look in TestNextOfficialSerialNr2_IVVc when changing
+*/
+global
+procedure LegalInvNr2SClassArrayOnOpen(string filename,LongInt curivnr,Date invdate,string custcode,var Array string astr,var Integer acnt,Integer recordtype,string terminal,string branch,Integer status)
+BEGIN
+  record LegalInvNr2Block LegalInvNr2Rec;
+  row LegalInvNr2Block LINrbrw;
+  Integer i,rwcnt;
+  record CUVc CUr;
+  Boolean testf;  
+  
+  if nonblank(custcode) then begin 
+    CUr.Code = custcode;
+    if (ReadFirstMain(CUr,1,true)) then begin end;
+  end;  
+  BlockLoad(LegalInvNr2Rec);
+  rwcnt = MatRowCnt(LegalInvNr2Rec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LegalInvNr2Rec,i,LINrbrw);
+    testf = false;
+    if (LINrbrw.RegType==kOfficialNumTypeAllIVVc) and ((recordtype<=kInvoiceTypeInterest) or (recordtype==kInvoiceTypeDownpayment) or (recordtype==kInvoiceTypePrepayment)) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeInterestIVVc) and (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==0) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeManualInterestIVVc) and (recordtype==kInvoiceTypeInterest or recordtype==kInvoiceTypeDebit) and (status==4) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdInterestIVVc) and ((recordtype==kInvoiceTypeInterest) or (recordtype==kInvoiceTypeDebit)) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeCashInvoiceReceiptPRTIVVc or LINrbrw.RegType==kOfficialNumTypeManualCashInvoiceReceiptIVVc) and (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeCashIVVc or LINrbrw.RegType==kOfficialNumTypeManualCashIVVc) and (recordtype==kInvoiceTypeCash) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdCashInvoiceReceiptIVVc) and (recordtype==kInvoiceTypeCashInvoiceReceiptPRT) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdCashIVVc) and (recordtype==kInvoiceTypeCash) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeCreditIVVc or LINrbrw.RegType==kOfficialNumTypeRecoverdCreditIVVc /*or LINrbrw.RegType==kOfficialNumTypeManualCreditIVVc*/) and (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status!=4) then begin 
+      testf = true;
+    end; 
+    if (LINrbrw.RegType==kOfficialNumTypeManualCreditIVVc) and (recordtype==kInvoiceTypeCredit or recordtype==kInvoiceTypeCreditSpecialSales) and (status==4) then begin 
+      testf = true;
+    end; 
+    if (LINrbrw.RegType==kOfficialNumTypeIVVc or LINrbrw.RegType==kOfficialNumTypeManualIVVc or LINrbrw.RegType==kOfficialNumTypeRecoverdIVVc) and (recordtype==kInvoiceTypeNormal or recordtype==kInvoiceTypeDownpayment or recordtype==kInvoiceTypePrepayment) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypePOSIVVc or LINrbrw.RegType==kOfficialNumTypeManualPOSIVVc or LINrbrw.RegType==kOfficialNumTypeRecoverdPOSIVVc) and (recordtype==10) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeSHVc or LINrbrw.RegType==kOfficialNumTypeManualSHVc) and (recordtype==14) and (status!=5) then begin 
+      testf = true;
+    end;
+     if (LINrbrw.RegType==kOfficialNumTypeRecoverdSHVc) and (recordtype==14) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRetVc) and (recordtype==13) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdRetVc) and (recordtype==13) and (status==5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeStockMovVc or LINrbrw.RegType==kOfficialNumTypeManualStockMovVc) and (recordtype==11) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRecoverdStockMovVc) and (recordtype==11) and (status==5) then begin 
+      testf = true;
+    end;            
+    if (LINrbrw.RegType==kOfficialNumTypeORVc) and (recordtype==12) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeSpecialSalesIVVc) and (recordtype==kInvoiceTypeNormalSpecialSales) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRetPUVc or LINrbrw.RegType==kOfficialNumTypeManualRetPUVc) and (recordtype==15) and (status!=5) then begin 
+      testf = true;
+    end;
+    if (LINrbrw.RegType==kOfficialNumTypeRetPUVc) and (recordtype==15) and (status==5) then begin 
+      testf = true;
+    end;    
+   
+   
+    if (testf==true) then begin 
+      if nonblank(branch) then begin 
+        if nonblank(LINrbrw.Branch) then begin 
+          if (LINrbrw.Branch!=branch) then begin 
+            testf = false; 
+          end;
+        end else begin 
+          testf = false; 
+        end;  
+      end;
+      if nonblank(terminal) then begin 
+        if nonblank(LINrbrw.LocalMachineCode) then begin 
+          if (LINrbrw.LocalMachineCode!=terminal) then begin 
+            testf = false; 
+          end;
+        end else begin 
+          testf = false; 
+        end;  
+      end;    
+      if (HasLocalization("LVA")) then begin
+        if (invdate<LINrbrw.PurchDate) then begin testf = false; end;
+      end;
+      if (invdate>LINrbrw.EndDate) then begin testf = false; end;
+      if nonblank(custcode) then begin 
+        if (nonblank(LINrbrw.CClass)) then begin
+          if (nonblank(CUr.Classification)) then begin
+            if (SetInSet(LINrbrw.CClass,CUr.Classification)==false) then begin testf = false; end;
+          end;
+        end;  
+      end;
+    end;  
+    if (testf) then begin
+      astr[acnt] = NextLegalSerNr(filename,curivnr,invdate,LINrbrw.Serie,LINrbrw.TSerStart,LINrbrw.TSerEnd);
+      astr[acnt] = astr[acnt] & "    ";
+      astr[acnt] = astr[acnt] & LINrbrw.TSerCom;
+      acnt = acnt + 1;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+function string 50 NextLegalCLInSerNr(LongInt curclinnr,Date transdate,string serie,LongInt tserstart,LongInt tserend)
+BEGIN
+  string 50 res,tstr;
+  string 1 c;
+  Integer i,l,seriel;
+  record CLInVc CLInr;
+  
+  if (tserend>0) then begin
+    CLInr.OfficialSerNr = serie & tserend;
+    if (ReadLastKey("OfficialSerNr",CLInr,1,false)) then begin
+      if (CLInr.SerNr!=curclinnr) or (blank(CLInr.OfficialSerNr)) then begin
+        seriel = len(serie);
+        if (Left(CLInr.OfficialSerNr,seriel)==serie) then begin
+          l = len(CLInr.OfficialSerNr);
+          for (i=seriel;i<l;i=i+1) begin
+            c = Mid(CLInr.OfficialSerNr,i,1);
+            if (asc(c)>=asc("0")) and (asc(c)<=asc("9")) then begin
+              tstr = tstr & c;
+            end else begin
+              goto LBREAK;
+            end;
+          end;
+        end;
+      end;
+    end;
+LBREAK:;
+    if (StringToLongInt(tstr)<tserstart) then begin tstr = ""; end;
+    if (blank(tstr)) then begin
+      res = serie & tserstart;
+    end else begin
+      res = "";
+      NextNumber(tstr,res);
+      if (StringToLongInt(res)>StringToLongInt(tserend)) then begin
+        res = "";
+        goto LNextLegalCLInSerNr;
+      end;
+      res = serie & res;
+    end;
+  end;
+LNextLegalCLInSerNr:;  
+  NextLegalCLInSerNr = res;
+  RETURN;
+END;
+
+global
+procedure LegalCLInNrSClassArrayOnOpen(LongInt curclinnr,Date transdate,var Array string astr,var Integer acnt)
+BEGIN
+  record LegalCLInNrBlock LegalCLInNrRec;
+  row LegalCLInNrBlock LegalCLInNrrw;
+  Integer i,rwcnt;  
+  
+  BlockLoad(LegalCLInNrRec);
+  rwcnt = MatRowCnt(LegalCLInNrRec);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(LegalCLInNrRec,i,LegalCLInNrrw);
+    if (transdate>=LegalCLInNrrw.PurchDate) then begin
+      astr[acnt] = NextLegalCLInSerNr(curclinnr,transdate,LegalCLInNrrw.Serie,LegalCLInNrrw.TSerStart,LegalCLInNrrw.TSerEnd);
+      acnt = acnt + 1;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure ObjBTSClassArrayOnOpenRemote(string objtype,var Array string astr,var Integer acnt)
+begin
+  record ObjVc OBjr;
+  boolean TrHs,testf;
+ 
+  OBjr.OTCode=objtype; 
+  TrHs=true;
+  While (LoopKey("OTCode",OBjr,1,TrHs)) begin
+    testf = true;
+    if (OBjr.OTCode<>objtype) then begin
+      testf = false;
+      TrHs = false;
+    end;
+    if (OBjr.TerminateFlag!=0) then begin
+      testf = false;
+    end;
+    if (testf) then begin
+      astr[acnt] = OBjr.Code & "     ";
+      astr[acnt] = astr[acnt] & OBjr.Comment;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure CClassBTSClassArrayOnOpenRemote(string ctype,string ctype2,var Array string astr,var Integer acnt)
+BEGIN
+  record CClassVc CClassr; 
+  boolean TrHs,testf;
+  string 255 tstr;
+  
+  CClassr.CType = ctype; 
+  TrHs = true;
+  while (LoopKey("CType",CClassr,1,TrHs)) begin
+    testf = true;
+    if (CClassr.CType<>ctype) then begin
+      testf = false;
+      TrHs = false;
+    end;
+    if (testf) then begin
+      M4PadString(CClassr.Code,15," ",false,tstr);
+      astr[acnt] = tstr;
+      astr[acnt] = astr[acnt] & CClassr.Comment;
+      acnt = acnt + 1;
+    end;
+  end;
+
+  ResetLoop(CClassr);
+  CClassr.CType = ctype2; 
+  TrHs = true;
+  while (LoopKey("CType",CClassr,1,TrHs)) begin
+    testf = true;
+    if (CClassr.CType<>ctype2) then begin
+      testf = false;
+      TrHs = false;
+    end;
+    if (blank(ctype2)) then begin
+      if (blank(CClassr.CType)) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      M4PadString(CClassr.Code,15," ",false,tstr);
+      astr[acnt] = tstr;
+      astr[acnt] = astr[acnt] & CClassr.Comment;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+END;
+
+global
+procedure HWCOClassBTSClassArrayOnOpenRemote(string ctype,var Array string astr,var Integer acnt)
+BEGIN
+  record HWCOClassVc HWCOClassr; 
+  boolean TrHs,testf;
+  string 255 tstr;
+  
+  HWCOClassr.ClType = ctype; 
+  TrHs = true;
+  while (LoopKey("ClType",HWCOClassr,1,TrHs)) begin
+    testf = true;
+    if (HWCOClassr.ClType<>ctype) then begin
+      testf = false;
+      TrHs = false;
+    end;
+    if (testf) then begin
+      M4PadString(HWCOClassr.Code,15," ",false,tstr);
+      astr[acnt] = tstr;
+      astr[acnt] = astr[acnt] & HWCOClassr.Comment;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+END;
+
+global
+procedure DIClassBTSClassArrayOnOpenRemote(string ctype,var Array string astr,var Integer acnt)
+BEGIN
+  record DIVc DIr;
+  boolean TrHs,testf;
+
+  DIr.CType = ctype; 
+  TrHs = true;
+  While (LoopKey("CType",DIr,1,TrHs)) begin
+    testf = true;
+    if (DIr.CType<>ctype) then begin
+      testf = false;
+      TrHs = false;
+    end;
+    if (testf) then begin    
+      astr[acnt] = DIr.Code & "     ";
+      astr[acnt] = Left(astr[acnt],13);
+      astr[acnt] = astr[acnt] & DIr.Name;
+      acnt = acnt + 1;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure TRVc_TRObjSClass(record TRVc TRr,integer currow,var record RcVc  RepSpec)
+begin
+  row TRVc TRrw;
+  record ObjVc Objr;
+  Integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 objects,typ,cobject;
+  
+  if (currow>=0) then begin
+    MatRowGet(TRr,currow,TRrw);
+    objects = TRrw.Objects;
+    if (nonblank(objects)) then begin
+      FindOTforAcc(TRrw.AccNumber,typ);
+      if (nonblank(typ)) then begin
+        typeam = CountObjects(typ); 
+        objam = CountObjects(objects); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(objects,i,cobject);
+          Objr.Code = cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found = true;
+                switch (j) begin
+                  case 1: RepSpec.f1 = cobject;
+                  case 2: RepSpec.f2 = cobject;
+                  case 3: RepSpec.f3 = cobject;
+                  case 4: RepSpec.f4 = cobject;
+                  case 5: RepSpec.f5 = cobject;
+                  case 6: RepSpec.AccStr = cobject;
+                  case 7: RepSpec.FirstAcc = cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found==false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6 = RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6 = cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure VIVc_TRObjSClass(record VIVc VIr,integer currow,var record RcVc  RepSpec)
+begin
+  row VIVc VIrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  
+  if (currow>=0) then begin
+    MatRowGet(VIr,currow,VIrw);
+    object = VIrw.Objects;
+    accnr = VIrw.AccNumber;
+  end else begin
+    object = VIr.Objects;
+    accnr = VIr.APAcc;
+    if (VIr.WithHoldingTax<>0) then begin
+      accnr = FindWithHoldAcc(VIr.APAcc,VIr.Objects);
+    end; 
+  end;
+    if (nonblank(object)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  return;
+end;
+
+global
+procedure IVVc_TRObjSClass(record IVVc IVr,integer currow,var record RcVc  RepSpec)
+begin
+  row IVVc IVrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  
+  if (currow>=0) then begin
+    MatRowGet(IVr,currow,IVrw);
+    object = IVrw.Objects;
+    accnr = IVrw.SalesAcc;
+  end else begin
+    object = IVr.Objects;
+    accnr = IVr.ARAcc;
+  end;
+    if (nonblank(object)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  return;
+end;
+
+global
+procedure ExpVc_TRObjSClass(record ExpVc Expr,integer currow,var record RcVc  RepSpec)
+begin
+  row ExpVc Exprw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject;
+  
+  if (currow>=0) then begin
+    MatRowGet(Expr,currow,Exprw);
+    object = Exprw.Objects;
+    if (nonblank(object)) then begin
+      FindOTforAcc(Exprw.AccNumber,typ);
+      if (nonblank(typ)) then begin
+        typeam = CountObjects(typ); 
+        objam = CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code = cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found = true;
+                switch (j) begin
+                  case 1: RepSpec.f1 = cobject;
+                  case 2: RepSpec.f2 = cobject;
+                  case 3: RepSpec.f3 = cobject;
+                  case 4: RepSpec.f4 = cobject;
+                  case 5: RepSpec.f5 = cobject;
+                  case 6: RepSpec.AccStr = cobject;
+                  case 7: RepSpec.FirstAcc = cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found==false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6 = RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6 = cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure CLInVc_TRObjSClass(record CLInVc CLInr,integer currow,var record RcVc  RepSpec)
+begin
+  row CLInVc CLInrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject;
+  row PMBlock PMrw;
+
+  if (currow>=0) then begin
+    MatRowGet(CLInr,currow,CLInrw);
+    object=CLInrw.Objects;
+    if (nonblank(object)) then begin
+       if (GetPMRow(CLInr.PayMode,PMrw)) then begin end;
+       FindOTforAcc(PMrw.AccNr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure CLOutVc_TRObjSClass(record CLOutVc CLOutr,integer currow,var record RcVc  RepSpec)
+begin
+  row CLOutVc CLOutrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject;
+  row PMBlock PMrw;
+
+  if (currow>=0) then begin
+    MatRowGet(CLOutr,currow,CLOutrw);
+    object=CLOutrw.Objects;
+    if (nonblank(object)) then begin
+       if (GetPMRow(CLOutr.PayMode,PMrw)) then begin end;
+       FindOTforAcc(PMrw.AccNr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure SDVc_TRObjSClass(record SDVc SDr,Integer currow,var record RcVc  RepSpec)
+begin
+  row SDVc SDrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+
+  if (currow>=0) then begin
+    MatRowGet(SDr,currow,SDrw);
+    object = SDrw.Objects;
+    accnr = SDrw.CostAcc;
+  end else begin
+    object = SDr.Objects;
+  end;
+  if (blank(accnr)) then begin
+    accnr = SDr.CostAcc;
+  end;
+  
+  if (true) then begin
+    if (nonblank(accnr)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure SRVc_TRObjSClass(record SRVc SRr,Integer currow,var record RcVc  RepSpec)
+begin
+  row SRVc SRrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+
+  if (currow>=0) then begin
+    MatRowGet(SRr,currow,SRrw);
+    object = SRrw.Objects;
+    accnr = SRrw.SRVarAcc;
+  end else begin
+    object = SRr.Objects;
+  end;
+  if (blank(accnr)) then begin
+    accnr = SRr.SRVarAcc;
+  end;
+  if (true) then begin
+    if (nonblank(accnr)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure SHVc_TRObjSClass(record SHVc SHr,Integer currow,var record RcVc  RepSpec)
+begin
+  row SHVc SHrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  record CostAccBlock CAb;
+  record AccBlock ARAccRec;
+  record INVc INr;
+  string 255 tstr,location;
+
+  if (currow>=0) then begin
+    MatRowGet(SHr,currow,SHrw);
+    object = SHrw.Objects;
+    BlockLoad(CAb);
+    BlockLoad(ARAccRec);
+    if (ReadFirstItem(SHrw.ArtCode,INr,true,true)) then begin end;
+    location = SHrw.Location;
+    if (blank(location)) then begin
+      location = SHr.Location;
+    end;
+    if (CAb.NoNLCostOnShip==2) then begin
+      accnr = ARAccRec.COSAccrualAcc;
+    end else begin
+      if (GetCOSAcc(SHrw.CostAcc,SHr.CustCode,location,ARAccRec,INr,CAb.ItemGroupAccounts,false,0,accnr,tstr)==true) then begin
+      end;
+    end;
+    if (nonblank(accnr)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure QTVc_TRObjSClass(record QTVc QTr,integer currow,var record RcVc  RepSpec)
+begin
+  row QTVc QTrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  
+  if (currow>=0) then begin
+    MatRowGet(QTr,currow,QTrw);
+    object = QTrw.Objects;
+    accnr = QTrw.SalesAcc;
+  end else begin
+    object = QTr.Objects;
+    accnr = "";
+  end;
+  if (nonblank(object)) then begin
+    FindOTforAcc(accnr,typ);
+    if (nonblank(typ)) then begin
+      typeam = CountObjects(typ); 
+      objam = CountObjects(object); 
+      for (i=1;i<=objam;i=i+1) begin
+        ExtractElemFromSet(object,i,cobject);
+        Objr.Code = cobject;
+        found = false;   
+        if (ReadFirstMain(Objr,1,true)) then begin
+          for (j=1;j<=typeam;j=j+1) begin
+            ExtractElemFromSet(typ,j,ctype);
+            if (Objr.OTCode==ctype) then begin
+              found=true;
+              switch (j) begin
+                case 1: RepSpec.f1 = cobject;
+                case 2: RepSpec.f2 = cobject;
+                case 3: RepSpec.f3 = cobject;
+                case 4: RepSpec.f4 = cobject;
+                case 5: RepSpec.f5 = cobject;
+                case 6: RepSpec.AccStr = cobject;
+                case 7: RepSpec.FirstAcc = cobject;
+              end;
+            end;
+          end;
+        end;
+        if (found == false) then begin
+          if (nonblank(RepSpec.f6)) then begin
+            RepSpec.f6 = RepSpec.f6 & "," & cobject;
+          end else begin
+             RepSpec.f6 = cobject;
+          end;
+        end;
+      end;
+    end;
+  end;    
+  return;
+end;
+
+global
+procedure WSVc_TRObjSClass(record WSVc WSr,Integer currow,var record RcVc  RepSpec)
+begin
+  row WSVc WSrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+
+  if (currow>=0) then begin
+    MatRowGet(WSr,currow,WSrw);
+    object = WSrw.Objects;
+    accnr = WSrw.CostAcc;
+  end else begin
+    object = WSr.Objects;
+  end;
+  if (blank(accnr)) then begin
+    accnr = WSr.CostAcc;
+  end;
+  
+  if (true) then begin
+    if (nonblank(accnr)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure CUVc_CUClassSClass(record CUVc CUr,var record RcVc  RepSpec)
+begin
+  record CCatVc CCatr;
+  record CClassVc CClassr;
+  integer typeam,i,clam,j;
+  string 5 ctype,cclass;
+  boolean res,found;
+  string 100 classification;
+  
+  classification = CUr.Classification;
+  if (nonblank(classification)) then begin
+    if (nonblank(CUr.CustCat)) then begin
+      CCatr.Code = CUr.CustCat;
+      if (ReadFirstMain(CCatr,1,true)) then begin
+        typeam = CountObjects(CCatr.ClassType); 
+        clam = CountObjects(classification); 
+        for (i=1;i<=clam;i=i+1) begin
+          ExtractElemFromSet(classification,i,cclass);
+          CClassr.Code=cclass;
+          found = false;
+          if (ReadFirstMain(CClassr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(CCatr.ClassType,j,ctype);
+              if (CClassr.CType==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1 = cclass;
+                  case 2: RepSpec.f2 = cclass;
+                  case 3: RepSpec.f3 = cclass;
+                  case 4: RepSpec.f4 = cclass;
+                  case 5: RepSpec.f5 = cclass;
+                  case 6: RepSpec.ObjStr = cclass;
+                  case 7: RepSpec.Stext = cclass;
+                  case 8: RepSpec.LastAcc = cclass;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6 = RepSpec.f6 & "," & cclass;
+            end else begin
+               RepSpec.f6 = cclass;
+            end;
+          end;
+        end;        
+      end;      
+    end;
+  end;
+  return;
+end;
+
+function val SerialNrReservedQty(string artcode,string serialnr,string location)
+begin
+  val res;
+  record ORVc ORr;
+  record IntORVc IntORr;
+  val resrv,ordqty;
+  string 255 comment,frloc,toloc,index;
+  Boolean found,testf;
+  record StockReservVc StockReservr;
+  
+  if (CountRecords("StockReservVc")>0) then begin
+    StockReservr.Donef = 0;
+    StockReservr.ArtCode = artcode;
+    found = true;
+    while (LoopKey("ArtCode",StockReservr,2,found)) begin
+      if (StockReservr.Donef!=0) then begin found = false; end;
+      if (StockReservr.ArtCode!=artcode) then begin found = false; end;
+      testf = found;
+      if (StockReservr.SerialNr!=serialnr) then begin testf = false; end;
+      if (StockReservr.FromFileName!=kResTypeSalesOrder) and (StockReservr.FromFileName!=kResTypeInternalOrder) then begin testf = false; end;
+      if (testf) then begin
+        res = res + StockReservr.Quant - StockReservr.QuantDone;
+      end;
+    end;
+
+/*mad code, for every serial number go through all orders*/  
+/*  
+    found = true;
+    if (blank(artcode)) then begin
+      index = "OSFlag";
+    end else begin
+//      index = "ArtCodeOSFlag:" & artcode;
+      index = "OSFlag";
+    end;    
+    ORr.OSFlag = 1;
+    while (LoopKey(index,ORr,1,found)) begin
+      if (ORr.OSFlag!=1) then begin found = false; end;
+      if (found) then begin
+        resrv = GetORRowReserv(ORr.SerNr,artcode,serialnr,ordqty,comment,frloc,false);
+        if (blank(location) or location==frloc) then begin
+          res = res + resrv;
+        end;
+      end;
+    end;
+    
+    found = true;
+    if (blank(artcode)) then begin
+      index = "OSFlag";
+    end else begin
+      index = "ArtCodeOSFlag:" & artcode;
+    end;    
+    IntORr.OSFlag = 1;
+    while (LoopKey(index,IntORr,1,found)) begin
+      if (ORr.OSFlag!=1) then begin found = false; end;
+      if (found) then begin
+        resrv = GetIntORRowReserv(IntORr.SerNr,artcode,serialnr,ordqty,comment,frloc,toloc,false);
+        if (blank(location) or location==frloc) then begin
+          res = res + resrv;
+        end;
+      end;
+    end;
+*/    
+  end;
+  SerialNrReservedQty = res;
+  return;
+end;
+
+global
+procedure FillSerialNr(string item,string location,var Array string asernrstr,var Integer acnt)
+BEGIN
+  record SerBalVc SBr;
+  Boolean found,infound;
+  string 255 tstr;
+  record INVc INr;
+
+  SBr.Item = item;
+  SBr.Location = location;
+  found = true;
+  while (LoopKey("ActiveSerial",SBr,2,found)) begin
+    if (nonblank(item)) then begin
+      if (SBr.Item!=item) then begin found = false; end;
+    end;
+    if (nonblank(location)) then begin
+      if (SBr.Location!=location) then begin found = false; end;
+    end;
+    if (acnt>=32700) then begin 
+      found = false; 
+      asernrstr[acnt] = USetStr(30070);
+      acnt = acnt + 1;
+    end;
+    if (found) then begin
+      if (SBr.Quant!=0) then begin
+        if (SBr.Quant - SerialNrReservedQty(item,SBr.Serial,SBr.Location)>0) then begin
+          if (infound==false) then begin
+            infound = ReadFirstItem(item,INr,false,false);
+          end;
+          CreateSBString(INr.SerNrf,SBr.Item,SBr.Serial,SBr.Location,SBr.Quant,true,-1,false,tstr);
+          if (nonblank(tstr)) then begin
+            asernrstr[acnt] = tstr;
+            acnt = acnt + 1;
+          end;
+        end;
+      end;
+    end;
+  end;  
+  RETURN;
+END;
+
+global
+procedure FillSerialNr2(string item,string location,var Array string asernr,var Integer acnt)
+BEGIN
+  record SerBalVc SBr;
+  Boolean found,infound;
+  string 255 tstr;
+  record INVc INr;
+
+  SBr.Item = item;
+  SBr.Location = location;
+  found = true;
+  while (LoopKey("ActiveSerial",SBr,2,found)) begin
+    if (nonblank(item)) then begin
+      if (SBr.Item!=item) then begin found = false; end;
+    end;
+    if (nonblank(location)) then begin
+      if (SBr.Location!=location) then begin found = false; end;
+    end;
+    if (acnt>=32700) then begin 
+      found = false; 
+      asernr[acnt] = USetStr(30070);
+      acnt = acnt + 1;
+    end;
+    if (found) then begin
+      if (SBr.Quant!=0 and SBr.Quant-SerialNrReservedQty(item,SBr.Serial,SBr.Location)>0) then begin
+        if (infound==false) then begin
+          infound = ReadFirstItem(item,INr,false,false);
+        end;
+        CreateSBString(INr.SerNrf,SBr.Item,SBr.Serial,SBr.Location,SBr.Quant,true,SBr.CostPrice,true,tstr);
+        if (nonblank(tstr)) then begin
+          asernr[acnt] = tstr;
+          acnt = acnt + 1;
+        end;
+      end;
+    end;
+  end;  
+  RETURN;
+END;
+
+global
+procedure XXINTSTOCKXX(string item,string location,var Array string asernr,var Integer acnt)
+BEGIN
+  Boolean found;
+  string 255 tstr;
+  record IntSerBalVc IntSBr;
+  
+  IntSBr.Item = item;
+  IntSBr.Location = location;
+  found = true;
+  while (LoopMain(IntSBr,2,found)) begin
+    if (nonblank(item)) then begin
+      if (IntSBr.Item!=item) then begin found = false; end;
+    end;
+    if (nonblank(location)) then begin
+      if (IntSBr.Location!=location) then begin found = false; end;
+    end;
+    if (found) then begin
+      CreateSBString(1,IntSBr.Item,IntSBr.Serial,IntSBr.Location,IntSBr.Quant,true,-1,false,tstr);
+      if (nonblank(tstr)) then begin
+        asernr[acnt] = tstr;
+        acnt = acnt + 1;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure XXINTSTOCK2XX(string item,var Array string asernr,var Integer acnt)
+BEGIN
+  Boolean found;
+  string 255 tstr;
+  record RentINVc RentINr;
+  
+  RentINr.Code = item;
+  found = true;
+  while (LoopMain(RentINr,2,found)) begin
+    if (nonblank(item)) then begin
+      if (RentINr.Code!=item) then begin found = false; end;
+    end;
+    if (found) then begin
+      if (RentINr.SerialNr!="") then begin
+        CreateSBString(1,RentINr.Code,RentINr.SerialNr,RentINr.OrgLocation,-1,false,-1,false,tstr);
+        if (nonblank(tstr)) then begin
+          asernr[acnt] = tstr;
+          acnt = acnt + 1;
+        end;
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+procedure FillKnownSerialNr(string item,var Array string asernr,var Integer acnt)
+BEGIN
+  Boolean found,testf;
+  string 255 tstr;
+  record SVOSerVc SVOSerr;
+  
+  SVOSerr.ItemCode = item;
+  found = true;
+  while (LoopMain(SVOSerr,1,found)) begin
+    testf = true;
+    if (nonblank(item)) then begin
+      if (SVOSerr.ItemCode!=item) then begin testf = false; end;
+    end;
+    if (found and testf) then begin
+      CreateSBString(1,SVOSerr.ItemCode,SVOSerr.SerialNr,"",1,true,-1,false,tstr);
+      if (nonblank(tstr)) then begin
+        asernr[acnt] = tstr;
+        acnt = acnt + 1;
+      end;
+    end;
+  end;
+  RETURN;
+END;  
+
+global
+procedure ORVc_TRObjSClass(record ORVc ORr,integer currow,var record RcVc  RepSpec)
+begin
+  row ORVc ORrw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  
+  if (currow>=0) then begin
+    MatRowGet(ORr,currow,ORrw);
+    object = ORrw.Objects;
+    accnr = ORrw.SalesAcc;
+  end else begin
+    object = ORr.Objects;
+    accnr = "";
+  end;
+  if (nonblank(object)) then begin
+    FindOTforAcc(accnr,typ);
+    if (nonblank(typ)) then begin
+      typeam = CountObjects(typ); 
+      objam = CountObjects(object); 
+      for (i=1;i<=objam;i=i+1) begin
+        ExtractElemFromSet(object,i,cobject);
+        Objr.Code = cobject;
+        found = false;   
+        if (ReadFirstMain(Objr,1,true)) then begin
+          for (j=1;j<=typeam;j=j+1) begin
+            ExtractElemFromSet(typ,j,ctype);
+            if (Objr.OTCode==ctype) then begin
+              found = true;
+              switch (j) begin
+                case 1: RepSpec.f1 = cobject;
+                case 2: RepSpec.f2 = cobject;
+                case 3: RepSpec.f3 = cobject;
+                case 4: RepSpec.f4 = cobject;
+                case 5: RepSpec.f5 = cobject;
+                case 6: RepSpec.AccStr = cobject;
+                case 7: RepSpec.FirstAcc = cobject;
+              end;
+            end;
+          end;
+        end;
+        if (found == false) then begin
+          if (nonblank(RepSpec.f6)) then begin
+            RepSpec.f6 = RepSpec.f6 & "," & cobject;
+          end else begin
+             RepSpec.f6 = cobject;
+          end;
+        end;
+      end;
+    end;
+  end;    
+  return;
+END;
+
+global
+procedure Bud1Vc_TRObjSClass(record Bud1Vc Bud1r,var record RcVc  RepSpec)
+begin
+  row Bud1Vc Bud1rw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  
+  object = Bud1r.Objects;
+  accnr = Bud1r.AccNumber;
+  if (true) then begin
+    if (nonblank(accnr)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure Bud2Vc_TRObjSClass(record Bud2Vc Bud2r,var record RcVc  RepSpec)
+begin
+  row Bud2Vc Bud2rw;
+  record ObjVc Objr;
+  integer typeam,i,objam,j;
+  string 5 otype,ctype;
+  boolean res,found;
+  string 100 object,typ,cobject,accnr;
+  
+  object = Bud2r.Objects;
+  accnr = Bud2r.AccNumber;
+  
+  if (true) then begin
+    if (nonblank(accnr)) then begin
+      FindOTforAcc(accnr,typ);
+      if (nonblank(typ)) then begin
+        typeam=CountObjects(typ); 
+        objam=CountObjects(object); 
+        for (i=1;i<=objam;i=i+1) begin
+          ExtractElemFromSet(object,i,cobject);
+          Objr.Code=cobject;
+          found = false;   
+          if (ReadFirstMain(Objr,1,true)) then begin
+            for (j=1;j<=typeam;j=j+1) begin
+              ExtractElemFromSet(typ,j,ctype);
+              if (Objr.OTCode==ctype) then begin
+                found=true;
+                switch (j) begin
+                  case 1: RepSpec.f1=cobject;
+                  case 2: RepSpec.f2=cobject;
+                  case 3: RepSpec.f3=cobject;
+                  case 4: RepSpec.f4=cobject;
+                  case 5: RepSpec.f5=cobject;
+                  case 6: RepSpec.AccStr=cobject;
+                  case 7: RepSpec.FirstAcc=cobject;
+                end;
+              end;
+            end;
+          end;
+          if (found == false) then begin
+            if (nonblank(RepSpec.f6)) then begin
+              RepSpec.f6=RepSpec.f6 & "," & cobject;
+            end else begin
+               RepSpec.f6=cobject;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+procedure ApproversSClassArrayOnOpen(var Array string auser,var Array string ausername,var Integer acnt,string approvers)
+begin
+  string 255 user;
+  Integer pos;
+  record UserVc Userr;
+  
+  acnt = 0;
+  ExtractObj(approvers,pos,user);
+  while (nonblank(user)) begin
+    Userr.Code = user;
+    ReadFirstMain(Userr,1,true);
+    auser[acnt] = user;
+    ausername[acnt] = Userr.Name;
+    acnt = acnt + 1;
+    ExtractObj(approvers,pos,user);
+  end;
+  return;
+end;
+
+global
+procedure CUDocTypeSClassArrayOnOpen(var Array string adoctype,var Array string acomment,var Integer acnt)
+begin
+  string 255 user;
+  Integer i,rwcnt;
+  record CUDocTypeBlock CUDTb;
+  row CUDocTypeBlock CUDTbrw;
+  
+  BlockLoad(CUDTb);
+  rwcnt = MatRowCnt(CUDTb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(CUDTb,i,CUDTbrw);
+    adoctype[acnt] = CUDTbrw.DocType;
+    acomment[acnt] = CUDTbrw.Comment;
+    acnt = acnt + 1;
+  end;
+  return;
+end;
+
+global
+procedure PDPMSClassArrayOnOpen(var Array string acode,var Array string acomment,var Array string atype)
+begin
+  record PDVc PDr;
+  Boolean found;
+  record PMBlock PMb;
+  row PMBlock PMbrw;
+  Integer i,rwcnt;
+
+  BlockLoad(PMb);
+  found = true;
+  while (LoopMain(PDr,1,found)) begin
+    if (found) then begin
+      acode[acode.length] = PDr.Code;
+      acomment[acomment.length] = PDr.pdComment;
+      atype[atype.length] = "T";
+    end;
+  end;
+  rwcnt = MatRowCnt(PMb);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PMb,i,PMbrw);
+    acode[acode.length] = PMbrw.Code;
+    acomment[acomment.length] = PMbrw.Comment;
+    atype[atype.length] = "M";
+  end;
+  return;
+end;
+
+global
+procedure PL2SClassArrayOnOpen(string plcode,string custcode,string artcode,var Array string aPrice,var Array string aPriceList,var Array string aArtcode,var Array string aComment)
+begin
+  Boolean found,testf;  
+  record PLVc PLr;
+  record INVc INr;
+  Integer s;
+
+  found = true;
+  PLr.ArtCode = artcode;
+  PLr.PLCode = plcode;
+  if (nonblank(plcode)) then begin
+    s = 2;
+  end;
+  while (LoopKey("ArtCode",PLr,s,found)) begin
+    testf = true;
+    if (nonblank(plcode)) then begin
+      if (PLr.ArtCode!=artcode or PLr.PLCode!=plcode) then begin 
+        testf = false;
+        found = false;
+      end;
+    end else begin
+      if (PLr.ArtCode!=artcode) then begin 
+        testf = false;
+        found = false;
+      end;
+    end;
+    if (testf) then begin 
+      if (nonblank(PLr.CustCode)) then begin 
+        if (PLr.CustCode!=custcode) then begin 
+          testf = false;
+        end;
+      end;   
+    end;
+    if (found and testf) then begin
+      s = aPrice.length;
+      aPrice[s] = PLr.ExVatPrice;
+      aPriceList[s] = PLr.PLCode;
+      aArtcode[s] = PLr.ArtCode;
+      aComment[s] = PLr.Comment;
+    end;
+  end;
+  if ((nonblank(plcode) and aPrice.length==0) or (blank(plcode))) then begin
+    ReadFirstItem(artcode,INr,false,true);
+    s = aPrice.length;
+    aPrice[s] = INr.UPrice1;
+    aPriceList[s] = "";
+    aArtcode[s] = artcode;
+    aComment[s] = INr.Name;
+  end;
+
+  return;
+end;
+
+global
+procedure CountryNameSClassOnOpenRemote(var Array string astr)
+begin
+  record CountryVc Cntryr;
+  boolean found;
+
+  found = true;
+  while (LoopKey("Comment",Cntryr,1,found)) begin
+    if (found) then begin    
+      astr[astr.length] = Cntryr.Comment;
+    end;
+  end;
+  return;
+end;

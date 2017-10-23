@@ -1,0 +1,850 @@
+external function Boolean HasEInvoiceExpired();
+external function Boolean HasEInvoicing();
+remote function string 255 AddBranchObjectToObjectList(string,string);
+external function LongInt TimeDiffInSeconds(Time,Time);
+external function LongInt AddTime(Time,LongInt,var Time);
+external function Time AddTime_Minutes(Time,Time);
+external function Time TimeDiff(Time,Time);
+external procedure ExtractObj(string,var Integer,var string);
+remote function Boolean PasteCust2InInv(var record IVVc,record LocalMachineBlock,string,Boolean,var string,var string,var string,var string,var string);
+external function LongInt DateDiff(Date,Date);
+external procedure FindUserMailboxName(string,var string,var string);
+external function Boolean TouchScreenLook();
+external procedure OpenHWStoreWithLandingPage(string);
+
+function Integer CheckStockSettings()
+begin
+  record ItemHistVc IHr;
+  record CostAccBlock CMb;
+  Integer res;
+  record INVc INr;
+  record ICSVc ICSr;
+  Boolean found,testf;
+  record OffLineSetBlock OffLb;
+  
+  res = 0;
+/*  
+  BlockLoad(CMb);
+*/  
+  if (CountRecords("ICSVc")>0) then begin
+    BlockLoad(OffLb);
+    testf = true;
+    if (CountRecords("ItemHistVc")!=0) then begin testf = false; end;
+    if (StringToInt(OffLb.OffLineComp)==CurrentCompany) then begin testf = false; end;
+    if (IsLiveSyncPOS) then begin testf = false; end;
+    if (testf) then begin
+      found = true;
+      INr.ItemType = 1;
+      while (LoopKey("ItemType",INr,1,found)) begin
+        if (INr.ItemType!=1) then begin found = false; end;
+        if (found) then begin
+          ICSr.ArtCode = INr.Code;
+          if (ReadFirstKey("ArtCode",ICSr,1,true)) then begin 
+            res = 1;
+            found = false;
+          end;
+        end;
+      end;
+    end;
+  end;
+  if ((ProgramType==typFirstOffice) or IsBooks) then begin
+    res = 0;
+  end;
+/*  
+  if (CMb.PrimaryCostModel==0) then begin
+    res = 2;
+  end;
+*/  
+  CheckStockSettings = res;
+  return;
+end;
+
+global
+function Boolean CanOKStockRecord(var Integer err)
+begin
+  Boolean res;
+  transaction string 255 gRuniningMaint;
+  record MainStockBlock MSb;
+  
+  err = 0;
+  res = true;
+  switch (gRuniningMaint) begin    
+    case "RecalcStockMn": ;
+    otherwise
+      if (CheckStockSettings>0) then begin
+        res = false;
+        err = 1766;
+      end;
+      if (res) then begin
+        BlockLoad(MSb);
+        if (CountRecords("LocationVc")>0) then begin
+          res = nonblank(MSb.MainStock);
+          err = 1767;
+        end;
+      end;
+  end;
+  CanOKStockRecord = res;
+  return;
+end;
+
+global
+function Boolean StockRecordForLocationAllowed(string FileName,string Location,string ArtCode,date TransDate,integer okflag,var Integer errcode,var string errstr)
+begin
+  boolean res;
+  
+  //empty for future code of blocking certain locations based on custom criteria
+  res = true;
+  StockRecordForLocationAllowed = res;
+  return;
+end;
+
+
+global
+function Boolean IsStockSettingsOK()
+begin
+  Boolean res;
+  record MainStockBlock MainStockr;
+  
+  res = true;
+  BlockLoad(MainStockr);
+  if (blank(MainStockr.MainStock)) then begin
+    if (CountRecords("LocationVc")>0) then begin
+      res = false;
+    end;
+  end;
+  IsStockSettingsOK = res;
+end;
+
+updating procedure SendMailToSuperior(string curuser,string supervisor,string ltxtcode)
+BEGIN
+  string 255 mailboxnr,mailboxname,tstr;
+  record MailVc Mailr;
+  row MailVc MArw;
+  record LTxtVc LTxtr;
+  Integer i,rwcnt,line;
+
+  if ((nonblank(curuser)) and (nonblank(supervisor))) then begin
+    RecordNew(Mailr);
+    FindUserMailboxName(supervisor,mailboxnr,mailboxname);
+    if (blank(mailboxname)) then begin
+      goto LSendMailToSupervisor;
+    end;  
+    MArw.RowTyp = 1;
+    MArw.AddrCode = mailboxname;
+    MatRowPut(Mailr,line,MArw);    
+    line = line + 1;
+    FindUserMailboxName(curuser,mailboxnr,mailboxname);
+    if (blank(mailboxname)) then begin
+      goto LSendMailToSupervisor;
+    end;  
+    Mailr.Header = curuser;
+    Mailr.SendFlag = 1;
+    MArw.RowTyp = 0;
+    MArw.AddrCode = mailboxname;
+    MatRowPut(Mailr,line,MArw);    
+    line = line + 1;
+    LTxtr.Code = ltxtcode;
+    if (ReadFirstMain(LTxtr,1,true)) then begin
+      rwcnt = LineTextCnt(LTxtr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        tstr = LineTextGet(LTxtr,i);
+        LineTextPut(Mailr,LineTextCnt(Mailr),tstr);
+        line = line + 1;        
+      end;    
+      AddCRToText(Mailr);
+    end;
+    Mailr.TransDate = CurrentDate;
+    Mailr.SerNr = NextSerNr("MailVc",Mailr.TransDate,-1,false,"");
+    if (RecordStore(Mailr,false)) then begin end;
+  end;
+LSendMailToSupervisor:;  
+  RETURN;
+END;
+
+global
+updating procedure CheckForceTimeEntry(Date clientdate)
+begin
+  record UserVc Userr;
+  record ActVc Actr;
+  record TSVc TSr;
+  string 255 ckey;
+  record ForceTimeEntryBlock ForceTimeEntryRec;
+  LongInt diff,diff2;
+  Date curd,td;
+  string 20 curuser;
+  string 255 tstr,supervisor;
+  Integer pos;
+  
+  BlockLoad(ForceTimeEntryRec);
+  if (blankdate(ForceTimeEntryRec.StartDate)) then begin
+    goto LCheckForceTimeEntry;
+  end;
+  if (ForceTimeEntryRec.WarnDays==-1) then begin
+    goto LCheckForceTimeEntry;
+  end;
+  curuser = CurrentUser;
+  curd = AddDay(clientdate,-1);//from yesterday
+  if (GetDateId(clientdate)==1) then begin//Monday
+    curd = AddDay(clientdate,-3);//skip weekend
+  end;
+  Userr.Code = curuser;
+  if (ReadFirstMain(Userr,1,true)) then begin
+    if (Userr.ForceTimeEntry!=0) then begin
+      switch (ForceTimeEntryRec.Type) begin    
+        case 0:
+          Actr.TransDate = curd;
+          Actr.CalTimeFlag = 1;
+          ckey = "DateUserMain:" & curuser;
+          if (ReadLastKey(ckey,Actr,2,false)) then begin
+            if (Actr.CalTimeFlag==1) then begin
+              td = Actr.TransDate;
+              if (Actr.TransDate<ForceTimeEntryRec.StartDate) then begin
+                goto LCheckForceTimeEntry;
+              end;
+            end;
+          end;
+        case 1:
+          TSr.Sign = curuser;
+          if (ReadLastKey("Sign",TSr,1,false)) then begin
+            if (TSr.Sign==curuser) then begin
+              if (TSr.RegDate<ForceTimeEntryRec.StartDate) then begin
+                goto LCheckForceTimeEntry;
+              end;
+              td = TSr.RegDate;
+            end;
+          end;          
+      end;
+      if (nonblankdate(td)) then begin
+        diff = DateDiff(curd,td);
+      end else begin
+        if (nonblankdate(Userr.DateCreated)) then begin
+          diff = DateDiff(curd,Userr.DateCreated);
+        end else begin
+          diff = ForceTimeEntryRec.WarnDays;
+        end;
+      end;
+//StopAlert("diff " & diff & " Userr.DateCreated " & Userr.DateCreated & " td " & td);      
+      if (diff<=0) then begin goto LCheckForceTimeEntry; end;
+      if (ForceTimeEntryRec.Type==1) then begin
+        tstr = USetStr(2226);
+      end else begin
+        tstr = USetStr(2220);
+      end;
+      tstr = tstr & diff;
+      if (diff==1) then begin
+        tstr = tstr & USetStr(2225);
+      end else begin
+        tstr = tstr & USetStr(2221);
+      end;
+      if (diff<ForceTimeEntryRec.WarnDays) then begin
+        tstr = tstr & USetStr(2222);
+        tstr = tstr & ForceTimeEntryRec.WarnDays-diff;
+        tstr = tstr & USetStr(2223);
+      end else begin
+        tstr = tstr & USetStr(2224);
+      end;
+      MessageBox(0,tstr);
+      if (ForceTimeEntryRec.WarnDays!=-1) then begin
+        if (diff>=ForceTimeEntryRec.WarnDays) then begin
+          if (nonblank(Userr.Supervisor)) then begin
+            pos = 0;
+            ExtractObj(Userr.Supervisor,pos,supervisor);
+            while (nonblank(supervisor)) begin
+              SendMailToSuperior(curuser,supervisor,ForceTimeEntryRec.LTxtCode);
+              ExtractObj(Userr.Supervisor,pos,supervisor);
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+LCheckForceTimeEntry:;  
+  return;
+end;
+
+function Boolean CheckVERecords()
+BEGIN
+  Boolean res;
+  record VEVc VEr;
+  
+  VEr.Code = "ZZZZZZZZZZZZZZZZZZZZ";
+  if (ReadLastKey("Code",VEr,1,false)) then begin
+    res = true;
+  end;
+  CheckVERecords = res;
+  RETURN;
+END;
+
+function Boolean CheckContactRecords()
+BEGIN
+  Boolean res;
+  record ContactVc Contactr;
+  
+  Contactr.Name = "";
+  if (LoopKey("ActName",Contactr,1,true)) then begin
+    if (Contactr.Closed==0) then begin
+      res = true;
+    end;
+  end;
+  CheckContactRecords = res;
+  RETURN;
+END;
+
+updating procedure CleanMailQueue()
+begin
+  record EMailQueVc EMQr;
+  record EMailQueVc oldEMQr;
+  Boolean foundf;
+
+  foundf = true;
+LOnApplicationStartupAfter:;
+  EMQr.EMailSent = 2;
+  while (LoopKey("Sending",EMQr,1,foundf)) begin
+    if (EMQr.EMailSent!=2) then begin
+      foundf = false;
+    end;
+    if (foundf) then begin
+      RecordCopy(oldEMQr,EMQr);
+      EMQr.EMailSent = 0;
+      if (RecordUpdate(oldEMQr,EMQr,false)==0) then begin end;
+      goto LOnApplicationStartupAfter;
+    end;
+  end;
+  return;
+end;
+
+updating function Boolean CreateClockInActivity(string user,Date clientdate,Time clienttime,var record ActVc Actr)
+begin
+  Boolean res;
+  Time blankt;
+  record ASTBlock ASTb;
+  
+  BlockLoad(ASTb);
+  RecordNew(Actr);
+  Actr.TransDate = clientdate;
+  Actr.StartTime = clienttime;
+  Actr.EndTime = blankt;
+  Actr.CalTimeFlag = kCalTimeFlagTime;
+  Actr.TodoFlag = kTodoFlagWorkHours;
+  Actr.MainPersons = user;
+  Actr.Comment = USetStr(22172);
+  Actr.ActType = ASTb.ClockInOut;
+  Actr.SerNr = NextSerNr("ActVc",Actr.TransDate,-1,false,"");
+  if (Actr.SerNr>0) then begin
+    res = RecordStore(Actr,false);
+  end;
+  CreateClockInActivity = res;
+  return;
+end;
+
+updating function string 255 ClockinActivityExists(string user,Date clientdate,Time clienttime,Boolean forcef,Boolean createactf,var record ActVc Actr)
+begin
+  string 255 res;
+  string 255 index;
+  Boolean found,testf;
+  Time curt;
+  Date curd;
+
+  if (UserCanAction("AllowNoClockInOut",true)==false) or (TypeOfUser==kTypeOfUserTimekeeper) or (forcef) then begin
+    res = "clockinactivitydoesnotexist";
+    curd = clientdate;
+    curt = clienttime;
+    index = "TodoUserMain:" & user;  
+    Actr.TodoFlag = kTodoFlagWorkHours;
+    Actr.CalTimeFlag = kCalTimeFlagTime;
+    Actr.TransDate = curd;
+    found = true;
+    while (LoopBackKey(index,Actr,3,found)) begin
+      if (Actr.TodoFlag!=kTodoFlagWorkHours) then begin found = false; end;
+      if (Actr.CalTimeFlag!=kCalTimeFlagTime) then begin found = false; end;
+      if (Actr.TransDate>curd) then begin found = false; end;
+      if (found) then begin
+        testf = true;
+        if (nonblank(Actr.EndTime)) then begin testf = false; end;
+        if (testf) then begin
+          if (curd>Actr.TransDate) then begin
+            res = "clockinactivityexists_inpast";
+          end else begin
+            res = "clockinactivityexists";
+          end;
+        end;
+        goto LClockinActivityExists;
+      end;
+    end;
+LClockinActivityExists:;  
+    if (res=="clockinactivitydoesnotexist") then begin
+      if (createactf) then begin
+        if (UserCanAction("AllowNoClockInOut",true)==false) or (TypeOfUser==kTypeOfUserTimekeeper) then begin
+          if (CreateClockInActivity(user,clientdate,clienttime,Actr)) then begin
+            res = "clockinactivitycreated";
+          end;
+        end;
+      end;
+    end;
+  end;
+  ClockinActivityExists = res;
+  return;
+end;
+
+global
+updating function Integer ClockInWClassDoRemote(string user,Date clientdate,Time clienttime)
+begin
+  Integer res;
+  record ActVc Actr;
+  
+  if (ClockinActivityExists(user,clientdate,clienttime,true,false,Actr)=="clockinactivityexists") then begin
+    res = 22170;
+    goto LClockInWClassDoRemote;
+  end;
+  if (UserCanAction("AllowNoClockInOut",true)) then begin
+    CreateClockInActivity(user,clientdate,clienttime,Actr);
+  end;
+LClockInWClassDoRemote:;  
+  ClockInWClassDoRemote = res;
+  return;
+end;
+
+global
+updating function Integer ClockOutWClassDoRemote(record RcVc RepSpec,string user,Date clientdate,Time clienttime,Boolean createclockinf)
+begin
+  Integer res;
+  record ActVc Actr;
+  record ActVc oldActr;
+  string 255 action;
+  Time t;
+  Integer days;
+  LongInt seconds;
+  
+  action = ClockinActivityExists(user,clientdate,clienttime,true,false,Actr);
+  switch (action) begin
+    case "clockinactivityexists":
+    case "clockinactivityexists_inpast":
+    otherwise
+      res = 22171;
+      goto LClockOutWClassDoRemote;
+  end;
+  RecordCopy(oldActr,Actr);
+  Actr.EndTime = CurrentTime;
+  Actr.EndDate = CurrentDate;
+  Actr.Comment = Actr.Comment & " " & USetStr(22173) & " " & USetStr(22174);
+  if (RepSpec.ArtMode==1) then begin
+    Actr.Comment = Actr.Comment & " " & USetStr(22175);
+  end;
+  if (Actr.EndDate==Actr.TransDate) then begin
+    Actr.CostTime = TimeDiff(Actr.StartTime,Actr.EndTime);  
+  end else begin
+    t.hour = 23; t.minute = 59; t.second = 59;
+    seconds = TimeDiffInSeconds(Actr.StartTime,t);
+    t.hour = 0; t.minute = 0; t.second = 0;
+    seconds = seconds + TimeDiffInSeconds(t,Actr.EndTime);
+    if (seconds>24*60*60) then begin
+      t.hour = 23; t.minute = 59; t.second = 59;
+      Actr.CostTime = t;
+    end else begin
+      Actr.CostTime = TimeDiff(Actr.StartTime,t);  
+      t.hour = 0; t.minute = 0; t.second = 0;
+      t = TimeDiff(t,Actr.EndTime);
+      Actr.CostTime = AddTime_Minutes(Actr.CostTime,t);
+      days = DateDiff(Actr.EndDate,Actr.TransDate);
+      if (days>1) then begin
+        t.hour = 23; t.minute = 59; t.second = 59;
+        Actr.CostTime = t;
+      end;
+    end;          
+/*
+should have been DUration and below code
+    Actr.CostTime = TimeDiff(Actr.StartTime,t);  
+    t.hour = 0; t.minute = 0; t.second = 0;
+    t = TimeDiff(t,Actr.EndTime);
+    Actr.CostTime = AddTime_Minutes(Actr.CostTime,t);
+    days = DateDiff(Actr.EndDate,Actr.TransDate);
+    if (days>1) then begin
+      AddTime(Actr.CostTime,(days-1)*3600,Actr.CostTime);
+    end;
+*/    
+  end;
+  Actr.OKFlag = 1;
+  RecordUpdate(oldActr,Actr,true);  
+  if (createclockinf) then begin
+    if (UserCanAction("AllowNoClockInOut",true)==false) or (TypeOfUser==kTypeOfUserTimekeeper) then begin
+      if (CreateClockInActivity(user,clientdate,clienttime,Actr)) then begin
+//          res = "clockinactivitycreated";
+      end;
+    end;
+  end;
+LClockOutWClassDoRemote:;  
+  ClockOutWClassDoRemote = res;
+  return;
+end;
+
+function Boolean AcceptanceActivityExistsForUser(string user,var record RcVc acptRepSpec)
+begin
+  Boolean res;
+  record ActVc Actr;
+  record ActTypeVc ATr;
+  Boolean found;
+  string 255 index;
+  
+  RecordNew(acptRepSpec);
+  index = "UserMain:" & user;  
+  Actr.TodoFlag = kTodoFlagApproval;
+  found = true;
+  while (LoopKey(index,Actr,1,found)) begin
+    if (Actr.TodoFlag!=kTodoFlagApproval) then begin found = false; end;
+    if (found) then begin
+      if (Actr.OKFlag==0) then begin
+        ATr.Code = Actr.ActType;
+        ReadFirstMain(ATr,1,true);
+        res = true;
+        acptRepSpec.f1 = user;
+        acptRepSpec.AccStr = ATr.ActTypeGr;
+        if (blank(acptRepSpec.AccStr)) then begin
+          acptRepSpec.f3 = Actr.ActType;
+        end;
+        acptRepSpec.flags[1] = 0;
+        acptRepSpec.flags[2] = 0;
+        acptRepSpec.flags[3] = 0;
+        acptRepSpec.flags[5] = 0;
+        acptRepSpec.sStartDate = Actr.TransDate;
+        acptRepSpec.sEndDate = CurrentDate;
+        acptRepSpec.Period2Str = acptRepSpec.sStartDate;
+        acptRepSpec.Period2Str = acptRepSpec.Period2Str & ":";
+        acptRepSpec.Period2Str = acptRepSpec.Period2Str & acptRepSpec.sEndDate;
+        found = false;
+      end;
+    end;
+  end;
+  AcceptanceActivityExistsForUser = res;
+  return;
+end;
+
+global
+updating function Boolean OnLoginRemote2(var Boolean newf,var Boolean resve,var Boolean rescont,Boolean cleanmail,Date clientdate,Time clienttime,string user,var Integer forcestockmaint,var Integer DBStatus,
+                                         var array LongInt aVEIVNr,var array LongInt aVEIVComp,var string clockinaction,
+                                         var Boolean accpetancef,var record RcVc acptRepSpec,var string mailboxnr,var string mailboxname)
+BEGIN
+  Boolean reshot,vefoundf;
+  string 255 tstr;
+  Boolean foundf,testf;
+  record CashierDefBlock CashDefRec;
+  record EInvoiceBlock EIb;
+  record DBERecordsBlock DBERb;
+  record VEIVVc VEIVr;
+  record ActVc Actr;
+  Integer oldcomp;
+  record CompaniesBlock Cb;
+  row CompaniesBlock Cbrw;
+  Integer i,rwcnt;
+  record GlobalUserVc GUserr;
+  
+  newf = false;
+  if (cleanmail) then begin
+    CleanMailQueue;
+  end;
+  CheckForceTimeEntry(clientdate);
+  resve = !CheckVERecords;
+  rescont = !CheckContactRecords;
+  forcestockmaint = CheckStockSettings;
+  BlockLoad(EIb);
+  //DBStatus = 1;
+  //if (EIb.OutEInvoices!=0) or (EIb.OutEPayments!=0) or (EIb.RcvEInvoices!=0) or (EIb.DefaultEBehave!=0) or (EIb.OutArgEInvoices!=0) or (EIb.SendExportIV!=0) then begin
+    BlockLoad(DBERb);
+    DBStatus = DBERb.DBStatus;
+  //end;
+
+  GUserr.Code = CurrentUser;
+  if (ReadFirstMain(GUserr,1,true)) then begin
+    oldcomp = CurrentCompany;
+    BlockLoad(Cb);
+    rwcnt = MatRowCnt(Cb);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Cb,i,Cbrw);
+      if (Cbrw.ActiveStatus==0 and blank(CBrw.TCPIP)) then begin
+        SetServerCompany(i+1);
+        if (UserCanAction("AlertWhenNewVEIV",false)) then begin
+          VEIVr.OKStatus = 0;
+          vefoundf = ReadFirstKey("OKStatus",VEIVr,1,true);
+          if (vefoundf==false) then begin
+  //      VEIVr.OKStatus = 2;//why rejected as well ? 
+  //      vefoundf = ReadFIrstKey("OKStatus",VEIVr,1,true);
+          end;
+          if (vefoundf) then begin
+            aVEIVNr[aVEIVNr.length] = VEIVr.SerNr;
+            aVEIVComp[aVEIVComp.length] = CurrentCompany;
+          end;
+        end;
+      end;
+    end;
+    SetServerCompany(oldcomp);
+  end else begin
+    if (UserCanAction("VEIVToVI",false)) then begin
+      VEIVr.OKStatus = 0;
+      vefoundf = ReadFirstKey("OKStatus",VEIVr,1,true);
+      if (vefoundf==false) then begin
+    //      VEIVr.OKStatus = 2;//why rejected as well ? 
+    //      vefoundf = ReadFIrstKey("OKStatus",VEIVr,1,true);
+      end;
+      if (vefoundf) then begin
+        aVEIVNr[aVEIVNr.length] = VEIVr.SerNr;
+        aVEIVComp[aVEIVComp.length] = CurrentCompany;
+      end;
+    end;
+  end;
+  
+  clockinaction = ClockinActivityExists(user,clientdate,clienttime,false,true,Actr);
+  if (accpetancef) then begin
+    accpetancef = AcceptanceActivityExistsForUser(user,acptRepSpec);
+  end;
+  FindUserMailboxName(CurrentUser,mailboxnr,mailboxname);
+  OnLoginRemote2 = reshot;
+  return;
+end;
+
+global
+updating function Boolean OnLoginRemote(var Boolean newf,var Boolean resve,var Boolean rescont,Boolean cleanmail,Date clientdate,Time clienttime,string user,var Integer forcestockmaint,var Integer DBStatus,var LongInt VEIVNr,var string clockinaction,
+                                        var Boolean accpetancef,var record RcVc acptRepSpec,var string mailboxnr,var string mailboxname)
+begin
+  Boolean res;
+  array LongInt aVEIVNr,aVEIVComp;
+
+  OnLoginRemote2(newf,resve,rescont,cleanmail,clientdate,clienttime,user,forcestockmaint,DBStatus,aVEIVNr,aVEIVComp,clockinaction,
+                 accpetancef,acptRepSpec,mailboxnr,mailboxname);
+  VEIVNr = aVEIVNr[0];
+  OnLoginRemote = res;
+  return;
+end;
+
+global
+updating function Boolean OnLoginRemote_RestAcc(var record RestAccVc RestAccr,var Boolean newf,var Boolean resve,var Boolean rescont,Boolean cleanmail,Date clientdate,Time clienttime,string user,var Integer forcestockmaint,var Integer DBStatus,var LongInt VEIVNr,var string clockinaction,
+                                                var string mailboxnr,var string mailboxname)
+BEGIN
+  Boolean res;
+  string 255 tstr;
+  Boolean foundf,testf;
+  record CashierDefBlock CashDefRec;
+  Boolean accpetancef;
+  record RcVc acptRepSpec;
+  
+  newf = false;
+  RestAccr.Closed = 0;
+//    RestAccr.TransTime = CurrentTime;
+  RestAccr.Cashier = CurrentUser;
+  if (ReadLastKey("OpenCashier",RestAccr,1,false)) then begin
+    if (RestAccr.Closed==0) and (RestAccr.Cashier==CurrentUser) then begin          
+      newf = false;
+    end else begin
+      newf = true;
+    end;
+  end else begin
+    newf = true;
+  end;
+  if (newf) then begin
+    RecordNew(RestAccr);
+  end;
+  res = OnLoginRemote(newf,resve,rescont,cleanmail,clientdate,clienttime,user,forcestockmaint,DBStatus,VEIVNr,clockinaction,accpetancef,acptRepSpec,mailboxnr,mailboxname);
+  OnLoginRemote_RestAcc = res;
+  RETURN;
+END;
+
+global
+updating function Boolean OnLoginRemote_IV(Boolean touchscreenf,var record IVVc IVr,var Boolean newf,var Boolean resve,var Boolean rescont,Boolean cleanmail,Date clientdate,Time clienttime,string user,var Integer forcestockmaint,var Integer DBStatus,var LongInt VEIVNr,var string clockinaction,
+                                           var string mailboxnr,var string mailboxname)
+begin
+  Boolean res;
+  string 255 tstr;
+  Boolean foundf,testf;
+  record CashierDefBlock CashDefRec;
+  Boolean accpetancef;
+  record RcVc acptRepSpec;
+  record LocalMachineBlock LMb;
+  
+  newf = false;
+  if (touchscreenf) then begin
+    BlockLoad(LMb);
+    IVr.OKFlag = 0;
+    IVr.SalesMan = CurrentUser;
+    newf = true;
+    foundf = true;
+    while (LoopKey("OKFlagSalesMan",IVr,2,foundf)) begin
+      if (IVr.OKFlag!=0) then begin
+        foundf = false;
+      end;
+      if (IVr.SalesMan!=CurrentUser) then begin
+        foundf = false;
+      end;
+      testf = foundf;
+      if (IVr.MachineName!=CurMachineName) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        newf = false;
+        foundf = false;
+      end;
+    end;
+    if (newf) then begin
+      RecordNew(IVr);
+      BlockLoad(CashDefRec);  
+      IVr.CustCode = CashDefRec.DefCustCode;
+      if (PasteCust2InInv(IVr,LMb,"",false,tstr,tstr,tstr,tstr,tstr)) then begin end;
+    end;
+  end;
+  res = OnLoginRemote(testf,resve,rescont,cleanmail,clientdate,clienttime,user,forcestockmaint,DBStatus,VEIVNr,clockinaction,accpetancef,acptRepSpec,mailboxnr,mailboxname);
+  OnLoginRemote_IV = res;
+  return;
+end;
+
+global
+updating function Boolean OnLogoutRemote(string user)
+BEGIN
+//  UpdateWorkHourActivity(user);
+  OnLogoutRemote = true;
+  RETURN;
+END;
+
+global
+function Integer OpenMasterWClass()
+begin
+  Integer wn,oldwn;
+  record RcVc RepSpec;
+  string 255 mailboxnr,mailboxname,rlink;
+  record ConfVc Confr;
+
+  if (OnlyMarketplace) then begin
+    OpenHWStoreWithLandingPage("/users");
+    goto LOpenMasterWClassOut;
+  end;
+
+  switch (TypeOfUser) begin
+    case kTypeOfUserTimekeeper:
+      if (oldwn>0) then begin
+        CloseWindow(oldwn);
+      end;
+      wn = OpenWindow("TimekeeperMasterWClass",0,0,"","",RepSpec);
+    otherwise
+      FindUserMailboxName(CurrentUser,mailboxnr,mailboxname);
+      Confr.SerNr = StringToLongInt(mailboxnr);
+      rlink = GetRecordLink(Confr);
+      oldwn = FindWindow("MasterWClass");
+      if (oldwn>0) then begin
+        CloseWindow(oldwn);
+      end;
+      wn = OpenWindow("MasterWClass",0,0,rlink,mailboxname,RepSpec);
+      if (GuiType==kGuiiPhone) then begin
+        wn = OpenWindow("Master2WClass",0,0,rlink,mailboxname,RepSpec);
+      end;
+  end;
+LOpenMasterWClassOut:;
+  OpenMasterWClass = wn;
+  return;
+end;
+
+global
+function Integer OpenMasterWClass2(string mailboxnr,string mailboxname)
+begin
+  Integer wn,oldwn;
+  record RcVc RepSpec;
+  string 255 rlink;
+  record ConfVc Confr;
+
+  switch (TypeOfUser) begin
+    case kTypeOfUserTimekeeper:
+      if (oldwn>0) then begin
+        CloseWindow(oldwn);
+      end;
+      wn = OpenWindow("TimekeeperMasterWClass",0,0,"","",RepSpec);
+    otherwise
+      Confr.SerNr = StringToLongInt(mailboxnr);
+      rlink = GetRecordLink(Confr);
+      oldwn = FindWindow("MasterWClass");
+      if (oldwn>0) then begin
+        CloseWindow(oldwn);
+      end;
+      wn = OpenWindow("MasterWClass",0,0,rlink,mailboxname,RepSpec);
+      if (GuiType==kGuiiPhone or GuiType==kGuiAndroid) then begin
+        oldwn = FindWindow("Master2WClass");
+        if (oldwn>0) then begin
+          CloseWindow(oldwn);
+        end;
+        wn = OpenWindow("Master2WClass",0,0,rlink,mailboxname,RepSpec);
+      end;
+  end;
+  OpenMasterWClass2 = wn;
+  return;
+end;
+
+global
+function Integer OpenToDoWClass(string mailboxnr,string mailboxname,record RcVc RepSpec)
+begin
+  Integer wn,oldwn;
+  record ConfVc Confr;
+
+  if (GUIType!=kGuiWindowsMobile) then begin
+    Confr.SerNr = StringToLongInt(mailboxnr);
+    oldwn = FindWindow("ToDoWClass");
+    if (oldwn>0) then begin
+      CloseWindow(oldwn);
+    end;
+    wn = OpenWindow("ToDoWClass",1,0,"",mailboxname,RepSpec);
+  end;
+
+  OpenToDoWClass = wn;
+  return;
+end;
+
+global
+function Boolean LoginWorkHoursActivityExists(string usercode)
+begin
+  Boolean res;
+  record ActVc Actr;
+  string 255 index;
+  Boolean found,testf;
+  Time curt;
+  Date curd;
+  
+  curt = CurrentTime;
+  curd = CurrentDate;
+
+  index = "TodoUserMain:" & usercode;  
+  Actr.TodoFlag = kTodoFlagWorkHours;
+  Actr.CalTimeFlag = kCalTimeFlagProfile;
+  Actr.TransDate = curd;
+  found = true;
+  while (LoopBackKey(index,Actr,3,found)) begin
+    if (Actr.TodoFlag!=kTodoFlagWorkHours) then begin found = false; end;
+    if (Actr.CalTimeFlag!=kCalTimeFlagProfile) then begin found = false; end;
+    if (Actr.TransDate>curd) then begin found = false; end;
+    if (found) then begin
+      testf = true;
+      if (Actr.TransDate>curd) then begin testf = false; end;
+
+      if (curd==Actr.TransDate) then begin
+        if (curt<Actr.StartTime) then begin testf = false; end;        
+        if (nonblank(Actr.EndTime)) then begin
+          if (curd<Actr.EndDate) then begin /*OK*/ end;          
+          if (curd==Actr.EndDate) then begin
+            if (curt>=Actr.EndTime) then begin testf = false; end;
+          end;
+          if (curd>Actr.EndDate) then begin testf = false; end;
+        end;
+      end;      
+      if (curd>Actr.TransDate) then begin
+        if (curd<=Actr.EndDate) then begin 
+          if (nonblank(Actr.EndTime)) then begin
+            if (curt>=Actr.EndTime) then begin testf = false; end;
+          end;
+        end;
+        if (curd>Actr.EndDate) then begin testf = false; end;          
+      end;
+      if (testf) then begin
+        res = true;
+        goto LLoginWorkHoursActivityExists;
+      end;
+      if (Actr.TransDate<curd) then begin
+        goto LLoginWorkHoursActivityExists;
+      end;
+    end;
+  end;
+LLoginWorkHoursActivityExists:;  
+  LoginWorkHoursActivityExists = res;
+  return;
+end;

@@ -1,0 +1,841 @@
+remote updating function Integer CreateMailFromPPD(record PPVc,var string,string);
+external function Integer PMCheckType(string,var string,var string);
+external procedure GetPayType(String,Var Integer);
+remote procedure PPVc_PastePayDate(var record PPVc);
+external function roundmode SetRoundModeD(Integer);
+external function roundmode DefaultRoundMode();
+external function Integer PMCheckType(string,var string,var string);
+external function Boolean GetPMRow(string,var row PMBlock);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure RecActionPP_rlCashInOutDPrint(var record PPVc);
+remote procedure PPVc_PasteCurncyCode(var record PPVc);
+remote procedure PPVc_PasteTransDate(var record PPVc,Boolean,var Integer,var Integer);
+remote procedure PPVc_PastePayMode(var record PPVc);
+remote updating function Boolean RecordAction_rlPPLOrder(var record PPVc);
+external procedure RecordActionPP_Print(var record PPVc,string);
+remote updating function Boolean RecordAction_rlPPLOK(var record PPVc);
+remote function string 40 GenViitNumber(string,LongInt);
+
+global
+Function Boolean IsPaymentType(String i,Integer TypeNr)  
+Begin
+  Record PMBlock PayModes;
+  Row PMBlock PayModesrw;
+  Integer j,rows;
+  Boolean ret;
+
+  Blockload(PayModes);
+  rows = MatRowCnt(PayModes);
+  for (j=0;j<rows;j=j+1) begin
+    MatRowGet(PayModes,j,PayModesrw);
+    if (PayModesrw.Code == i)then begin
+      if (PayModesrw.CheckType == TypeNr) then begin
+        ret  = true;
+      end else begin
+        ret  = false;
+      end;
+    end;
+  end;
+  IsPaymentType = ret;
+  Return;
+End;
+
+global
+procedure PPSumup(var record PPVc PPp)
+BEGIN
+  Integer rwcnt;
+  row PPVc PPrw;
+  Integer i;
+
+  PPp.PayVal = blankval;
+  rwcnt = MatRowCnt(PPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PPp,i,PPrw);
+    if (PPrw.ovst==0) then begin
+      if (PPrw.stp==1) then begin
+        PPp.PayVal = PPp.PayVal + PPrw.PayVal;
+      end;
+    end;
+  end;
+  PPp.BasePayVal = MulRateToBase1(PPp.CurncyCode,PPp.PayVal,PPp.FrRate,PPp.ToRateB1,PPp.ToRateB2,PPp.BaseRate1,PPp.BaseRate2,DefaultCurRoundOff);
+  PPp.BasePayVal = PPp.BasePayVal + PPp.ExtraCost;
+  RETURN;
+END;
+
+function Boolean PPDClassObjectsEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+  row PPVc PPrw;
+  record RTViiteNumBlock RTr;
+  
+  BlockLoad(RTr);
+  if (changed!=0) and (RTr.GenFlag == 1) then begin
+    if (rownr>=0) then begin
+      GetWindowRecord(wn,PPr); 
+      DeselectWindow(wn,false);
+      MatRowGet(PPr,rownr,PPrw);
+      PPrw.rkPayNumber = GenViitNumber(PPrw.Objects,GetYear(PPr.TransDate));
+      MatRowPut(PPr,rownr,PPrw);
+      PutWindowRecord(wn,PPr);    
+    end;
+  end;
+  PPDClassObjectsEFAfter = true;
+  return;
+end;
+
+function boolean PPDClassChequeNrEFAfter(Integer wn,Integer fn,Integer rownr,integer changedf)
+begin
+  record PPVc PPr;
+  row PPVc PPrw;
+  record CheckVc Chqr;
+  record OwnCheckVc OwnChqr;
+  Boolean Cont;
+  Integer i,rows;
+  string 255 pmmode;
+  string 255 tstr;
+  val v;
+
+  if (changedf!=0) then begin
+    GetWindowRecord(wn,PPr);
+    rows = MatrowCnt(PPr);
+    MatRowGet(PPr,rownr,PPrw);
+    
+    pmmode = PPrw.PayMode;
+    if (blank(pmmode)) then begin
+      pmmode = PPr.PayMode;
+    end;
+    switch (PMCheckType(pmmode,tstr,tstr)) begin
+      case 1:
+        Chqr.SerNr = PPrw.ChequeNr;
+        if ReadFirstMain(Chqr,1,true) then begin
+          Cont = true;
+          if blank(PPr.CurncyCode) then begin  
+            PPr.CurncyCode = Chqr.CurncyCode;   
+          end;
+          if (PPr.CurncyCode<>Chqr.CurncyCode) then begin 
+            Cont = false;         
+          end;
+          if (Chqr.Openf<>1) then begin   
+            Cont = false;          
+          end; 
+          v = Chqr.Amount; 
+        end;
+      case 2:
+        OwnChqr.SerNr = PPrw.ChequeNr;
+        if ReadFirstMain(OwnChqr,1,true) then begin
+          Cont = true;
+          if blank(PPr.CurncyCode) then begin  
+            PPr.CurncyCode = OwnChqr.CurncyCode;   
+          end;
+          if (PPr.CurncyCode<>OwnChqr.CurncyCode) then begin 
+            Cont = false;         
+          end;
+          if (OwnChqr.Openf<>0) then begin   
+            Cont = false;          
+          end;
+          v = OwnChqr.Amount; 
+        end;
+    end;
+
+    if (not Cont) then begin
+      PPrw.ChequeNr = -1;
+      PPrw.PayVal = blankval;
+      MatRowPut(PPr,rownr,PPrw);
+      Beep;
+    end else begin
+      PPrw.PayVal = v;
+      MatRowPut(PPr,rownr,PPrw);
+    end;     
+    PPSumup(PPr);
+    PutWindowRecord(wn,PPr);
+  end;
+  return;
+end;
+
+global
+function Boolean PPDClassDoneFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record PPVc PPr;
+  record PPVc PP2r;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,PPr);
+    if (PPr.OrderedFlag==0) then begin
+      res = false;
+      goto LPPDClassDoneFlagButtonAction;
+    end;
+    if (PPr.DoneFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetWindowRecord(wn,PPr);
+    GetPrevWindowRecord(wn,PP2r);
+    if (PPr.OrderedFlag==0) then begin
+      res = false;
+      goto LPPDClassDoneFlagButtonAction;
+    end;
+    if (PPr.DoneFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+LPPDClassDoneFlagButtonAction:;  
+  PPDClassDoneFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean PPDClassOrderedFlagButtonAction(Integer wn,Integer value)
+BEGIN
+  Boolean res;
+  record PPVc PPr;
+  Integer normalmode,updatemode;
+ 
+  res = true;
+  normalmode = 0;//Rs_normal
+  updatemode = 2;//Rs_update
+  if (WindowState(wn)==normalmode) then begin
+    GetWindowRecord(wn,PPr);
+    if (PPr.OrderedFlag!=0) then begin
+      res = false;
+      if (UserCanAction("UnOKAll",false)) then begin
+        res = true;
+      end;    
+    end;
+  end;  
+  if (WindowState(wn)==updatemode) then begin
+    GetPrevWindowRecord(wn,PPr);
+    if (PPr.OrderedFlag!=0) then begin
+      res = false;
+    end;
+  end;  
+  PPDClassOrderedFlagButtonAction = res;
+  RETURN;
+END;
+
+global
+function Boolean PPDClassUpdateTest(Integer wn)
+BEGIN
+  Boolean res;
+  record PPVc PPr;
+  
+  res = true;
+  GetWindowRecord(wn,PPr);
+  if (PPr.DoneFlag!=0) then begin
+    res = false;
+    if (UserCanAction("UnOKAll",false)) then begin
+      res = true;
+    end;    
+  end;
+  PPDClassUpdateTest = res;
+  RETURN;
+END;
+
+
+global
+updating procedure OKPPLsm()
+BEGIN
+  record PPVc PPr;
+  Integer wn,i;
+  
+  if (UserCanAction("PPOK",true)) then begin
+    wn = CurWindow;
+    i = 1;
+    while (GetRecordFromBrowse(PPr,wn,i)) begin
+      if (RecordAction_rlPPLOK(PPr)) then begin end;
+      i = i + 1;
+    end;  
+    UpdateBrowses("PPVc");  
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"PPOK"));
+  end;
+  
+  RETURN;
+END;
+
+global
+updating procedure OrderPPLsm()
+BEGIN
+  record PPVc PPr;
+  Integer wn,i;
+  
+  if (UserCanAction("PPOK",true)) then begin
+    wn = CurWindow;
+    i = 1;
+    while (GetRecordFromBrowse(PPr,wn,i)) begin
+      if (RecordAction_rlPPLOrder(PPr)) then begin end;
+      i = i + 1;
+    end;  
+    UpdateBrowses("PPVc");  
+  end else begin
+    MessageBox(1274,StringFromStringSet(3,"PPOK"));
+  end;
+  
+  RETURN;
+END;
+
+global
+procedure PrintPPL(Integer wn,Boolean previewf)
+BEGIN
+  record PPVc PPr;
+  Integer i;
+  
+  StartPrintDialogGroup;
+  i = 1;
+  while (GetRecordFromBrowse(PPr,wn,i)) begin
+    RecordActionPP_Print(PPr,previewf);
+    i = i + 1;
+  end;
+  EndPrintDialogGroup;
+  RETURN;
+END;
+
+function Boolean PPDClassPayModeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,PPr);    
+    DeselectWindow(wn,false);
+    PPVc_PastePayMode(PPr);    
+    PutWindowRecord(wn,PPr);    
+  end;
+  PPDClassPayModeEFAfter = true;
+  return;
+end;
+
+function Boolean PPDClassTransDateEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+  Integer warning1,warning2;
+
+  GetWindowRecord(wn,PPr);    
+  DeselectWindow(wn,false);
+  PPVc_PasteTransDate(PPr,changed!=0,warning1,warning2); 
+  if (warning1!=0) then begin   
+    MessageBox(warning1,"")
+  end;
+  if (warning2!=0) then begin   
+    MessageBox(warning2,"")
+  end;
+  PutWindowRecord(wn,PPr);    
+  PPDClassTransDateEFAfter = true;
+  return;
+end;
+
+function Boolean PPDClassPayDateEFAfter(Integer wn,Boolean changedf)
+BEGIN
+  record PPVc PPr;
+
+  if (changedf) then begin
+    GetWindowRecord(wn,PPr);    
+    DeselectWindow(wn,false);
+    PPVc_PastePayDate(PPr);
+    PutWindowRecord(wn,PPr);    
+  end;
+  PPDClassPayDateEFAfter = true;
+  return;
+end;
+
+function Boolean PPDClassCurncyCodeEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,PPr);    
+    DeselectWindow(wn,false);
+    PPVc_PasteCurncyCode(PPr);    
+    PutWindowRecord(wn,PPr);    
+  end;
+  PPDClassCurncyCodeEFAfter = true;
+  return;
+end;
+
+function Boolean PPDClassRateEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,PPr);    
+    DeselectWindow(wn,false);
+    PPSumup(PPr);
+    PutWindowRecord(wn,PPr);    
+  end;
+  PPDClassRateEFAfter = true;
+  return;
+end;
+
+procedure PPChangBasePay(var record PPVc PPp)
+BEGIN
+  val newsum,torate,temp;
+
+  newsum = PPp.BasePayVal - PPp.ExtraCost;
+  if (PPp.FrRate==0) then begin
+//    newsum = newsum*100;
+//    PPp.ToRateB1 = newsum/PPp.PayVal;
+//    PPp.ToRateB1 = Round(PPp.ToRateB1,DefaultRoundMode);
+//why do we update rate when adding new bank fee?
+  end else begin
+    temp = newsum/PPp.PayVal;
+    torate = temp*PPp.FrRate;
+    temp = PPp.BaseRate1/PPp.BaseRate2;
+    torate = torate/temp;
+    torate = Round(torate,SetRoundModeD(2));
+    if (PPp.ToRateB1==0) then begin
+      PPp.ToRateB2 = torate;
+    end else begin
+      PPp.ToRateB1 = torate;
+    end;
+  end;
+  return;
+end;
+
+function Boolean PPDClassChangBasePay(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+
+  if (changed!=0) then begin
+    GetWindowRecord(wn,PPr);    
+    DeselectWindow(wn,false);
+    PPChangBasePay(PPr);
+    PPSumup(PPr);
+    PutWindowRecord(wn,PPr);    
+  end;
+  PPDClassChangBasePay = true;
+  return;
+end;
+
+function Boolean PPDClassPersonEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+  row PPVc PPrw;
+  record UserVc Userr;
+
+  if (changed!=0) then begin
+    if (rownr>=0) then begin
+      GetWindowRecord(wn,PPr);        
+      DeselectWindow(wn,false);
+      MatRowGet(PPr,rownr,PPrw);
+      Userr.Code = PPrw.Person;
+      if (ReadFirstMain(Userr,1,true)) then begin
+        PPrw.SortCode = Userr.SortCode;
+        PPrw.BankAcc = Userr.BankAcc;
+        PPrw.Comment = Userr.Name;
+        PPrw.Objects = Userr.PersObjx;
+      end;
+      MatRowPut(PPr,rownr,PPrw);
+      PutWindowRecord(wn,PPr);    
+    end;
+  end;
+  PPDClassPersonEFAfter = true;
+  return;
+end;
+
+function Boolean PPDClassPayValEFAfter(Integer wn,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  record PPVc PPr;
+
+  if (changed!=0) then begin
+    if (rownr>=0) then begin
+      GetWindowRecord(wn,PPr);        
+      DeselectWindow(wn,false);
+      PPSumup(PPr);
+      PutWindowRecord(wn,PPr);    
+    end;
+  end;
+  PPDClassPayValEFAfter = true;
+  return;
+end;
+
+global
+function Boolean PPDClassAfterEditField(Integer wn,string fieldname,Integer fn, Integer rownr,Integer changed)
+BEGIN
+  Boolean res;
+
+  switch (fieldname) begin
+    case "PayMode": res = PPDClassPayModeEFAfter(wn,fn,rownr,changed);
+    case "TransDate": res = PPDClassTransDateEFAfter(wn,fn,rownr,changed);
+    case "PayDate": res = PPDClassPayDateEFAfter(wn,changed!=0);
+    case "CurncyCode": res = PPDClassCurncyCodeEFAfter(wn,fn,rownr,changed);
+    case "FrRate": res = PPDClassRateEFAfter(wn,fn,rownr,changed);
+    case "ToRateB1": res = PPDClassRateEFAfter(wn,fn,rownr,changed);
+    case "ToRateB2": res = PPDClassRateEFAfter(wn,fn,rownr,changed);
+    case "BaseRate1": res = PPDClassRateEFAfter(wn,fn,rownr,changed);
+    case "BaseRate2": res = PPDClassRateEFAfter(wn,fn,rownr,changed);
+    case "ExtraCost": res = PPDClassChangBasePay(wn,fn,rownr,changed);
+    case "BasePayVal": res = PPDClassChangBasePay(wn,fn,rownr,changed);
+    case "Person": res = PPDClassPersonEFAfter(wn,fn,rownr,changed);
+    case "PayVal": res = PPDClassPayValEFAfter(wn,fn,rownr,changed);
+    case "ChequeNr": res = PPDClassChequeNrEFAfter(wn,fn,rownr,changed);
+    case "Objects": res = PPDClassObjectsEFAfter(wn,fn,rownr,changed);
+  end;
+  PPDClassAfterEditField = res;
+  RETURN;
+END;
+
+global 
+function Boolean PPDClassInsertRowTest(Integer wn, Integer rownr)
+BEGIN
+  Boolean res;
+
+  if (WindowState(wn)==1) then begin//Rs_insert
+    res = true;
+  end;
+  PPDClassInsertRowTest = res;
+  RETURN;
+END;
+
+global
+function Boolean PPDClassOnOverStrike(Integer wn,Integer rownr)
+BEGIN
+  record PPVc PPr;
+
+  if (rownr>=0) then begin
+    GetWindowRecord(wn,PPr);    
+    PPSumup(PPr);
+    PutWindowRecord(wn,PPr);    
+  end;
+  PPDClassOnOverStrike = true;
+  RETURN;
+END;
+
+global 
+function Boolean PPDClassOverStrikeTest(Integer wn,Integer rownr)
+begin
+  record PPVc PP2r;
+  Boolean res;
+
+  res = true;
+  if (WindowState(wn)==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,PP2r);    
+    if ((PP2r.OrderedFlag==0) or (PP2r.DoneFlag!=0)) then begin res = false; end;
+  end;
+  PPDClassOverStrikeTest = res;
+  RETURN;
+END;
+
+global 
+function Boolean PPDClassDeleteRowTest(Integer wn,Integer rownr)
+begin
+  record PPVc PP2r;
+  Boolean res;
+
+  res = true;
+  if (WindowState(wn)==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,PP2r);    
+    if (PP2r.OrderedFlag!=0) then begin res = false; end;
+  end;
+  PPDClassDeleteRowTest = res;
+  return;
+end;
+
+global
+function Boolean PPDClassActiveEditField(Integer wn,string fieldname,Integer fn,Integer wnst,Integer rownr,Integer changed)
+BEGIN
+  Boolean res,off;
+  record PPVc PP2r;
+  record CYBlock CYRec;
+  
+  if (fieldname=="TransDate") then begin
+    BlockLoad(CYRec);
+    if (CYRec.AllowTransDateEdit==0) then begin 
+      goto LPPDClassActiveEditField;      
+    end;
+  end;
+  if (wnst==2) then begin//Rs_update
+    GetPrevWindowRecord(wn,PP2r);    
+    off = false;
+    if (PP2r.OrderedFlag!=0) then begin
+      switch (fieldname) begin
+        case "ExtraCost": ;
+        case "BasePayVal": ;
+        case "TransDate": ;
+        otherwise
+          off = true;
+      end;
+    end;
+    if (PP2r.DoneFlag!=0) then begin
+      off = true;
+    end;
+    if (off) then begin
+      goto LPPDClassActiveEditField;
+    end;
+  end;
+  res = true;
+LPPDClassActiveEditField:;  
+  PPDClassActiveEditField = res;
+  RETURN;
+END;
+
+
+global
+procedure PrintCashInOutPPDsm()
+BEGIN
+  record PPVc PPr;
+  Integer wn,nwn;
+  Integer normalstate;
+
+  normalstate = 0;
+  wn = CurWindow;
+  if (WindowState(wn)==normalstate) then begin
+    GetWindowRecord(wn,PPr);
+    RecActionPP_rlCashInOutDPrint(PPr);
+  end;
+  RETURN;
+END;
+
+global
+procedure BankStPPDsm()
+begin
+  Integer wn,nwn;
+  row PMBlock PMrw;
+  record PPVc PPr;
+  record RcVc RepSpec;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,PPr);
+  if (GetPMRow(PPr.PayMode,PMrw)) then begin end;
+  ReportDefaults(RepSpec,"BankStRClass");
+  nwn = OpenWindow("BankStRClass",1,0,"","",RepSpec);
+  DeselectWindow(nwn,false);
+  RepSpec.repname = "BankStRn";
+  RepSpec.Media = mtScreen;
+  RepSpec.flags[1] = 1;
+  RepSpec.flags[2] = 1;
+  RepSpec.sStartDate = PPr.TransDate;
+  RepSpec.sEndDate = PPr.TransDate;
+  RepSpec.Period2Str = RepSpec.sStartDate;
+  RepSpec.Period2Str = RepSpec.Period2Str & ":";
+  RepSpec.Period2Str = RepSpec.Period2Str & RepSpec.sEndDate;
+  RepSpec.AccStr = PMrw.AccNr;
+  PutWindowRecord(nwn,RepSpec);
+  return;
+end;
+
+global
+function string 40 PPDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 255 psname;
+  record PPVc PPr;
+  row PPVc PPrw;
+  Integer rownr,cht;
+  
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "ChequeNr":
+      GetWindowRecord(wn,PPr);
+      rownr = WindowActiveRow(wn);
+      if (rownr>=0) then begin
+        MatRowGet(PPr,rownr,PPrw);
+      end;
+      if (nonblank(PPrw.PayMode)) then begin
+        cht = PMCheckType(PPrw.PayMode,psname,psname);
+      end else begin
+        cht = PMCheckType(PPr.PayMode,psname,psname);
+      end;    
+      switch (cht) begin
+        case 0: psname = "";
+        case 1: psname = "CheckSClass";
+        case 2: psname = "OwnCheckSClass";
+        otherwise psname = "";
+      end;
+  end;
+  PPDClassSpecPasteName = psname;
+  return;
+end;
+
+function val TotUserAmount(record PPVc PPr,Integer rownr,val initval,string usercode)
+begin
+  row PPVc PPrw;
+  Integer i,rwcnt,pt;
+  val res;
+  string 5 Pmode;
+  
+  res = initval;
+  rwcnt = MatRowCnt(PPr);
+  for (i=rownr+1;i<rwcnt;i=i+1) begin
+    MatRowGet(PPr,i,PPrw);
+    Pmode = PPrw.PayMode;
+    if blank(Pmode) then begin
+      Pmode = PPr.PayMode; 
+    end;
+    GetPayType(Pmode,pt);
+    if ((PPrw.ChequeNr==-1) and (PPrw.Person==usercode) and (pt<>4)) then begin
+      res = res + PPrw.PayVal;
+    end;
+  end; 
+  TotUserAmount = res; 
+  return;
+end;
+
+procedure OpenOwnCheque(string ownbankacc,string usercode,Date paydate,string curncy,val cheqv,Integer mwn)
+begin
+  Integer nwn;
+  record OwnCheckVc OwnCheckr;
+  Boolean TrHs,openf,testf;
+  
+  TrHs = true;
+  OwnCheckr.SerNr = -1;
+  OwnCheckr.Openf = 0;
+  while (LoopKey("OpenSerNr",OwnCheckr,1,TrHs)) begin
+    if (TrHs) then begin
+      testf = true;
+      if (OwnCheckr.Amount!=0) then begin
+        testf = false;
+      end;
+      if (nonblank(ownbankacc)) then begin
+        if (nonblank(OwnCheckr.BankAcc)) then begin
+          if (OwnCheckr.BankAcc!=ownbankacc) then begin
+            testf = false;
+          end;
+        end;
+      end;
+      if (testf) then begin
+        TrHs = false;
+        openf = true;
+      end;
+    end;
+  end;
+  if (openf) then begin
+    nwn = OpenWindow("OwnCheckDClass",0,mwn,"","",OwnCheckr);
+    if (blank(OwnCheckr.BankAcc)) then begin
+      OwnCheckr.BankAcc = ownbankacc;
+    end;
+    if (blankdate(OwnCheckr.EffectDate)) then begin
+      OwnCheckr.EffectDate = paydate;
+    end;
+    if (blankdate(OwnCheckr.TransDate)) then begin
+      OwnCheckr.TransDate = CurrentDate;
+    end;
+    OwnCheckr.Amount = cheqv;
+    OwnCheckr.CurncyCode = curncy;
+    PutWindowRecord(nwn,OwnCheckr);    
+  end else begin
+    RecordNew(OwnCheckr);
+    OwnCheckr.TransDate = CurrentDate;
+    OwnCheckr.EffectDate = paydate;
+    OwnCheckr.Amount = cheqv;
+    OwnCheckr.BankAcc = ownbankacc;
+    OwnCheckr.CurncyCode = curncy;
+    nwn = OpenWindow("OwnCheckDClass",0,mwn,"","",OwnCheckr);
+  end;
+  if (nwn>0) then begin
+    WindowFieldGoto(nwn,OwnCheckr,-1,"CheckNr",true);
+  end;
+  return;
+end;
+
+global
+procedure PrepChequePPDsm()
+begin
+  Integer wn;
+  record PPVc PPr;
+  row PPVc PPrw;
+  Integer rownr;
+  val totv;
+  Integer cht;
+  string 255 tstr;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,PPr);
+  rownr = WindowActiveRow(wn);
+  if (rownr>=0) then begin
+    if (WindowActiveField(wn)!="ChequeNr") then begin
+      WindowFieldGoto(wn,PPr,rownr,"ChequeNr",true);
+      GetWindowRecord(wn,PPr);
+    end;
+    if (WindowActiveField(wn)=="ChequeNr") then begin
+      MatRowGet(PPr,rownr,PPrw);
+      if (PPrw.ChequeNr==-1) then begin
+        if (nonblank(PPrw.PayMode)) then begin
+          cht = PMCheckType(PPrw.PayMode,tstr,tstr);
+        end else begin
+          cht = PMCheckType(PPr.PayMode,tstr,tstr);
+        end;        
+        if (cht==2) then begin
+          totv = TotUserAmount(PPr,rownr,PPrw.PayVal,PPrw.Person);
+          if (totv!=0) then begin
+            OpenOwnCheque(PPr.BankAcc,PPrw.Person,PPr.PayDate,PPr.CurncyCode,totv,wn);
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure PrintChequesPPDsm()
+begin
+  Integer wn;
+  record PPVc PPr;
+  row PPVc PPrw;
+  Integer i,rwcnt;
+  record OwnCheckVc OwnCheckr;
+  vector Boolean owncheckprintedf;
+
+  wn = CurWindow;
+  GetWindowRecord(wn,PPr);
+  rwcnt = MatRowCnt(PPr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(PPr,i,PPrw);
+    if (PPrw.ChequeNr>0) and (owncheckprintedf[PPrw.ChequeNr]==false) then begin
+      OwnCheckr.SerNr = PPrw.ChequeNr;
+      if (ReadFirstMain(OwnCheckr,1,true)) then begin
+        PrintDocument(OwnCheckr,"OwnChkForm",false);
+        owncheckprintedf[PPrw.ChequeNr] = true;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global 
+updating procedure CreateMailFromPPDsm()
+begin
+  Integer wn;
+  record PPVc PPr;
+  Integer err;
+  string 255 tstr;
+  Boolean testf;
+
+  wn = CurWindow;
+  if (WindowState(wn)==0)then begin//Rs_normal
+    testf = true;
+    GetWindowRecord(wn,PPr);  
+    if (PPr.DoneFlag==0) then begin 
+      testf = false;
+      MessageBox(12556,"");
+    end;
+    if (testf) then begin
+      err = CreateMailFromPPD(PPr,tstr,WindowFormName(wn));
+      if (err!=0) then begin
+        MessageBox(err,": " & tstr);
+      end else begin
+        MessageBox(5174,": " & tstr);
+      end;      
+    end;
+  end;
+  return;
+end;
+
+global
+function string 40 PPDClassSpecPasteName(Integer wn,string defpsname)
+begin
+  string 255 psname;
+
+  psname = defpsname;
+  switch (WindowActiveField(wn)) begin
+    case "PayMode": psname = "PMBSClass";
+  end;
+  PPDClassSpecPasteName = psname;
+  return;
+end;

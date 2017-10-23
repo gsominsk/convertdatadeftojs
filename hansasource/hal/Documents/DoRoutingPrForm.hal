@@ -1,0 +1,213 @@
+external function LongInt TimeToMinutes(Time);
+external function roundmode SetRoundModeD(Integer);
+external procedure PrintValue(string,val,Integer,record LangNrVc,record SysFormatBlock,Boolean);
+external procedure PrintLongInt(string,LongInt);
+external procedure CommonDocumentFields(record RcVc);
+external function Boolean Getformcode(Integer,Integer,string,string,string,LongInt,LongInt,string,string,Integer,string,var string);
+external function Integer NumberofDocumentPages(string,Integer);
+external procedure GetLangNr(string,var record LangNrVc);
+
+function val DurationToMinutes(Duration adur)
+begin
+  val resv,t;
+
+  resv = adur.hour*60;
+  t = adur.minute;
+  resv = resv + t;
+  t = adur.second;
+  resv = resv + t/60;
+  resv = Round(resv,SetRoundModeD(2));
+  DurationToMinutes = resv;
+  return;
+end;
+
+procedure PrintInstructions(record ProdOperationVc ProdOpr)
+begin
+  Integer i,rwcnt;
+  string 255 tstr;
+  
+  rwcnt = LineTextCnt(ProdOpr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    tstr = LineTextGet(ProdOpr,i);
+    OUTFORMFIELD("F_INSTRUCTIONS",tstr);    
+  end;  
+  return;
+end;
+
+global
+procedure PrintRouting(LongInt prodnr,string Routing,Integer type,record DocVc Docr)
+begin
+  record SysFormatBlock SysFormatRec;
+  record RoutingVc Routr;
+  record ProdOperationVc ProdOpr;
+  record AT2UnitVc AT2Unitr;
+  row DocVc Docrw;
+  Boolean found;
+  string 255 keystr,tstr,EndStr;
+  Integer rownr,rw,rwc,i;
+  record LangNrVc LangNrr;
+  
+  GetLangNr("",LangNrr);
+  BlockLoad(SysFormatRec);
+  OUTFORMFIELD("F_ROUTING",Routing);
+  Routr.Code = Routing;
+  if (ReadFirstMain(Routr,1,true)) then begin
+    OUTFORMFIELD("F_COMMENT",Routr.Comment);
+  end;  
+  switch (type) begin
+    case 0:
+      keystr = "ProdNr";
+      ProdOpr.ProdNr = prodnr;
+    case 1:
+      keystr = "ProdOrdNr";
+      ProdOpr.ProdOrdNr = prodnr;
+  end;
+  found = true;
+  for (i = 0; i < 200; i = i + 1) begin  
+    EndStr = EndStr & "_"; 
+  end;
+  while (LoopKey(keystr,ProdOpr,1,found)) begin
+    switch (type) begin
+      case 0:
+        if (ProdOpr.ProdNr!=prodnr) then begin
+          found = false;
+        end;
+      case 1:
+        if (ProdOpr.ProdOrdNr!=prodnr) then begin
+          found = false;
+        end;
+    end;
+    if (found) then begin
+      OUTFORMFIELD("F_SEPARATOR",EndStr);
+      OUTFORMFIELD("F_ROWSERIALNO",ProdOpr.SerNr);
+      OUTFORMFIELD("F_KOMMENTAR",ProdOpr.Comment);
+      OUTFORMFIELD("F_STARTDATE2",ProdOpr.StartDate);
+      OUTFORMFIELD("F_ENDDATE2",ProdOpr.ProdDate);
+      OUTFORMFIELD("F_STARTTIME2",ProdOpr.StartTime);
+      OUTFORMFIELD("F_ENDTIME2",ProdOpr.EndTime);
+      PrintLongInt("F_PLANNEDDAYS",ProdOpr.PlanDurDays);
+      OUTFORMFIELD("F_PLANNEDTIME",ProdOpr.PlanDurTime);
+      OUTFORMFIELD("F_STATUS",USetStr(16410+ProdOpr.PRStatusFlag));
+      OUTFORMFIELD("F_FIXASSETCODE",ProdOpr.Machine);
+      OUTFORMFIELD("F_FIXASSETGROUP",ProdOpr.MachineGroup);
+      AT2Unitr.InventoryNr = ProdOpr.Machine;
+      if (ReadFirstMain(AT2Unitr,1,true)) then begin
+        OUTFORMFIELD("F_FIXASSETNAME",AT2Unitr.Description);    
+      end;
+      OUTFORMFIELD("F_SEQUENCE",ProdOpr.Sequence);
+      OUTFORMFIELD("F_SUBSEQUENCE",ProdOpr.SubSequence);
+      PrintValue("F_RUNMINUTES",DurationToMinutes(ProdOpr.RunTime),M4UVal,LangNrr,SysFormatRec,false);
+      PrintValue("F_SETUPMINS",TimeToMinutes(ProdOpr.SetupTime),M4UVal,LangNrr,SysFormatRec,false);
+      PrintValue("F_QUEUEMINS",TimeToMinutes(ProdOpr.QueueTime),M4UVal,LangNrr,SysFormatRec,false);
+      rownr = rownr + 1;
+      OUTFORMFIELD("F_ROWNR",rownr);
+      rwc = MatRowCnt(Docr);
+      for (rw=0;rw<rwc;rw=rw+1) begin
+        MatRowGet(Docr,rw,Docrw);
+        if (Docrw.fieldSetNr==F_LEDTEXT and Docrw.unitText<>"" and Docrw.formatNr==1 ) then begin
+          OUTFORMFIELD(Docrw.unitText,Docrw.unitText);
+        end;
+      end;  
+      EndFormRow;
+      if (FIELDINFORM("F_INSTRUCTIONS")) then begin
+        rwc = LineTextCnt(ProdOpr);
+        for (rw = 0; rw < rwc; rw= rw + 1) begin
+          if (nonblank(Docr.DescriptionStyle)) then begin
+            SetFormStyle(Docr.DescriptionStyle,Docr.DescriptionHeight);
+          end;    
+          tstr = LineTextGet(ProdOpr,rw);
+          OUTFORMFIELD("F_INSTRUCTIONS",tstr);
+          EndFormRow;
+        end;
+      end;
+    end;
+  end;
+  if (FIELDINFORM("F_INSTRUCTIONS")) then begin
+    OUTFORMFIELD("F_SEPARATOR",EndStr);
+    EndFormRow;
+  end;
+  EndFormRow;
+  return;
+end;
+
+global
+procedure DoRoutingPrForm(record RcVc RepSpec,record ProdVc Prodr)
+begin
+  record FormDefVc FDr;
+  row FormDefVc FDrw;
+  record SysFormatBlock SFb;
+  record LangNrVc LangNrr;
+  record DocVc Docr;
+  Integer i,rwcnt;
+  record UserVc Userr;
+  string 255 tstr;
+  Boolean printf;
+  Integer intdocnr;
+  string 30 formcode;
+
+  BlockLoad(SFb);  
+  FDr.repname = RepSpec.repname;
+  FDr.shortname = RepSpec.shortname;
+  if (ReadFirstMain(FDr,1,true)==false) then begin
+    MessageBox(1624, " " & USetStr(1623));
+    goto L99;
+  end;
+  rwcnt = MatRowCnt(FDr);
+  GetLangNr("",LangNrr);
+  intdocnr = 1;
+  printf = true;
+  while (printf) begin  
+    formcode = "";
+    for (i=rwcnt-1;i>=0;i=i-1) begin
+      MatRowGet(FDr,i,FDrw);
+      if (Getformcode(i,FDrw.intdocnr,FDrw.FPCode,FDrw.UserGroup,FDrw.LangCode,FDrw.SerNr,Prodr.SerNr,FDrw.PrintGroupCode,
+                      Prodr.LangCode,intdocnr,"RoutingVc",formcode)) then
+      begin
+        goto LBREAK;
+      end;
+    end;
+LBREAK:;
+    if (nonblank(formcode)) then begin
+      if (OpenForm(formcode)) then begin
+        CommonDocumentFields(RepSpec);
+//        NumberofDocumentPages(formcode,MatRowCnt(Prodr));
+        OUTFORMFIELD("F_SERNR",Prodr.SerNr);
+        OUTFORMFIELD("F_STARTDATE",Prodr.StartDate);
+        OUTFORMFIELD("F_STARTTIME",Prodr.StartTime);
+        OUTFORMFIELD("F_PRODDATE",Prodr.ProdDate);
+        OUTFORMFIELD("F_ENDTIME",Prodr.EndTime);
+        OUTFORMFIELD("F_BESKRIVNING",Prodr.Comment);
+        OUTFORMFIELD("F_SPECIFIKATION",Prodr.Comment2);
+        OUTFORMFIELD("F_DESCRIPTION",Prodr.Comment3);
+        OUTFORMFIELD("F_RECEPY",Prodr.Recepy);
+        OUTFORMFIELD("F_RECNAME",Prodr.RecName);
+        OUTFORMFIELD("F_LOCATION",Prodr.Location);
+        OUTFORMFIELD("F_FIXASSETCODE",Prodr.FixAssCode);
+        OUTFORMFIELD("F_RESPONSIBLEPERSON",Prodr.Inspector);
+        Userr.Code = Prodr.Inspector;
+        if (ReadFirstMain(Userr,1,true)) then begin
+        end;
+        OUTFORMFIELD("F_RESPONSIBLEPERSONNAME",Userr.Name);
+        PrintLongInt("F_PRODORDER",Prodr.ProdOrder);
+        OUTFORMFIELD("F_PERSNAME",Userr.Name);
+        Docr.Code = formcode;
+        ReadFirstMain(Docr,1,true);
+
+        PrintRouting(Prodr.SerNr,Prodr.Routing,0,Docr);
+//        PrintValue("F_TOTQTY",Prodr.Qty,M4Qty,LangNrr,SFb,false);
+        CloseForm;
+      end else begin
+        printf = false;
+        MessageBox(1546,formcode);
+      end;
+    end else begin
+      printf = false;
+      if (intdocnr==1) then begin
+        MessageBox(1624, " " & USetStr(1623));
+      end;
+    end;
+    intdocnr = intdocnr + 1;
+  end;
+L99:;
+  return;
+end;

@@ -1,0 +1,1035 @@
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+external function string 255 NumToHex2(string,Integer);
+
+enum begin
+  TSL_STX = 2,  // 02h
+  TSL_ETX = 10, // 0Ah
+  TSL_ACK = 6,  // 06h
+  TSL_DC2 = 18, // 0x12
+  TSL_DC4 = 20, // 0x14
+  TSL_NAK = 21, // 0x15
+  TSL_FS = 28,  // 0x1C
+  TSL_REP = 14, // 0Eh
+  TSL_STATPRN = 161
+end;
+
+procedure Add_ASC(var Array Integer aArray,var Integer aCount,Integer AscCode)
+begin
+  aArray[aCount] = AscCode;
+  aCount = aCount + 1;
+  return;
+end;
+
+procedure Add_CHR(var Array Integer aArray,var Integer aCount,string s)
+begin                                                                              
+  Integer i,cnt;
+  
+  cnt = len(s);
+  for (i=0;i<cnt;i=i+1) begin
+    Add_ASC(aArray,aCount,asc(mid(s,i,1)));
+  end;                                                  
+  return;
+end;
+
+procedure Add_STR(var Array Integer aArray,var Integer aCount,string s)
+begin                                                       
+  if (NonBlank(s)) then begin
+    Add_CHR(aArray,aCount,ConvertStringToCodePage("CP437",s));
+  end else begin
+    Add_CHR(aArray,aCount,"_");
+  end;
+  return;
+end;
+
+procedure Add_VAL(var Array Integer aArray,var Integer aCount,val v)
+begin
+  string 20 tstr;
+  
+  tstr = ValToString(v,M4Val,"",".",0);
+  M4PadString(tstr,10," ",true,tstr);
+  Add_CHR(aArray,aCount,tstr);
+  return;
+end;
+
+procedure Add_QTY(var Array Integer aArray,var Integer aCount,val v)
+begin
+  string 20 tstr;
+  
+  tstr = ValToString(v,M4UVal,"",".",0);
+  M4PadString(tstr,10," ",true,tstr);
+  Add_CHR(aArray,aCount,tstr);
+  return;
+end;
+
+procedure Add_PRC(var Array Integer aArray,var Integer aCount,val v)
+begin
+  string 20 tstr;
+  
+  tstr = ValToString(v,M4Val,"",".",0);
+  tstr = tstr & "%";
+  M4PadString(tstr,7," ",true,tstr);
+  Add_CHR(aArray,aCount,tstr);
+  return;
+end;
+
+function string 255 ArrayToStr(Array Integer aArray,Integer aCount)
+begin
+  string 255 res;
+  Integer i;
+  
+  for (i=0;i<aCount;i=i+1) begin
+    res = res & chr(aArray[i]);
+  end;
+  
+  ArrayToStr = res;
+  return;
+end;
+
+function string 255 StringToHex(string s)
+begin
+  string 255 res;
+  Integer i,cnt;
+  
+  cnt = Len(s);
+  for (i=0;i<cnt;i=i+1) begin
+    res = res & NumToHex2(asc(Mid(s,i,1)),2) & " ";
+  end;
+  
+  StringToHex = res;
+  return;
+end;
+
+procedure TSLDisplayErrorMsg(Integer err,string msg)
+begin
+  MessageBox(err,msg);
+  return;
+end;
+
+function Integer AddCmdSeq(var Integer cmdnr)
+begin
+  if (cmdnr<32 or cmdnr>=127) then begin
+    cmdnr = 32;
+  end else begin
+    cmdnr = cmdnr + 1;
+  end;
+  AddCmdSeq = cmdnr;
+  return;
+end;
+
+function Integer ReplyInTSLBuffer(var string replystr,Integer l)
+begin
+  Integer noErr,readlen;
+  
+  readlen = l - len(replystr);
+  replystr = replystr & ReadComPort(0,readlen);
+//  if (len(replystr)>0) then begin
+//    logtext(0,"[READ]" & chr(9) & StringToHex(replystr) & chr(9) & "(" & readlen & ")");
+//  end;
+  ReplyInTSLBuffer = noErr;
+  return;
+end;
+
+function Integer OutComPortInteger(Integer EscSeq)
+begin
+  Integer res;
+
+  res = OutComPort(0,uchr(EscSeq));
+  OutComPortInteger = res;
+  return;
+end;
+
+function Integer OutComPortArray(array Integer aEscSeq,Integer aCount)
+BEGIN
+  Integer res;
+  Integer noErr,i;
+  string 255 tstr;
+  
+  for (i=0;i<aCount;i=i+1) begin
+    res = OutComPortInteger(aEscSeq[i]);
+    tstr = tstr & chr(aEscSeq[i]);
+  end;
+//  logtext(0,"[SEND]" & chr(9) & StringToHex(tstr));
+  if (res!=0) then begin
+    res = noErr;
+  end else begin
+    res = 1;
+  end;
+  OutComPortArray = res;
+  RETURN;
+END;
+
+procedure ClearComPort()
+begin
+  string 1 c;
+  
+  c = ReadComPort(0,1);
+  while (c!="") begin
+    c = ReadComPort(0,1);
+  end;
+  
+  return;
+end;
+
+function Integer WaitTSLTime(var string replystr,Integer replylen)
+begin
+  Integer res;
+  Integer noErr;
+  LongInt timeout;
+  LongInt tickcount, tick;
+
+  res = 12400;
+  replystr = "";
+  timeout = 800;
+  tick = GetCurTick;
+  tickcount = tick;
+  while ((tickcount-tick)<timeout) begin
+    tickcount = GetCurTick;
+    res = ReplyInTSLBuffer(replystr,replylen);
+    if (len(replystr)>=replylen) or ((replylen==255) and (len(replystr)>0)) then begin
+      res = noErr;
+      goto LWaitTSLTime;
+    end;
+    MilliSleep(10);
+  end;
+LWaitTSLTime:;
+  WaitTSLTime = res;
+  return;
+end;
+
+function Integer TestPrinterStatus(Integer code)
+begin
+  Integer res,noErr;
+  
+  switch (code) begin
+    case 48: res = noErr; // OK
+    case 49: res = 22103; // Out of paper, printer failure
+    case 50: res = 22124; // Registers overflow
+    case 51: res = 22125; // Clock failure or incorrect date and hour format
+    case 52: res = 22126; // Opened fiscal receipt
+    case 53: res = 22127; // Payment residue account
+    case 54: res = 22128; // Opened non-fiscal receipt
+    case 55: res = 22129; // Registered a payment but opened fiscal receipt
+    case 56: res = 22110; // Fiscal memory failure
+    case 57: res = 22150; // Incorrect password
+
+    case 59: res = 22160; // 24 hours without daily report blocked
+    case 60: res = 22161; // printer overheat
+    case 61: res = 22162; // power down
+    case 62: res = 22163; // electronic journal overflow
+    case 63: res = 22164; // not enough conditions met
+  otherwise
+    res = noErr;
+  end;
+
+  TestPrinterStatus = res;
+  return;
+end;
+
+function Integer TestCommandStatus(Integer code)
+begin
+  Integer res,noErr;
+  
+  switch (code) begin
+    case 48: res = noErr; // OK
+    case 49: res = 22114; // Invalid command
+    case 50: res = 22151; // Illegal command
+    case 51: res = 22152; // Illegal command due to zero daily report
+    case 52: res = 22153; // Syntax error
+    case 53: res = 22154; // Syntax error - input registers overflow
+    case 54: res = 22155; // Syntax error - zero input registers
+    case 55: res = 22156; // Unavailable transaction for correction
+    case 56: res = 22157; // Insufficient amount on hand
+    case 57: res = noErr; // Not used
+  otherwise
+    res = noErr;
+  end;
+  
+  TestCommandStatus = res;
+  return;
+end;
+
+function Integer TestTSLSuccess(string escseq,var string replystr)
+begin
+  Integer res,err;
+  Integer noErr;
+  string 1 tstr;
+  Integer enqint;
+  string 255 printerstatus,fiscalstatus;
+  
+  res = TestPrinterStatus(Asc(Mid(replystr,1,1)));
+  if (res!=0) then begin
+    goto LTestTSLSuccess;
+  end;
+
+  res = TestCommandStatus(Asc(Mid(replystr,2,1)));
+  if (res!=0) then begin
+    goto LTestTSLSuccess;
+  end;
+  
+LTestTSLSuccess:;
+//  logtext(0,"TestTSLSuccess.res=" & res & " escseq=" & StringToHex(escseq) & " replystr=" & StringToHex(replystr));
+  TestTSLSuccess = res;
+  return;
+end;
+
+procedure SeqWithTSLCheckSum(var array Integer aEscSeq,var Integer aCount,var Integer cmdnr)
+begin
+  string 255 res;
+  string 255 cchex;
+  Integer cc,i,aTmpCount,hv;
+  array Integer aTmpEscSeq;
+  
+  Add_ASC(aTmpEscSeq,aTmpCount,TSL_STX);
+  Add_ASC(aTmpEscSeq,aTmpCount,32 + aCount + 2);
+  Add_ASC(aTmpEscSeq,aTmpCount,AddCmdSeq(cmdnr));
+  for (i=0;i<aCount;i=i+1) begin
+    Add_ASC(aTmpEscSeq,aTmpCount,aEscSeq[i]);
+  end;
+  aCount = 0;
+  for (i=0;i<aTmpCount;i=i+1) begin
+    Add_ASC(aEscSeq,aCount,aTmpEscSeq[i]);
+  end;
+  cc = 0;
+  for (i=1;i<aCount;i=i+1) begin
+    cc = BitXor(cc,aEscSeq[i]);
+  end;
+  cchex = NumToHex2(cc,2);
+  for(i=0;i<len(cchex);i=i+1)begin
+    switch (Mid(cchex,i,1)) begin
+      case "0": hv = 0;
+      case "1": hv = 1;
+      case "2": hv = 2;
+      case "3": hv = 3;
+      case "4": hv = 4;
+      case "5": hv = 5;
+      case "6": hv = 6;
+      case "7": hv = 7;
+      case "8": hv = 8;
+      case "9": hv = 9;
+      case "A": hv = 10;
+      case "B": hv = 11;
+      case "C": hv = 12;
+      case "D": hv = 13;
+      case "E": hv = 14;
+      case "F": hv = 15;
+    end;
+    Add_ASC(aEscSeq,aCount,48+hv);
+  end;
+  
+  return;
+end;
+
+function Integer TestPrinterReady()
+begin
+  Integer res,noErr,TriesLeft;
+  array Integer aEscSeq;
+  Integer aCount;
+  string 255 replystr;
+  Boolean KeepTrying;
+  
+  aCount = 0;
+  Add_ASC(aEscSeq,aCount,3);
+  Add_ASC(aEscSeq,aCount,4);
+  
+  KeepTrying = true;
+  TriesLeft = 10;
+  while (KeepTrying and TriesLeft>0) begin
+    TriesLeft = TriesLeft - 1;
+    res = OutComPortArray(aEscSeq,aCount);
+    if (res!=noErr) then begin
+      goto LTestPrinterReady;
+    end;
+    replystr = "";
+    res = WaitTSLTime(replystr,1);
+    if (res!=noErr) then begin
+      goto LTestPrinterReady;
+    end;
+    if (len(replystr)>0) then begin
+      if (asc(replystr)==4) then begin
+        KeepTrying = false;
+      end else begin
+        res = 22158;
+        goto LTestPrinterReady;
+      end;
+    end;
+  end;
+  
+  aCount = 0;
+  Add_ASC(aEscSeq,aCount,3);
+  Add_ASC(aEscSeq,aCount,5);
+  
+  KeepTrying = true;
+  TriesLeft = 10;
+  while (KeepTrying and TriesLeft>0) begin
+    TriesLeft = TriesLeft - 1;
+    res = OutComPortArray(aEscSeq,aCount);
+    if (res!=noErr) then begin
+      goto LTestPrinterReady;
+    end;
+    replystr = "";
+    res = WaitTSLTime(replystr,1);
+    if (res!=noErr) then begin
+      goto LTestPrinterReady;
+    end;
+    if (len(replystr)>0) then begin
+      if (asc(replystr)==5) then begin
+        KeepTrying = false;
+      end else begin
+        res = 22159;
+        goto LTestPrinterReady;
+      end;
+    end;
+  end;
+  
+LTestPrinterReady:;
+  TestPrinterReady = res;
+  return;
+end;
+
+function Boolean ETXInReply(string replystr)
+begin
+  Boolean res; 
+  string 255 c;
+  Integer i;
+  
+  for (i=len(replystr)-1;i>=0;i=i-1) begin
+    c = Mid(replystr,i,1);
+    if (asc(c)==TSL_ETX) then begin
+      res = true;
+      goto LETXInReply;
+    end;
+  end;
+LETXInReply:;  
+  ETXInReply = res;
+  return;
+end;
+
+function Integer TSLWrite(var array Integer aEscSeq,var Integer aCount,Boolean cancelstrf,var Integer cmdnr,var string replystr,Integer replylen)
+begin
+  Integer res;
+  Integer noErr,err;
+  Integer attempts;
+  Integer enqint;
+  Boolean testf,parsereply;
+  string 255 tstr;
+  LongInt starttick;  
+  array Integer aCancelSeq;
+  Integer aCancelCount;
+  
+  res = TestPrinterReady;
+  if (res!=noErr) then begin
+    goto LTSLWrite;
+  end;
+  
+//  res = SendTSLString(chr(TSL_NAK));//to empty buffor
+//  res = WaitTSLTime(replystr,255);
+  SeqWithTSLCheckSum(aEscSeq,aCount,cmdnr);
+  Add_ASC(aEscSeq,aCount,TSL_ETX);
+  res = OutComPortArray(aEscSeq,aCount);
+  if (res!=noErr) then begin
+    goto LTSLWrite;
+  end;
+//  MilliSleep(800);
+  
+  res = 12400;
+  starttick = GetCurTick;
+  testf = true;
+  parsereply = false;
+  while (testf) begin
+    err = WaitTSLTime(replystr,1);
+    if (nonblank(replystr)) then begin
+      enqint = asc(Left(replystr,1));
+      switch (enqint) begin
+        case TSL_DC2: //continue
+        case TSL_DC4: //continue
+        case TSL_NAK: //retransmit
+          res = OutComPortArray(aEscSeq,aCount);
+          if (res!=noErr) then begin
+            goto LTSLWrite;
+          end;
+        case TSL_REP: // Repetition request - It is sent when the FPR is busy executing the preceding command
+          res = OutComPortArray(aEscSeq,aCount);
+          if (res!=noErr) then begin
+            goto LTSLWrite;
+          end;
+        case TSL_STATPRN: 
+          testf = false;
+          res = 12400;
+        case TSL_ACK: //continue
+          parsereply = true;
+          if (ETXInReply(replystr)) then begin
+            testf = false;
+          end;
+        otherwise 
+          testf = false;
+          err = WaitTSLTime(replystr,replylen);
+          replystr = chr(enqint) & replystr;
+          res = noErr;
+      end;
+    end;
+    if ((GetCurTick-starttick)>60000) then begin
+      testf = false;
+    end;
+  end;
+LTSLWrite:;
+  if (res==noErr) then begin
+    if (parsereply) then begin
+      res = TestTSLSuccess(ArrayToStr(aEscSeq,aCount),replystr);
+    end;
+//    err = OutComPortInteger(TSL_ACK);
+  end;
+  if (res==noErr) then begin
+    ClearComPort;
+  end else begin
+    ClearComPort;
+//    if (cancelstrf) then begin
+//      Add_ASC(aCancelSeq,aCancelCount,TSL_STX);
+//      Add_ASC(aCancelSeq,aCancelCount,AddCmdSeq(cmdnr));
+//      Add_ASC(aCancelSeq,aCancelCount,100); // 0x64
+//      Add_ASC(aCancelSeq,aCancelCount,TSL_FS);
+//      M4PadString("",25," ",false,tstr);
+//      Add_CHR(aCancelSeq,aCancelCount,tstr);
+//      Add_ASC(aCancelSeq,aCancelCount,TSL_FS);
+//      Add_VAL(aCancelSeq,aCancelCount,0);
+//      Add_ASC(aCancelSeq,aCancelCount,TSL_FS);
+//      Add_CHR(aCancelSeq,aCancelCount,"C");
+//      Add_ASC(aCancelSeq,aCancelCount,TSL_ETX);
+//      err = TSLWrite(aCancelSeq,aCancelCount,false,cmdnr,replystr,255);
+//      res = 22114;
+//    end;
+    TSLDisplayErrorMsg(res,"");
+  end;
+  TSLWrite = res;
+  return;
+end;
+
+function val DownPaymentAmount(record IVVc IVr,Integer ordrow)
+begin
+  val res;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+
+  if (ordrow>=0) then begin
+    rwcnt =  MatRowCnt(IVr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(IVr,i,IVrw);
+      if (IVrw.stp==5) then begin
+        if (IVrw.OrdRow==ordrow) then begin
+          res = res + IVrw.Sum;
+        end;
+      end;
+    end;
+  end;
+  DownPaymentAmount = res;
+  RETURN;
+END;
+
+function Integer TSLOpen(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res;
+  
+  res = OpenComPort(0,LSPDr.Port,LSPDr.BaudRate,LSPDr.Parity,LSPDr.ByteSize,LSPDr.StopBits,LSPDr.FlowControl);
+//  logtext(0,"[OPEN]" & chr(9) & res);
+//  res = OpenComPort(0,LSPDr.Port,9600,-1,8,0,kFlowControlDefault);
+  TSLOpen = res;
+  return;
+end;
+
+procedure TSLClose()
+begin
+  Integer res;
+
+  res = CloseComPort(0);
+//  logtext(0,"[CLOSE]" & chr(9) & res);
+  return;
+end;
+
+function Integer TSLCheckClock(record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res;
+  Date td,PrinterDate;
+  Integer noErr;
+  string 255 replystr,msg;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = noErr;
+  td = CurrentDate;
+  Add_ASC(aEscSeq,aCount,104); // 68h
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+  if (res!=noErr) then begin
+    goto LTSLCheckClock;
+  end;
+  PrinterDate.day = StringToInt(Mid(replystr,4,2));
+  PrinterDate.month = StringToInt(Mid(replystr,7,2));
+  PrinterDate.year = StringToInt(Mid(replystr,10,4));
+  if (td!=PrinterDate) then begin
+    msg = USetStr(12402);
+    msg = msg & chr(10) & USetStr(12403) & PrinterDate;
+    msg = msg & chr(10) & USetStr(12404) & td;
+    res = 1;
+  end;
+  if (IVr.TransDate!=PrinterDate) then begin
+    msg = msg & chr(10) & USetStr(20852) & " " & IVr.TransDate & " " & USetStr(12403) & " " & PrinterDate;
+    res = 1;
+  end;
+  if (NonBlank(msg)) then begin
+    TSLDisplayErrorMsg(0,msg);
+  end;
+LTSLCheckClock:;
+  TSLCheckClock = res;
+  return;
+end;
+
+function Integer TSLGetVatRates(var array val aVatRate,var Integer cmdnr)
+begin 
+  Integer res,noErr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,98); // 62h
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+  if (res!=noErr) then begin
+    goto LTSLGetVatRates;
+  end;
+  aVatRate[0] = 0;
+  aVatRate[1] = StringToVal(Mid(replystr,4,5),M4Val);
+  aVatRate[2] = StringToVal(Mid(replystr,11,5),M4Val);
+  aVatRate[3] = StringToVal(Mid(replystr,18,5),M4Val);
+  aVatRate[4] = StringToVal(Mid(replystr,25,5),M4Val);
+  aVatRate[5] = StringToVal(Mid(replystr,32,5),M4Val);
+  
+//  logtext(0,"VAT Rates: " & aVatRate[1] & "|" & aVatRate[2] & "|" & aVatRate[3] & "|" & aVatRate[4] & "|" & aVatRate[5]);
+  
+LTSLGetVatRates:;
+  TSLGetVatRates = res;
+  return;
+end;
+
+function Integer TSLOpenFiscalReceipt(record MachineCashVc MCr,record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  record CUVc CUr;
+  record CYBlock CYb;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,48); // 30h
+  Add_CHR(aEscSeq,aCount,"1"); // operator no
+  Add_CHR(aEscSeq,aCount,";");
+  Add_CHR(aEscSeq,aCount,"0000"); // operator password
+  Add_CHR(aEscSeq,aCount,";");
+  Add_CHR(aEscSeq,aCount,"0"); // 0 - brief format; 1 - detailed format
+  Add_CHR(aEscSeq,aCount,";");
+  Add_CHR(aEscSeq,aCount,"1"); // 0 - hide vat; 1 - show vat
+  Add_CHR(aEscSeq,aCount,";");
+  Add_CHR(aEscSeq,aCount,"2"); // 1 - standard printing; 2 - postponed prinintg
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+  TSLOpenFiscalReceipt = res;
+  return;
+end;
+
+function Integer GetTSLVATCode(array val aVatRate,record VATCodeBlock VATCodeRec,string VATCode)
+begin
+  Integer res;
+  Integer i,j,rwcnt;
+  row VATCodeBlock VATCodeRow;
+  
+  res = 0;
+  if (nonblank(VATCode)) then begin
+    rwcnt = MatRowCnt(VATCodeRec);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VATCodeRec,i,VATCodeRow);
+      if (VATCodeRow.VATCode==VATCode) then begin
+        if (blank(VATCodeRow.ExVatpr)) then begin
+          goto LGetTSLVATCode;
+        end;
+        for (j=0;j<5;j=j+1) begin
+          if (aVatRate[j]==VATCodeRow.ExVatpr) then begin
+            res = j;
+            goto LGetTSLVATCode;
+          end;
+        end;
+      end;   
+    end;
+  end;
+  
+LGetTSLVATCode:;  
+  GetTSLVATCode = res;
+  RETURN;
+END;
+
+
+function Integer TSLPrintInvoiceLines(record IVVc IVr,array val aVatRate,var Boolean DoPayment,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  record INVc INr;
+  Integer i,rwcnt,VATNo;
+  row IVVc IVrw;
+  string 255 replystr,tstr;
+  val downpay,t,t1,discount;
+  array Integer aEscSeq;
+  Integer aCount;
+  record VATCodeBlock VATCodeRec;
+
+  BlockLoad(VATCodeRec);
+  rwcnt =  MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVr,i,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeStructuredItemComponent:
+        goto LkInvoiceRowTypeNormal;
+      case kInvoiceRowTypeNormal:
+LkInvoiceRowTypeNormal:;
+        downpay = DownPaymentAmount(IVr,IVrw.OrdRow);
+        if (downpay!=0) then begin
+          IVrw.Sum = IVrw.Sum + downpay;
+          IVrw.Price = IVrw.Sum/IVrw.Quant;
+        end;
+      case kInvoiceRowTypeCorrection: ;
+      case kInvoiceRowTypeDownpayment: 
+        if (IVrw.Sum<0) then begin 
+          goto LSkipRow;
+        end;
+        IVrw.Price = IVrw.Sum/IVrw.Quant;
+      case kInvoiceRowTypeLoyaltyPointsPayment:
+        DoPayment = true;
+        goto LSkipRow;
+      case kInvoiceRowTypeGiftVoucherPayment:
+        DoPayment = true;
+        goto LSkipRow;
+      case kInvoiceRowTypeCashPayment:
+        DoPayment = true;
+        goto LSkipRow;
+      case kInvoiceRowTypeCreditCardPayment:
+        DoPayment = true;
+        goto LSkipRow;
+      case kInvoiceRowTypeChequePayment:
+        DoPayment = true;
+        goto LSkipRow;
+      otherwise 
+        goto LSkipRow;
+    end;
+    if (blank(IVrw.ArtCode)) then begin
+      goto LSkipRow;
+    end;
+    aCount = 0;
+    Add_ASC(aEscSeq,aCount,49); // 31h
+    M4PadString(IVrw.Spec,36," ",false,tstr);
+    Add_STR(aEscSeq,aCount,tstr);
+    Add_CHR(aEscSeq,aCount,";");
+    VATNo = GetTSLVATCode(aVatRate,VATCodeRec,IVrw.VATCode);
+    Add_CHR(aEscSeq,aCount,VATNo);
+    Add_CHR(aEscSeq,aCount,";");
+    if (IVr.InclVAT==0) then begin
+      t = IVrw.Price + IVrw.Price * aVatRate[VATNo] / 100;
+    end else begin
+      t = IVrw.Price;
+    end;
+    Add_VAL(aEscSeq,aCount,t);
+    Add_CHR(aEscSeq,aCount,"*");
+    Add_QTY(aEscSeq,aCount,IVrw.Quant);
+    if (IVrw.vRebate!=blankval) then begin
+      Add_CHR(aEscSeq,aCount,",");
+      Add_PRC(aEscSeq,aCount,-IVrw.vRebate);
+    end;
+    res = TSLWrite(aEscSeq,aCount,true,cmdnr,replystr,255);
+    if (res!=0) then begin
+      goto LTSLPrintInvoiceLines;
+    end;
+LSkipRow:;    
+  end;
+LTSLPrintInvoiceLines:;  
+  TSLPrintInvoiceLines = res;
+  return;
+end;
+
+function Integer TSLPayment(record IVVc IVr,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount,i,rwcnt,PayType,CalcChange,j;
+  row IVVc IVrw;
+  val PaidAmount;
+  
+  rwcnt =  MatRowCnt(IVr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    for (j=0; j<aCount; j=j+1) begin
+      aEscSeq[j] = 0;
+    end;
+    aCount = 0;
+    Add_ASC(aEscSeq,aCount,53); // 35h  
+    MatRowGet(IVr,i,IVrw);
+    switch (IVrw.stp) begin
+      case kInvoiceRowTypeCashPayment:
+        PayType = 0;
+      case kInvoiceRowTypeCreditCardPayment:
+        PayType = 1;
+      case kInvoiceRowTypeChequePayment:
+        PayType = 2;
+      case kInvoiceRowTypeGiftVoucherPayment:
+        PayType = 3;
+      case kInvoiceRowTypeLoyaltyPointsPayment:
+        PayType = 4;
+      otherwise 
+        goto LSkipRow;
+    end;
+    Add_CHR(aEscSeq,aCount,PayType);
+    Add_CHR(aEscSeq,aCount,";");
+    PaidAmount = PaidAmount + IVrw.Sum;
+    if (PaidAmount>=IVr.Sum4) then begin
+      CalcChange = 0;
+    end else begin
+      CalcChange = 1;
+    end;
+    Add_CHR(aEscSeq,aCount,CalcChange);
+    Add_CHR(aEscSeq,aCount,";");
+    Add_VAL(aEscSeq,aCount,IVrw.Sum);
+    Add_CHR(aEscSeq,aCount,";");
+    Add_CHR(aEscSeq,aCount,1);
+    res = TSLWrite(aEscSeq,aCount,true,cmdnr,replystr,50);
+    if (res!=0) then begin
+      goto LTSLPayment;
+    end;
+LSkipRow:;
+  end;
+LTSLPayment:;
+  TSLPayment = res;
+  return;
+end;
+
+function Integer TSLCloseFiscalReceipt(var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,56); // 38h
+  res = TSLWrite(aEscSeq,aCount,true,cmdnr,replystr,50);
+  TSLCloseFiscalReceipt = res;
+  return;
+end;
+
+function Integer TSLAutoCloseFiscalReceipt(var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,54); // 36h
+  res = TSLWrite(aEscSeq,aCount,true,cmdnr,replystr,50);
+  TSLAutoCloseFiscalReceipt = res;
+  return;
+end;
+
+function Integer TSLFreeText(string text,var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr,tstr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,55); // 37h
+  M4PadString(text,38," ",false,tstr);
+  Add_STR(aEscSeq,aCount,tstr);
+  res = TSLWrite(aEscSeq,aCount,true,cmdnr,replystr,50);
+  TSLFreeText = res;
+  return;
+end;
+
+function Integer TSLOpenDrawer(var Integer cmdnr)
+begin
+  Integer res,noErr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  Add_ASC(aEscSeq,aCount,42); // 2Ah
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+  TSLOpenDrawer = res;
+  return;
+end;
+
+global
+procedure IVVc_PrintTSLReceipt(record IVVc IVr,record LSerialPortDeviceVc LSPDr,Integer rownr,Boolean okf,Boolean opendrawerf,Integer IncrementalPrint)
+begin
+  record IVVc oldIVr;
+  Integer noErr,res;
+  record CashPrintBlock CPb;
+  record LocalMachineBlock LMb;
+  record MachineCashVc MCr;
+  Integer cmdnr;
+  Boolean DoPayment;
+  array val aVatRate;
+  
+  if (!okf) then begin
+    goto LIVVc_PrintTSLReceipt;
+  end;  
+  noErr = 1;
+  res = TSLOpen(LSPDr);
+  if (res==noErr) then begin
+    noErr = 0;
+    cmdnr = 33;
+    BlockLoad(LMb);
+    MCr.Code = LMb.LocalMachineCode;
+    ReadFirstMain(MCr,1,true);
+    if (TSLCheckClock(IVr,cmdnr)!=noErr) then begin goto LIVVc_PrintTSLReceipt; end;
+    if (TSLGetVatRates(aVatRate,cmdnr)!=noErr) then begin goto LIVVc_PrintTSLReceipt; end;
+    if (TSLOpenFiscalReceipt(MCr,IVr,cmdnr)!=noErr) then begin goto LIVVc_PrintTSLReceipt; end;
+    if (TSLFreeText(USetStr(16668) & IVr.SerNr,cmdnr)!=noErr) then begin
+      goto LIVVc_PrintTSLReceipt;
+    end;
+    if (TSLPrintInvoiceLines(IVr,aVatRate,DoPayment,cmdnr)!=noErr) then begin
+      TSLAutoCloseFiscalReceipt(cmdnr);
+      goto LIVVc_PrintTSLReceipt;
+    end;
+    if (DoPayment) then begin
+      if (TSLPayment(IVr,cmdnr)!=noErr) then begin
+        TSLAutoCloseFiscalReceipt(cmdnr);
+        goto LIVVc_PrintTSLReceipt;
+      end;
+      if (TSLCloseFiscalReceipt(cmdnr)!=noErr) then begin goto LIVVc_PrintTSLReceipt; end;
+    end else begin
+      if (TSLAutoCloseFiscalReceipt(cmdnr)!=noErr) then begin goto LIVVc_PrintTSLReceipt; end;
+    end;
+    if (opendrawerf==true) then begin
+      TSLOpenDrawer(cmdnr);
+    end;
+LIVVc_PrintTSLReceipt:;
+    TSLClose;
+  end;
+  return;
+end;
+
+global
+procedure TSLDailyReport(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer cmdnr,res;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+
+  res = TSLOpen(LSPDr);
+  if (res!=1) then begin
+    goto LTSLDailyReport;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,124); // 7Ch
+  Add_CHR(aEscSeq,aCount,"Z");
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+LTSLDailyReport:;  
+  TSLClose;
+  return;
+end;
+
+global
+procedure TSLMonthlyReport(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer cmdnr,res;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = TSLOpen(LSPDr);
+  if (res!=1) then begin
+    goto LTSLMonthlyReport;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,124); // 7Ch
+  Add_CHR(aEscSeq,aCount,"X");
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+LTSLMonthlyReport:;  
+  TSLClose;
+  return;
+end;
+
+global
+procedure TSLStatus(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res,cmdnr,noErr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = TSLOpen(LSPDr);
+  if (res!=1) then begin
+    goto LTSLReset;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,32); // 20h
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+  if (res==noErr) then begin
+    MessageBox(0,Mid(replystr,4,len(replystr)-7));
+  end;
+LTSLReset:;  
+  TSLClose;
+  return;
+end;
+
+global
+procedure TSLVersion(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res,cmdnr,noErr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = TSLOpen(LSPDr);
+  if (res!=1) then begin
+    goto LTSLReset;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,33); // 21h
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+  if (res==noErr) then begin
+    MessageBox(0,Mid(replystr,4,len(replystr)-7));
+  end;
+LTSLReset:;  
+  TSLClose;
+  return;
+end;
+
+global
+procedure TSLDiagnostics(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res,cmdnr,noErr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = TSLOpen(LSPDr);
+  if (res!=1) then begin
+    goto LTSLReset;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,34); // 22h
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+LTSLReset:;  
+  TSLClose;
+  return;
+end;
+
+global
+procedure TSLTerminateReceipt(record LSerialPortDeviceVc LSPDr)
+begin
+  Integer res,cmdnr,noErr;
+  string 255 replystr;
+  array Integer aEscSeq;
+  Integer aCount;
+  
+  res = TSLOpen(LSPDr);
+  if (res!=1) then begin
+    goto LTSLReset;
+  end;
+  cmdnr = 32;
+  Add_ASC(aEscSeq,aCount,54); // 36h
+  res = TSLWrite(aEscSeq,aCount,false,cmdnr,replystr,255);
+LTSLReset:;  
+  TSLClose;
+  return;
+end;

@@ -1,0 +1,751 @@
+external function roundmode DefaultRoundMode();
+external function roundmode SetRoundMode(Integer,Integer,Integer,Integer);
+external function roundmode SetRoundModeD(Integer);
+external function LongInt DateDiff(Date,Date);
+external function Integer DateGetIntMonth(Date);
+
+global
+procedure GetATDprDepreciationVals(record RcVc RepSpec,record AT2DprVc ATDprp,var string dmcode,var val StartValuep,Date sdp,var Date pdp,Date edp)
+BEGIN
+  if (RepSpec.flags[1]==0) then begin
+    StartValuep = ATDprp.StartVal;
+  end else begin
+    StartValuep = ATDprp.StartVal2;
+  end;
+  if (RepSpec.flags[1]==0) then begin
+    dmcode = ATDprp.Model1;
+  end else begin
+    dmcode = ATDprp.Model2;
+  end;
+  pdp = RepSpec.sStartDate;
+  if (sdp>pdp) then begin pdp = sdp; end;
+  RETURN;
+END;
+
+procedure StraightDepr_Monthly(val svp,val dprprc,Integer deprrnd,Integer LifecycleYears,Integer LifecycleDays,Integer DeprCalc,Date sd,Date ed,Boolean yearprcf,var val res)
+BEGIN
+  LongInt nm;
+  Integer sm,em;
+  val nmv,t;  
+
+  sm = DateGetIntMonth(sd);
+  em = DateGetIntMonth(ed);    
+  nm = em - sm + 1;    
+  nmv = nm;
+  res = svp;
+  switch (DeprCalc) begin
+    otherwise
+      if (LifecycleYears>0) and ((yearprcf==false) or (dprprc==0)) then begin
+        t = LifecycleYears;
+        res = res * (100/t);
+        res = res/100;
+        if (deprrnd==20) then begin
+          res = res / 12;
+          t = 49999.00/100000.00;
+          res = res + t;
+          res = Round(res,SetRoundModeD(0));
+          res = res * nmv;
+        end else begin
+          res = Round(res,SetRoundModeD(deprrnd));
+          res = res / 12;
+          res = res * nmv;
+        end;
+      end else begin
+        res = res * dprprc;
+        res = res/100;
+        res = res / 12;//one month depreciation rounded and then times 12, otherwise neverending roundof problem
+        if (deprrnd==20) then begin
+          t = 49999.00/100000.00;
+          res = res + t;
+          res = Round(res,SetRoundModeD(0));
+        end else begin
+          res = Round(res,SetRoundModeD(deprrnd));
+        end;
+        res = res * nmv;
+      end;
+  end;
+  RETURN;
+END;
+
+procedure StraightDepr_Dayly(val svp,val dprprc,Integer deprrnd,Integer LifecycleYears,Integer LifecycleDays,Integer DeprCalc,Date sd,Date ed,Boolean yearprcf,var val res)
+BEGIN
+  LongInt nm;
+  Integer sm,em;
+  val nmv,ymv,t;
+
+  nm = DateDiff(ed,sd)+1;      
+  nmv = nm;
+  res = svp;
+  if (IsLeapYear(GetYear(ed))) then begin
+    ymv = 366.00;
+  end else begin
+    ymv = 365.00;
+  end;  
+  if (LifecycleYears>0) and ((yearprcf==false) or (dprprc==0)) then begin
+    t = LifecycleYears;
+    res = res * (100/t);
+    res = res/100;
+    res = res / ymv;
+    res = Round(res,SetRoundModeD(deprrnd));//per day , round , multiply per day, to get rid of round of problems
+    res = res * nmv;
+  end else begin
+    res = res * dprprc;
+    res = res/100;
+    res = res / ymv;
+    res = Round(res,SetRoundModeD(deprrnd));//per day , round , multiply per day, to get rid of round of problems
+    res = res * nmv;
+  end;
+  RETURN;
+END;
+
+procedure StraightDepr_Yearly(val svp,val dprprc,Integer deprrnd,Integer LifecycleYears,Integer LifecycleDays,Integer DeprCalc,Date sd,Date ed,Boolean yearprcf,var val res)
+BEGIN
+  LongInt nm;
+  Integer sm,em;
+  val nmv,t;
+  roundmode rm;
+
+  sm = DateGetIntMonth(sd);
+  em = DateGetIntMonth(ed);
+  nm = em - sm + 1;
+  nmv = nm;
+  res = svp;
+  switch (DeprCalc) begin
+    otherwise
+      if (LifecycleYears>0) and ((yearprcf==false) or (dprprc==0)) then begin
+        t = LifecycleYears;
+        res = res * (100/t);
+        res = res/100;
+        if (deprrnd==20) then begin
+          rm = DefaultRoundMode;
+          rm.decimals = 0;
+          t = 49999.00/100000.00;
+          res = res + t;
+          res = Round(res,rm);
+        end;
+/*
+        if (deprrnd==20) then begin
+          res = res / 12;
+          t = 49999.00/100000.00;
+          res = res + t;
+          res = Round(res,SetRoundModeD(0));
+          res = res * nmv;
+        end else begin
+          res = Round(res,SetRoundModeD(deprrnd));
+          res = res / 12;
+          res = res * nmv;
+        end;
+*/        
+      end else begin
+        res = res * dprprc;
+        res = res/100;   
+        switch (deprrnd) begin
+          case 20:
+            t = 49999.00/100000.00;
+            res = res + t;
+            res = Round(res,SetRoundModeD(0));
+            res = res / 12;
+          otherwise
+            res = Round(res,SetRoundModeD(deprrnd));
+            res = res / 12;
+        end;
+        res = res * nmv;
+      end;
+  end;
+  
+  RETURN;
+END;
+
+procedure StraightDepr_Quarterly(val svp,val dprprc,Integer deprrnd,Integer LifecycleYears,Integer LifecycleDays,Integer DeprCalc,Date sd,Date ed,Boolean yearprcf,var val res)
+BEGIN
+  LongInt nm;
+  Integer sm,em;
+  val nmv,t;  
+  val ldprprc;
+
+  sm = DateGetIntMonth(sd);
+  em = DateGetIntMonth(ed);    
+  nm = em - sm + 1;    
+  nmv = nm/3.00;
+  res = svp;
+  switch (DeprCalc) begin
+    otherwise
+      if (LifecycleYears>0) and ((yearprcf==false) or (dprprc==0)) then begin
+        t = LifecycleYears;
+        res = res * (100/t);
+        res = res/100;
+        if (deprrnd==20) then begin
+          res = res / 12;
+          t = 49999.00/100000.00;
+          res = res + t;
+          res = Round(res,SetRoundModeD(0));
+          res = res * nmv;
+        end else begin
+          res = Round(res,SetRoundModeD(deprrnd));
+          res = res / 12;
+          res = res * nmv;
+        end;        
+      end else begin
+        res = res * dprprc;
+        res = res/100;
+        if (deprrnd==20) then begin
+          t = 49999.00/100000.00;
+          res = res + t;
+          res = Round(res,SetRoundModeD(0));
+        end else begin
+          res = Round(res,SetRoundModeD(deprrnd));
+        end;
+        res = res * nmv;
+      end;
+  end;
+  RETURN;
+END;
+
+procedure StraightDepr(Integer Comparison,var val svp,var val pp,Integer deprrnd,Integer LifecycleYears,Integer LifecycleDays,Integer DeprCalc,var Date sd,var Date ed,var val dvp,Boolean yearprcf)
+BEGIN  
+  switch (Comparison) begin
+    case 0:
+      StraightDepr_Monthly(svp,pp,deprrnd,LifecycleYears,LifecycleDays,DeprCalc,sd,ed,yearprcf,dvp);
+    case 1:
+      StraightDepr_Dayly(svp,pp,deprrnd,LifecycleYears,LifecycleDays,DeprCalc,sd,ed,yearprcf,dvp);
+    case 2:
+      StraightDepr_Yearly(svp,pp,deprrnd,LifecycleYears,LifecycleDays,DeprCalc,sd,ed,yearprcf,dvp);
+    case 3:
+      StraightDepr_Quarterly(svp,pp,deprrnd,LifecycleYears,LifecycleDays,DeprCalc,sd,ed,yearprcf,dvp);
+  end;
+  RETURN;
+END;
+
+procedure DecliningDeprDefault(val dvp,val pp,Integer deprrnd,Integer sm,Integer em,var val tvp,Integer type)
+BEGIN
+  Integer nm;
+  Integer ym;
+  val dv,t,tv,nmv;
+  
+  nm = em - sm + 1;
+
+  dv = dvp;
+  while (nm>0) begin
+    if (type==1) then begin    
+      ym = 1;
+    end else begin
+      ym = nm;
+    end;
+    if (ym>12) then begin ym = 12; end;
+    nmv = ym;
+    t = dv * nmv;
+    nmv = 12;
+    t = t/nmv;
+    t = t*pp;
+    t = t/100;
+    dv = dv - t;
+    tv = tv + t;
+    nm = nm - ym;
+  end;
+  if (deprrnd==20) then begin
+    tv = tv + 49999.00/100000.00;
+    tv = Round(tv,SetRoundModeD(0));
+  end else begin
+    tv = Round(tv,SetRoundModeD(deprrnd));
+  end;  
+  tvp = tv;  
+  RETURN;
+END;
+
+procedure DecliningDeprQuarterly(val dvp,val pp,Integer deprrnd,Integer sm,Integer em,var val tvp)
+BEGIN
+  Integer nm;
+  Integer ym;
+  val dv,t,tv,nmv;
+  
+  nm = em - sm + 1;
+  if (Mod(nm,3)!=0) then begin
+    nm = nm/3;
+    nm = nm*3;
+  end;
+  dv = dvp;
+  while (nm>0) begin
+    ym = 3;
+    nmv = ym;
+    t = dv * nmv;
+    nmv = 3;
+    t = t/nmv;
+    t = t*pp;
+    t = t/100;
+    dv = dv - t;
+    tv = tv + t;
+    nm = nm - ym;
+  end;
+  if (deprrnd==20) then begin
+    tv = tv + 49999.00/100000.00;
+    tv = Round(tv,SetRoundModeD(0));
+  end else begin
+    tv = Round(tv,SetRoundModeD(deprrnd));
+  end;  
+  tvp = tv;  
+  RETURN;
+END;
+
+procedure DecliningDepr(val dvp,Integer lComparison,val pp,Integer deprrnd,Integer sm,Integer em,var val tvp,Integer type)
+begin
+  switch (lComparison) begin
+    case 3:
+      DecliningDeprQuarterly(dvp,pp,deprrnd,sm,em,tvp);
+    otherwise
+      DecliningDeprDefault(dvp,pp,deprrnd,sm,em,tvp,type);
+  end;
+  return;
+end;
+
+/*
+global
+procedure DeprSegment(Date sEndDate,Integer Comparison,string dmcode,var Date sd,var Date pd,var Date ed,val svp,var val avp,var val dvp,var val resvalp,var val mindprvalp,var val curvalp,var Integer alreadydonef,val deductval)
+BEGIN
+  record DprModVc DMr;
+  Boolean found;
+  val t,d1,d2;
+  val startval;
+  Integer sm,pm,em,tmpm;
+  LongInt diff;
+  Date lsd,lpd,led;
+  Date td;
+  Integer lComparison;
+ 
+  lComparison = Comparison;
+  lsd = sd;
+  lpd = pd;
+  led = ed;
+  startval = svp - resvalp;
+//* svp - basevalue
+//*   avp - depr before period
+//*   dvp - depr during period
+  DMr.Code = dmcode;
+  found = ReadFirstMain(DMr,1,true);
+  if (DMr.DeprPeriod==2) then begin  
+    if (alreadydonef==0) then begin
+      lsd = AddMonth(lsd,-GetMonth(lsd)+1);
+      lsd = AddDay(lsd,-GetDay(lsd)+1);     
+      lpd = AddMonth(lpd,-GetMonth(lpd)+1);
+      lpd = AddDay(lpd,-GetDay(lpd)+1);     
+      alreadydonef = 1;                                                 
+    end;
+  end else begin
+    if (lComparison==2) then begin
+      lComparison = DMr.DeprPeriod;
+    end;
+  end;     
+  if (DMr.DeprMethod==1) then begin  
+    diff = DateDiff(lpd,led);
+    if (diff<=0) then begin
+      switch (lComparison) begin
+        case 0:
+          lpd.month = lpd.month - 1;
+          if (lpd.month==0) then begin
+            lpd.month = 12;
+            lpd.year = lpd.year - 1;
+          end;
+        case 2:
+          lpd = AddMonth(lpd,-1);//lpd->month -= 1;
+          if (GetMonth(lpd)==0) then begin
+            lpd = AddMonth(lpd,-GetMonth(lpd)+12);//lpd->month = 12;
+            lpd = AddYear(lpd,-1);//lpd->year -= 1;
+          end;
+          if (GetMonth(sEndDate)!=12) then begin//*is it needed at all
+            led = AddDay(led,-GetDay(led)+31);
+            led = AddMonth(led,-GetMonth(led)+12);
+          end;
+      end;
+      td = lpd;
+      if (lComparison==1) then begin
+        td = AddDay(td,-1);
+      end;
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,lsd,td,d2);      
+      if (lComparison==1) then begin
+//        lsd = AddDay(lsd,-1);
+        lsd = AddDay(td,1);
+      end;        
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,lsd,led,d1);      
+    end else begin
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,lsd,led,d1);
+    end;    
+    if (diff<=0) then begin
+      if (lComparison==1) then begin
+        dvp = dvp + d1;
+        avp = avp + d2;
+      end else begin
+        dvp = dvp + d1;
+        dvp = dvp - d2;
+        avp = avp + d2;
+      end;
+    end else begin
+      avp = avp + d1;
+    end;
+  end;
+  
+  if (DMr.DeprMethod==2) then begin
+      diff = DateDiff(lpd,led);
+//      lpd = AddDay(led,-GetDay(led)+1);
+//      lpd = AddMonth(lpd,-GetMonth(lpd)+1);//why was it here
+      if (lpd<lsd) then begin
+        lpd = lsd;
+      end;
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      pm = DateGetIntMonth(lpd);
+      if (pm<=em) then begin
+        DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,pm-1,d2,1);
+        t = startval;
+        t = t - d2;
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,pm,em,d1,1);
+      end else begin
+        DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d1,1);
+      end;      
+      if (diff<=0) then begin
+        dvp = dvp + d1;
+        avp = avp + d2;
+      end else begin
+        avp = avp + d1;
+      end;
+  end;  
+  if (DMr.DeprMethod==3) then begin
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      pm = DateGetIntMonth(lpd);
+      if (pm<=em) then begin
+        tmpm = pm - GetMonth(lpd);
+
+        DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,tmpm,d2,2);
+        t = startval;
+        if (GetYear(lsd)!=GetYear(lpd)) then begin
+          t = t - d2;
+        end;  
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,pm,em,d1,2);
+        if (GetYear(lsd)!=GetYear(lpd)) then begin
+          t = GetMonth(lpd) - 1;
+          t = t*d1;
+          d2 = d2 + t;
+        end else begin
+          DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,pm-1,d2,2);
+        end;
+      end;
+      dvp = d1;
+      avp = d2;
+  end;
+  if (DMr.DeprMethod==4) then begin  
+    startval = startval - deductval;
+    diff = DateDiff(lpd,led);
+    if (diff<=0) then begin
+      switch (lComparison) begin
+        case 0:
+          lpd = AddMonth(lpd,-1);//lpd->month -= 1;
+          if (GetMonth(lpd)==0) then begin
+            lpd = AddMonth(lpd,-GetMonth(lpd)+12);//lpd->month = 12;
+            lpd = AddYear(lpd,-1);//lpd->year -= 1;
+          end;
+        case 2:
+          lpd = AddMonth(lpd,-1);//lpd->month -= 1;
+          if (GetMonth(lpd)==0) then begin
+            lpd = AddMonth(lpd,-GetMonth(lpd)+12);//lpd->month = 12;
+            lpd = AddYear(lpd,-1);//lpd->year -= 1;
+          end;
+          if (GetMonth(sEndDate)!=12) then begin//*is it needed at all
+            led = AddDay(led,-GetDay(led)+31);
+            led = AddMonth(led,-GetMonth(led)+12);
+          end;
+      end;
+      td = lpd;
+      if (lComparison==1) then begin
+        td = AddDay(td,-1);
+      end;
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,lsd,td,d2);      
+      if (lComparison==1) then begin
+//        lsd = AddDay(lsd,-1);
+        lsd = AddDay(td,1);
+      end;        
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,lsd,led,d1);      
+    end else begin
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,lsd,led,d1);
+    end;    
+    if (diff<=0) then begin
+      if (lComparison==1) then begin
+        dvp = dvp + d1;
+        avp = avp + d2;
+      end else begin
+        dvp = dvp + d1;
+        dvp = dvp - d2;
+        avp = avp + d2;
+      end;
+    end else begin
+      avp = avp + d1;
+    end;
+  end;
+  if (avp>startval) then begin avp = startval; end;
+
+ // what this is for , 
+//*if u have very old asset, and revaluate it , 
+//*  if (dvp>startval) then begin dvp = startval; end;
+//*  t = avp + dvp;    
+//*  if (t>startval) then begin
+//*    t = t - startval;
+//*     dvp = dvp - t;      
+//*  end;  
+  sd = lsd;
+  pd = lpd;
+  ed = led;
+    
+  dvp = Round(dvp,SetRoundModeD(DMr.DeprRnd));
+  avp = Round(avp,SetRoundModeD(DMr.DeprRnd));
+
+  RETURN;
+END;
+*/
+
+global
+procedure DeprSegment(Date sEndDate,Date purchdate,Integer Comparison,record DprModVc DMr,Date sd,Date pd,Date ed,val svp,var val avp,var val dvp,var val resvalp,var val mindprvalp,var Integer alreadydonef,val acumdpr)
+BEGIN
+  Date lsd,led,lpd;
+  val startval;
+  Boolean found;
+  Integer lComparison;
+  LongInt diff;
+  val d1,d2;
+  val t;
+  Integer sm,em,pm,tmpm;
+  Boolean difff;
+  
+  lComparison = Comparison;
+  lsd = sd;
+  lpd = pd;//dprbef
+  led = ed;
+  startval = svp - resvalp;
+//*   svp - basevalue
+//*   avp - depr before period
+//*   dvp - depr during period
+//*   lComparison 0 months, 1 days, 2 years
+
+//  DMr.Code = dmcode;
+//  found = ReadFirstMain(DMr,1,true);
+  if (lComparison==2) then begin
+    lComparison = DMr.DeprPeriod;
+  end;
+  switch (DMr.DeprMethod) begin  
+    case 1:      
+      diff = DateDiff(lpd,led);
+      difff = false;
+      if (lsd<lpd) then begin
+        if (sEndDate>lpd) then begin
+          difff = true;
+        end;
+      end;
+      if (difff) then begin
+        switch (lComparison) begin
+          case 0:
+            lpd.month = lpd.month - 1;
+            if (lpd.month==0) then begin
+              lpd.month = 12;
+              lpd.year = lpd.year - 1;
+            end;
+            lpd.day = DaysInMonth(lpd.year,lpd.month);
+          case 1:
+            lpd = AddDay(lpd,-1);
+          case 2:
+            lpd = AddMonth(lpd,-1);
+            if (GetMonth(lpd)==0) then begin
+              lpd.year = lpd.year - 1;
+            end;
+            lpd.day = 31;
+            lpd.month = 12;
+        end;
+        StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,lpd,d2,MatRowCnt(DMr)>0);
+        if ((acumdpr+d2)>startval) then begin
+          d2 = startval - acumdpr;
+        end;
+        if (d2<0) then begin d2 = blankval; end;
+//StopAlert("a.lsd " & lsd & " lpd " & lpd & " led " & led & " d2 " & d2 & " startval " & startval);
+        StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,led,d1,MatRowCnt(DMr)>0);
+//StopAlert("b.lsd " & lsd & " lpd " & lpd & " led " & led & " d1 " & d1 & " startval " & startval & " DMr.LifecycleYears " & DMr.LifecycleYears & " svp " & svp & " resvalp " & resvalp);
+        dvp = dvp + d1;
+        dvp = dvp - d2;
+        avp = avp + d2;
+      end else begin
+//StopAlert("purchdate " & purchdate & " lsd " & lsd  & " lpd " & lpd);  
+        StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,led,d1,MatRowCnt(DMr)>0);
+//StopAlert("c.lsd " & lsd & " lpd " & lpd & " led " & led & " d1 " & d1 & " startval " & startval & " d1 " & d1);
+        dvp = dvp + d1;
+//StopAlert("c.lsd " & lsd & " lpd " & lpd & " led " & led & " d1 " & d1 & " dvp " & dvp & " d1 " & d1);
+      end;
+    case 2:
+      diff = DateDiff(lpd,led);
+      if (lpd<lsd) then begin
+        lpd = lsd;
+      end;
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      pm = DateGetIntMonth(lpd);
+      if (pm<=em) then begin
+        DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,pm-1,d2,1);
+        t = startval;
+        t = t - d2;
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,pm,em,d1,1);
+      end else begin
+        DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d1,1);
+      end;      
+      if (diff<=0) then begin
+        dvp = dvp + d1;
+        avp = avp + d2;
+      end else begin
+        avp = avp + d1;
+      end;
+    case 3:
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      pm = DateGetIntMonth(lpd);
+
+      if (pm<=em) then begin
+        tmpm = pm - GetMonth(lpd);
+
+        DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,tmpm,d2,2);
+        t = startval;
+        if (GetYear(lsd)!=GetYear(lpd)) then begin
+          t = t - d2;
+        end;  
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,pm,em,d1,2);
+        if (GetYear(lsd)!=GetYear(lpd)) then begin
+          t = GetMonth(lpd) - 1;
+          t = t*d1;
+          d2 = d2 + t;
+        end else begin
+          DecliningDepr(startval,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,pm-1,d2,2);
+        end;
+      end else begin
+        t = startval;
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d2,2);
+      end;
+      dvp = d1;
+      avp = d2;
+    case 4:
+      startval = startval - acumdpr;
+      diff = DateDiff(lpd,led);
+      if (lsd!=lpd) then begin
+        switch (lComparison) begin
+          case 0:
+            lpd.month = lpd.month - 1;
+            if (lpd.month==0) then begin
+              lpd.month = 12;
+              lpd.year = lpd.year - 1;
+            end;
+            lpd.day = DaysInMonth(lpd.year,lpd.month);
+          case 1:
+            lpd = AddDay(lpd,-1);
+          case 2:
+            lpd = AddMonth(lpd,-1);
+            if (GetMonth(lpd)==0) then begin
+              lpd.year = lpd.year - 1;
+            end;
+            lpd.day = 31;
+            lpd.month = 12;
+        end;
+        StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,lpd,d2,MatRowCnt(DMr)>0);
+        StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,led,d1,MatRowCnt(DMr)>0);
+      end else begin
+        StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,led,d1,MatRowCnt(DMr)>0);
+      end;    
+      if (diff<=0) then begin
+        if (lComparison==1) then begin
+          dvp = dvp + d1;
+          avp = avp + d2;
+        end else begin
+          dvp = dvp + d1;
+          dvp = dvp - d2;
+          avp = avp + d2;
+        end;
+      end else begin
+        avp = avp + d1;
+      end;
+    case 5:
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      pm = DateGetIntMonth(lpd);
+      if (pm<=em) then begin
+        tmpm = pm - GetMonth(lpd);
+        DecliningDepr(startval-acumdpr,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,tmpm,d2,2);
+        t = startval;
+        if (GetYear(lsd)!=GetYear(lpd)) then begin
+          t = t - d2;
+        end;  
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,pm,em,d1,2);
+        if (GetYear(lsd)!=GetYear(lpd)) then begin
+          t = GetMonth(lpd) - 1;
+          t = t*d1;
+          d2 = d2 + t;
+        end else begin
+          DecliningDepr(startval-acumdpr,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,pm-1,d2,2);
+        end;
+      end else begin
+        t = startval;
+        DecliningDepr(t,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d2,2);
+      end;
+      dvp = d1;
+      avp = d2;
+  end;
+  if (avp>startval) then begin avp = startval; end;
+  dvp = Round(dvp,SetRoundModeD(DMr.DeprRnd));
+  avp = Round(avp,SetRoundModeD(DMr.DeprRnd));
+  return;
+end;
+
+global
+procedure DeprSegmentNew(Integer Comparison,record DprModVc DMr,Date sd,Date ed,val svp,var val dvp,var val resvalp,val acumdpr)
+begin
+  Date lsd,led;
+  val startval;
+  Boolean found;
+  Integer lComparison;
+  LongInt diff;
+  val d1,d2;
+  val t;
+  Integer sm,em,pm,tmpm;
+  Boolean difff;
+  
+  lComparison = Comparison;
+  lsd = sd;
+  led = ed;
+  startval = svp - resvalp;
+//*   svp - basevalue
+//*   dvp - depr during period
+//*   lComparison 0 months, 1 days, 2 years
+
+  if (lComparison==2) then begin
+    lComparison = DMr.DeprPeriod;
+  end;
+  switch (DMr.DeprMethod) begin  
+    case 1:      
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,led,d1,MatRowCnt(DMr)>0);
+      dvp = dvp + d1;
+    case 2:
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      DecliningDepr(startval - acumdpr,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d1,1);
+      dvp = dvp + d1;
+    case 3:
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      DecliningDepr(startval - acumdpr,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d1,2);
+      dvp = dvp + d1;
+    case 4:
+      startval = startval - acumdpr;
+      StraightDepr(lComparison,startval,DMr.DeprPerc,DMr.DeprRnd,DMr.LifecycleYears,DMr.LifecycleDays,DMr.DeprCalc,lsd,led,d1,MatRowCnt(DMr)>0);
+      dvp = dvp + d1;
+    case 5:
+      sm = DateGetIntMonth(lsd);
+      em = DateGetIntMonth(led);
+      DecliningDepr(startval - acumdpr,lComparison,DMr.DeprPerc,DMr.DeprRnd,sm,em,d1,2);
+//Trace("DeprSegmentNew "," startval " & startval & " acumdpr " & acumdpr & " DMr.DeprPerc " & DMr.DeprPerc & " sm " & sm & " em " & em);  
+      
+      dvp = dvp + d1;
+  end;
+
+  if (dvp>startval) then begin dvp = startval; end;
+  dvp = Round(dvp,SetRoundModeD(DMr.DeprRnd));
+  RETURN;
+END;

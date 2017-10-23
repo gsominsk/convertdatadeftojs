@@ -1,0 +1,1318 @@
+external procedure AutomatedSalesOrderly(string);
+external procedure TransGenRnPUVc(record RcVc,record TRVc,record SMVc,var val);
+external function Boolean NegativeAmountsOnIVTrans(Integer,val);
+external procedure TransGenRnSRVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnIntIVVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnOwnCheckVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnCheckVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnAT2WrofVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnWSVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnProdVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnRetPUVc(record RcVc,record TRVc,record SMVc,var val);
+external procedure TransGenRnINTransferVc(record RcVc,record TRVc,record SMVc,var val);
+
+external function Integer MakeTransFromVATVI(record TRVc,record VATVIVc,Boolean);
+external function Integer MakeTransFromVATIV(record TRVc,record VATIVVc,Boolean);
+external function Integer MakeTransFromPP(record TRVc,record PPVc,Boolean);
+external function Integer MakeTransFromExp(record TRVc,record ExpVc,Boolean);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function Integer MakeTransFromStockMov(record TRVc,record StockMovVc,record LocationVc,record LocationVc,Boolean,Integer);
+external function Integer MakeTransFromRet(record TRVc,record RetVc,Boolean);
+external function Integer MakeTransFromSD(record TRVc,record SDVc,Boolean,var string,var Integer);
+external function Integer MakeTransFromPU(record TRVc,record PUVc,record LocationVc,Boolean);
+external function Integer MakeTransFromVI(record TRVc,record SMVc,record VIVc,Boolean,Boolean);
+external function Integer MakeTransFromOP(record TRVc,record OPVc,Boolean);
+external function Integer MakeTransFromIP(var record TRVc,var record IPVc,Boolean,var Integer,var string);
+external function Integer MakeTransFromCLIn(var record TRVc,record CLInVc,Boolean,var string);
+external function Integer MakeTransFromCLOut(var record TRVc,record CLOutVc,Boolean,var string);
+external function Integer MakeTransFromIV(var record TRVc,var record SMVc,record IVVc,Boolean,Boolean);
+external procedure AddEuroTrRow(record TRVc,string,string,string,string,val,val,val,Boolean,Boolean,var val,Boolean,string,string,string);
+external function Boolean GetAccName(string,var string,Integer);
+external procedure FormTrr(record RcVc,Integer,record TRVc,Integer,var val,record SMVc,var LongInt,Boolean);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Integer MakeTransFromSH(record TRVc,record SHVc,Boolean,record RcVc);
+
+global
+procedure PrintTrrTransGen(record RcVc RepSpec,record TRVc TRr,LongInt invalid,record TRVc TRTotr,record SMVc VATr,var val TotSum,Integer IntYc,Integer InvType)
+BEGIN
+  Integer i,rwcnt;
+  val sv,v;
+  row TRVc TRrw;
+  val temp,baserate1,baserate2;
+  string 20 curncy;
+  LongInt TransCount;
+  string 255 tstr;
+  Boolean negamf,dc;
+  
+  GetFullCurncyRate(curncy,TRr.TransDate,temp,temp,temp,baserate1,baserate2);
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    if (RepSpec.ArtMode==0) then begin
+      if (invalid!=-1) then begin
+        TRrw.ovst = 1;
+        MatRowPut(TRr,i,TRrw);
+      end;
+      FormTrr(RepSpec,180,TRr,i,v,VATr,TransCount,true);
+    end;
+    if (invalid==-1) then begin
+      if (TRrw.DebVal!=0) then begin
+        sv = TRrw.DebVal;
+        dc = true;
+      end else begin
+        sv = TRrw.CredVal;
+        dc = false;
+      end;
+      if (GetAccName(TRrw.AccNumber,tstr,60)) then begin
+      end;
+      TRrw.Comment = tstr;
+      switch (IntYc) begin
+        case IVYc:
+          if (InvType==kInvoiceTypeCredit or InvType==kInvoiceTypeCreditSpecialSales) then begin
+            negamf = NegativeAmountsOnIVTrans(InvType,-sv);                
+          end else begin
+            negamf = NegativeAmountsOnIVTrans(InvType,sv);                
+          end;
+      end;
+      AddEuroTrRow(TRTotr,TRrw.AccNumber,TRrw.Objects,
+                   "",TRrw.Comment,sv,baserate1,baserate2,true,dc,TotSum,negamf,"","","");
+    end;
+  end;
+  RETURN;
+END;
+
+procedure TransGenRnSHVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record SHVc SHr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row SHVc SHrw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  SHr.ShipDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("ShipDate",SHr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (SHr.ShipDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (SHr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (SHr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (SHr.SerNr<frnr) then begin testf = false; end;
+      if (SHr.SerNr>tonr) then begin testf = false; end;
+    end;
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,SHr.SerNr,false);
+      OutDate(60,0,SHr.ShipDate,false);
+      OutString(140,0,SHr.CustCode,false);
+      OutString(240,0,SHr.Addr0,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(SHr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(SHr,i,SHrw);
+          sum = sum + SHrw.FIFORowVal;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromSH(TRr,SHr,true,RepSpec); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,SHYc,0);
+      end; 
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;           
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnSDVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record SDVc SDr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row SDVc SDrw;
+  val sum;
+  LongInt frnr,tonr;
+  string 255 errofield;
+  Integer errorrow;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  SDr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",SDr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (SDr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (SDr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (SDr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (SDr.SerNr<frnr) then begin testf = false; end;
+      if (SDr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,SDr.SerNr,false);
+      OutDate(60,0,SDr.TransDate,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(SDr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(SDr,i,SDrw);
+          sum = sum + SDrw.FIFORowVal;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromSD(TRr,SDr,true,errofield,errorrow); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,SDYc,0);
+      end; 
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;           
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnRetVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record MainStockBlock MainStockRec;
+  record LocationVc LocRec;
+  record RetVc Retr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row RetVc Retrw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  BlockLoad(MainStockRec);
+  Retr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",Retr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (Retr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (Retr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (Retr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (Retr.SerNr<frnr) then begin testf = false; end;
+      if (Retr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,Retr.SerNr,false);
+      OutDate(60,0,Retr.TransDate,false);
+      OutString(140,0,Retr.CustCode,false);
+      OutString(240,0,Retr.Comment,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(Retr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(Retr,i,Retrw);
+          sum = sum + Retrw.CostPrice;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromRet(TRr,Retr,true); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,RetYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;            
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnExpVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record ExpVc Expr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row ExpVc Exprw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  Expr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",Expr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (Expr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (Expr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (Expr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (Expr.SerNr<frnr) then begin testf = false; end;
+      if (Expr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,Expr.SerNr,false);
+      OutDate(60,0,Expr.TransDate,false);
+      OutString(140,0,Expr.Person,false);
+      OutString(240,0,Expr.Comment,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(Expr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(Expr,i,Exprw);
+          sum = sum + Exprw.Sum;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromExp(TRr,Expr,true); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,ExpYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;            
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnPPVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record PPVc PPr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row PPVc PPrw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  PPr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",PPr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (PPr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (PPr.DoneFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (PPr.DoneFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (PPr.SerNr<frnr) then begin testf = false; end;
+      if (PPr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,PPr.SerNr,false);
+      OutDate(60,0,PPr.TransDate,false);
+      OutString(140,0,PPr.PayMode,false);
+      OutString(240,0,PPr.BankAcc,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(PPr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(PPr,i,PPrw);
+          sum = sum + PPrw.PayVal;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromPP(TRr,PPr,true); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,PPYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;            
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnVATIVVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record VATIVVc VATIVr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row VATIVVc VATIVrw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  VATIVr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",VATIVr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (VATIVr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (VATIVr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (VATIVr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (VATIVr.SerNr<frnr) then begin testf = false; end;
+      if (VATIVr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,VATIVr.SerNr,false);
+      OutDate(60,0,VATIVr.TransDate,false);
+      OutString(140,0,VATIVr.CustCode,false);
+      OutString(240,0,VATIVr.Addr0,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(VATIVr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VATIVr,i,VATIVrw);
+          sum = sum + VATIVrw.Sum;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromVATIV(TRr,VATIVr,true); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,VATIVYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;            
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnVATVIVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record VATVIVc VATVIr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row VATVIVc VATVIrw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  VATVIr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",VATVIr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (VATVIr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (VATVIr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (VATVIr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (VATVIr.SerNr<frnr) then begin testf = false; end;
+      if (VATVIr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,VATVIr.SerNr,false);
+      OutDate(60,0,VATVIr.TransDate,false);
+      OutString(140,0,VATVIr.VECode,false);
+      OutString(240,0,VATVIr.VEName,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(VATVIr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(VATVIr,i,VATVIrw);
+          sum = sum + VATVIrw.Sum;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromVATVI(TRr,VATVIr,true); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,VATVIYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;            
+    end;
+  end;  
+  RETURN;
+END;
+
+
+procedure TransGenRnStockMovVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record LocationVc LocFrRec;
+  record LocationVc LocToRec;
+  record StockMovVc StockMovr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  Integer i,rwcnt;
+  row StockMovVc StockMovrw;
+  val sum;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  StockMovr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",StockMovr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (StockMovr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (StockMovr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (StockMovr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (StockMovr.SerNr<frnr) then begin testf = false; end;
+      if (StockMovr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      sum = blankval;
+      invalid = -1;
+      sum = 0;
+      StartFormat(15);
+      OutLongInt(0,0,StockMovr.SerNr,false);
+      OutDate(60,0,StockMovr.TransDate,false);
+      OutString(140,0,StockMovr.FrLocation,false);
+      OutString(240,0,StockMovr.ToLocation,false);
+      if (RepSpec.ArtMode==1) then  begin
+        rwcnt = MatRowCnt(StockMovr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(StockMovr,i,StockMovrw);
+          sum = sum + StockMovrw.FIFORowVal;
+        end;
+        OutVal(450,0,sum,M4Val,true);
+      end;
+      EndFormat;
+      LocFrRec.Code = StockMovr.FrLocation;
+      if (ReadFirstMain(LocFrRec,1,true)) then begin
+      end;            
+      LocToRec.Code = StockMovr.ToLocation;
+      if (ReadFirstMain(LocToRec,1,true)) then begin
+      end;            
+      trans = MakeTransFromStockMov(TRr,StockMovr,LocFrRec,LocToRec,true,STMovYc); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,STMovYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;      
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnIVVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record IVVc IVr;
+  record TRVc TRr;
+  record SMVc SMr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  val t;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  IVr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",IVr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (IVr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (IVr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (IVr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (IVr.SerNr<frnr) then begin testf = false; end;
+      if (IVr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      invalid = -1;
+      
+      if (IVr.InvType==kInvoiceTypePrepayment) then begin goto L20IV; end;
+      if (IVr.Invalid!=0) then begin
+        invalid = 1;
+      end;
+      StartFormat(15);
+      OutLongInt(0,0,IVr.SerNr,false);
+      OutDate(60,0,IVr.TransDate,false);
+      OutString(140,0,IVr.CustCode,false);
+      OutString(240,0,IVr.Addr0,false);
+      if (HasLocalization("POL")) then begin//vatPolish
+        OutString(480,0,IVr.VATNr,true);
+      end;
+      if (RepSpec.ArtMode==1) then begin
+        t = MulRateToBase1(IVr.CurncyCode,IVr.Sum4,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+        if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+          t = -t;
+        end;
+        if (invalid==1) then begin
+          OutValOvst(1,0,t,M4Val,true,1);
+        end else begin
+          OutValOvst(1,0,t,M4Val,true,0);
+        end;
+      end;
+      EndFormat;
+      if (RepSpec.ArtMode!=1) then begin
+        if (HasLocalization("POL")) then begin
+          if (nonblank(IVr.Addr1)) then begin
+            StartFormat(15);
+            OutString(240,0,IVr.Addr1,false);
+            EndFormat;
+          end;
+          if (nonblank(IVr.Addr2)) then begin
+            StartFormat(15);
+            OutString(240,0,IVr.Addr2,false);
+            EndFormat;
+          end;
+          if (nonblank(IVr.Addr3)) then begin
+            StartFormat(15);
+            OutString(240,0,IVr.Addr3,false);
+            EndFormat;
+          end;
+        end;
+      end;
+      trans =  MakeTransFromIV(TRr,SMr,IVr,true,false);
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,IVYc,IVr.InvType);
+      end; 
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;           
+L20IV:;
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnVIVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record VIVc VIr;
+  record TRVc TRr;
+  record SMVc SMr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  val t;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  VIr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",VIr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (VIr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (VIr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (VIr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (VIr.SerNr<frnr) then begin testf = false; end;
+      if (VIr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      invalid = -1;      
+      if (VIr.Invalid!=0) then begin
+        invalid = 1;
+      end;
+      StartFormat(15);
+      OutLongInt(0,0,VIr.SerNr,false);
+      OutDate(60,0,VIr.TransDate,false);
+      OutString(140,0,VIr.VECode,false);
+      OutString(240,0,VIr.VEName,false);
+      if (RepSpec.ArtMode==1) then begin
+        t = MulRateToBase1(VIr.CurncyCode,VIr.PayVal,VIr.FrRate,VIr.ToRateB1,VIr.ToRateB2,VIr.BaseRate1,VIr.BaseRate2,DefaultCurRoundOff);
+        if (VIr.InvType==kInvoiceTypeCredit or VIr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+          t = -t;
+        end;
+        OutVal(1,0,t,M4Val,true);
+      end;
+      EndFormat;
+      trans =  MakeTransFromVI(TRr,SMr,VIr,false,true);
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,VIYc,VIr.InvType);
+      end; 
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;           
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnCLOutVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record CLOutVc CLOutr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Boolean trans;
+  LongInt frnr,tonr;
+  string 255 errstr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  CLOutr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",CLOutr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (CLOutr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) and (CLOutr.Invalid==0) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (CLOutr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (CLOutr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (CLOutr.SerNr<frnr) then begin testf = false; end;
+      if (CLOutr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      invalid = -1;
+      StartFormat(15);
+      OutLongInt(0,0,CLOutr.SerNr,false);
+      OutDate(60,0,CLOutr.TransDate,false);
+      OutString(140,0,CLOutr.CUCode,false);
+      OutString(240,0,CLOutr.CUName,false);
+      if (RepSpec.ArtMode==1) then  begin
+        OutVal(450,0,CLOutr.Total,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromCLOut(TRr,CLOutr,true,errstr)==0; 
+      if (trans) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,CLOutYc,0);
+      end; 
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;           
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnCLInVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record CLInVc CLInr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  LongInt frnr,tonr;
+  string 255 errstr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  CLInr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",CLInr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (CLInr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (CLInr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (CLInr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (CLInr.SerNr<frnr) then begin testf = false; end;
+      if (CLInr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      invalid = -1;
+      StartFormat(15);
+      OutLongInt(0,0,CLInr.SerNr,false);
+      OutDate(60,0,CLInr.TransDate,false);
+      OutString(140,0,CLInr.CUCode,false);
+      OutString(240,0,CLInr.CUName,false);
+      if (RepSpec.ArtMode==1) then  begin
+        OutVal(450,0,CLInr.Total,M4Val,true);
+      end;
+      EndFormat;
+      trans = MakeTransFromCLIn(TRr,CLInr,true,errstr); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,CLInYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;      
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnIPVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record IPVc IPr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  LongInt frnr,tonr;
+  Integer errrownr;
+  string 255 errfield;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  IPr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",IPr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (IPr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (IPr.OKFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (IPr.OKFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (IPr.SerNr<frnr) then begin testf = false; end;
+      if (IPr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      invalid = -1;
+      StartFormat(15);
+      OutLongInt(0,0,IPr.SerNr,false);
+      OutDate(60,0,IPr.TransDate,false);
+      OutString(140,0,IPr.PayMode,false);
+      OutString(240,0,IPr.Comment,false);
+      if (RepSpec.ArtMode==1) then  begin
+        OutVal(450,0,IPr.CurPayVal,M4Val,true);
+        OutString(455,0,IPr.PayCurCode,false);
+      end;
+      EndFormat;      
+      trans = MakeTransFromIP(TRr,IPr,true,errrownr,errfield); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,IPYc,0);
+      end;
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;      
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure TransGenRnOPVc(record RcVc RepSpec,record TRVc TRTotr,record SMVc VATr,var val TotSum)
+BEGIN
+  record OPVc OPr;
+  record TRVc TRr;
+  Boolean TrHs,testf;
+  LongInt invalid;
+  Integer trans;
+  LongInt frnr,tonr;
+
+  frnr = FirstInRange(RepSpec.f1,10);
+  tonr = LastInRange(RepSpec.f1,10);    
+  OPr.TransDate = RepSpec.sStartDate;
+  TrHs = true;
+  while (LoopKey("TransDate",OPr,1,TrHs)) begin
+    if (TrHs) then begin
+      if (OPr.TransDate>RepSpec.sEndDate) then begin
+        TrHs = false;
+      end;
+    end;
+    testf = TrHs;
+    if (TrHs) then begin
+      testf = false;
+      if (RepSpec.flags[1]!=0) then begin
+        if (OPr.DoneFlag!=0) then begin
+          testf = true;
+        end;
+      end;
+      if (RepSpec.flags[2]!=0) then begin
+        if (OPr.DoneFlag==0) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (nonblank(RepSpec.f1)) then begin
+      if (OPr.SerNr<frnr) then begin testf = false; end;
+      if (OPr.SerNr>tonr) then begin testf = false; end;
+    end;    
+    if (testf) then begin
+      invalid = -1;
+      StartFormat(15);
+      OutLongInt(0,0,OPr.SerNr,false);
+      OutDate(60,0,OPr.TransDate,false);
+      OutString(140,0,OPr.PayMode,false);
+      OutString(240,0,OPr.BankName,false);
+      if (RepSpec.ArtMode==1) then  begin
+        OutVal(450,0,OPr.CurPayVal,M4Val,true);
+        OutString(455,0,OPr.PayCurCode,false);
+      end;
+      EndFormat;      
+      trans = MakeTransFromOP(TRr,OPr,true); 
+      if (trans==0) then begin
+        PrintTrrTransGen(RepSpec,TRr,invalid,TRTotr,VATr,TotSum,OPYc,0);
+      end; 
+      if (RepSpec.ArtMode==0) then begin
+        Gray_Divider(0,1);
+      end;           
+    end;
+  end;  
+  RETURN;
+END;
+
+procedure AddToAccSumup(record TRVc TRr,row TRVc TRTotrw)
+begin
+  Integer i,rwcnt;
+  row TRVc TRrw;
+  Boolean addedef;
+
+  rwcnt = MatRowCnt(TRr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRr,i,TRrw);
+    if (TRTotrw.AccNumber==TRrw.AccNumber) then begin
+      TRrw.DebVal = TRrw.DebVal + TRTotrw.DebVal;
+      TRrw.CredVal = TRrw.CredVal + TRTotrw.CredVal;
+      MatRowPut(TRr,i,TRrw);
+      addedef = true;
+    end;
+  end;
+  if (addedef==false) then begin
+    CopyRow(TRr,TRTotrw,TRrw);
+    TRrw.Objects = "";
+    MatRowPut(TRr,MatRowCnt(TRr),TRrw);
+  end;
+  return;
+end;
+
+procedure SumupTRTot(record TRVc TRTotr)
+begin
+  record TRVc TRr;
+  row TRVc TRTotrw;
+  row TRVc tTRTotrw;
+  row TRVc nTRTotrw;
+  Integer i,rwcnt,changing;  
+  
+  RecordCopy(TRr,TRTotr);
+  rwcnt = MatRowCnt(TRr);
+  while (rwcnt>0) begin
+    MatRowDelete(TRr,0);
+    rwcnt = rwcnt - 1;
+  end;  
+  rwcnt = MatRowCnt(TRTotr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(TRTotr,i,TRTotrw);
+    AddToAccSumup(TRr,TRTotrw);
+  end;  
+  RecordClear(TRTotr);
+  RecordCopy(TRTotr,TRr);
+
+  rwcnt = MatRowCnt(TRTotr);
+  changing = 1;
+  while (changing==1) begin
+    changing = 0;
+    for (i=0;i<rwcnt-1;i=i+1) begin
+      MatRowGet(TRTotr,i,TRTotrw);
+      MatRowGet(TRTotr,i+1,nTRTotrw);
+      if (TRTotrw.AccNumber>nTRTotrw.AccNumber) then begin
+        changing = 1;
+        CopyRow(TRTotr,TRTotrw,tTRTotrw);
+        CopyRow(TRTotr,nTRTotrw,TRTotrw);
+        CopyRow(TRTotr,tTRTotrw,nTRTotrw);
+        MatRowPut(TRTotr,i,TRTotrw);
+        MatRowPut(TRTotr,i+1,nTRTotrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure TransGenRn(record RcVc RepSpec)
+BEGIN
+  record TRVc TRTotr;
+  row TRVc TRTotrw;
+  record SMVc VATr;  
+  Integer i,rwcnt,rw;
+  Date tdp;
+  string 20 fnr;
+  string 255 cstr,tstr;
+  val v,TotSum;
+  Boolean trans;
+  Boolean TrHs;
+  Boolean testf;
+  LongInt invalid;
+  LongInt TransCount;
+  val totdeb,totcred;
+
+  invalid = -1;
+  fnr = "";
+  switch (RepSpec.flags[0]) begin
+    case 0:  fnr = "IVVc";
+    case 1:  fnr = "IPVc";
+    case 2:  fnr = "VIVc";
+    case 3:  fnr = "OPVc";
+    case 4:  fnr = "SHVc";
+    case 5:  fnr = "PUVc";
+    case 6:  fnr = "CLInVc";
+    case 7:  fnr = "CLOutVc";
+    case 8:  fnr = "SDVc";
+    case 9:  fnr = "StockMovVc";
+
+    case 11: fnr = "RetVc";
+    case 12: fnr = "ExpVc";
+    case 13: fnr = "PPVc";
+    case 14: fnr = "VATIVVc";
+    case 15: fnr = "VATVIVc";
+    case 16: fnr = "INTransferVc";
+    case 17: fnr = "RetPUVc";
+    case 18: fnr = "ProdVc";
+    case 19: fnr = "WSVc";
+    case 20: fnr = "AT2WrofVc";
+    case 21: fnr = "CheckVc";
+    case 22: fnr = "OwnCheckVc";
+    case 23: fnr = "IntIVVc";
+    case 24: fnr = "SRVc";
+  end;
+  if (blank(fnr)) then begin
+    goto LTransGenRn;
+  end;
+  StartReportJob(USetStr(2740));
+   rw = 1;
+   switch (RepSpec.flags[0]) begin
+     case 0:  tstr = USetStr(1150);
+     case 1:  tstr = USetStr(1151);
+     case 2:  tstr = USetStr(1152);
+     case 3:  tstr = USetStr(1153);
+     case 4:  tstr = USetStr(1158);
+     case 5:  tstr = USetStr(1157);
+     case 6:  tstr = USetStr(1193);
+     case 7:  tstr = USetStr(1194);
+     case 8:  tstr = USetStr(1195);
+     case 9:  tstr = USetStr(1172);
+     case 10: tstr = USetStr(1344);      
+     case 11: tstr = USetStr(1421);      
+     case 12: tstr = USetStr(1170);      
+     case 13: tstr = USetStr(1171);      
+     case 14: tstr = USetStr(1442);      
+     case 15: tstr = USetStr(1441);      
+     case 16: tstr = USetStr(1443);      
+     case 17: tstr = USetStr(1446);      
+     case 18: tstr = USetStr(1420);      
+     case 19: tstr = USetStr(1422);      
+     case 20: tstr = USetStr(1430);      
+     case 21: tstr = USetStr(1423);      
+     case 22: tstr = USetStr(1429);      
+     case 23: tstr = USetStr(1447);      
+     case 23: tstr = USetStr(1636);      
+   end;
+   Header(rw,tstr,1);
+   rw = rw + 1;
+  EndHeader;
+  
+  SetRepCol(2,80);
+  if (RepSpec.ArtMode==1) then begin
+    SetRepCol(3,288);
+    SetRepCol(4,384);
+  end else begin
+    SetRepCol(3,288);
+    SetRepCol(4,384);
+  end;
+  SetRepCol(5,465);
+  SetRepCol(8,413);
+  SetRepCol(9,221);
+  if (RepSpec.flags[6]==1) then begin
+    SetRepCol(6,190);
+  end else begin
+    SetRepCol(6,130);
+  end;
+  if ((nonblank(RepSpec.ObjType)) or (RepSpec.flags[3]!=0)) then begin
+    SetRepCol(6,200);
+  end;
+  SetRepCol(7,140);
+  switch (RepSpec.ArtMode) begin
+    case 0: // detailed 
+      StartFormat(15);
+      OutString(0,0,USetStr(2352),false);
+      OutString(60,0,USetStr(2742),false);
+      EndFormat;
+      StartFormat(15);
+      OutString(20,0,USetStr(2744),false);
+      OutString(60,0,USetStr(2748),false);
+      OutString(380,0,USetStr(2745),true);
+      OutString(1,0,USetStr(2746),true);
+      EndFormat;
+    case 1: // overview 
+      StartFormat(15);
+      OutString(0,0,USetStr(2741),false);
+      OutString(60,0,USetStr(2742),false);
+      OutString(1,0,USetStr(2747),true);
+      EndFormat;
+  end;
+  Gray_Divider(0,1);
+  cstr = "";
+  switch (fnr) begin
+    case "IVVc": TransGenRnIVVc(RepSpec,TRTotr,VATr,TotSum);
+    case "IPVc": TransGenRnIPVc(RepSpec,TRTotr,VATr,TotSum);
+    case "VIVc": TransGenRnVIVc(RepSpec,TRTotr,VATr,TotSum);
+    case "OPVc": TransGenRnOPVc(RepSpec,TRTotr,VATr,TotSum);
+    case "SHVc": TransGenRnSHVc(RepSpec,TRTotr,VATr,TotSum);
+    case "PUVc": TransGenRnPUVc(RepSpec,TRTotr,VATr,TotSum);
+    case "CLInVc": TransGenRnCLInVc(RepSpec,TRTotr,VATr,TotSum);
+    case "CLOutVc": TransGenRnCLOutVc(RepSpec,TRTotr,VATr,TotSum);
+    case "SDVc": TransGenRnSDVc(RepSpec,TRTotr,VATr,TotSum);
+    case "StockMovVc": TransGenRnStockMovVc(RepSpec,TRTotr,VATr,TotSum);
+    case "RetVc": TransGenRnRetVc(RepSpec,TRTotr,VATr,TotSum);
+    case "ExpVc": TransGenRnExpVc(RepSpec,TRTotr,VATr,TotSum);
+    case "PPVc": TransGenRnPPVc(RepSpec,TRTotr,VATr,TotSum);
+    case "VATIVVc": TransGenRnVATIVVc(RepSpec,TRTotr,VATr,TotSum);
+    case "VATVIVc": TransGenRnVATVIVc(RepSpec,TRTotr,VATr,TotSum);
+    case "INTransferVc": TransGenRnINTransferVc(RepSpec,TRTotr,VATr,TotSum);
+    case "RetPUVc": TransGenRnRetPUVc(RepSpec,TRTotr,VATr,TotSum);
+    case "ProdVc": TransGenRnProdVc(RepSpec,TRTotr,VATr,TotSum);
+    case "WSVc": TransGenRnWSVc(RepSpec,TRTotr,VATr,TotSum);
+    case "AT2WrofVc": TransGenRnAT2WrofVc(RepSpec,TRTotr,VATr,TotSum);
+    case "CheckVc": TransGenRnCheckVc(RepSpec,TRTotr,VATr,TotSum);
+    case "OwnCheckVc": TransGenRnOwnCheckVc(RepSpec,TRTotr,VATr,TotSum);
+    case "IntIVVc": TransGenRnIntIVVc(RepSpec,TRTotr,VATr,TotSum);
+    case "SRVc": TransGenRnSRVc(RepSpec,TRTotr,VATr,TotSum);
+  end;  
+  StartFormat(25);
+  EndFormat;
+  Gray_Divider(0,1);
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(20,0,USetStr(2744),false);
+    OutString(60,0,USetStr(2748),false);
+    OutString(380,0,USetStr(2745),true);
+    OutString(1,0,USetStr(2746),true);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;    
+  if (RepSpec.flags[3]!=0) then begin
+    SumupTRTot(TRTotr);
+  end;
+  rwcnt = MatRowCnt(TRTotr);
+  for (i=0;i<rwcnt ;i=i+1) begin
+    FormTrr(RepSpec,200,TRTotr,i,v,VATr,TransCount,true);
+    MatRowGet(TRTotr,i,TRTotrw);
+    totdeb = totdeb + TRTotrw.DebVal;
+    totcred = totcred + TRTotrw.CredVal;
+  end; 
+  Gray_Divider(0,1);
+  StartFormat(15);
+   OutVal(380,0,totdeb,M4Val,true);
+   OutVal(5,0,totcred,M4Val,true);
+  EndFormat;
+  EndJob;
+LTransGenRn:;
+  AutomatedSalesOrderly("HasIntegratedNL+Run_TransGenRn");
+  RETURN;
+END;

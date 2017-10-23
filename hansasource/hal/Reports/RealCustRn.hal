@@ -1,0 +1,701 @@
+external function roundmode SetRoundModeD(Integer);
+external procedure HT2Per(Date, Date , var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val FindVAT(string,val,Integer,Integer);
+external procedure HTCusts(string, string, var string);
+external procedure HTSaleMan(string, var string);
+external procedure HTCustCat(string,var string);
+external procedure HTDetailLevel(Integer, var string);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+
+function
+Boolean IncludeInSales(string vatcode)
+begin
+  record VATCodeBlock VATr;
+  row VATCodeBlock VATrw;
+  Integer i,rwcnt;
+  Boolean res;
+ 
+  res = true;
+  BlockLoad(VATr);
+  rwcnt = MatRowCnt(VATr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VATr,i,VATrw);
+    if (vatcode==VATrw.VATCode) then begin
+      if (VATrw.ExcludeFromOfficial<>1) then begin
+        res = false;
+      end;
+      i = rwcnt;
+    end;
+  end;
+  IncludeInSales = res;
+  return;
+end;
+
+procedure FindRealSales(Date from,Date to,string orgcust,string cust,var val sum, var val vat, var val tot,Boolean printf,Integer notation)
+begin
+  record IVVc IVr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  roundmode rndline,rndtotal,roundvat;
+  Boolean ivtestf;
+  Boolean found;
+  Boolean partsales;
+  val ivsum,ivvat,ivtot;
+  Integer typ;
+  LongInt ivsuml,ivvatl,ivtotl;
+
+  switch (notation) begin
+    case 0:
+      typ = M4UVal;
+    case 2:
+      typ = M4UVal;
+    otherwise
+      typ = M4Val;
+  end;
+  partsales = false;
+  found = true;
+  IVr.CustCode = cust;
+  while (LoopKey("CustCode",IVr,1,found)) begin
+    found = true;
+    if (IVr.CustCode<>cust) then begin
+      found = false;
+    end;
+    ivtestf = true;
+    if (IVr.OKFlag==0) then begin ivtestf = false; end;
+    if (IVr.Invalid<>0) then begin ivtestf = false; end;
+    if (IVr.InvDate<from) then begin ivtestf = false; end;
+    if (IVr.InvDate>to) then begin ivtestf = false; end;
+    if (found==false) then begin
+      ivtestf = false;
+    end;
+    if (ivtestf) then begin
+      rwcnt = MatRowCnt(IVr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(IVr,i,IVrw);
+        if ((IncludeInSales(IVrw.VATCode)) and (IVrw.Sum>0)) then begin
+          partsales = true;
+        end;
+      end;
+      if (partsales) then begin
+        ivsum = 0;
+        ivvat = 0;
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(IVr,i,IVrw);
+          if ((IncludeInSales(IVrw.VATCode)==false) and (IVrw.Sum>0)) then begin
+            if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+              ivsum = ivsum - IVrw.Sum;
+              if (IVr.Sum3>0) then begin
+                ivvat = ivvat - FindVAT(IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT);
+              end;
+            end else begin
+              ivsum = ivsum + IVrw.Sum;
+              if (IVr.Sum3>0) then begin
+                ivvat = ivvat + FindVAT(IVrw.VATCode,IVrw.Sum,IVr.InclVAT,IVr.NoTAXonVAT);
+              end;
+            end;
+          end;
+        end;  
+        GetCurncyRoundoff(IVr.CurncyCode,IVr.PayDeal,"IVVc",rndtotal,rndline,roundvat);
+        ivvat = Round(ivvat,roundvat);
+        ivtot = ivsum + ivvat;
+        ivtot = Round(ivtot,rndtotal);
+      end else begin
+        if (IVr.InclVAT>0) then begin
+          ivsum = IVr.Sum1;
+          ivvat = IVr.Sum3;
+          ivtot = IVr.Sum4 - IVr.TAX1Sum;
+        end else begin
+          ivsum = IVr.Sum1;
+          ivvat = IVr.Sum3;
+          ivtot = IVr.Sum4 - IVr.TAX1Sum;
+        end;
+      end;
+      if (IVr.InvType==kInvoiceTypeCredit or IVr.InvType==kInvoiceTypeCreditSpecialSales) then begin
+        ivsum = -ivsum;
+        ivvat = -ivvat;
+        ivtot = -ivtot;
+      end;
+
+      ivsum = MulRateToBase1(IVr.CurncyCode,ivsum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff); 
+      ivvat = MulRateToBase1(IVr.CurncyCode,ivvat,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+      ivtot = MulRateToBase1(IVr.CurncyCode,ivtot,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff); 
+      sum = sum + ivsum;
+      vat = vat + ivvat;
+      tot = tot + ivtot;
+      if (printf) then begin
+        switch (notation) begin
+          case 0:
+            ivsum = Round(ivsum / 1000,SetRoundModeD(0));
+            ivvat = Round(ivvat / 1000,SetRoundModeD(0));
+            ivtot = Round(ivtot / 1000,SetRoundModeD(0));
+          case 2:
+            ivsuml = ivsum; ivsum = ivsuml;
+            ivvatl = ivvat; ivvat = ivvatl;
+            ivtotl = ivtot; ivtot = ivtotl;
+        end;
+        StartFormat(15);
+        if (orgcust<>cust) then begin
+          OutString(0,0,cust,false);
+        end;
+        OutString(2,0,IVr.SerNr,false);
+        OutDate(4,0,IVr.InvDate,false);
+        OutVal(8,0,ivsum,typ,true);
+        OutVal(9,0,ivvat,typ,true);
+        OutVal(1,0,ivtot,typ,true);
+        EndFormat;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure FindCreditNotes(record RcVc RepSpec,string fromcust,string tocust)
+begin
+  Boolean found,ivtestf,ivtestf2,TrHs,printCustomer;
+  record IVVc IVr;
+  record IVVc IV2r;
+  string 255 lastreason,lastInvCountry,lastvatnr;
+  val ivbase,ivvat,totivvat,totivbase,ivbase2,ivvat2,ivsum;
+  Integer typ;
+  record CUVc CUr;
+
+  switch (RepSpec.flags[1]) begin
+    case 0:
+      typ = M4UVal;
+    case 2:
+      typ = M4UVal;
+    otherwise
+      typ = M4Val;
+  end;
+  
+  SetRepCol(2,50);
+  SetRepCol(3,200);
+  SetRepCol(4,100);
+  SetRepCol(5,130);
+  SetRepCol(6,300);
+  SetRepCol(7,250);
+  SetRepCol(8,360);
+  SetRepCol(9,400);
+  if (RepSpec.flags[0]==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(18178),false);
+    OutString(3,0,USetStr(9368),false);
+    OutString(7,0,USetStr(9362),false);
+    OutString(9,0,USetStr(10495),true);
+    OutString(1,0,USetStr(9364),true);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  ivbase = 0;
+  ivvat = 0;
+  found = true;
+  IVr.Reason = "";
+  IVr.VATNr = 0;
+  while (LoopKey("Reason",IVr,2,found)) begin
+    ivtestf = true;
+    if (IVr.OKFlag==0) then begin ivtestf = false; end;
+    if (IVr.Invalid<>0) then begin ivtestf = false; end;
+    if (DateInRange(IVr.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin ivtestf = false; end;
+    if (blank(IVr.Reason)) then begin
+      ivtestf = false;
+    end;
+    if (IVr.InvType!=kInvoiceTypeCredit) then begin
+      ivtestf = false;
+    end;
+    if (IVr.ExportFlag==0 and RepSpec.flags[2]<>1) then begin
+      ivtestf = false;
+    end;
+    if (IVr.ExportFlag==1 and RepSpec.flags[3]<>1) then begin
+      ivtestf = false;
+    end;
+    if (IVr.ExportFlag==2 and RepSpec.flags[4]<>1) then begin
+      ivtestf = false;
+    end;
+    if (IVr.ExportFlag==3  and RepSpec.flags[3]<>1) then begin
+      ivtestf = false;
+    end;        
+    if (IVr.ExportFlag==4  and RepSpec.flags[4]<>1) then begin
+      ivtestf = false;
+    end;
+    if (ivtestf) then begin
+      CUr.Code = IVr.CustCode;
+      ReadFirstMain(CUr,1,true);
+      if (RepSpec.flags[0]==0) then begin
+        if (nonblank(lastreason) and nonblank(lastvatnr)) then begin
+          if (lastreason!=IVr.Reason or lastvatnr!=IVr.VATNr) then begin
+            StartFormat(15);
+            OutString(0,0,lastreason,false);
+            OutString(3,0,lastInvCountry,false);
+            OutString(7,0,lastvatnr,false);
+            OutString(9,0,ivbase,true);
+            OutString(1,0,ivvat,true);
+            EndFormat;
+            ivbase = 0;
+            ivvat = 0;
+            lastreason = IVr.Reason;
+            lastvatnr = IVr.VATNr;
+            lastInvCountry = CUr.CountryCode;
+            ivbase = MulRateToBase1(IVr.CurncyCode,IVr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            ivvat = MulRateToBase1(IVr.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            totivbase = totivbase + ivbase;
+            totivvat = totivvat + ivvat;
+          end else begin
+            ivbase = ivbase + MulRateToBase1(IVr.CurncyCode,IVr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            ivvat = ivvat + MulRateToBase1(IVr.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            totivbase = totivbase + IVr.Sum1;
+            totivvat = totivvat + IVr.Sum3;
+          end;
+        end else begin
+          ivbase = MulRateToBase1(IVr.CurncyCode,IVr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          ivvat = MulRateToBase1(IVr.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          totivbase = ivbase;
+          totivvat = ivvat;
+          lastreason = IVr.Reason;
+          lastvatnr = IVr.VATNr;
+          lastInvCountry = CUr.CountryCode;
+        end;
+      end else begin
+        if (nonblank(lastreason) and nonblank(lastvatnr)) then begin
+          if (lastreason!=IVr.Reason or lastvatnr!=IVr.VATNr) then begin
+            Black_Divider(0,1);
+            StartFormat(15);
+            OutString(0,0,USetStr(18178),false);
+            OutString(3,0,USetStr(9368),false);
+            OutString(7,0,USetStr(9362),false);
+            EndFormat;
+            Gray_Divider(0,1);
+            StartFormat(15);
+            OutString(0,0,lastreason,false);
+            OutString(3,0,lastInvCountry,false);
+            OutString(7,0,lastvatnr,false);
+            EndFormat;
+            Gray_Divider(0,1);
+            StartFormat(15);
+            OutString(0,0,USetStr(9361),false);
+            OutString(8,0,USetStr(10495),true);
+            OutString(9,0,USetStr(9364),true);
+            OutString(1,0,USetStr(9365),true);
+            EndFormat;
+            printCustomer = true;
+            IV2r.Reason = lastreason;
+            IV2r.VATNr = lastvatnr;
+            ResetLoop(IV2r);
+            TrHs = true;
+            while (LoopKey("Reason",IV2r,2,TrHs)) begin
+              ivtestf2 = true;
+              if (IV2r.Reason!=lastreason or IV2r.VATNr!=lastvatnr) then begin
+                TrHs = false;
+              end;
+              if (IV2r.OKFlag==0) then begin ivtestf2 = false; end;
+              if (IV2r.Invalid<>0) then begin ivtestf2 = false; end;
+              if (DateInRange(IV2r.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin ivtestf2 = false; end;
+              if (IV2r.InvType!=kInvoiceTypeCredit) then begin
+                ivtestf2 = false;
+              end;
+              if (IV2r.ExportFlag==0 and RepSpec.flags[2]<>1) then begin
+                ivtestf2 = false;
+              end;
+              if (IV2r.ExportFlag==1 and RepSpec.flags[3]<>1) then begin
+                ivtestf2 = false;
+              end;
+              if (IV2r.ExportFlag==2 and RepSpec.flags[4]<>1) then begin
+                ivtestf2 = false;
+              end;
+              if (IV2r.ExportFlag==3  and RepSpec.flags[3]<>1) then begin
+                ivtestf2 = false;
+              end;        
+              if (IV2r.ExportFlag==4  and RepSpec.flags[4]<>1) then begin
+                ivtestf2 = false;
+              end;
+              if (TrHs and ivtestf2) then begin
+                if (printCustomer) then begin
+                  StartFormat(15);
+                  OutString(0,0,IV2r.CustCode,false);
+                  OutString(2,0,IV2r.Addr0,false);
+                  EndFormat;
+                  printCustomer = false;
+                end;
+                StartFormat(15);
+                OutString(2,"Dbl2IVVc",IV2r.SerNr,false);
+                OutDate(4,0,IV2r.InvDate,false);
+                OutVal(8,0,MulRateToBase1(IV2r.CurncyCode,IV2r.Sum1,IV2r.FrRate,IV2r.ToRateB1,IV2r.ToRateB2,IV2r.BaseRate1,IV2r.BaseRate2,DefaultCurRoundOff),typ,true);
+                OutVal(9,0,MulRateToBase1(IV2r.CurncyCode,IV2r.Sum3,IV2r.FrRate,IV2r.ToRateB1,IV2r.ToRateB2,IV2r.BaseRate1,IV2r.BaseRate2,DefaultCurRoundOff),typ,true);
+                OutVal(1,0,MulRateToBase1(IV2r.CurncyCode,IV2r.Sum4 - IV2r.TAX1Sum,IV2r.FrRate,IV2r.ToRateB1,IV2r.ToRateB2,IV2r.BaseRate1,IV2r.BaseRate2,DefaultCurRoundOff),typ,true);
+                EndFormat;
+              end;
+            end;
+            Gray_Divider(0,1);
+            StartFormat(15);
+            OutVal(8,0,ivbase,typ,true);
+            OutVal(9,0,ivvat,typ,true);
+            OutVal(1,0,ivsum,typ,true);
+            EndFormat;
+            StartFormat(15);
+            EndFormat;
+            ivbase = 0;
+            ivvat = 0;
+            lastreason = IVr.Reason;
+            lastvatnr = IVr.VATNr;
+            lastInvCountry = CUr.CountryCode;
+            ivbase = MulRateToBase1(IVr.CurncyCode,IVr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            ivvat = MulRateToBase1(IVr.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            ivsum = MulRateToBase1(IVr.CurncyCode,IVr.Sum4 - IVr.TAX1Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            totivbase = totivbase + ivbase;
+            totivvat = totivvat + ivvat;
+          end else begin
+            ivbase = ivbase + MulRateToBase1(IVr.CurncyCode,IVr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            ivvat = ivvat + MulRateToBase1(IVr.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            ivsum = ivsum + MulRateToBase1(IVr.CurncyCode,IVr.Sum4 - IVr.TAX1Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+            totivbase = totivbase + ivbase;
+            totivvat = totivvat + ivvat;
+          end;
+        end else begin
+          ivbase = MulRateToBase1(IV2r.CurncyCode,IVr.Sum1,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          ivvat = MulRateToBase1(IV2r.CurncyCode,IVr.Sum3,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          ivsum = MulRateToBase1(IV2r.CurncyCode,IVr.Sum4 - IVr.TAX1Sum,IVr.FrRate,IVr.ToRateB1,IVr.ToRateB2,IVr.BaseRate1,IVr.BaseRate2,DefaultCurRoundOff);
+          totivbase = ivbase;
+          totivvat = ivvat;
+          lastreason = IVr.Reason;
+          lastvatnr = IVr.VATNr;
+          lastInvCountry = CUr.CountryCode;
+        end;
+      end;
+    end;
+  end;
+  if (nonblank(lastreason) and nonblank(lastvatnr)) then begin
+    if (RepSpec.flags[0]==0) then begin
+      StartFormat(15);
+      OutString(0,0,lastreason,false);
+      OutString(3,0,lastInvCountry,false);
+      OutString(7,0,lastvatnr,false);
+      OutString(9,0,ivbase,true);
+      OutString(1,0,ivvat,true);
+      EndFormat;
+    end else begin
+      Black_Divider(0,1);
+      StartFormat(15);
+      OutString(0,0,USetStr(18178),false);
+      OutString(3,0,USetStr(9368),false);
+      OutString(7,0,USetStr(9362),false);
+      EndFormat;
+      Gray_Divider(0,1);
+      StartFormat(15);
+      OutString(0,0,lastreason,false);
+      OutString(3,0,lastInvCountry,false);
+      OutString(7,0,lastvatnr,false);
+      EndFormat;
+      Gray_Divider(0,1);
+      StartFormat(15);
+      OutString(0,0,USetStr(9361),false);
+      OutString(8,0,USetStr(10495),true);
+      OutString(9,0,USetStr(9364),true);
+      OutString(1,0,USetStr(9365),true);
+      EndFormat;
+      printCustomer = true;
+      IV2r.Reason = lastreason;
+      IV2r.VATNr = lastvatnr;
+      ResetLoop(IV2r);
+      TrHs = true;
+      while (LoopKey("Reason",IV2r,2,TrHs)) begin
+        ivtestf2 = true;
+        if (IV2r.Reason!=lastreason or IV2r.VATNr!=lastvatnr) then begin
+          TrHs = false;
+        end;
+        if (IV2r.OKFlag==0) then begin ivtestf2 = false; end;
+        if (IV2r.Invalid<>0) then begin ivtestf2 = false; end;
+        if (DateInRange(IV2r.InvDate,RepSpec.sStartDate,RepSpec.sEndDate)==false) then begin ivtestf2 = false; end;
+        if (IV2r.InvType!=kInvoiceTypeCredit) then begin
+          ivtestf2 = false;
+        end;
+        if (IV2r.ExportFlag==0 and RepSpec.flags[2]<>1) then begin
+          ivtestf2 = false;
+        end;
+        if (IV2r.ExportFlag==1 and RepSpec.flags[3]<>1) then begin
+          ivtestf2 = false;
+        end;
+        if (IV2r.ExportFlag==2 and RepSpec.flags[4]<>1) then begin
+          ivtestf2 = false;
+        end;
+        if (IV2r.ExportFlag==3  and RepSpec.flags[3]<>1) then begin
+          ivtestf2 = false;
+        end;        
+        if (IV2r.ExportFlag==4  and RepSpec.flags[4]<>1) then begin
+          ivtestf2 = false;
+        end;
+        if (TrHs and ivtestf2) then begin
+          if (printCustomer) then begin
+            StartFormat(15);
+            OutString(0,0,IV2r.CustCode,false);
+            OutString(2,0,IV2r.Addr0,false);
+            EndFormat;
+            printCustomer = false;
+          end;
+          StartFormat(15);
+          OutString(2,"Dbl2IVVc",IV2r.SerNr,false);
+          OutDate(4,0,IV2r.InvDate,false);
+          OutVal(8,0,MulRateToBase1(IV2r.CurncyCode,IV2r.Sum1,IV2r.FrRate,IV2r.ToRateB1,IV2r.ToRateB2,IV2r.BaseRate1,IV2r.BaseRate2,DefaultCurRoundOff),typ,true);
+          OutVal(9,0,MulRateToBase1(IV2r.CurncyCode,IV2r.Sum3,IV2r.FrRate,IV2r.ToRateB1,IV2r.ToRateB2,IV2r.BaseRate1,IV2r.BaseRate2,DefaultCurRoundOff),typ,true);
+          OutVal(1,0,MulRateToBase1(IV2r.CurncyCode,IV2r.Sum4 - IV2r.TAX1Sum,IV2r.FrRate,IV2r.ToRateB1,IV2r.ToRateB2,IV2r.BaseRate1,IV2r.BaseRate2,DefaultCurRoundOff),typ,true);
+          EndFormat;
+        end;
+      end;
+      Gray_Divider(0,1);
+      StartFormat(15);
+      OutVal(8,0,ivbase,typ,true);
+      OutVal(9,0,ivvat,typ,true);
+      OutVal(1,0,ivsum,typ,true);
+      EndFormat;
+      StartFormat(15);
+      EndFormat;
+    end;
+  end;
+  if (RepSpec.flags[0]==0) then begin
+    Gray_Divider(0,1);
+    StartFormat(15);
+    OutVal(9,0,totivbase,typ,true);
+    OutVal(1,0,totivvat,typ,true);
+    EndFormat;
+  end;
+  return;
+end;
+
+global
+procedure RealCustRn(record RcVc RepSpec)
+begin
+  record CUVc CUr;
+  record CUVc CU2r;
+  Boolean testf,check;
+  Boolean TrHs,TrHs2;
+  String 20 fromcust;
+  String 20 tocust;
+  String 255 tstr;
+  string 60 prevvatno;
+  Integer rw;
+  val sum,vat,tot;
+  val tsum,tvat,ttot;
+  val limit;
+  Integer typ;
+  LongInt suml,vatl,totl;
+
+  switch (RepSpec.flags[1]) begin
+    case 0:
+      typ = M4UVal;
+    case 2:
+      typ = M4UVal;
+    otherwise
+      typ = M4Val;
+  end;
+  rw = 1;
+  limit = RepSpec.vals0;
+  if (limit<=0) then begin
+    limit = 0.01;
+  end;
+  tsum = 0 ; tvat = 0; ttot = 0;
+  fromcust = FirstInRange(RepSpec.f1,20);
+  tocust = LastInRange(RepSpec.f1,20);
+  StartReportJob(USetStr(9360));
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTCusts(fromcust,tocust,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTDetailLevel(RepSpec.flags[0],tstr);
+  Header(rw,tstr,0);
+  HTCustCat(RepSpec.f3,tstr);
+  if (tstr<>"") then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  HTSaleMan(RepSpec.f2,tstr);
+  if (tstr<>"") then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  check = false;
+  if (RepSpec.flags[2]==1) then begin
+    tstr = USetStr(5626);
+    check = true;
+  end;
+  if (RepSpec.flags[3]==1) then begin
+    if (check) then begin
+      tstr = tstr & ", " & USetStr(10698);
+    end else begin
+      tstr = USetStr(10698);
+    end;
+    check = true;
+  end;
+  if (RepSpec.flags[4]==1) then begin
+    if (check) then begin
+      tstr = tstr & ", " & USetStr(5628);
+    end else begin
+      tstr = USetStr(5628);
+    end;
+  end;
+  if (tstr<>"") then begin
+    Header(rw,tstr,1);
+    rw = rw + 1;
+  end;
+  if (RepSpec.flags[5]==1) then begin
+    Header(rw,USetStr(9369),1);
+    rw = rw + 1;
+  end;
+  EndHeader;
+  if (RepSpec.flags[5]==1) then begin
+    FindCreditNotes(RepSpec,fromcust,tocust);
+  end else begin
+    SetRepCol(2,50);
+    SetRepCol(3,200);
+    SetRepCol(4,100);
+    SetRepCol(5,130);
+    SetRepCol(6,300);
+    SetRepCol(8,320);
+    SetRepCol(9,400);
+    if (RepSpec.flags[0]==0) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(9361),false);
+      OutString(3,0,USetStr(9368),false);
+      OutString(6,0,USetStr(9362),false);
+      OutString(1,0,USetStr(9365),true);
+      EndFormat;
+    end;
+    if ((RepSpec.flags[0]==1) or (RepSpec.flags[0]==2)) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(9361),false);
+      OutString(3,0,USetStr(9368),false);
+      OutString(7,0,USetStr(9362),false);
+      OutString(8,0,USetStr(9363),true);
+      OutString(9,0,USetStr(9364),true);
+      OutString(1,0,USetStr(9365),true);
+      EndFormat;
+    end;
+    Gray_Divider(0,1);
+    TrHs = true;
+    CUr.Code = fromcust;
+    while (LoopKey("VATNr",CUr,1,TrHs)) begin
+      TrHs = true;
+      if (TrHs) then begin
+        testf = true;
+        if (nonblank(prevvatno)) then begin
+          if (CUr.VATNr==prevvatno) then begin
+            testf = false;
+          end;
+        end;
+        prevvatno = CUr.VATNr;
+        if (nonblank(fromcust)) then begin
+          if (CUr.Code<fromcust) then begin
+            testf = false;
+          end;
+        end;
+        if (nonblank(tocust)) then begin
+          if (CUr.Code>tocust) then begin
+            testf = false;
+          end;
+        end;
+        if ((nonblank(RepSpec.f2)) and (CUr.SalesMan<>RepSpec.f2)) then begin 
+          testf = false;
+        end;
+        if ((nonblank(RepSpec.f3)) and (CUr.CustCat<>RepSpec.f3)) then begin
+          testf = false;
+        end;
+        if (nonblank(RepSpec.Stext)) then begin
+          if (SetInSet(RepSpec.Stext,CUr.Classification)==false) then begin
+            testf = false;
+          end;
+        end;
+        if (CUr.CUType==0) then begin testf = false; end;
+        if (CUr.ExportFlag==0 and RepSpec.flags[2]<>1) then begin
+          testf = false;
+        end;
+        if (CUr.ExportFlag==1 and RepSpec.flags[3]<>1) then begin
+          testf = false;
+        end;
+        if (CUr.ExportFlag==2 and RepSpec.flags[4]<>1) then begin
+          testf = false;
+        end;
+        if (CUr.ExportFlag==3  and RepSpec.flags[3]<>1) then begin
+          testf = false;
+        end;        
+        if (CUr.ExportFlag==4  and RepSpec.flags[4]<>1) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          sum = 0; vat = 0; tot = 0;
+          CU2r.VATNr = CUr.VATNr;
+          ResetLoop(CU2r);
+          TrHs2 = true;
+          while (LoopKey("VATNr",CU2r,1,TrHs2)) begin
+            if (CU2r.VATNr<>CUr.VATNr) then begin TrHs2 = false; end;
+            if (TrHs2) then begin
+              FindRealSales(RepSpec.sStartDate,RepSpec.sEndDate,CUr.Code,CU2r.Code,sum,vat,tot,false,RepSpec.flags[1]);
+            end;
+          end;
+          switch (RepSpec.flags[1]) begin
+            case 0:
+              sum = Round(sum / 1000,SetRoundModeD(0));
+              vat = Round(vat / 1000,SetRoundModeD(0));
+              tot = Round(tot / 1000,SetRoundModeD(0));
+            case 2:
+              suml = sum; sum = suml;
+              vatl = vat; vat = vatl;
+              totl = tot; tot = totl;
+          end;
+          if (tot>=limit) then begin
+            tsum = tsum + sum;
+            tvat = tvat + vat;
+            ttot = ttot + tot;
+            if (RepSpec.flags[0]==0) then begin
+              StartFormat(15);
+              OutString(0,0,CUr.Name,false);
+              OutString(3,0,CUr.CountryCode,false);
+              OutString(6,0,CUr.VATNr,false);
+              OutVal(1,0,tot,typ,true);
+              EndFormat;
+            end;
+            if ((RepSpec.flags[0]==1) or (RepSpec.flags[0]==2)) then begin
+              StartFormat(15);           
+              OutString(0,0,CUr.Code,false);
+              OutString(2,0,CUr.Name,false);
+              OutString(3,0,CUr.CountryCode,false);
+              OutString(7,0,CUr.VATNr,false);
+              OutVal(8,0,sum,typ,true);
+              OutVal(9,0,vat,typ,true);
+              OutVal(1,0,tot,typ,true);
+              EndFormat;
+              if (RepSpec.flags[0]==2) then begin
+                sum = 0; vat = 0; tot = 0;
+                CU2r.VATNr = CUr.VATNr;
+                ResetLoop(CU2r);
+                TrHs2 = true;
+                while (LoopKey("VATNr",CU2r,1,TrHs2)) begin
+                  if (CU2r.VATNr<>CUr.VATNr) then begin TrHs2 = false; end;
+                  if (TrHs2) then begin
+                    FindRealSales(RepSpec.sStartDate,RepSpec.sEndDate,CUr.Code,CU2r.Code,sum,vat,tot,true,RepSpec.flags[1]);
+                  end;
+                end;
+              end;
+            end;
+          end;
+          if (tot>=limit) then begin
+            if (RepSpec.flags[0]==2) then begin
+              Gray_Divider(0,1);
+            end;
+          end;
+        end;
+      end;
+    end;
+    if (ttot>=limit) then begin
+      Gray_Divider(0,1);
+      StartFormat(15);
+      if ((RepSpec.flags[0]==1) or (RepSpec.flags[0]==2)) then begin
+        OutVal(8,0,tsum,typ,true);
+        OutVal(9,0,tvat,typ,true);
+      end;
+      OutVal(1,0,ttot,typ,true);
+      EndFormat;
+    end;
+  end;
+  EndJob;
+  return;
+end;

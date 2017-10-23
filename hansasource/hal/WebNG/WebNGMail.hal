@@ -1,0 +1,270 @@
+external updating function Integer CreateMailFromWebIV(LongInt,var string);
+external function Boolean FindStringInString(string,string);
+external function string 10 CurrentWebLang();
+
+updating function Boolean PrintWebshopDocAndGetCustomer(Integer type,string recordid,Boolean printf,var record CUVc CUr,var string fname)
+begin
+  Boolean res;
+  record ORVc ORr;
+  record IVVc IVr;
+  record SHVc SHr;
+  string 255 docname;
+
+  switch (type) begin
+    case kWebshopMailRegister:
+      CUr.Code = recordid;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        res = true;
+      end;
+    case kWebshopMailPassword:
+      CUr.Code = recordid;
+      if (ReadFirstMain(CUr,1,true)) then begin
+        res = true;
+      end;
+    case kWebshopMailOrder:
+      ORr.SerNr = StringToLongInt(recordid);
+      if (ReadFirstMain(ORr,1,true)) then begin
+        CUr.Code = ORr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin
+          res = true;
+        end;
+        if (printf) then begin
+          fname = "tmp/" & USetStr(1816) & " " & ORr.SerNr & ".pdf";
+          SetDocumentFilename(fname);
+          SetMedia(mtPdf);
+          PrintDocument(ORr,"OrdForm",false);
+          SetDocumentFilename("");
+        end;
+      end;
+    case kWebshopMailShip:
+      SHr.SerNr = StringToLongInt(recordid);
+      if (ReadFirstMain(SHr,1,true)) then begin
+        CUr.Code = SHr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin
+          res = true;
+        end;
+        //Print Ship doc
+        if (printf) then begin
+          fname = "tmp/" & USetStr(1817) & " " & SHr.SerNr & ".pdf";
+          SetDocumentFilename(fname);
+          SetMedia(mtPdf);
+          PrintDocument(SHr,"Sh2Form",false)
+          SetDocumentFilename("");
+        end;
+      end;
+    case kWebshopMailInvoice:
+      IVr.SerNr = StringToLongInt(recordid);
+      if (ReadFirstMain(IVr,1,true)) then begin
+        CUr.Code = IVr.CustCode;
+        if (ReadFirstMain(CUr,1,true)) then begin
+          res = true;
+        end;
+        //Print Invoice doc
+        if (printf) then begin
+          docname = "InvForm";
+          switch (IVr.InvType) begin
+            case kInvoiceTypeCash: docname = "CashInvForm";
+            case kInvoiceTypeCashInvoiceReceiptPRT: docname = "CashInvRecPRTForm";
+            case kInvoiceTypeCredit: docname = "CredInvForm";
+            case kInvoiceTypeInterest: docname = "IIInvForm";
+            case kInvoiceTypeCreditSpecialSales: docname = "CredInvForm";
+          end;
+          fname = "tmp/" & USetStr(1803) & " " & IVr.SerNr & ".pdf";
+          SetDocumentFilename(fname);
+          SetMedia(mtPdf);
+          PrintDocument(IVr,docname,false);
+          SetDocumentFilename("");
+        end;
+      end;
+  end;
+  
+  PrintWebshopDocAndGetCustomer = res;
+  return;
+end;
+
+//should be made as a global function, cause used in many places
+global
+function Boolean CheckAttachedFilesSizeToLetter(record LetVc Letp)
+BEGIN
+  Boolean res;
+  record EmailBlock EmailRec;
+  record RLinkVc RLr;
+  record Attach2Vc Attach2r;
+  Integer filenr;
+    
+  res = true;
+  BlockLoad(EmailRec);
+  if (EmailRec.MaxFileSize<=0) then begin
+    goto LCheckAttachedFilesSize;
+  end;
+  filenr = 1;
+  while (ReadRecordLink(Letp,filenr,Attach2r,RLr)) begin
+    if ((nonblank(Attach2r.FileName)) and (Attach2r.Uploading==0)) then begin
+      if (Attach2r.FileSize>EmailRec.MaxFileSize) then begin
+        res = false;
+        goto LCheckAttachedFilesSize;
+      end;
+    end;
+    filenr = filenr + 1;
+  end;
+LCheckAttachedFilesSize:;  
+  CheckAttachedFilesSizeToLetter = res;
+  RETURN;
+END;
+
+updating procedure StoreCustomerMessageFromWebshop(record LetVc Letp,Integer type,string recordid,Boolean printf,string email)
+begin
+  record EmailBlock emailblock;
+  record EMailQueVc emqrp;
+  row EMailQueVc emarw;
+  record UserVc Userr;
+  Boolean signf,signerfound;
+  string 255 tstr;
+  LongInt pos,l;
+  Integer i,emcnt,cscnt;
+  area a;
+  record RcVc RepSpec;
+  record LetVc Let2p;
+  row MailVc tMailrw;
+  string 255 tuuid;
+  record CUVc CUr;
+  string 255 fname,tmail;
+  
+
+  if (PrintWebshopDocAndGetCustomer(type,recordid,printf,CUr,fname)) then begin
+    emarw.RowTyp = 0;
+    tmail = email;
+    if (blank(tmail)) then begin
+      tmail = CUr.eMail;
+    end;
+    emarw.AddrCode = tmail;
+    MatRowPut(emqrp,MatRowCnt(emqrp),emarw);
+    emqrp.Header = Letp.Header;
+    RepSpec.flags[29] = type;
+    RepSpec.f12 = recordid;
+    RepSpec.f1 = CUr.Code;
+    if (Letp.HtmlFlag==0) then begin
+      ParseTextField(a,Letp,RepSpec,"LetVcReplaceToken");
+      l = GetAreaLength(a);
+      pos = 0;
+      while (pos<l) begin
+        tstr = GetStringFromArea(a,pos,255);
+        AddToText(tstr,Let2p); 
+        pos = pos+255;
+      end;
+      cscnt = LineTextCnt(Let2p);
+      if (cscnt>0) then begin
+        for (i=0;i<cscnt;i=i+1) begin
+          tstr = LineTextGet(Let2p,i);
+          LineTextPut(emqrp,LineTextCnt(emqrp),tstr);
+        end;  
+      end;
+      LineTextPut(emqrp,LineTextCnt(emqrp),Letp.Greet);
+      LineTextPut(emqrp,LineTextCnt(emqrp),Letp.Signature);
+    end;
+    emqrp.SerNr = NextSerNr("EMailQueVc",Letp.TransDate,-1,false,"");
+    emqrp.OrgSerNr = Letp.SerNr;
+    emqrp.FileName = "LetVc";
+    emqrp.TransDate = Letp.TransDate;
+    emqrp.TransTime = CurrentTime;
+    emqrp.HasFileAtt = 0;
+    emqrp.HasRecAtt = 0;
+    emqrp.Priority = 1;
+    emqrp.EMailSent = 0;
+    emqrp.Lifespan = 0;
+    emqrp.QueDate = CurrentDate;
+    emqrp.QueTime = CurrentTime;
+    emqrp.HtmlFlag = Letp.HtmlFlag;
+    
+    if (CheckAttachedFilesSizeToLetter(Letp)) then begin
+      if (RecordStore(emqrp,false)) then begin end;
+      CopyRecordLinks(Letp,emqrp);
+      if (nonblank(fname)) then begin
+        RecordLinkFile(fname,0,emqrp,CurrentCompany);
+        if (FileExists(fname)) then begin
+          Delete_File(fname);
+        end;
+      end;
+      if (Letp.HtmlFlag==1) then begin
+        LineTextPutToHtmlRecord(emqrp,Letp.Greet,true,true);
+        LineTextPutToHtmlRecord(emqrp,Letp.Signature,true,true);
+        ParseHtmlField(emqrp,RepSpec,"EMailQueVcReplaceToken");
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+global
+updating procedure SendWebshopMail2(Integer type,Longint recordid,string email,string tag2,string language)
+begin
+  string 20 tag,langcode,tstr;
+  Boolean foundf,foundletf,testf,printf;
+  record LetVc Letr,tLetr;
+  record WebRegMailBlock WMb;
+
+  BlockLoad(WMb);
+  switch (type) begin
+    case kWebshopMailRegister:
+      tag = WMb.RegLetID;
+    case kWebshopMailPassword:
+      tag = WMb.PasswordLetID;
+    case kWebshopMailOrder:
+      tag = WMb.OrderLetID;
+      printf = WMb.PrintOrder;
+    case kWebshopMailShip:
+      tag = WMb.ShipLetID;
+      printf = WMb.PrintShip;
+    case kWebshopMailInvoice:
+      tag = WMb.InvoiceLetID;
+      printf = WMb.PrintInvoice;
+  end;
+  if (nonblank(tag2)) then begin
+    tag = tag2;
+  end;
+
+  if (nonblank(tag)) then begin
+    langcode = language;
+    foundf = true;
+    foundletf = false;
+    Letr.Name = tag;
+    while (LoopKey("Name",Letr,1,foundf)) begin
+      if (Left(Letr.Name,len(tag))!=tag) then begin
+        foundf = false;
+      end else begin
+        testf = true;
+        if (Letr.LangCode!=langcode and nonblank(Letr.LangCode)) then begin
+          testf = false;
+        end;
+        if (testf) then begin 
+          if (FindStringInString(lowercase(Letr.Name),tag)==false) then begin testf = false; end;
+          if (testf) then begin 
+            if (foundletf==false or nonblank(Letr.LangCode)) then begin
+              foundletf = true;
+              RecordCopy(tLetr,Letr);
+            end;
+            foundf = false;
+          end;
+        end;
+      end; 
+    end;
+
+    if (foundletf) then begin
+      StoreCustomerMessageFromWebshop(tLetr,type,recordid,printf,email);
+    end else begin
+      CreateMailFromWebIV(recordid,tstr);
+    end;
+  end;
+
+  return;
+end;
+
+global
+updating procedure SendWebshopMail(Integer type,Longint recordid)
+begin
+
+  SendWebshopMail2(type,recordid,"","",CurrentWebLang);
+
+  return;
+end;

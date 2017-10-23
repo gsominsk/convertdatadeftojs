@@ -1,0 +1,631 @@
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external function Boolean OtherExchangeRate(val,val,val,val,val,val,val,val,val,val);
+external procedure SaveExchangeRate(val,val,val,val,val,var val,var val,var val,var val,var val);
+external function LongInt JobVcRecordCheck2(record JobVc,record JobVc,Integer);
+external procedure ExtractObj(string,var Integer,var string);
+external updating function Integer JobToShopBaskRemote(var record JobVc,Record RcVc);
+external procedure JobPasteNrOfDays(var record JobVc);
+external function Integer JobPasteType(var record JobVc,string);
+external updating function Integer DoJobCheckOut(var Record JobVc,boolean);
+external function Boolean IsAccountOK(record JobVc);
+external function Boolean AllowCheckout(record JobVc,var Boolean);
+external updating function Integer DoJobCheckIn(var record JobVc,boolean,Boolean,var string);
+external updating function Integer DoJobCheckIn2(var record JobVc,boolean,Boolean,var string,var string,var Integer);
+external function Boolean CheckedAllowedStatus(string,string);
+external function Boolean PasteAgentOnResAv(var record ResAvVc,var string);
+external function Boolean PasteCustOnResAv(var record ResAvVc,var string);
+
+global
+updating function Integer JobCheckInsmRemote2(var record JobVc Jobr,string fldnam,var string CheckinMes,var string errstr,var string thefield,var Integer therow)
+begin
+  Integer res;
+  Boolean RoomOK;
+  record ResVc Resr;
+  record HotelBlock Hotelb;
+  record JobVc curJobr;
+  Record ResUsageVc ResUsager;
+
+  Blockload(Hotelb);
+  RoomOK = false;
+  if (nonblank(Jobr.ResCode)) then begin
+    Resr.Code = Jobr.ResCode;
+    if (ReadFirstMain(Resr,1,true)) then begin
+      if (Resr.ResStatus==Hotelb.FromResStatus) then begin  // = clean
+        RoomOK = true;
+      end;
+    end;
+  end else begin
+    res = 2153;
+    goto LJobCheckInsmRemote;
+  end;
+  if (Jobr.SerNr==-1) then begin
+    res = 1008;
+    goto LJobCheckInsmRemote;
+  end;
+  if (RoomOK==false) then begin
+    res = 1939;
+    goto LJobCheckInsmRemote;
+  end;
+  if (UserCanAction("AllowCheckinBeforePlanned",true)==false) then begin
+    if (Jobr.TransDate!=CurrentDate) then begin
+      res = 2042;
+      goto LJobCheckInsmRemote;
+    end;
+  end;
+
+  curJobr.ResStatus = Hotelb.ChInSt;
+  curJobr.ResCode = Jobr.ResCode;
+  if (ReadLastKey("ResCodeStatus",curJobr,2,true)) then begin 
+    res = 2297;
+    errstr = " " & USetStr(2283) & curJobr.SerNr;
+    goto LJobCheckInsmRemote;
+  end;  
+  if (fldnam=="Mother") then begin
+    res = DoJobCheckIn2(Jobr,true,false,errstr,thefield,therow);
+  end else begin
+    res = DoJobCheckIn2(Jobr,false,false,errstr,thefield,therow);
+  end;
+  CheckinMes = Hotelb.CheckinMes;
+  ResUsager.Code = Jobr.ResUsage;
+  if (ReadFirstMain(ResUsager,1,true)) then begin
+    if (nonblank(ResUsager.MessCkIn)) then begin
+      CheckinMes = ResUsager.MessCkIn;
+    end;
+  end;
+LJobCheckInsmRemote:;  
+  JobCheckInsmRemote2 = res;
+  return;
+end;
+
+global
+updating function Integer JobCheckInsmRemote(var record JobVc Jobr,string fldnam,var string CheckinMes,var string errstr)
+begin
+  string 255 thefield;
+  Integer therow;
+  
+  JobCheckInsmRemote = JobCheckInsmRemote2(Jobr,fldnam,CheckinMes,errstr,thefield,therow);
+  return;
+end;
+
+global
+updating function Integer GroupJobCheckInsmRemote(var record JobVc Jobr,string fldnam,var string CheckinMes,var string errstr)
+begin
+  Integer res;
+  record HotelBlock Hotelb;
+  Record ResUsageVc ResUsager;
+  record JobVc doughterJobr;
+  Boolean found;
+  record JobVc oldJobr;
+
+  Blockload(Hotelb);
+  if (Jobr.SerNr==-1) then begin
+    res = 1008;
+    goto LGroupJobCheckInsmRemote;
+  end;
+  if (CheckedAllowedStatus(Jobr.ResStatus,Hotelb.ChInSt)==false) then begin
+    res = 1942;
+    goto LGroupJobCheckInsmRemote;
+  end;
+  found = true;
+  doughterJobr.Mother = Jobr.SerNr;
+  while (LoopKey("MotherKey",doughterJobr,1,found)) begin
+    if (doughterJobr.Mother!=Jobr.SerNr) then begin found = false; end;
+    if (found) then begin
+      switch (doughterJobr.ReservationType) begin      
+        case kReservationTypeNormal:
+          res = DoJobCheckIn(doughterJobr,false,true,errstr);
+          if (res!=0) then begin
+            goto LGroupJobCheckInsmRemote;
+          end;
+        case kReservationTypeGroup:
+          res = GroupJobCheckInsmRemote(doughterJobr,fldnam,CheckinMes,errstr);
+          if (res!=0) then begin
+            goto LGroupJobCheckInsmRemote;
+          end;
+      end;
+    end;
+  end;
+  RecordCopy(oldJobr,Jobr);
+  Jobr.ResStatus = Hotelb.ChInSt;
+  RecordUpdate(oldJobr,Jobr,true);
+  CheckinMes = Hotelb.CheckinMes;
+  ResUsager.Code = Jobr.ResUsage;
+  if (ReadFirstMain(ResUsager,1,true)) then begin
+    if (nonblank(ResUsager.MessCkIn)) then begin
+      CheckinMes = ResUsager.MessCkIn;
+    end;
+  end;
+LGroupJobCheckInsmRemote:;  
+  GroupJobCheckInsmRemote = res;
+  return;
+end;
+
+global
+updating function Integer JobCheckOutsmRemote(var record JobVc Jobr,string fldnam,var string CheckoutMes,var Boolean hasopen,var string errstr)
+begin
+  Integer res;
+  record HotelBlock Hotelb;
+  Boolean TimeOK;
+  Record ResUsageVc ResUsager;
+
+  Blockload(Hotelb);
+  if (CheckedAllowedStatus(Jobr.ResStatus,Hotelb.ChOutSt)==false) then begin
+    res = 1942;
+    goto LJobCheckOutsmRemote;
+  end;
+  // Set the Timeinvoicing limiet and the Day invoicing limit 
+  // depends on the hotel (in hours) 
+/*
+  TinvLimit = 1;
+  DinvLimit = 10;
+  TimeOK = true;
+  Resource.Code = Jobr.ResCode;
+  if ReadFirstMain(Resource,1,true) then begin
+    if (Resource.InvoiceBy == 0) then begin    //hourinvoicing
+      AfterRegTime = TimeDiff(CurrentTime,Jobr.LastTransferTime);
+      if (TinvLimit > TimeToVal(AfterRegTime)) then begin
+        TimeOK = false;
+      end;
+    end else begin                             //dayinvoicing
+      AfterChOut = TimeDiff(CurrentTime,Hotelb.CheckOut);
+      if (GetMinute(AfterChOut) < DinvLimit) then begin
+        TimeOK = false;
+      end;
+    end;
+  end;
+*/
+  TimeOK = true; // control on late checkout??
+  if (not TimeOK) then begin
+    res = 2144;
+    goto LJobCheckOutsmRemote;
+  end;
+  if IsAccountOK(Jobr) then begin
+    res = 2145;
+    goto LJobCheckOutsmRemote;
+  end;
+  if (UserCanAction("AllowCheckoutBeforePlanned",true)==false) then begin
+    if (Jobr.EndDate!=CurrentDate) then begin
+      res = 2043;
+      goto LJobCheckOutsmRemote;
+    end;
+  end;
+  if (AllowCheckout(Jobr,hasopen)==false) then begin
+    res = 2044;
+    goto LJobCheckOutsmRemote;
+  end;
+  if (fldnam=="Mother") then begin
+    res = DoJobCheckOut(Jobr,true);
+  end else begin
+    res = DoJobCheckOut(Jobr,false);
+  end;
+  CheckoutMes = Hotelb.CheckoutMes;
+  ResUsager.Code = Jobr.ResUsage;
+  if (ReadFirstMain(ResUsager,1,true)) then begin
+    if (nonblank(ResUsager.MessCkOut)) then begin
+      CheckoutMes = ResUsager.MessCkOut;
+    end;
+  end;
+LJobCheckOutsmRemote:;  
+  JobCheckOutsmRemote = res;
+  return;
+end;
+
+global
+updating function Integer GroupJobCheckOutsmRemote(var record JobVc Jobr,string fldnam,var string CheckoutMes,var Boolean hasopen,var string errstr)
+begin
+  Integer res;
+  record HotelBlock Hotelb;
+  record JobVc doughterJobr;
+  Boolean found;
+  record JobVc oldJobr;
+  Record ResUsageVc ResUsager;
+
+  Blockload(Hotelb);
+  if (CheckedAllowedStatus(Jobr.ResStatus,Hotelb.ChOutSt)==false) then begin
+    res = 1942;
+    goto LGroupJobCheckOutsmRemote;
+  end;
+  if (IsAccountOK(Jobr)) then begin
+    res = 2145;
+    goto LGroupJobCheckOutsmRemote;
+  end;
+  if (UserCanAction("AllowCheckoutBeforePlanned",true)==false) then begin
+    if (Jobr.EndDate!=CurrentDate) then begin
+      res = 2043;
+      goto LGroupJobCheckOutsmRemote;
+    end;
+  end;
+  if (AllowCheckout(Jobr,hasopen)==false) then begin
+    res = 2044;
+    goto LGroupJobCheckOutsmRemote;
+  end;
+
+  found = true;
+  doughterJobr.Mother = Jobr.SerNr;
+  while (LoopKey("MotherKey",doughterJobr,1,found)) begin
+    if (doughterJobr.Mother!=Jobr.SerNr) then begin found = false; end;
+    if (found) then begin
+      switch (doughterJobr.ReservationType) begin      
+        case kReservationTypeNormal:
+          res = DoJobCheckOut(doughterJobr,false);
+          if (res!=0) then begin
+            goto LGroupJobCheckOutsmRemote;
+          end;
+        case kReservationTypeGroup:
+          res = GroupJobCheckOutsmRemote(doughterJobr,fldnam,CheckoutMes,hasopen,errstr);
+          if (res!=0) then begin
+            goto LGroupJobCheckOutsmRemote;
+          end;
+      end;
+    end;
+  end;
+  RecordCopy(oldJobr,Jobr);
+  Jobr.ResStatus = Hotelb.ChInSt;
+  RecordUpdate(oldJobr,Jobr,true);
+  CheckoutMes = Hotelb.CheckoutMes;
+  ResUsager.Code = Jobr.ResUsage;
+  if (ReadFirstMain(ResUsager,1,true)) then begin
+    if (nonblank(ResUsager.MessCkOut)) then begin
+      CheckoutMes = ResUsager.MessCkOut;
+    end;
+  end;
+LGroupJobCheckOutsmRemote:;  
+  GroupJobCheckOutsmRemote = res;
+  return;
+end;
+
+global
+procedure SplitResRemote(record JobVc Jobr,var record JobVc nJobr)
+begin
+  Date SplitDate;
+  Time SplitTime;
+  Boolean res;
+  LongInt TransNumber,Mother,nwn;
+  record SRBlock SRRec;
+  record ResTypeVc ResTyper;
+
+  BlockLoad(SRRec);  
+
+  Mother = Jobr.SerNr;
+  if (Jobr.Mother!=-1) then begin
+    Mother = Jobr.Mother;
+  end;
+  Recordnew(nJobr);
+  nJobr.CUCode    = Jobr.CUCode;
+  nJobr.CUName    = Jobr.CUName;
+  nJobr.Type      = Jobr.Type;
+  JobPasteType(nJobr,"");  
+  nJobr.TransDate = Jobr.TransDate;
+  nJobr.StartTime = Jobr.StartTime;
+  nJobr.EndTime   = Jobr.EndTime;
+  nJobr.EndDate   = Jobr.EndDate;
+  nJobr.SalesMan  = Jobr.SalesMan;
+  nJobr.SalesGroup = Jobr.SalesGroup;
+  nJobr.ResStatus = Jobr.ResStatus;  
+  nJobr.ResUsage = Jobr.ResUsage;
+  nJobr.BookOrigin = Jobr.BookOrigin;
+  nJobr.RefStr = Jobr.RefStr;
+  nJobr.NrOfDays = Jobr.NrOfDays;
+  JobPasteNrOfDays(Jobr);  
+  nJobr.Objects = Jobr.Objects;
+  if SingleUserMode then begin
+    TransNumber = NextSerNr("JobVc",nJobr.TransDate,-1,false,nJobr.LangCode);
+  end;
+  nJobr.Mother    = Mother;
+  nJobr.SerNr     = TransNumber;
+  return;
+end;
+
+global
+function Boolean IsJobChargeAllowed(record JobVc Jobr)
+begin
+  Boolean res;
+  record HotelBlock Hotelb;
+
+  res = true;
+  BlockLoad(Hotelb);
+  if (Jobr.ResStatus==Hotelb.ChOutSt) or (Jobr.ResStatus==Hotelb.NoshowStatus) then begin
+    res = false;
+  end;
+  IsJobChargeAllowed = res;
+  return;
+end;
+
+global
+updating function Integer ChargeJobRemote(var record JobVc Jobr,Boolean fullstay)
+begin
+  Integer res;
+  record JobVc oldJobr;
+  record RcVc RepSpec;
+
+  if (fullstay==false) then begin // Hotelb.TempBook==0
+    RepSpec.sStartDate = CurrentDate;
+    RepSpec.sStartTime = CurrentTime;
+    res = JobToShopBaskRemote(Jobr,RepSpec);
+  end else begin
+    RepSpec.sStartDate = Jobr.EndDate;
+    RepSpec.sStartTime = Jobr.EndTime;
+    res = JobToShopBaskRemote(Jobr,RepSpec);
+    if (res==0) then begin
+      ReadFirstMain(Jobr,1,true);
+    end;
+  end;    
+LChargeJobRemote:;
+  ChargeJobRemote = res;
+  return;
+end;
+
+global
+updating function Integer GroupChargeJobRemote(var record JobVc Jobr,Boolean fullstay)
+begin
+  Integer res;
+  record JobVc oldJobr;
+  record RcVc RepSpec;
+  record JobVc doughterJobr;
+  Boolean found;
+
+  found = true;
+  doughterJobr.Mother = Jobr.SerNr;
+  while (LoopKey("MotherKey",doughterJobr,1,found)) begin
+    if (doughterJobr.Mother!=Jobr.SerNr) then begin found = false; end;
+    if (found) then begin
+      switch (doughterJobr.ReservationType) begin      
+        case kReservationTypeNormal:
+          if (fullstay==false) then begin // Hotelb.TempBook==0
+            RepSpec.sStartDate = CurrentDate;
+            RepSpec.sStartTime = CurrentTime;
+          end else begin
+            RepSpec.sStartDate = Jobr.EndDate;
+            RepSpec.sStartTime = Jobr.EndTime;
+          end;
+          res = JobToShopBaskRemote(doughterJobr,RepSpec);
+          if (res!=0) then begin
+            goto LGroupChargeJobRemote;
+          end;
+        case kReservationTypeGroup:
+          res = GroupChargeJobRemote(doughterJobr,fullstay);
+          if (res!=0) then begin
+            goto LGroupChargeJobRemote;
+          end;
+      end;
+    end;
+  end;
+LGroupChargeJobRemote:;
+  GroupChargeJobRemote = res;
+  return;
+end;
+
+global
+procedure GroupCreateSubJobRemote(record JobVc Jobr,var record JobVc nJobr)
+begin
+  Boolean res;
+
+  RecordNew(nJobr);
+  nJobr.CUCode = Jobr.CUCode;
+  nJobr.CUName = Jobr.CUName;
+  nJobr.RegDate = CurrentDate;
+  nJobr.TransDate = CurrentDate;
+  nJobr.StartTime = CurrentTime;
+  nJobr.SalesMan = Jobr.SalesMan;
+  nJobr.SalesGroup = Jobr.SalesGroup;
+  nJobr.BookOrigin = Jobr.BookOrigin;
+  nJobr.RefStr = Jobr.RefStr;
+  nJobr.ReservationType = kReservationTypeNormal;
+
+  nJobr.CurncyCode = Jobr.CurncyCode;
+  nJobr.FrRate = Jobr.FrRate;
+  nJobr.ToRateB1 = Jobr.ToRateB1;
+  nJobr.ToRateB2 = Jobr.ToRateB2;
+  nJobr.BaseRate1 = Jobr.BaseRate1;
+  nJobr.BaseRate2 = Jobr.BaseRate2;
+  if (SingleUserMode) then begin
+    nJobr.SerNr = NextSerNr("JobVc",nJobr.TransDate,-1,false,nJobr.LangCode);
+  end;
+  nJobr.Mother  = Jobr.SerNr;
+  return;
+end;
+
+global
+procedure GroupDuplicateSubJobRemote(record JobVc Jobr,string GroupResNum,var record JobVc nJobr)
+begin
+  Boolean res;
+  record HotelBlock Hotelb;
+  Date blankd;
+  Time blankt;
+
+  BlockLoad(Hotelb);
+  RecordCopy(nJobr,Jobr);
+  nJobr.RegDate = CurrentDate;
+  nJobr.TransDate = CurrentDate;
+  nJobr.StartTime = CurrentTime;
+  nJobr.ResCode = "";
+  nJobr.ReservationType = kReservationTypeNormal;
+  Jobr.LastTransferDate = blankd;
+  Jobr.LastTransferTime = blankt;
+  Jobr.ResStatus = Hotelb.DefSt;
+  if (SingleUserMode) then begin
+    nJobr.SerNr = NextSerNr("JobVc",nJobr.TransDate,-1,false,nJobr.LangCode);
+  end;
+  nJobr.Mother = GroupResNum;
+  return;
+end;
+
+function LongInt ValidateSubJobs(LongInt Mother,array record JobVc aJobr,Integer acnt,var LongInt subsernr)
+begin
+  LongInt err;
+  Integer pos,i;
+  string 255 tstr;
+  record JobVc oldJobr;
+  record JobVc Jobr;
+
+  for (i=0;i<acnt;i=i+1) begin    
+    Jobr = aJobr[i];
+    if (ReadFirstMain(Jobr,1,true)) then begin
+      RecordCopy(oldJobr,Jobr);
+      Jobr.Mother = Mother;
+      err = JobVcRecordCheck2(Jobr,oldJobr,Rs_update);
+      if (err!=0) then begin
+        subsernr = Jobr.SerNr;
+        goto LValidateSubJobs;
+      end;
+    end else begin
+      err = 12529;
+      subsernr = StringToLongInt(tstr);      
+    end;
+  end;
+LValidateSubJobs:;  
+  ValidateSubJobs = err;
+  return;
+end;
+
+global
+updating function LongInt GroupMoveSubJobRemote(record RcVc RepSpec,array record JobVc aJobr,Integer acnt,var LongInt subsernr)
+begin
+  LongInt err;
+  Integer pos,i;
+  string 255 tstr;
+  record JobVc oldJobr;
+  record JobVc Jobr;
+
+  err = ValidateSubJobs(RepSpec.long2,aJobr,acnt,subsernr);
+  if (err!=0) then begin
+    goto LGroupMoveSubJobRemote;
+  end;
+  
+  for (i=0;i<acnt;i=i+1) begin    
+    Jobr = aJobr[i];
+    RecordCopy(oldJobr,Jobr);
+    Jobr.Mother = RepSpec.long2;
+    err = RecordUpdate(oldJobr,Jobr,true);
+  end;
+LGroupMoveSubJobRemote:;  
+  GroupMoveSubJobRemote = err;
+  return;
+end;
+
+global
+updating function LongInt AssignGroupJobRemote(record RcVc RepSpec,array record JobVc aJobr,Integer acnt,var LongInt subsernr)
+begin
+  LongInt err;
+  Integer pos,i;
+  string 255 tstr;
+  record JobVc oldJobr;
+  record JobVc Jobr;
+
+  err = ValidateSubJobs(RepSpec.long1,aJobr,acnt,subsernr);
+  if (err!=0) then begin
+    goto LAssignGroupJobRemote;
+  end;
+  
+  for (i=0;i<acnt;i=i+1) begin    
+    Jobr = aJobr[i];
+    RecordCopy(oldJobr,Jobr);
+    Jobr.Mother = RepSpec.long1;
+    err = RecordUpdate(oldJobr,Jobr,true);
+  end;
+LAssignGroupJobRemote:;  
+  AssignGroupJobRemote = err;
+  return;
+end;
+
+global
+updating function LongInt GroupAddSubJobRemote(record JobVc groupJobr,array record JobVc aJobr,Integer acnt,var LongInt subsernr)
+begin
+  LongInt err;
+  Integer pos,i;
+  string 255 tstr;
+  record JobVc oldJobr;
+  record JobVc Jobr;
+
+  err = ValidateSubJobs(groupJobr.SerNr,aJobr,acnt,subsernr);
+  
+  if (err!=0) then begin
+    goto LGroupAddSubJobRemote;
+  end;
+  
+  for (i=0;i<acnt;i=i+1) begin    
+    Jobr = aJobr[i];
+    RecordCopy(oldJobr,Jobr);
+    Jobr.Mother = groupJobr.SerNr;
+    Jobr.CurncyCode = groupJobr.CurncyCode;
+    Jobr.FrRate = groupJobr.FrRate;
+    Jobr.ToRateB1 = groupJobr.ToRateB1;
+    Jobr.ToRateB2 = groupJobr.ToRateB2;
+    Jobr.BaseRate1 = groupJobr.BaseRate1;
+    Jobr.BaseRate2 = groupJobr.BaseRate2;
+    err = RecordUpdate(oldJobr,Jobr,true);
+  end;
+LGroupAddSubJobRemote:;  
+  GroupAddSubJobRemote = err;
+  return;
+end;
+
+global
+procedure GroupCreateSubJobsRemote(record JobVc GroupJobr,var record ResAvVc ResAvr)
+begin
+  record HotelBlock Hotelb;
+  string 255 warn;
+  
+  BlockLoad(Hotelb);
+  ResAvr.MatherJobNr = GroupJobr.SerNr;
+  ResAvr.SourceCode = GroupJobr.Source;
+  if nonblank(ResAvr.SourceCode) then begin
+    PasteAgentOnResAv(ResAvr,warn);
+  end;
+  ResAvr.SourceName = GroupJobr.SourceName;
+  ResAvr.CUCode = GroupJobr.CUCode;
+  if nonblank(ResAvr.CUCode) then begin
+    PasteCustOnResAv(ResAvr,warn);
+  end;
+  ResAvr.CUName = GroupJobr.CUName;
+  ResAvr.BookOrigin = GroupJobr.BookOrigin;
+  ResAvr.RefStr = GroupJobr.RefStr;
+  ResAvr.StartTime = Hotelb.CheckIn;
+  ResAvr.EndTime = Hotelb.CheckOut;
+  ResAvr.ResLoc = GroupJobr.ResLoc;
+  ResAvr.VisitPurpose = GroupJobr.VisitPurpose;
+  ResAvr.CurncyCode = GroupJobr.CurncyCode;
+  ResAvr.FrRate = GroupJobr.FrRate;
+  ResAvr.ToRateB1 = GroupJobr.ToRateB1;
+  ResAvr.ToRateB2 = GroupJobr.ToRateB2;
+  ResAvr.BaseRate1 = GroupJobr.BaseRate1;
+  ResAvr.BaseRate2 = GroupJobr.BaseRate2;
+  return;
+end;
+
+global
+procedure JobGetRate(var record JobVc Jobp)
+begin
+  val from,to1,to2,base1,base2;
+  string 5 crncy;
+ 
+  crncy = Jobp.CurncyCode;
+  GetFullCurncyRate(crncy,Jobp.TransDate,from,to1,to2,base1,base2);
+  Jobp.CurncyCode = crncy;
+  Jobp.FrRate = from;
+  Jobp.ToRateB1 = to1;
+  Jobp.ToRateB2 = to2;
+  Jobp.BaseRate1 = base1;
+  Jobp.BaseRate2 = base2;  
+  return;
+end;
+
+global
+procedure JobVc_PasteCurncyCode(var record JobVc Jobp,string oldcurncy)
+begin
+  val fr,to1,to2,br1,br2;
+  record ItemSettingBlock ISr;
+  
+  if (Jobp.CurncyCode!=oldcurncy) then begin
+    JobGetRate(Jobp);
+//      JobDUpdatePrices(Jobp,false);
+  end else begin
+    BlockLoad(ISr);
+    SaveExchangeRate(Jobp.FrRate,Jobp.ToRateB1,Jobp.ToRateB2,Jobp.BaseRate1,Jobp.BaseRate2,fr,to1,to2,br1,br2);
+    JobGetRate(Jobp);
+    if ((OtherExchangeRate(Jobp.FrRate,Jobp.ToRateB1,Jobp.ToRateB2,Jobp.BaseRate1,Jobp.BaseRate2,fr,to1,to2,br1,br2)) and (ISr.UpdCurPrWithDate!=0)) then begin
+//      JobDUpdatePrices(Jobp,false);
+    end;
+  end;
+  return;
+end;

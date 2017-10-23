@@ -1,0 +1,446 @@
+external updating procedure UpdateOwnChequeStatusHistory(record OwnCheckVc,string,LongInt,Boolean);
+external function Integer CheckVATNrMask(string,string,Integer,var string);
+external function Boolean DateWarned(Date,string);
+external function Boolean DateLocked(Date,string);
+external function Integer MakeTransFromOwnCheck(record TRVc,var record OwnCheckVc,Boolean,Boolean);
+external function string 255 CheckTrans(var record TRVc,Integer,Boolean);
+external updating procedure SaveTrans(record TRVc);
+external function Boolean CheckAccount(string,Integer);
+external function Boolean Date2Test(string,Date,string,Integer);
+external function Boolean GetFullCurncyRateDate(var string,Date,var val,var val,var val,var val,var val,var Date);
+external function Boolean TransInFiscal(Date);
+external function Boolean SerNrTestOwnCheckVc(LongInt,Date,var Boolean);
+external Procedure AddCheckAccount(var string,Integer);
+
+
+global
+updating function LongInt OwnCheckVcRecordCheck(var record OwnCheckVc OwnCheckp,record OwnCheckVc OwnCheck2p,LongInt stat,LongInt long4)
+BEGIN
+  LongInt res;
+  Integer i,rows,s;
+  Boolean transf,gentrans;
+  LongInt oldnr;
+  Integer errstr;
+  Boolean skiptempf;
+  record TRVc gTRp;
+  record OwnCheckVc locOwnCheckr;
+  Integer insertmode,updatemode;
+  string 255 tstr;
+  record CUVc CUr;
+  Date td;
+
+  insertmode = 1;
+  updatemode = 2;
+  res = 0;
+  skiptempf = false;
+  oldnr = OwnCheckp.SerNr;
+  if (OwnCheckp.SerNr<=0) then begin
+    OwnCheckp.SerNr = NextSerNr("OwnCheckVc",OwnCheckp.TransDate,-1,false,"");
+  end;
+  if (stat==updatemode) then begin
+    if ((OwnCheck2p.Invalid==0) and (OwnCheckp.Invalid!=0)) then begin
+      goto L99OwnCheckVcRecordCheck;
+    end;
+  end;
+  if ((stat==insertmode) and (OwnCheckp.Openf==2)) then begin
+    locOwnCheckr.SerNr = OwnCheckp.SerNr;
+    if (ReadFirstMain(locOwnCheckr,1,true)) then begin
+      RecordCheckError(1115,"",-1,"SerNr");
+      res = -1;
+      goto L99OwnCheckVcRecordCheck;
+    end;
+  end;  
+  if (SerNrTestOwnCheckVc(OwnCheckp.SerNr,OwnCheckp.TransDate,gentrans)==false) then begin
+    RecordCheckError(1557,OwnCheckp.SerNr,-1,"SerNr");      
+    res = -1;
+    goto L99OwnCheckVcRecordCheck;
+  end;
+  if (blank(OwnCheckp.Amount)) then begin
+    RecordCheckError(1058,OwnCheckp.Amount,-1,"Amount");
+    res = -1;
+    goto L99OwnCheckVcRecordCheck;
+  end;  
+  switch (OwnCheckp.Openf) begin
+    case kCheckTypeDeposited:
+      td = OwnCheckp.ClearingDate;
+      if (blank(td)) then begin
+        td = CurrentDate;
+      end;
+      if (Date2Test("OwnCheckVc",td,"EffectDate",-1)==false) then begin
+        res = -1;
+        goto L99OwnCheckVcRecordCheck;
+      end;  
+    case kCheckTypeRegistered:
+    otherwise
+      if (Date2Test("OwnCheckVc",OwnCheckp.TransDate,"TransDate",-1)==false) then begin
+        res = -1;
+        goto L99OwnCheckVcRecordCheck;
+     end;  
+  end;
+  if (OwnCheck2p.SerNr!=-1) then begin
+    if (OwnCheckp.Openf!=OwnCheck2p.Openf) then begin
+      if (UserCanAction("IssueOwnChk",true)==false) then begin
+        RecordCheckError(1878,OwnCheckp.CheckNr,-1,"CheckNr");
+        res = -1;
+        goto L99OwnCheckVcRecordCheck;
+      end;
+    end;
+    if ((OwnCheckp.Openf==2) and (OwnCheck2p.Openf==0)) then begin
+      skiptempf = true;
+    end;
+  end;  
+  if (blank(OwnCheckp.CheckNr)) then begin
+    RecordCheckError(1058,OwnCheckp.CheckNr,-1,"CheckNr");
+    res = -1;
+    goto L99OwnCheckVcRecordCheck;
+  end;
+  if (blankdate(OwnCheckp.EffectDate)) then begin
+    RecordCheckError(1058,OwnCheckp.EffectDate,-1,"EffectDate");
+    res = -1;
+    goto L99OwnCheckVcRecordCheck;
+  end;
+  if (CheckAccount(OwnCheckp.OrigAccNr,9)==false) then begin
+    RecordCheckError(1276," " & OwnCheckp.CheckNr,-1,"OrigAccNr");
+    res = -1;
+    goto L99OwnCheckVcRecordCheck;
+  end;
+  if (nonblank(OwnCheckp.VECode)) then begin
+    CUr.Code = OwnCheckp.VECode;
+    if (ReadFirstMain(CUr,1,true)==false) then begin
+      RecordCheckError(1120,OwnCheckp.VECode,-1,"VECode");      
+      res = -1; 
+      goto L99OwnCheckVcRecordCheck;
+    end;
+  end;
+  res = CheckVATNrMask(OwnCheckp.VATNr,CUr.CountryCode,CUr.CustType,tstr);
+  if (res!=0) then begin
+    RecordCheckError(res,tstr,-1,"VATNr");      
+    res = -1; 
+    goto L99OwnCheckVcRecordCheck;
+  end;
+  transf = false;
+
+  if (stat==insertmode) then begin transf = true; end;
+  if (stat==updatemode) then begin
+    if (OwnCheck2p.Openf!=OwnCheckp.Openf) then begin transf = true; end;
+  end;
+  
+  if (gentrans==false) then begin transf = false; end;
+  if (transf) then begin
+    errstr = MakeTransFromOwnCheck(gTRp,OwnCheckp,false,skiptempf);
+    if (errstr>0) then begin
+      RecordCheckError(errstr,"",-1,"SerNr");      
+      res = -1;
+      goto L99OwnCheckVcRecordCheck;
+    end;
+    if ((gTRp.Number>0) and (gTRp.IntYc==OwnCheckYc)) then begin
+      tstr = CheckTrans(gTRp,2,true);
+      if (nonblank(tstr)) then begin
+        RecordCheckError(1085,tstr,-1,"SerNr");      
+        res = -1;
+        goto L99OwnCheckVcRecordCheck;
+      end;
+      SaveTrans(gTRp);
+    end;        
+  end;
+L99OwnCheckVcRecordCheck:;
+  if (res!=0) then begin 
+    OwnCheckp.SerNr = oldnr;
+  end;
+LOwnCheckVcRecordCheck:;
+  OwnCheckVcRecordCheck = res;
+  RETURN;
+END;
+
+global
+function LongInt OwnCheckVcRecordDefaults(var record OwnCheckVc OwnCheckp,record OwnCheckVc OwnCheck2p,LongInt long3,LongInt long4)
+begin
+  val to1,to2,fr,br1,br2;
+  Date ed;
+  string 50 crncycode,tstr;
+  Boolean testf;
+  
+  crncycode = OwnCheckp.CurncyCode;
+  testf = GetFullCurncyRateDate(crncycode,OwnCheckp.TransDate,fr,to1,to2,br1,br2,ed);
+  OwnCheckp.CurncyCode = crncycode;  
+  OwnCheckp.SerNr         = -1;
+  OwnCheckp.TransDate     = CurrentDate;
+  OwnCheckp.Openf         = 0;
+  OwnCheckp.Amount        = BlankVal;
+//  AddCheckAccount(r1.TargetAccNr,4);
+  AddCheckAccount(tstr,3);
+  OwnCheckp.TempAccNr = tstr;
+  if (SingleUserMode) then begin
+     OwnCheckp.SerNr = NextSerNr("OwnCheckVc",OwnCheckp.TransDate,-1,false,"");
+  end;
+  if (Importing==false) then begin
+    if (DateLocked(OwnCheckp.TransDate,"OwnCheckVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(OwnCheckp.TransDate,"OwnCheckVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+function LongInt OwnCheckVcRecordDuplicate(var record OwnCheckVc OwnCheckp,record OwnCheckVc OwnCheck2p,LongInt long3,LongInt long4)
+begin
+  val to1,to2,fr,br1,br2;
+  Date ed;
+  string 5 crncycode;
+  Boolean testf;
+
+  crncycode = OwnCheckp.CurncyCode;
+  testf = GetFullCurncyRateDate(crncycode,OwnCheckp.TransDate,fr,to1,to2,br1,br2,ed);
+  OwnCheckp.CurncyCode = crncycode;  
+  OwnCheckp.SerNr = -1;
+  OwnCheckp.Openf = 0;
+  OwnCheckp.TransDate = CurrentDate;
+  OwnCheckp.IssuedDate = "";
+  OwnCheckp.BouncedDate = "";
+  OwnCheckp.CancelledDate = "";
+  OwnCheckp.Invalid = 0;
+  if (SingleUserMode) then begin
+     OwnCheckp.SerNr = NextSerNr("OwnCheckVc",OwnCheckp.TransDate,-1,false,"");
+  end;
+  if (Importing==false) then begin
+    if (DateLocked(OwnCheckp.TransDate,"OwnCheckVc")) then begin
+      MessageBox(1046,"");
+    end else begin
+      if (DateWarned(OwnCheckp.TransDate,"OwnCheckVc")) then begin
+        MessageBox(1045,"");
+      end;
+    end;    
+  end;
+  return;
+end;
+
+global
+function LongInt OwnCheckVcRecordSave(var record OwnCheckVc OwnCheckp,record OwnCheckVc OwnCheck2p,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  OwnCheckVcRecordSave = res;
+  return;
+end;
+
+global
+updating function LongInt OwnCheckVcRecordSaveAfter(var record OwnCheckVc OwnCheckp,record OwnCheckVc OwnCheck2p,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  if (OwnCheckp.Openf!=kCheckTypeAccepted) then begin
+    UpdateOwnChequeStatusHistory(OwnCheckp,"OwnCheckVc",OwnCheckp.SerNr,false);
+  end;
+  OwnCheckVcRecordSaveAfter = res;
+  return;
+end;
+
+global
+function LongInt OwnCheckVcRecordUpdate(var record OwnCheckVc OwnCheckp,record OwnCheckVc OwnCheck2p,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record OrdenChqVc OrdenChqr;
+   
+  if (OwnCheckp.SerNr==-1) then begin       
+    OwnCheckp.SerNr = NextSerNr("CheckVc",OwnCheckp.TransDate,-1,false,"");
+  end;
+
+  if ((OwnCheckp.Openf==kCheckTypeDeposited) and (OwnCheck2p.Openf==kCheckTypeAccepted)) then begin
+    if (blankdate(OwnCheckp.ClearingDate)) then begin
+      OwnCheckp.ClearingDate = CurrentDate;
+    end;    
+    OrdenChqr.Code = OwnCheckp.VECode;
+    if (ReadFirstMain(OrdenChqr,1,true)) then begin
+      OwnCheckp.VEName = OrdenChqr.Comment;
+    end;
+  end;        
+  if ((OwnCheckp.Openf==kCheckTypeCancelled) and (OwnCheck2p.Openf!=kCheckTypeCancelled)) then begin
+    if (blankdate(OwnCheckp.CancelledDate)) then begin
+      OwnCheckp.CancelledDate = CurrentDate;
+    end;    
+  end;
+  if ((OwnCheckp.Openf==kCheckTypeBounced) and (OwnCheck2p.Openf!=kCheckTypeBounced)) then begin
+    if (blankdate(OwnCheckp.BouncedDate)) then begin
+      OwnCheckp.BouncedDate = CurrentDate;
+    end;    
+  end;
+  OwnCheckVcRecordUpdate = res;
+  return;
+end;
+
+updating procedure OwnCheckVc_UpdateTR(record OwnCheckVc OwnCheckr,record OwnCheckVc OwnCheck2r)
+begin
+  record TRVc TRr;
+  record TRVc oldTRr;
+  row TRVc TRrw;
+  Boolean updatedf;
+  val t;
+
+  if (OwnCheckr.ClearingDate==OwnCheck2r.ClearingDate) then begin
+    goto LOwnCheckVc_UpdateTR;
+  end;
+  TRr.IntYc = OwnCheckYc;
+  TRr.Number = OwnCheckr.SerNr;
+  if (ReadFirstMain(TRr,2,true)==false) then begin
+    goto LOwnCheckVc_UpdateTR;
+  end;
+  RecordCopy(oldTRr,TRr);
+  ClearRow(TRr,TRrw,2);
+  TRrw.ovst = 0;
+  TRrw.stp = 2;
+  TRrw.Sign = CurrentUser;
+  TRrw.OldTransDate = TRr.TransDate;
+  TRrw.UpdDate = CurrentDate;
+  MatRowPut(TRr,MatRowCnt(TRr),TRrw);
+  TRr.TransDate = OwnCheckr.ClearingDate;
+//  TRSumup(TRr,t);
+  RecordUpdate(oldTRr,TRr,true);
+LOwnCheckVc_UpdateTR:;  
+  return;
+end;
+
+global
+updating function LongInt OwnCheckVcRecordUpdateAfter(var record OwnCheckVc OwnCheckr,record OwnCheckVc OwnCheck2r,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  
+  if (OwnCheckr.Openf==kCheckTypeDeposited) then begin
+    if (OwnCheckr.ClearingDate!=OwnCheck2r.ClearingDate) then begin
+      OwnCheckVc_UpdateTR(OwnCheckr,OwnCheck2r);
+    end;
+  end;
+  if (OwnCheckr.Openf!=kCheckTypeAccepted) and (OwnCheck2r.Openf!=OwnCheckr.Openf) then begin
+    UpdateOwnChequeStatusHistory(OwnCheckr,"OwnCheckVc",OwnCheckr.SerNr,false);
+  end;
+  OwnCheckVcRecordUpdateAfter = res;
+  return;
+end;
+
+global
+function LongInt OwnCheckVcRecordRemoveTest(var record OwnCheckVc OwnCheckr,record OwnCheckVc OwnCheck2p,LongInt long3,LongInt long4)
+begin
+  LongInt res;
+  record DBLockBlock DBLb;
+
+  res = 1;
+  BlockLoad(DBLb);
+  if (OwnCheckr.TransDate<=DBLb.DeleteBeforeDate) then begin
+    if ((blankdate(DBLb.OtherLock)) or (OwnCheckr.TransDate>DBLb.OtherLock)) then begin
+      res = 1;
+      goto LOwnCheckVcRecordRemoveTest;
+    end;
+  end;
+  if (OwnCheckr.Openf!=0) then begin
+    if (long3>0) then begin
+      MessageBox(1544,"");
+    end;
+    res = 0;
+  end;
+LOwnCheckVcRecordRemoveTest:;
+  OwnCheckVcRecordRemoveTest = res;  
+  return;
+end;
+
+global
+function LongInt OwnCheckVcRecordInIndex(record OwnCheckVc OwnCheckr,string indexname)
+BEGIN
+  LongInt res;
+  
+  res = 1;
+  switch (indexname) begin
+    case "OpenSerNr":     if (OwnCheckr.Openf!=kCheckTypeRegistered) then begin res = 0; end;
+    case "OpenCheckNr":   if (OwnCheckr.Openf!=kCheckTypeRegistered) then begin res = 0; end;
+    case "OpenAmount":    if (OwnCheckr.Openf!=kCheckTypeRegistered) then begin res = 0; end;
+
+    case "DepSerNr":      if (OwnCheckr.Openf!=kCheckTypeAccepted) then begin res = 0; end; 
+    case "DepEffectDate": if (OwnCheckr.Openf!=kCheckTypeAccepted) then begin res = 0; end; 
+    case "DepVEName":     if (OwnCheckr.Openf!=kCheckTypeAccepted) then begin res = 0; end; 
+    case "DepCheckNr":    if (OwnCheckr.Openf!=kCheckTypeAccepted) then begin res = 0; end; 
+    case "DepAmount":     if (OwnCheckr.Openf!=kCheckTypeAccepted) then begin res = 0; end; 
+  end;
+  OwnCheckVcRecordInIndex = res;
+  RETURN;
+END;
+
+updating function Boolean InvalidOwnCheckOK(record OwnCheckVc OwnCheckp,LongInt long3)
+BEGIN
+  Boolean res;
+  record DBLockBlock DBLb;
+
+  BlockLoad(DBLb);
+  if (OwnCheckp.TransDate<=DBLb.OtherLock) then begin
+    if (long3>0) then begin
+      MessageBox(1560,"");
+    end else begin
+      MessageBox(34500,"");
+    end;
+    res = false;
+    goto LInvalidOwnCheckOK;
+  end;
+  if (OwnCheckp.Openf>1) then begin goto LInvalidOwnCheckOK; end;
+  OwnCheckp.Openf = 5;
+  res = true;
+LInvalidOwnCheckOK:;
+  InvalidOwnCheckOK = res;
+  RETURN;
+END;
+
+global
+updating function LongInt OwnCheckVcRecordInvalidateTest(var record OwnCheckVc OwnCheckr,record OwnCheckVc OwnCheck2r,LongInt long3,LongInt long4)
+BEGIN
+  LongInt res;
+
+  res = 0;
+  if (UserCanAction("OwnCheckInvalid",true)) then begin
+    if (OwnCheckr.Invalid==0) and (OwnCheckr.Openf<=1) then begin
+      if (InvalidOwnCheckOK(OwnCheckr,long3)) then begin
+        OwnCheckr.Invalid = 1;
+        res = 1;
+      end;
+    end else begin
+      if (OwnCheckr.Invalid==0) then begin
+        MessageBox(34500,"");
+      end;
+    end;
+  end;
+LOwnCheckVcRecordInvalidateTest:;
+  OwnCheckVcRecordInvalidateTest = res;  
+  RETURN;
+END;
+
+global
+function Integer OwnCheckVcDoSearch(var record OwnCheckVc OwnCheckr,string indexname,string searchstr)
+begin
+  Integer keys;
+  
+  keys = -1;
+  switch (indexname) begin
+    case "OpenCheckNr": 
+      OwnCheckr.Openf = 0;
+      OwnCheckr.CheckNr = searchstr;
+      keys = 2;
+
+    case "DepCheckNr": 
+      OwnCheckr.Openf = 1;
+      OwnCheckr.CheckNr = searchstr;
+      keys = 2;
+    case "DepVEName": 
+      OwnCheckr.Openf = 1;
+      OwnCheckr.VEName = searchstr;
+      keys = 2;
+    case "DepEffectDate": 
+      OwnCheckr.Openf = 1;
+      OwnCheckr.EffectDate = StringToDate(searchstr);
+      keys = 2;
+    case "DepAmount": 
+      OwnCheckr.Openf = 1;
+      OwnCheckr.Amount = StringToVal(searchstr,M4Val);
+      keys = 2;
+  end;
+  OwnCheckVcDoSearch = keys;
+  return;
+end;

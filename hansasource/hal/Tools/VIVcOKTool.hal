@@ -1,0 +1,1627 @@
+external function roundmode SetRoundModeD(Integer);
+external procedure GetCurncyRoundoff(string,string,string,var roundmode,var roundmode,var roundmode);
+external procedure MulVATIV(string,val,var val,var val,Integer,Integer);
+external procedure TBIVGetRate(var record TBIVVc);
+external procedure Base1ToOther(var string,val,val,val,val,val,val,var val,roundmode);
+external function val DivRateToBase1(string,val,val,val,val,val,val,roundmode);
+external procedure CalcInCurtoTBIV(var record TBIVVc);
+external function Integer TypeOfCurncy(var string,var Integer);
+external procedure AddInCurtoTBIVwithRate(var record TBIVVc,string,val,val,val,val,val);
+external function roundmode DefaultRoundMode();
+external function val GetAPPayBoolRVal(LongInt,Date);
+external function Boolean GetAPPayRate(LongInt,var val,var val,var val,var val,var val,string,Date);
+external procedure GetPRName(string, var string);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external function val MulWithRateToBase1(var string,Date,val,roundmode);
+external function Boolean GetFirstPurchaseItem2(string,string,string,var record PIVc);
+external procedure GetProjectPrice(string,string,string,string,string,val,var val,var val,var string,var val,var string);
+external procedure SetPOFlags(record POVc,Boolean);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure GetPRInvSep(string,var Integer,var Integer);
+external procedure CalcExtra(val,string,var val);
+external function Integer GetItemTypeGroup(string,var string);
+external updating procedure VICalcInstallment(record VIVc,Date,val,string,var LongInt,Boolean);
+external function Boolean GetPD(var record PDVc);
+external procedure GetFullCurncyRate (var string,Date,var val,var val,var val,var val,var val);
+external procedure CurValToOtherCur(Date,string,val,string,var val,roundmode);
+
+function Date FindAPPayHistDate(LongInt PrepayNr)
+begin
+  Date res;
+  record APPayHistVc APPayHistr;
+  
+  APPayHistr.VEPNr = PrepayNr;
+  APPayHistr.FileName = "OPVc";
+  if (ReadFirstMain(APPayHistr,2,true)) then begin
+    res = APPayHistr.TransDate;
+  end;
+  FindAPPayHistDate = res;
+  return;
+end;
+
+global
+updating procedure UpdatePOPrepaidAmount(LongInt ordnr,val rs)
+begin
+  record POVc POr;
+  record POVc oldPOr;
+  
+  if (ordnr>0) then begin
+    POr.SerNr = ordnr;
+    if (ReadFirstMain(POr,1,true)) then begin
+      RecordCopy(oldPOr,POr);
+      POr.PrepaidAmount = POr.PrepaidAmount + rs;
+      if (RecordUpdate(oldPOr,POr,false)) then begin
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure OPPUpdateRow(LongInt SerNr,LongInt ordernr,Date pdp,string curcod,val pfr,val pto1,val pto2,val pbr1,val pbr2,
+                                string vecode,val payvalp,val vatvalp,string vatcod,string bankcur,val bankval,val b1bankval,
+                                Boolean vinvf,Boolean unokf)
+begin
+  record APPayHistVc APPayHistr;
+  record OPPVc OPPr;
+  record OPPVc oldOPPr;
+  record CUVc VEr;
+  Boolean found,delf;
+  string 20 vc;
+  val temp,coff,rs;
+  val theval;
+  record BaseCurBlock BCb;
+  val fr,to1,to2,br1,br2;
+  val sign;
+
+  fr = pfr;
+  to1 = pto1;
+  to2 = pto2;
+  br1 = pbr1;
+  br2 = pbr2;
+  BlockLoad(BCb);
+  theval = payvalp;
+  sign = 1;
+  if (vinvf) then begin
+    if (unokf) then begin
+      sign = 1;
+    end else begin
+      sign = -1;
+    end;
+  end else begin
+    if (unokf) then begin
+      sign = -1;
+    end else begin
+      sign = 1;
+    end;
+  end;
+  if (payvalp!=0) then begin
+    delf = false;
+    OPPr.VECode = vecode;
+    OPPr.SerNr = SerNr;
+    found = ReadFirstMain(OPPr,2,true);
+    RecordCopy(oldOPPr,OPPr);
+    if (found) then begin
+    end else begin
+      OPPr.SerNr = SerNr;
+      OPPr.OrderNr = ordernr;
+      APPayHistr.VEPNr = SerNr;
+      APPayHistr.FileName = "OPVc";
+      if (ReadFirstMain(APPayHistr,2,true)) then begin
+        OPPr.OrderNr = APPayHistr.OrderNr;
+        OPPr.VATVal = APPayHistr.VATVal;
+        OPPr.VATBookVal = APPayHistr.VATBookVal;
+      end;
+
+      OPPr.PayDate = pdp;
+      OPPr.VECode = vecode;
+      VEr.Code = vecode;
+      if (ReadFirstMain(VEr,1,true)) then begin
+        OPPr.VEName = VEr.Name;
+      end else begin
+        OPPr.VEName = "";
+      end;
+      OPPr.CurncyCode = curcod;
+      OPPr.VATCode = vatcod;
+      OPPr.BankCurncy = bankcur;
+      OPPr.PPVal = blankval;
+      OPPr.VATVal = blankval;
+      OPPr.VATBookVal = blankval;
+    end;
+    if (vinvf) then begin
+//PREPVIPL , those 3 places should be same  
+      if (unokf) then begin
+        OPPr.PayDate = FindAPPayHistDate(SerNr);
+        if (blankdate(OPPr.PayDate)) then begin
+          OPPr.PayDate = pdp;
+        end;
+      end;
+      if (theval>=OPPr.PPVal) then begin
+        OPPr.VATVal = OPPr.VATVal + sign*vatvalp;
+        OPPr.VATBookVal = OPPr.VATBookVal + sign*MulRateToBase1(curcod,vatvalp,fr,to1,to2,br1,br2,DefaultCurRoundOff);;
+      end else begin
+/*      
+        rs = (OPPr.VATVal*theval)/OPPr.PPVal;//from Invoice
+        OPPr.VATVal = OPPr.VATVal + sign*rs;
+        rs = (OPPr.VATBookVal*theval)/OPPr.PPVal;
+        OPPr.VATBookVal = OPPr.VATBookVal + sign*rs;
+*/        
+
+        OPPr.VATVal = OPPr.VATVal + sign*vatvalp;        
+        rs = MulRateToBase1(curcod,vatvalp,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        OPPr.VATBookVal = OPPr.VATBookVal + sign*rs;
+
+        if (OPPr.VATVal==0) and (vatvalp!=0) then begin
+          OPPr.VATVal = OPPr.VATVal + sign*vatvalp;
+          OPPr.VATBookVal = OPPr.VATBookVal + sign*MulRateToBase1(curcod,vatvalp,fr,to1,to2,br1,br2,DefaultCurRoundOff);;
+        end;
+      end;
+
+
+      CurValToOtherCur(OPPr.PayDate,curcod,theval,OPPr.CurncyCode,temp,DefaultCurRoundOff);
+      OPPr.PPVal = OPPr.PPVal + sign*temp;
+      
+      if (bankval!=0) then begin
+        temp = bankval;
+      end else begin
+        temp = MulRateToBase1(curcod,theval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+      end;
+      if (nonblank(b1bankval)) then begin
+        temp = b1bankval;
+      end;
+      temp = Round(temp,DefaultRoundMode);
+      OPPr.BookRVal = OPPr.BookRVal + sign*temp;
+    end else begin
+
+
+      OPPr.PayDate = FindAPPayHistDate(SerNr);
+      if (blankdate(OPPr.PayDate)) then begin
+        OPPr.PayDate = pdp;
+      end;
+
+      GetAPPayRate(SerNr,fr,to1,to2,br1,br2,curcod,pdp);          
+//      GetFullCurncyRate(curcod,pdp,fr,to1,to2,br1,br2);
+//what if unok? 
+      OPPr.VATVal = OPPr.VATVal + sign*vatvalp;
+      OPPr.VATBookVal = OPPr.VATBookVal + sign*MulRateToBase1(curcod,vatvalp,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+      OPPr.PPVal = OPPr.PPVal + sign*theval;
+      if (unokf) then begin
+        temp = GetAPPayBoolRVal(SerNr,pdp);
+        if (theval<0) then begin
+          temp = -temp;
+          if (temp<theval) then begin
+            temp = theval;
+          end;
+        end;
+      end else begin
+        temp = MulRateToBase1(curcod,theval,fr,to1,to2,br1,br2,DefaultCurRoundOff);
+        if (nonblank(b1bankval)) then begin
+          temp = b1bankval;
+        end;
+      end;
+      temp = Round(temp,DefaultRoundMode);
+      OPPr.BookRVal = OPPr.BookRVal + sign*temp;
+    end;
+    if (OPPr.PPVal==0) then begin delf = true; end;
+    if (delf==false) then begin
+      if (found) then begin
+        if (RecordUpdate(oldOPPr,OPPr,true)==0) then begin end;
+      end else begin
+        if (RecordStore(OPPr,false)) then begin end;        
+      end;
+    end else begin
+      if (found==true) then begin
+        RecordDelete(oldOPPr);
+      end;
+    end;
+    if (ordernr>0) then begin
+      UpdatePOPrepaidAmount(ordernr,theval);
+    end;
+    
+  end;
+  return;
+end;
+
+updating procedure APPayHistAdd2(record OPVc OPp,Boolean unokf,Boolean importf)
+begin
+  record APPayHistVc APPayHistr;
+  record BaseCurBlock bascur;
+  row OPVc OPrw;
+  row OPVc OPrw2;
+  Integer i,j,rwcnt;
+  val rs,bankrs,vattot,b1bankv;
+  string 255 curcode;
+  val frrate,torate1,torate2,baserate1,baserate2;
+
+  BlockLoad(bascur);
+  if (nonblank(bascur.StdBaseCur)) then begin
+    curcode = bascur.StdBaseCur;
+  end else begin
+    curcode = bascur.BaseCur1;
+  end;
+  rwcnt = MatRowCnt(OPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(OPp,i,OPrw);
+    vattot = blankval;
+    rs = blankval;
+    bankrs = blankval;
+    b1bankv = blankval;
+    if (OPrw.PrepayNr!=-1 and OPrw.ovst==0) then begin
+//      rs = OPrw.RecVal;
+//      bankrs = OPrw.BankVal;
+//      vattot = OPrw.VATVal;
+      
+      for (j=i;j<rwcnt;j=j+1) begin
+        MatRowGet(OPp,j,OPrw2);
+        if (OPrw2.PrepayNr==OPrw.PrepayNr and OPrw2.ovst==0) then begin
+          rs = rs + OPrw2.RecVal;//and what if diff rec curncy ? 
+          bankrs = bankrs + OPrw2.BankVal;//and what if diff bank curncy ? 
+          b1bankv = b1bankv + OPrw2.B1BankVal;
+/*          
+why should it be diffrent on import ? 
+          if (OPrw2.B1BankVal!=0) then begin          
+            b1bankv = b1bankv + OPrw2.B1BankVal;
+          end else begin
+            if (importf==false) then begin   
+              GetAPPayRate(OPrw2.PrepayNr,frrate,torate1,torate2,baserate1,baserate2,OPrw2.BankCurncy,OPp.TransDate);
+              b1bankv = b1bankv + MulRateToBase1(OPrw2.BankCurncy,bankrs,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+            end else begin
+              b1bankv = b1bankv + MulWithRateToBase1(OPrw2.BankCurncy,OPp.TransDate,bankrs,DefaultCurRoundOff);
+            end;
+          end;
+*/          
+          vattot = vattot + OPrw2.VATVal;
+        end;
+      end;
+
+      APPayHistr.VEPNr = OPrw.PrepayNr;
+      APPayHistr.FileName = "OPVc";
+      APPayHistr.SerNr = OPp.SerNr;
+      APPayHistr.TransDate = OPp.TransDate;
+      APPayHistr.VECode = OPrw.VECode;
+      APPayHistr.CurncyCode = OPrw.RecCurncy;
+      APPayHistr.BankCurncy = OPrw.BankCurncy;
+      APPayHistr.OrderNr = OPrw.OrderNr;
+      APPayHistr.Val = rs;
+      APPayHistr.APAcc = OPrw.APAcc;
+      if (bascur.BaseCur1==OPrw.BankCurncy) then begin//what about other rows
+        GetAPPayRate(OPrw.PrepayNr,frrate,torate1,torate2,baserate1,baserate2,OPrw.RecCurncy,APPayHistr.TransDate);
+//GetAPPayBoolRVal(OPrw.PrepayNr,APPayHistr.TransDate)
+        APPayHistr.BookVal = MulRateToBase1(OPrw.RecCurncy,rs,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);        
+        if (nonblank(b1bankv)) then begin 
+          APPayHistr.BookVal = b1bankv;
+        end;
+      end else begin
+//        if (importf==false) then begin   //what about other rows, import diffrnt than storing , holy moses
+//          GetAPPayRate(OPrw.PrepayNr,frrate,torate1,torate2,baserate1,baserate2,OPrw.BankCurncy,APPayHistr.TransDate);
+//          if (OPrw.B1BankVal!=0) then begin
+//            APPayHistr.BookVal = b1bankv;
+//          end else begin
+////            APPayHistr.BookVal = MulRateToBase1(OPrw.BankCurncy,bankrs,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff); //should have had same as perpayment account
+//            APPayHistr.BookVal = MulRateToBase1(OPrw.RecCurncy,rs,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+//          end;
+//        end else begin
+          if (OPrw.B1BankVal!=0) then begin
+            APPayHistr.BookVal = b1bankv;
+          end else begin
+//            APPayHistr.BookVal = MulWithRateToBase1(OPrw.BankCurncy,APPayHistr.TransDate,bankrs,DefaultCurRoundOff);
+            APPayHistr.BookVal = MulWithRateToBase1(OPrw.RecCurncy,APPayHistr.TransDate,rs,DefaultCurRoundOff);//should have had same as perpayment account
+          end;
+//        end;
+      end;
+      APPayHistr.VATVal = vattot;
+      if (bascur.BaseCur1==OPrw.RecCurncy) then begin
+        APPayHistr.VATBookVal = vattot;
+      end else begin
+        APPayHistr.VATBookVal = MulWithRateToBase1(OPrw.RecCurncy,APPayHistr.TransDate,vattot,DefaultCurRoundOff);
+      end;
+      if (unokf) then begin      
+        if (ReadFirstMain(APPayHistr,0,true)) then begin
+          RecordDelete(APPayHistr);
+        end;
+      end else begin
+        if (RecordStore(APPayHistr,false)) then begin end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure OPPUpdateOP(record OPVc OPp,Boolean unokf,Boolean importf)
+begin
+  row OPVc OPrw;
+  Integer rwcnt,i;
+  val fr,to1,to2,br1,br2;
+  Boolean prepayfound;
+
+  prepayfound = false;
+  rwcnt = MatRowCnt(OPp);
+  for (i=0;i<rwcnt;i=i+1) begin
+     MatRowGet(OPp,i,OPrw);
+     if (OPrw.PrepayNr!=-1 and OPrw.ovst==0) then begin
+       GetFullCurncyRate(OPrw.PInvCurncy,OPp.TransDate,fr,to1,to2,br1,br2);
+       OPPUpdateRow(OPrw.PrepayNr,OPrw.OrderNr,OPp.PayDate,OPrw.PInvCurncy,fr,to1,to2,br1,br2,
+                    OPrw.VECode,OPrw.PInvVal,OPrw.VATVal,OPrw.VATCode,OPrw.BankCurncy,OPrw.BankVal,OPrw.B1BankVal,false,unokf);  
+       prepayfound = true;
+     end;
+  end;  
+  if (prepayfound) then begin
+    APPayHistAdd2(OPp,unokf,importf);
+  end;
+  return;
+end;
+
+updating procedure APPayHistSub2(record VIVc VIp,Boolean norminv)
+begin
+  record APPayHistVc APPayHistr;
+  row VIVc VIrw,VIrw2;
+  record BaseCurBlock bascur;
+  string 255 curcode;
+  Integer i,j,rwcnt;
+  val rs,bankrs,vattot,sum;
+  Date prepdate;
+  Boolean found;
+
+//PREPVIPL , those 3 places should be same  
+  BlockLoad(bascur);
+  if (nonblank(bascur.StdBaseCur)) then begin
+    curcode = bascur.StdBaseCur;
+  end else begin
+    curcode = bascur.BaseCur1;
+  end;
+  rwcnt = MatRowCnt(VIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    vattot = blankval;
+    rs = blankval;
+    bankrs = blankval;
+    sum = blankval;
+    if (VIrw.stp==6) then begin
+      for (j=0;j<rwcnt;j=j+1) begin
+        MatRowGet(VIp,j,VIrw2);
+        if (VIrw2.stp==6) then begin
+          if (VIrw.PrepayNr==VIrw2.PrepayNr) then begin
+            rs = rs + VIrw2.PrepayAmount;
+            vattot = vattot + VIrw2.VATVal;
+            sum = sum + VIrw2.Sum;
+          end;
+        end;
+      end;
+      APPayHistr.VEPNr = VIrw.PrepayNr;
+      APPayHistr.FileName = "VIVc";
+      APPayHistr.SerNr = VIp.SerNr;
+      APPayHistr.TransDate = VIp.TransDate;
+      APPayHistr.VECode = VIp.VECode;
+      APPayHistr.CurncyCode = VIp.CurncyCode;
+      APPayHistr.BankCurncy = "";
+      APPayHistr.Val = rs;
+      APPayHistr.VATVal = vattot;
+      APPayHistr.APAcc = VIrw.AccNumber;
+      if (bascur.BaseCur1==VIp.CurncyCode) then begin
+        APPayHistr.BookVal = rs;
+        APPayHistr.VATBookVal = vattot;
+      end else begin
+        if (VIrw.Sum==0) then begin
+          APPayHistr.BookVal = MulRateToBase1(VIp.CurncyCode,rs,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+          APPayHistr.VATBookVal = MulRateToBase1(VIp.CurncyCode,vattot,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+        end else begin
+          APPayHistr.BookVal = sum;
+          if (APPayHistr.BookVal==0) then begin
+            prepdate = FindAPPayHistDate(VIrw.PrepayNr);
+            if (nonblankdate(prepdate)) then begin
+              APPayHistr.BookVal = MulWithRateToBase1(VIp.CurncyCode,prepdate,rs,DefaultCurRoundOff);
+            end;
+          end;
+          rs = APPayHistr.VATVal/APPayHistr.Val;
+          APPayHistr.VATBookVal = APPayHistr.BookVal*rs;
+        end;
+      end;
+      if (RecordStore(APPayHistr,false)) then begin end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure OPPUpdateVI(record VIVc VIp,Boolean unokf)
+begin
+  row VIVc VIrw;
+  Integer rwcnt,i;
+  Boolean subf,prepayfound;
+  Date blankd,prepdate;
+  val fr,to1,to2,br1,br2;
+
+  prepayfound = false;
+  subf = true;
+  if (VIp.PayVal<0) then begin subf = false; end;
+  if (unokf) then begin subf = false; end;
+  rwcnt = MatRowCnt(VIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    if (VIrw.PrepayNr!=-1) then begin
+      if (unokf) then begin 
+        prepdate = FindAPPayHistDate(VIrw.PrepayNr);
+        if (blankdate(prepdate)) then begin
+          prepdate = VIp.TransDate;
+        end;
+        GetFullCurncyRate(VIp.CurncyCode,prepdate,fr,to1,to2,br1,br2);
+      end else begin
+        fr = VIp.FrRate; to1 = VIp.ToRateB1; to2 = VIp.ToRateB2; br1 = VIp.BaseRate1; br2 = VIp.BaseRate2;
+      end;
+      if (blankdate(prepdate)) then begin
+        prepdate = VIp.InvDate;
+      end;
+      OPPUpdateRow(VIrw.PrepayNr,VIp.POSerNr,prepdate,VIp.CurncyCode,
+                   fr,to1,to2,br1,br2,
+                   VIp.VECode,VIrw.PrepayAmount,VIrw.VATVal,VIrw.VATCode,"",VIrw.Sum,blankval,true,unokf);
+      prepayfound = true;
+    end;  
+  end;  
+  if (prepayfound) then begin
+    APPayHistSub2(VIp,true);
+  end;
+  return;
+end;
+
+updating procedure APInstallmentAdd(record VIVc VIp,val sump)
+begin 
+  LongInt l;
+  
+  VICalcInstallment(VIp,VIp.InvDate,sump,"",l,true);
+  return;
+end;
+
+global
+updating procedure APAdd1(record VIVc VIp,Boolean trflg,Boolean unokf)
+begin
+  record APVc APr;
+  record APVc oldAPr;
+  record OPPVc OPPr;
+  row VIVc VIrw;
+  Boolean found,delf,foundopp;
+  val t;
+  Integer rwcnt,i;
+  val fr,to1,to2,br1,br2;
+  Date dat;
+  val payval;
+
+  if (VIp.PayVal!=0) then begin
+    delf = false;
+    APr.SerNr = VIp.SerNr;
+    if (VIp.PayVal<0) then begin
+      payval =  VIp.PayVal + VIp.WithHoldingTax;
+    end else begin
+      payval =  VIp.PayVal - VIp.WithHoldingTax;
+    end;
+    switch (VIp.InvType) begin
+      case kInvoiceTypeCredit:
+        if (VIp.CredInv!=-1) then begin
+          APr.SerNr = VIp.CredInv;
+        end;
+      case kInvoiceTypeCreditSpecialSales:
+        if (VIp.CredInv!=-1) then begin
+          APr.SerNr = VIp.CredInv;
+        end;
+    end;
+    found = ReadFirstMain(APr,1,true);
+    RecordCopy(oldAPr,APr);
+    if (found) then begin
+    end else begin
+      APr.SerNr = VIp.SerNr;
+      APr.RVal = 0;
+      APr.BookRVal = 0;
+      APr.DueDate = VIp.DueDate;
+      if (nonblankdate(VIp.RebDate)) then begin
+        APr.RebDate = VIp.RebDate;
+      end else begin
+        APr.RebDate = VIp.DueDate;
+      end;
+      APr.RebDate2 = VIp.RebDate2;
+      APr.VECode = VIp.VECode;
+      APr.VEName = VIp.VEName;
+      APr.InvoiceNr = VIp.InvoiceNr;
+      APr.CurncyCode = VIp.CurncyCode;
+      APr.RefStr = VIp.RefStr;
+    end;
+    t = MulRateToBase1(VIp.CurncyCode,payval,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    switch (VIp.InvType) begin
+      case kInvoiceTypeCreditSpecialSales: 
+        goto LkInvoiceTypeCredit;
+      case kInvoiceTypeCredit:
+LkInvoiceTypeCredit:;
+        APr.RVal = APr.RVal - payval;
+        APr.BookRVal = APr.BookRVal - t;
+        if (VIp.CredInv!=-1) then begin
+          APr.SerNr = VIp.CredInv;
+        end;
+      otherwise
+        APr.RVal = APr.RVal + payval;
+        APr.BookRVal = APr.BookRVal + t;
+        rwcnt = MatRowCnt(VIp);
+        for (i=0;i<rwcnt;i=i+1) begin
+           MatRowGet(VIp,i,VIrw);
+           if (VIrw.stp==6) then begin
+             OPPr.VECode = VIp.VECode;
+             OPPr.SerNr = VIrw.PrepayNr;
+             foundopp = ReadFirstMain(OPPr,2,true);
+             if (foundopp) then begin
+               dat = OPPr.PayDate;
+             end else begin
+               dat = CurrentDate;
+             end;
+             GetFullCurncyRate(VIp.CurncyCode,dat,fr,to1,to2,br1,br2);
+             t = MulRateToBase1(VIp.CurncyCode,VIrw.PrepayAmount,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+             if (VIp.Invalid==0) then begin
+               if (unokf) then begin
+                 APr.RVal = APr.RVal + VIrw.PrepayAmount;
+                 APr.BookRVal = APr.BookRVal + t;
+               end else begin
+                 APr.RVal = APr.RVal - VIrw.PrepayAmount;
+                 APr.BookRVal = APr.BookRVal - t;
+               end;
+             end else begin
+               APr.RVal = APr.RVal + VIrw.PrepayAmount;
+               APr.BookRVal = APr.BookRVal + t;
+             end;
+           end;  
+        end;      
+    end;
+    if (trflg) then begin
+      if (VIp.InstallmentInv==1) then begin
+        APInstallmentAdd(VIp,VIp.PayVal);
+      end;
+    end;
+    if (APr.RVal==0) then begin delf = true; end;
+    if (delf==false) then begin
+      if (found) then begin
+        if (RecordUpdate(oldAPr,APr,false)==0) then begin end;
+      end else begin
+        if (RecordStore(APr,false)) then begin end;        
+      end;
+    end else begin
+      if (found==true) then begin
+        RecordDelete(oldAPr);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure VendStatUp(string filename,LongInt nr,string cc,string curncy,Date dp,val isp,val esp,val psp,val basebalp,Boolean negf)
+begin
+  record CUVc VEr;
+  Boolean found;
+  val is,es,ps,basebal;
+  Date ldp;
+
+  ldp = dp;
+  if (blankdate(ldp)) then begin goto LVendStatUp; end;
+  if (GetYear(ldp)<1980) then begin
+    ldp = AddYear(ldp,-GetYear(ldp)+1980);
+  end;
+  VEr.Code = cc;
+  found = ReadFirstMain(VEr,1,true);
+  if (found) then begin
+  end else begin
+    VEr.Code = cc;
+  end;
+  is = isp;
+  es = esp;
+  ps = psp;
+  basebal = basebalp;
+  if (negf==true) then begin
+    is = -is;
+    es = -es;
+    ps = -ps;
+    basebal = -basebal;
+  end;
+  VEr.CurncyCode = curncy;
+  AddBalance(VEr,ldp,"vesalesexclvat",es,"vesalesinclvat",is,"vepaidvalue",ps,"vebalance",basebal,"",blankval,"",blankval);  
+LVendStatUp:;
+  return;
+end;
+
+procedure FindPrepaidBaseAmount(record VIVc VIp,var val prepayvalp,var val totpayvalp,var val vatvalp)
+begin
+  record BaseCurBlock bcur;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  val fr;
+  Date td;
+   
+  BlockLoad(bcur);
+  totpayvalp = blankval;
+  prepayvalp = blankval;
+  vatvalp = blankval;
+  if (bcur.BaseCur1!=VIp.CurncyCode) then begin
+    rwcnt = MatRowCnt(VIp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VIp,i,VIrw);
+      if (VIrw.PrepayNr!=-1) then begin
+        if (VIrw.Sum==0) then begin
+          fr = MulRateToBase1(VIp.CurncyCode,VIrw.PrepayAmount,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+        end else begin
+          fr = VIrw.Sum;
+        end;
+        totpayvalp = totpayvalp + fr;
+        prepayvalp = prepayvalp + VIrw.PrepayAmount;
+        vatvalp = vatvalp + VIrw.VATVal;
+      end;
+    end;
+  end;  
+  return;
+end;
+
+global
+updating procedure VIrsPrelBookingStats(record VIVc VIp,Boolean unokf)
+begin
+  record OPrsVc mainr;
+  
+  mainr.VECode = VIp.VECode;
+  mainr.TransDate = VIp.TransDate;
+  mainr.TransNr = VIp.SerNr;
+  mainr.TransType = kOPrsTransTypeInvoice;
+  mainr.TransNr = VIp.SerNr;
+  mainr.OKFlag = 0;
+  switch (VIp.InvType) begin
+    case kInvoiceTypeCreditSpecialSales: 
+      goto LkInvoiceTypeCredit;
+    case kInvoiceTypeCredit:
+LkInvoiceTypeCredit:;
+      if (VIp.CredInv!=-1) then begin
+        mainr.VINr = VIp.CredInv;
+      end else begin
+        mainr.VINr = VIp.SerNr;
+      end;
+    otherwise
+      mainr.VINr = VIp.SerNr;
+  end;
+  if (unokf) then begin
+    if (ReadFirstMain(mainr,0,true)) then begin
+      RecordDelete(mainr);
+    end;
+  end else begin
+    if (RecordStore(mainr,false)) then begin end;
+  end;
+  return;
+end;
+
+updating procedure UpdatePPrs(record VIVc VIp,Boolean deletef)
+begin
+  record PPrsVc PPrsr;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+
+  if (VIp.InvType==kInvoiceTypeEmployee) then begin
+    rwcnt = MatRowCnt(VIp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VIp,i,VIrw);
+      if (VIrw.stp==kInvoiceRowTypeEmployee) then begin
+        i = rwcnt;
+      end;
+    end;
+    PPrsr.Person = VIrw.UserCode;
+    PPrsr.TransDate = VIp.TransDate;
+    PPrsr.PPOKNr = VIp.PPOKNr;
+    PPrsr.TransType = 4;
+    PPrsr.TransNr = VIp.SerNr;
+    if (deletef) then begin
+      if (ReadFirstMain(PPrsr,0,true)) then begin
+        RecordDelete(PPrsr);
+      end;
+    end else begin
+      if (RecordStore(PPrsr,false)) then begin
+      end;
+    end;
+  end;
+  return;
+end;
+
+updating procedure VIrsStats(record VIVc VIp,Boolean unokf)
+begin
+  record OPrsVc mainr;
+  
+  if (VIp.PrelBook!=0) then begin
+    VIrsPrelBookingStats(VIp,true);
+  end;
+  mainr.VECode = VIp.VECode;
+  mainr.TransDate = VIp.TransDate;
+  mainr.TransNr = VIp.SerNr;
+  mainr.TransType = kOPrsTransTypeInvoice;
+  mainr.OKFlag = 1;
+  switch (VIp.InvType) begin
+    case kInvoiceTypeCreditSpecialSales: goto LkInvoiceTypeCredit;
+    case kInvoiceTypeCredit:
+LkInvoiceTypeCredit:;
+      if (VIp.CredInv!=-1) then begin
+        mainr.VINr = VIp.CredInv;
+      end else begin
+        mainr.VINr = VIp.SerNr;
+      end;
+    otherwise
+      mainr.VINr = VIp.SerNr;
+  end;
+  if (unokf) then begin
+    if (ReadFirstMain(mainr,0,true)) then begin
+      RecordDelete(mainr);
+    end;
+  end else begin
+    if (RecordStore(mainr,false)) then begin end;
+  end;
+  if (VIp.InvType==kInvoiceTypeEmployee) then begin
+    UpdatePPrs(VIp,unokf);
+  end;
+  return;
+end;
+
+global
+procedure VIVc_GetPrePaidAmount2(record VIVc VIp,var val prepvp,var val prepvb1p)
+begin
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  
+  prepvp = blankval;
+  prepvb1p = blankval;
+  rwcnt = MatRowCnt(VIp);
+  for (i=0; i<rwcnt; i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    if (VIrw.stp==kInvoiceRowTypePrepayment) then begin
+      prepvp = prepvp + VIrw.PrepayAmount;
+      prepvb1p = prepvb1p + MulRateToBase1(VIp.CurncyCode,VIrw.PrepayAmount,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure VIVc_GetPrePaidAmount(record VIVc VIp,var val prepvp)
+begin
+  val prepvb1p;
+  
+  VIVc_GetPrePaidAmount2(VIp,prepvp,prepvb1p);
+  return;
+end;
+
+global
+updating function Boolean VendStats(record VIVc VIp,Boolean unokf)
+begin
+  record VIVc orgVIr;
+  record CUVc VEr;
+  Boolean res,negf;
+  val exlvat;
+  val pp,prev,bprev,pvatval;
+  val basebal;
+  val vatval;
+  val frrate,torate1,torate2,baserate1,baserate2;
+  val PayVal,payval2;
+  record BaseCurBlock BCb;
+  val PayValinvecur,exlvatinvecur,ppinvecur,basebalinvecur;
+
+  if (VIp.OKFlag==0) then begin goto LVendStats; end;
+  if (VIp.InvType==kInvoiceTypeCredit or VIp.InvType==kInvoiceTypeCreditSpecialSales) then begin negf = true; end;
+  VEr.Code = VIp.VECode;
+  if (ReadFirstMain(VEr,1,true)) then begin
+  end;
+  BlockLoad(BCb);
+//  PayVal = VIp.PayVal - VIp.HoldSum;
+//they say we owe payval to supplier
+  PayVal = VIp.PayVal - VIp.WithHoldingTax;
+  PayValinvecur = PayVal;
+  if (VIp.VATVal==blankval) then begin
+    vatval = VIp.CalcVATVal;
+  end else begin
+    vatval = VIp.VATVal;
+  end;
+  if ((VIp.ExportFlag==1) or (VIp.ExportFlag==2)) then begin
+    exlvat = PayVal;
+  end else begin
+    exlvat = PayVal - vatval;
+  end;  
+  exlvatinvecur = exlvat;
+  frrate = VIp.FrRate;
+  torate1 = VIp.ToRateB1;
+  torate2 = VIp.ToRateB2;
+  baserate1 = VIp.BaseRate1;
+  baserate2 = VIp.BaseRate2;
+  if (VIp.InvType==kInvoiceTypeCredit or VIp.InvType==kInvoiceTypeCreditSpecialSales) then begin        
+    if (VIp.CredInv!=-1) then begin
+      orgVIr.SerNr = VIp.CredInv;
+      if (ReadFirstMain(orgVIr,1,true)) then begin
+        frrate = VIp.FrRate;
+        torate1 = VIp.ToRateB1;
+        torate2 = VIp.ToRateB2;
+        baserate1 = VIp.BaseRate1;
+        baserate2 = VIp.BaseRate2;
+      end;
+    end;
+  end;
+  prev = blankval;
+  bprev = blankval;
+  pvatval = blankval;
+  FindPrepaidBaseAmount(VIp,prev,bprev,pvatval);
+  payval2 = PayVal - prev;
+  basebal = MulRateToBase1(VIp.CurncyCode,payval2,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);
+  basebal = basebal + bprev;
+  if ((blank(VEr.VECurncyCode)) or (VEr.VECurncyCode==BCb.BaseCur1)) then begin
+    exlvat = MulRateToBase1(VIp.CurncyCode,exlvat,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff);  
+    PayVal = PayVal - VIp.WithHoldingTax; 
+    PayVal = MulRateToBase1(VIp.CurncyCode,PayVal,frrate,torate1,torate2,baserate1,baserate2,DefaultCurRoundOff); // This should be correct.
+  end else begin
+//don't we store curncy values here?  
+  end;
+  if (VIp.InvType==kInvoiceTypeEmployee or VIp.InvType==kInvoiceTypeCash or VIp.InvType==kInvoiceTypeCashInvoiceReceiptPRT) then begin
+    VIVc_GetPrePaidAmount(VIp,prev);
+    pp = -PayVal;
+    ppinvecur = -PayValinvecur;
+    basebal = 0;
+    if (prev!=blankval) then begin
+      basebal = prev;
+      pp = pp + prev;
+      ppinvecur = ppinvecur + prev;
+    end;  
+  end;
+  if (unokf) then begin
+    negf = !negf;
+  end;
+  VendStatUp("VIVc",VIp.SerNr,VIp.VECode,"",VIp.TransDate,PayVal,exlvat,pp,basebal,negf);
+  if (nonblank(VIp.CurncyCode)) and (VIp.CurncyCode!=BCb.BaseCur1) then begin
+    VendStatUp("VIVc",VIp.SerNr,VIp.VECode,VIp.CurncyCode,VIp.TransDate,PayValinvecur,exlvatinvecur,blankval,blankval,negf);
+  end;
+  VIrsStats(VIp,unokf);
+  res = true;
+LVendStats:;
+  VendStats = res;
+  return;
+end;
+
+global
+function Integer PlainItemPricing(string prcode,string incode)
+begin
+  record PRITHandleBlock PRITHandleRec;
+  record PRITHVc PRITHr;
+  Integer res;
+  
+  PRITHr.Project = prcode;
+  PRITHr.ItemCode = incode;
+  if (ReadFirstMain(PRITHr,2,true)) then begin
+    res = PRITHr.PlainItemPricing;
+  end else begin
+    BlockLoad(PRITHandleRec);
+    res = PRITHandleRec.PlainItemPricing;
+  end;
+  PlainItemPricing = res;
+  return;
+end;
+
+global
+updating procedure VICreateTBIV(record VIVc VIp,Integer rownr,row VIVc VIrw)
+begin
+  record ProjectBlock PRRec;
+  record TBIVVc TBIVr;
+  record INVc INr;
+  record PRVc PRr;
+  val t,basesum;
+  Integer intype;
+  Date blankd;
+  Integer invseptb,invseppb;
+  val price,reb,priceinprcur;
+  string 10 markup,markupinb1,markupinprcur;
+  string 255 tstr;
+  val costprice,costpriceinb1,costpriceinprcur;
+  val priceinb1;
+  Integer oldstyle,typofcur;  
+
+  BlockLoad(PRRec);
+  INr.Code = VIrw.Item;
+  intype = 1;
+  if (ReadFirstMain(INr,1,true)) then begin
+    markup = INr.Markup;
+    markup = markup & "%";
+    markupinb1 = markup;
+    intype = INr.ItemType;
+  end;
+  TBIVr.oVc = 2;
+  TBIVr.SerNr = VIp.SerNr;
+  TBIVr.Row = rownr;
+  TBIVr.TransDate = VIp.TransDate;
+  TBIVr.PRCode = VIrw.PRCode;
+  GetPRName(TBIVr.PRCode,tstr);
+  TBIVr.PRName = tstr;
+  TBIVr.ArtCode = VIrw.Item;
+  TBIVr.ItemType = GetItemTypeGroup(TBIVr.ArtCode,TBIVr.INGroup);
+  TBIVr.Qty = VIrw.qty;
+  TBIVr.InvQty = VIrw.qty;
+  TBIVr.Invoice = -1;
+  TBIVr.InvDate = blankd;
+  TBIVr.Comment = VIrw.Comment;
+  TBIVr.EMCode = "";
+  PRr.Code = VIrw.PRCode;
+  if (ReadFirstMain(PRr,1,true)) then begin
+  end;
+  TBIVr.Objects = VIrw.Objects;
+  if ((SetInSet(PRr.Objects,TBIVr.Objects)==false) or (blank(TBIVr.Objects))) then begin
+    if (nonblank(TBIVr.Objects) and (nonblank(PRr.Objects))) then begin
+      TBIVr.Objects = TBIVr.Objects & ",";
+    end;
+    TBIVr.Objects = TBIVr.Objects & PRr.Objects;
+  end;
+  if (intype!=0) then begin
+    TBIVr.ItemType = intype;
+  end else begin
+    if (INr.ItemMaterial!=0) then begin
+      TBIVr.ItemType = 5;
+    end else begin
+      TBIVr.ItemType = 0;
+    end;
+  end;
+  GetPRInvSep(VIrw.PRCode,invseptb,invseppb);
+  TBIVr.InvSeparately = invseppb;
+  switch (PlainItemPricing(TBIVr.PRCode,TBIVr.ArtCode)) begin
+    case 0: price = VIrw.Sum/VIrw.qty;
+    case 1: 
+      GetProjectPrice(TBIVr.PRCode,TBIVr.ArtCode,"","","",1,priceinb1,reb,markupinb1,price,markup);    
+  end;
+
+  if (PRRec.UseItemCostPrice!=0) then begin
+    costprice = VIrw.Sum/VIrw.qty;//cur
+  end else begin
+    costprice = INr.InPrice;//base1
+  end;
+  typofcur = TypeOfCurncy(VIp.CurncyCode,oldstyle);
+  if (typofcur!=1) or (nonblank(PRr.CurncyCode)) then begin
+    TBIVr.CurncyCode = VIp.CurncyCode;
+  end;
+
+  if (nonblank(PRr.CurncyCode)) then begin
+    if (VIp.CurncyCode==PRr.CurncyCode) then begin //EUR USD
+      switch (typofcur) begin
+        case 0://Foreign
+          priceinprcur = price;
+          if (nonblank(priceinprcur)) then begin
+            priceinb1 = MulRateToBase1(VIp.CurncyCode,priceinprcur,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+          end else begin
+            Base1ToOther(VIp.CurncyCode,priceinb1,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,priceinprcur,DefaultCurRoundOff);
+          end;
+          if (PRRec.UseItemCostPrice!=0) then begin
+            costpriceinprcur = costprice;
+            costpriceinb1 = MulRateToBase1(VIp.CurncyCode,costprice,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+          end else begin
+            costpriceinprcur = DivRateToBase1(VIp.CurncyCode,costprice,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+            costpriceinb1 = costprice;
+          end;
+        case 1://Base Curncy 1 
+          if (nonblank(price)) then begin      
+            priceinb1 = price;
+          end;
+          costpriceinb1 = costprice;
+        case 2://Base Curncy 2
+          priceinprcur = price;
+          priceinb1 = MulRateToBase1(VIp.CurncyCode,price,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+          if (PRRec.UseItemCostPrice!=0) then begin
+            costpriceinprcur = costprice;
+            costpriceinb1 = MulRateToBase1(VIp.CurncyCode,costprice,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+          end else begin
+            costpriceinprcur = DivRateToBase1(VIp.CurncyCode,costprice,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+            costpriceinb1 = costprice;
+          end;
+        case 3://Blank Currency, old style 
+          priceinb1 = price;
+          costpriceinb1 = costprice;
+      end;
+    end else begin
+      if (nonblank(price)) then begin      
+        priceinb1 = MulRateToBase1(VIp.CurncyCode,price,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+      end;
+      if (PRRec.UseItemCostPrice!=0) then begin
+        costpriceinb1 = MulRateToBase1(VIp.CurncyCode,costprice,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+      end else  begin
+        costpriceinb1 = costprice;
+      end;
+    end;
+  end else begin
+    priceinb1 = MulRateToBase1(VIp.CurncyCode,price,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    if (PRRec.UseItemCostPrice!=0) then begin
+      costpriceinb1 = MulRateToBase1(VIp.CurncyCode,costprice,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff);
+    end else  begin
+      costpriceinb1 = costprice;
+    end;
+  end;
+  markupinprcur = markup; 
+
+  TBIVr.Price = priceinb1;
+  TBIVr.Discount = reb;
+  TBIVr.Markup = markupinb1;
+  if (VIp.InvType==kInvoiceTypeCredit or VIp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    TBIVr.InvQty = -TBIVr.InvQty;
+    TBIVr.Qty = -TBIVr.Qty;
+  end;
+  CalcSum(TBIVr.InvQty,TBIVr.Price,0,TBIVr.Discount,t,0);
+  TBIVr.Sum = t;
+  CalcExtra(TBIVr.Sum,TBIVr.Markup,t);
+  TBIVr.Sum = TBIVr.Sum + t;
+  TBIVr.InvAfter = blankd;
+  TBIVr.CostPrice = costpriceinb1;    
+  t = TBIVr.CostPrice*TBIVr.Qty;
+  TBIVr.GP = TBIVr.Sum - t;  
+  if (nonblank(PRr.CurncyCode)) then begin
+    if (VIp.CurncyCode==PRr.CurncyCode) then begin
+      switch (typofcur) begin
+        case 0://Foreign
+          TBIVr.PriceInCur = priceinprcur;
+          TBIVr.CostPriceInCur = costpriceinprcur;
+          TBIVr.MarkupInCur = markupinprcur;
+          CalcSum(TBIVr.InvQty,TBIVr.PriceInCur,0,TBIVr.Discount,t,0);
+          TBIVr.SumInCur = t;
+          CalcExtra(TBIVr.SumInCur,TBIVr.MarkupInCur,t);
+          TBIVr.SumInCur = TBIVr.SumInCur + t;
+          TBIVr.GPInCur = TBIVr.SumInCur - TBIVr.CostPriceInCur*TBIVr.Qty;
+        case 1://Base Curncy 1 
+          TBIVGetRate(TBIVr);    
+        case 2://Base Curncy 2
+          TBIVr.PriceInCur = priceinprcur;
+          TBIVr.CostPriceInCur = costpriceinprcur;
+          TBIVr.MarkupInCur = markupinprcur;
+          CalcSum(TBIVr.InvQty,TBIVr.PriceInCur,0,TBIVr.Discount,t,0);
+          TBIVr.SumInCur = t;
+          CalcExtra(TBIVr.SumInCur,TBIVr.MarkupInCur,t);
+          TBIVr.SumInCur = TBIVr.SumInCur + t;
+          TBIVr.GPInCur = TBIVr.SumInCur - TBIVr.CostPriceInCur*TBIVr.Qty;
+        case 3://Blank Currency, old style 
+          CalcInCurtoTBIV(TBIVr);
+      end;
+    end else begin
+      CalcInCurtoTBIV(TBIVr);
+    end;
+  end else begin
+    CalcInCurtoTBIV(TBIVr);
+  end;  
+  
+  if (RecordStore(TBIVr,false)) then begin end;
+  return;
+end;
+
+updating procedure UpdateSupplierRetentions(string vecode,row VIVc VIrw,Boolean negf)
+begin
+  record VEPRRetentionVc VEPRRr;
+  record VEPRRetentionVc oldVEPRRr;
+  Boolean updf;
+  
+  VEPRRr.VECode = vecode;
+  VEPRRr.PRCode = VIrw.PRCode;
+  if (ReadFirstMain(VEPRRr,2,true)) then begin
+    RecordCopy(oldVEPRRr,VEPRRr);
+    updf = true;
+  end;
+  if (negf) then begin
+    if (VIrw.Sum>=0) then begin
+      VEPRRr.RetInvd = VEPRRr.RetInvd - VIrw.Sum;
+    end else begin
+      VEPRRr.RetSum = VEPRRr.RetSum + VIrw.Sum;
+    end;
+  end else begin
+    if (VIrw.Sum>=0) then begin
+      VEPRRr.RetInvd = VEPRRr.RetInvd + VIrw.Sum;
+    end else begin
+      VEPRRr.RetSum = VEPRRr.RetSum - VIrw.Sum;
+    end;
+  end;
+  if (VEPRRr.RetSum==0) then begin VEPRRr.RetSum = blankval; end;
+  if (VEPRRr.RetInvd==0) then begin VEPRRr.RetInvd = blankval; end;
+  if (updf) then begin
+    RecordUpdate(oldVEPRRr,VEPRRr,true);
+  end else begin
+    VEPRRr.VECode = vecode;
+    VEPRRr.PRCode = VIrw.PRCode;
+    RecordStore(VEPRRr,false);
+  end;
+  return;
+end;
+
+updating function Boolean VIDeleteTBIV(record VIVc VIp,Integer rownr,row VIVc VIrw)
+begin
+  record TBIVVc TBIVr;
+  Boolean res;
+
+  TBIVr.oVc = 2;
+  TBIVr.SerNr = VIp.SerNr;
+  TBIVr.Row = rownr;
+  TBIVr.ArtCode = VIrw.Item;
+  TBIVr.PRCode = VIrw.PRCode;
+  TBIVr.EMCode = "";
+  if (ReadFirstMain(TBIVr,6,true)) then begin
+    if (TBIVr.Invoice==-1) then begin
+      res = true;
+      RecordDelete(TBIVr);
+    end;
+  end;
+  VIDeleteTBIV = res;
+  return;
+end;
+
+global
+updating procedure VIUpdatePR(record VIVc VIp,record VIVc VI2p,Boolean vi2f)
+begin
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  Boolean newtbivf;
+
+  newtbivf = true;
+  if (VIp.OKFlag==0) then begin goto LVIUpdatePR; end;
+  if (vi2f) then begin
+    if (VI2p.SerNr!=-1) then begin
+      rwcnt = MatRowCnt(VI2p);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(VI2p,i,VIrw);
+        switch (VIrw.stp) begin
+          case kInvoiceRowTypeNormal:
+            if (nonblank(VIrw.PRCode)) then begin
+              newtbivf = VIDeleteTBIV(VI2p,i,VIrw);
+            end;            
+          case kInvoiceRowTypeRetention:
+            if (nonblank(VIrw.PRCode)) then begin
+              UpdateSupplierRetentions(VIp.VECode,VIrw,true);
+            end;
+        end;
+      end;
+    end;
+  end;
+  if (newtbivf) then begin
+    rwcnt = MatRowCnt(VIp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VIp,i,VIrw);
+      switch (VIrw.stp) begin
+        case kInvoiceRowTypeNormal:
+          if (nonblank(VIrw.PRCode)) then begin
+            VICreateTBIV(VIp,i,VIrw);
+          end;
+        case kInvoiceRowTypeRetention:
+          if (nonblank(VIrw.PRCode)) then begin
+            UpdateSupplierRetentions(VIp.VECode,VIrw,false);
+          end;
+      end;
+    end;
+  end;
+LVIUpdatePR:;
+  return;
+end;
+
+global
+updating procedure VIUpdatePOCO(record VIVc VIp,record VIVc VI2p,Boolean vif,Boolean vi2f)
+begin
+  record POCOVc POCOr;
+  row POCOVc POCOrw;
+  Integer i,rwcnt;
+  
+  if (vif) then begin
+    POCOr.SerNr = VIp.POCOSerNr;
+    if (ReadFirstMain(POCOr,1,true)) then begin
+      rwcnt = MatRowCnt(POCOr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(POCOr,i,POCOrw);
+        if (POCOrw.VINr==-1) then begin
+          POCOrw.VINr = VIp.SerNr;
+          MatRowPut(POCOr,i,POCOrw);
+        end;
+      end;
+      if (RecordStore(POCOr,true)) then begin end;
+    end;
+  end;  
+  if (vi2f) then begin
+    POCOr.SerNr = VI2p.POCOSerNr;
+    if (ReadFirstMain(POCOr,1,true)) then begin
+      rwcnt = MatRowCnt(POCOr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(POCOr,i,POCOrw);
+        if (POCOrw.VINr==VI2p.SerNr) then begin
+          POCOrw.VINr = -1;
+          MatRowPut(POCOr,i,POCOrw);
+        end;
+      end;
+      if (RecordStore(POCOr,true)) then begin end;
+    end;
+  end;
+  return;
+end;
+
+procedure InvDownPaySum(record VIVc VIp,var val possump,var val negsump,Boolean addvat,Boolean mulrate)
+BEGIN
+  Integer i,rwcnt;
+  row VIVc VIrw;
+  val pt,nt,prt,nrt;
+  record PDVc PDr;
+  val vatv,t1;
+  roundmode roundlines,rndtotal,rndvat;
+    
+  possump = blankval;
+  negsump = blankval;
+  rwcnt = MatRowCnt(VIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    if (VIrw.stp==kInvoiceRowTypeDownpayment) then begin
+      if (VIrw.Sum>=0) then begin
+        if (mulrate) then begin
+          pt = pt + Round(MulRateToBase1(VIp.CurncyCode,VIrw.Sum,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff),SetRoundModeD(0));
+        end else begin
+          pt = pt + VIrw.Sum;
+        end;
+        if (addvat) then begin
+          if ((VIp.ExportFlag==0) or (VIp.ExportFlag==3) or (VIp.ExportFlag==4)) then begin
+            if (false) then begin//vat as in OnSaveInvoice
+              MulVATIV(VIrw.VATCode,VIrw.Sum,vatv,t1,1,VIp.NoTAXonVAT);
+              pt = pt + vatv + t1;
+            end;
+          end;
+        end;
+      end else begin
+        if (mulrate) then begin
+          nt = nt + Round(MulRateToBase1(VIp.CurncyCode,VIrw.Sum,VIp.FrRate,VIp.ToRateB1,VIp.ToRateB2,VIp.BaseRate1,VIp.BaseRate2,DefaultCurRoundOff),SetRoundModeD(0));
+        end else begin
+          nt = nt + VIrw.Sum;
+        end;
+        if (addvat) then begin
+          if ((VIp.ExportFlag==0) or (VIp.ExportFlag==3) or (VIp.ExportFlag==4)) then begin
+            if (false) then begin//vat as in OnSaveInvoice
+              MulVATIV(VIrw.VATCode,VIrw.Sum,vatv,t1,1,VIp.NoTAXonVAT);
+              nt = nt + vatv + t1;
+            end;
+          end;
+        end;
+      end;
+    end;    
+  end;
+  GetCurncyRoundoff(VIp.CurncyCode,VIp.PayDeal,"VIVc",rndtotal,roundlines,rndvat);
+  pt = Round(pt,rndtotal); 
+  nt = Round(nt,rndtotal);   
+  if (VIp.InvType==kInvoiceTypeDownpayment) then begin
+    PDr.Code = VIp.PayDeal; 
+    if (ReadFirstMain(PDr,1,true)) then begin
+      if (PDr.PDType==kInvoiceTypeCredit) then begin 
+        pt = -pt;
+        nt = -nt;
+      end;
+    end;
+  end;
+  if (VIp.InvType==kInvoiceTypeCredit or VIp.InvType==kInvoiceTypeCreditSpecialSales) then begin
+    pt = -pt;
+    nt = -nt;
+  end;
+  possump = possump + pt;
+  negsump = negsump + nt;
+  return;
+end;
+
+global
+updating function Boolean UpdatePOFromVI(record VIVc VIp,record VIVc VI2p,Boolean vif,Boolean vi2f,Boolean unokf)
+begin
+  record VITBlock VITb;
+  record POVc oldPOr;
+  record POVc POr;
+  record PIVc PIr;
+  row VIVc VIrw;
+  row POVc POrw;
+  Integer orw,orcnt;
+  Integer i,rwcnt;
+  Boolean forceinvd,testf;
+  val rem,t;
+  Boolean addf,updf,notconnectedtoporowf;
+  val downpayval,downpayredcd;
+  
+  if (vi2f) then begin
+  if (VI2p.POSerNr>0) then begin
+    POr.SerNr = VI2p.POSerNr;
+    updf = false;
+    if (ReadFirstMain(POr,1,true)) then begin
+      RecordCopy(oldPOr,POr);
+      orcnt = MatRowCnt(POr);
+      addf = VI2p.InvType==kInvoiceTypeCredit or VI2p.InvType==kInvoiceTypeCreditSpecialSales;
+      if (unokf) then begin
+        addf = !addf;
+      end;
+      rwcnt = MatRowCnt(VI2p);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(VI2p,i,VIrw);
+        if (VIrw.OrdRow==-2 and VIrw.stp==kInvoiceRowTypeNormal) then begin
+          notconnectedtoporowf = true;
+        end;
+        if (VIrw.OrdRow>-1 and VIrw.stp==kInvoiceRowTypeNormal) then begin
+          orw = VIrw.OrdRow;
+          if (orw<orcnt) then begin
+            MatRowGet(POr,orw,POrw);
+//            if (VI2p.OKFlag!=0) then begin
+              testf = GetFirstPurchaseItem2(POrw.ArtCode,POr.Location,POr.VECode,PIr);            
+              t = VIrw.qty;
+              if (addf) then begin
+                POrw.Invd = POrw.Invd + t;
+              end else begin
+                POrw.Invd = POrw.Invd - t;
+              end;
+//            end;
+            if (POrw.Invd==0) then begin
+              POrw.Invd = blankval;
+            end;
+            MatRowPut(POr,orw,POrw);
+            updf = true;
+          end;
+        end;
+      end;
+      if (notconnectedtoporowf) then begin
+        rwcnt = MatRowCnt(POr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(POr,i,POrw);
+          if (addf) then begin
+            POrw.Invd = POrw.Quant;
+          end else begin
+            POrw.Invd = blankval;
+          end;
+          MatRowPut(POr,i,POrw);
+          updf = true;
+        end;
+      end;
+      InvDownPaySum(VI2p,downpayval,downpayredcd,true,false);
+      if (downpayval!=0 or downpayredcd!=0) then begin
+        POr.DownPaySent = POr.DownPaySent - downpayval;
+        POr.DownPayRedcd = POr.DownPayRedcd + downpayredcd;
+        updf = true;
+      end;
+      if (updf) then begin
+        SetPOFlags(POr,forceinvd);
+        if (RecordUpdate(oldPOr,POr,true)==0) then begin
+        end;
+      end;
+    end;
+  end;
+  end;
+  if (vif) then begin
+  if (VIp.POSerNr>0) then begin
+    updf = false;
+    POr.SerNr = VIp.POSerNr;
+    if (ReadFirstMain(POr,1,true)) then begin
+      RecordCopy(oldPOr,POr);
+      orcnt = MatRowCnt(POr);
+      addf = VIp.InvType!=kInvoiceTypeCredit and VIp.InvType!=kInvoiceTypeCreditSpecialSales;
+      if (unokf) then begin
+        addf = !addf;
+      end;
+      rwcnt = MatRowCnt(VIp);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(VIp,i,VIrw);
+        if (VIrw.OrdRow==-2 and VIrw.stp==kInvoiceRowTypeNormal) then begin
+          notconnectedtoporowf = true;
+        end;
+        if (VIrw.OrdRow>-1 and VIrw.stp==kInvoiceRowTypeNormal) then begin
+          orw = VIrw.OrdRow;
+          if (orw<orcnt) then begin
+            MatRowGet(POr,orw,POrw);
+//            if (VIp.OKFlag!=0) then begin//not good, one could create many Invoice from the sam ePO
+              testf = GetFirstPurchaseItem2(POrw.ArtCode,POr.Location,POr.VECode,PIr);            
+              t = VIrw.qty;
+              if (addf) then begin
+                POrw.Invd = POrw.Invd + t;
+              end else begin
+                POrw.Invd = POrw.Invd - t;
+              end;
+//            end;
+            if (POrw.Invd==0) then begin
+              POrw.Invd = blankval;
+            end;
+            if ((VIrw.qty==0) and (blank(VIrw.Item))) then begin
+              forceinvd = true;
+            end;
+            MatRowPut(POr,orw,POrw);
+            updf = true;
+          end;
+        end;
+      end;
+      if (notconnectedtoporowf) then begin
+        rwcnt = MatRowCnt(POr);
+        for (i=0;i<rwcnt;i=i+1) begin
+          MatRowGet(POr,i,POrw);
+          if (addf) then begin
+            POrw.Invd = POrw.Quant;
+          end else begin
+            POrw.Invd = blankval;
+          end;
+          MatRowPut(POr,i,POrw);
+          updf = true;
+        end;
+      end;
+      InvDownPaySum(VIp,downpayval,downpayredcd,true,false);
+      if (downpayval!=0 or downpayredcd!=0) then begin
+        POr.DownPaySent = POr.DownPaySent + downpayval;
+        POr.DownPayRedcd = POr.DownPayRedcd - downpayredcd;
+        updf = true;
+      end;
+      if (updf) then begin
+        SetPOFlags(POr,forceinvd);
+        if (RecordUpdate(oldPOr,POr,false)==0) then begin
+        end;
+      end;
+    end;
+  end;
+  end;
+  if (unokf==false) then begin    
+    BlockLoad(VITb);
+    switch (VITb.TransferItems) begin        
+      case 1:
+      case 0:
+        if (vif) and (vi2f) then begin
+          if (MatRowCnt(VIp)>0) then begin
+            MatRowGet(VIp,0,VIrw);
+            if (VIp.POSerNr>0) then begin
+              POr.SerNr = VIp.POSerNr;
+              if (ReadFirstMain(POr,1,true)) then begin
+                RecordCopy(oldPOr,POr);
+                orcnt = MatRowCnt(POr);
+                rem = VIrw.qty;          
+                rwcnt = MatRowCnt(POr);
+                for (i=0;i<rwcnt;i=i+1) begin
+                  MatRowGet(POr,i,POrw);
+                  if (rem<=0 or VIrw.stp!=kInvoiceRowTypeNormal) then begin goto L12UpdatePOFromVI; end;
+                  if (POr.InvBeforePU==0) then begin
+                    if (POrw.Shipd2>0) then begin
+                      t = POrw.Shipd2 - POrw.Invd;
+                    end else begin
+                      t = POrw.Quant - POrw.Invd;
+                    end;
+                    if (rem<t) then begin
+                      POrw.Invd = rem;
+                    end else begin
+                      POrw.Invd = POrw.Invd + t;
+                    end;
+                    rem = rem - t;
+                  end else begin
+                    t = POrw.Quant - POrw.Invd;
+                    if (rem<t) then begin
+                      POrw.Invd = rem;
+                    end else begin
+                      POrw.Invd = POrw.Invd + t;
+                    end;
+                    rem = rem - t;
+                  end;
+                  MatRowPut(POr,i,POrw);            
+                end;  
+                SetPOFlags(POr,forceinvd);
+                if (RecordUpdate(oldPOr,POr,false)==0) then begin
+                end;
+              end;
+            end;
+          end;
+        end;
+L12UpdatePOFromVI:;          
+    end;  
+  end;
+  return;
+end;
+
+updating procedure UpdatePOWithVIRows(record VIVc VIp,row VIVc VIrw,Boolean addf)
+begin
+  record PUVc PUr;
+  row PUVc PUrw;
+  record POVc oldPOr;
+  record POVc POr;
+  row POVc POrw;
+  
+  PUr.SerNr = VIrw.PUNr;
+  if (ReadFirstMain(PUr,1,true)) then begin
+    if (VIrw.PURow<MatRowCnt(PUr)) then begin
+      MatRowGet(PUr,VIrw.PURow,PUrw);
+      POr.SerNr = PUrw.PONr;
+      if (ReadFirstMain(POr,1,true)) then begin
+        RecordCopy(oldPOr,POr);
+        if (PUrw.OrdRow<MatRowCnt(POr)) then begin          
+          MatRowGet(POr,PUrw.OrdRow,POrw);
+          if (addf) then begin
+            POrw.Invd = POrw.Invd + VIrw.qty;
+          end else begin
+            if (POrw.Invd>0) then begin
+              POrw.Invd = POrw.Invd - VIrw.qty;
+            end;
+          end;
+          MatRowPut(POr,PUrw.OrdRow,POrw);
+          if (RecordUpdate(oldPOr,POr,true)==0) then begin
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure UpdatePOFromVIRows(record VIVc VIp,Boolean vif,record VIVc VI2p,Boolean vi2f,Boolean unokf)
+begin
+  Integer i,rwcnt;
+  row VIVc VIrw;
+  
+  if (vif) then begin
+    if (VIp.POSerNr>0) then begin goto LUpdatePOFromVIRows; end;
+  end;
+  if ((vif==false) and (vi2f)) then begin
+    if (VI2p.POSerNr>0) then begin goto LUpdatePOFromVIRows; end;
+  end;
+  if (vi2f) then begin
+    rwcnt = MatRowCnt(VI2p);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VI2p,i,VIrw);
+      if ((VIrw.PUNr>0) and (VIrw.PURow>=0)) then begin//OrdRow is PU Row now
+        UpdatePOWithVIRows(VI2p,VIrw,false);
+      end;
+    end;
+  end;
+  if (vif) then begin
+    rwcnt = MatRowCnt(VIp);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VIp,i,VIrw);
+      if ((VIrw.PUNr>0) and (VIrw.PURow>=0)) then begin
+        UpdatePOWithVIRows(VIp,VIrw,true);
+      end;
+    end;
+  end;
+LUpdatePOFromVIRows:;  
+  return;
+end;
+
+function Boolean IsConsigmentItem(LongInt PUNr,LongInt PURow)
+begin
+  Boolean res;
+  record PUVc PUr;
+  row PUVc PUrw;
+  
+  res = false;
+  if (PUNr<=0) or (PURow<0) then begin
+    goto LIsConsigmentItem;
+  end;
+  PUr.SerNr = PUNr;
+  if (ReadFirstMain(PUr,1,true)) then begin
+    MatRowGet(PUr,PURow,PUrw);
+    if (PUrw.StockType==kStockTypeConsigment) then begin
+      res = true;
+    end;
+  end;
+LIsConsigmentItem:;  
+  IsConsigmentItem = res;
+  return;
+end;
+
+global
+updating procedure UpdateBatchTextFromVI(record VIVc VIr,Integer status) 
+begin
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  record SerBalVc SerBalr;
+  record BatchTextVc btr;
+  record BatchTextVc oldbtr;
+  Boolean testf;
+  
+  rwcnt = MatRowCnt(VIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIr,i,VIrw);
+    if (VIrw.stp==1) then begin
+      if (nonblank(VIrw.SerialNr)) then begin
+        SerBalr.Item = VIrw.Item;
+        SerBalr.Serial = VIrw.SerialNr;  
+        if (ReadFirstKey("ItemSerial",SerBalr,2,true)) then begin
+          btr.SerialNr = SerBalr.Serial;
+          btr.ArtCode = SerBalr.Item;
+          if (ReadFirstMain(btr,2,true)) then begin
+            testf = true;
+            if (btr.ConsigStock==status) then begin
+              testf = false;
+            end;
+            if (IsConsigmentItem(VIrw.PUNr,VIrw.PURow)==false) then begin
+              testf = false;
+            end;
+            if (testf) then begin
+              RecordCopy(oldbtr,btr);
+              btr.ConsigStock = status;
+              if (RecordUpdate(oldbtr,btr,true)) then begin end;
+            end;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;

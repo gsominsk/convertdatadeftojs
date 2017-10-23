@@ -1,0 +1,102 @@
+external procedure CheckFlush(var Integer,Integer);
+external updating procedure GenResInvMn(var record RcVc);
+
+global
+updating procedure PPInvMn(var record RcVc RepSpec)
+begin
+  record CUVc CUr;
+  record JobVc Jobr;
+  Boolean found,testf;
+  record HotelBlock HotelRec;  
+  string 20 frcust,tocust;
+
+  
+  frcust = FirstInRange(RepSpec.f2,20);
+  tocust = LastInRange(RepSpec.f2,20);
+  
+  BlockLoad(HotelRec);
+  found = true;
+  Jobr.TransDate = RepSpec.sStartDate;
+  while (LoopKey("TransDate",Jobr,1,found)) begin
+    if (Jobr.TransDate>RepSpec.sEndDate) then begin
+      found = false;
+    end;
+    if (found) then begin      
+      testf = true;
+/*
+      CUr.Code = Jobr.CUCode;
+      if (ReadFirstMain(CUr,1,true)==false) then begin
+        testf = false;
+      end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (Jobr.CUCode>tocust) then begin
+          found = false;
+        end;
+      end;
+*/
+      if ((nonblank(HotelRec.CustCat1)) and (nonblank(HotelRec.CustCat2))) then begin
+        if ((CUr.CustCat!=HotelRec.CustCat1) and (CUr.CustCat!=HotelRec.CustCat2)) then begin
+          testf = false;
+        end;
+      end;
+      if (testf) then begin
+        RepSpec.long1 = Jobr.SerNr;
+        RepSpec.UsedOnly = 1;
+        RepSpec.f1 = RepSpec.f2;       
+        GenResInvMn(RepSpec);
+      end;  
+    end;
+  end;
+  return;
+end;
+
+global
+updating procedure RecJobInvMn(record RcVc RepSpec)
+begin
+  record IVVc IVr;
+  record JobVc Jobr;
+  record ShopBaskVc ShopBaskr;
+  record ShopBaskVc oldShopBaskr;
+  Boolean found;
+  Boolean Accs,testf;
+  LongInt frser,toser;
+  Integer error;
+  Integer flushcnt;
+
+  found = true;
+  frser = FirstInRange(RepSpec.f1,20);
+  toser = LastInRange(RepSpec.f1,20);
+  Jobr.SerNr = frser;
+  while (LoopMain(Jobr,1,found)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (Jobr.SerNr>toser) then begin
+        found = false;
+      end;
+    end;
+    if (found) then begin      
+      Accs = true;
+LRecJobInvMn:;
+      ResetLoop(ShopBaskr);
+      ShopBaskr.OwnerSerNr = Jobr.SerNr;
+      ShopBaskr.DestinationNr = 0; // Not read the Not invoiced
+      while (LoopKey("OwnerSerNr",ShopBaskr,1,Accs)) begin
+        if (ShopBaskr.OwnerSerNr!=Jobr.SerNr) then begin Accs = false; end;
+        testf = true;
+        if (ShopBaskr.DestinationNr==-1) then  begin testf = false; end;
+        if (Accs==false) then begin testf = false; end;
+        if (testf) then begin
+          IVr.SerNr = ShopBaskr.DestinationNr;
+          if (ReadFirstMain(IVr,1,true)==false) then begin
+            RecordCopy(oldShopBaskr,ShopBaskr);
+            ShopBaskr.DestinationNr = -1;
+            error = RecordUpdate(oldShopBaskr,ShopBaskr,false);
+            CheckFlush(flushcnt,10);
+            goto LRecJobInvMn;
+          end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+

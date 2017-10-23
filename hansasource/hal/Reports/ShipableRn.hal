@@ -1,0 +1,1029 @@
+external function boolean CheckItemGroupClassification(string,string,string);
+external procedure HTItemClass(string,var string);
+external function Boolean HasMultiCurrency();
+external procedure HTOnHoldCustomers(Integer,var string);
+external procedure FindStockValueInclStockReserv(LongInt,string,string,string,var record ItemStatusVc,var val);
+external function Boolean TestArtCodeMatch(string,string);
+external procedure HTOKF(Integer,Integer, var string);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external function val MulRateToBase1(var string,val,val,val,val,val,val,roundmode);
+external procedure GetStockValue(string,string,var record ItemStatusVc);
+external procedure BeginCurncyTotals(var Integer);
+external procedure AddCurncyTotals(var array string,var array val,var Integer,string,val);
+external procedure PrintCurncyTotals(array string,array val,array val,array val,Integer,Integer,Integer,Integer,Integer,Boolean,Integer);
+external procedure FindSalesExVat(record TaxMatrixVc,string, val,Integer,Integer,var val);
+external procedure HTOrder(LongInt,LongInt,var string);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external procedure HTOrdStatus(integer, integer, integer, integer,var string);
+external procedure HTArtSel(string,string, var string);
+external procedure HTSaleMan(string, var string); 
+external procedure HTObj(string,var string);
+external function Boolean CheckPlanShipRows(string,record ORVc);
+external function Boolean CheckPlanShip(string,string);
+
+function Boolean OrdRowMatchFlags(row ORVc ORrwp,var val t,Integer notship,Integer partship,Integer notinvd)
+BEGIN
+  Boolean testf;
+  Integer locnotship,locpartship,locnotinvd;
+  val shpd;
+  
+  testf = false;
+  if (ORrwp.Shipd2<>0) then begin
+    shpd = ORrwp.Shipd2;
+  end else begin
+    shpd = ORrwp.Shipd1;
+  end;  
+  locnotship = 0;
+  locpartship = 0;
+  locnotinvd = 0;
+  t = shpd - ORrwp.Invd;
+  if (t<>0) then begin locnotinvd = 1; end;
+  if (shpd<>0) then begin locpartship = 1; end;
+  if (shpd<>0) then begin locnotship = 1; end;
+  if (locnotship==notship) then begin testf = true; end;
+  if (locpartship==partship) then begin testf = true; end;
+  if (locnotinvd==notinvd) then begin testf = true; end;
+  OrdRowMatchFlags = testf;
+  return;
+END;
+
+global
+procedure RepStock(record ORVc ORp,Boolean adress,Boolean infoperrow,string frgr,string togr,var val tot,Boolean gp,record RcVc RepSpec)
+BEGIN
+  Integer i,rwcnt;
+  row ORVc ORrw;
+  val qty,qty2,totgp,valu;
+  val rowv;
+  Boolean testf;
+  record INVc INr;
+  Integer onlygr;
+  record GeneralOptionBlock GenOptRec;
+  record ItemStatusVc ISr;
+  Boolean firstf;
+
+  firstf = true;
+  BlockLoad(GenOptRec);
+  onlygr = RepSpec.Comparison;
+  rwcnt = MatRowCnt(ORp);  
+  tot = 0;
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ORp,i,ORrw);
+    if (ORrw.stp==1) then begin
+        testf = true;
+        if (infoperrow) then begin
+          testf = OrdRowMatchFlags(ORrw,valu,RepSpec.flags[2],RepSpec.flags[3],RepSpec.flags[4]);
+        end;
+        qty = ORrw.Quant;
+        if (testf) then begin
+          INr.Code = ORrw.ArtCode;
+          if (ReadFirstMain(INr,1,true)) then begin end;
+          if (INr.ItemType==1) then begin
+            GetStockValue(ORrw.ArtCode,ORp.Location,ISr);
+            if (ISr.Instock<=0) then begin testf = false; end;
+            qty = ISr.Instock;
+          end;          
+        end;
+        /*
+        if (testf) then begin
+// This is WRONG... The reports stops working
+//so what's wrong here? 
+//          if (((nonblank(frgr)) and (onlygr==1)) or (RepSpec.repname=="ShipableRn"))  then begin//JJ
+          if ((nonblank(frgr)) and (onlygr==1))  then begin
+            testf = false;
+            INr.Code = ORrw.ArtCode;
+//            if (ReadFirstMain(INr,1,true)) then begin
+            if (true) then begin
+              if (INr.Group>=frgr) then begin
+                if (INr.Group<=togr) then begin
+                  testf = true;
+                end;
+              end;    
+            end;  
+          end;
+        end;
+        */
+        if (blank(ORrw.ArtCode)) then begin testf = false; end;
+        if (RepSpec.repname=="ShipableRn") then begin
+          if (RepSpec.OnlyUnprntd==0) then begin
+            if ((ORrw.Quant - ORrw.Shipd1)==0)  then begin testf = false; end;
+          end else begin
+            if ((ORrw.Quant - ORrw.Shipd2)==0)  then begin testf = false; end;
+          end;
+          if (ORrw.Quant<ORrw.Shipd1) then begin testf = false; end;          
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (ORrw.ArtCode!=RepSpec.LastAcc) then begin testf = false; end;
+          end;  
+          if (testf) then begin
+            if (CheckItemGroupClassification(ORrw.ArtCode,RepSpec.f3,RepSpec.f8)==false) then begin 
+              testf = false;
+            end;
+          end;
+          if (ORrw.rowGP<=0) then begin testf = false; end;//instock
+          if (nonblank(RepSpec.Stext)) then begin
+            if (nonblank(ORrw.PlanShipRow)) then begin
+              if (CheckPlanShip(RepSpec.Stext,ORrw.PlanShipRow)==false) then begin 
+                testf = false;
+              end;
+            end else begin
+              if (nonblank(ORp.PlanShip)) then begin
+                if (CheckPlanShip(RepSpec.Stext,ORp.PlanShip)==false) then begin 
+                  testf = false;
+                end;
+              end;
+            end;
+          end;  
+        end;
+        if (testf) then begin
+          if (firstf) then begin
+            Gray_Divider(0,1);
+            StartFormat(15);
+            OutLongInt(0,"DblORVc",ORp.SerNr,false);
+            if (RepSpec.ArtMode==3) then begin
+              OutDate(100,0,ORp.OrdDate,false);
+              if (HasMultiCurrency) then begin
+                OutString(160,0,ORp.CurncyCode,false);
+              end;
+              OutString(220,0,ORp.Addr0,false);
+            end else begin
+              OutDate(130,0,ORp.OrdDate,false);
+              OutString(220,0,ORp.PayDeal,false);
+            end;
+            OutString(480,0,ORp.PlanShip,true);
+            EndFormat;
+            if (adress) then begin
+              StartFormat(15);
+              OutString(50,0,ORp.CustCode,false);
+              OutString(200,0,ORp.Addr0,false);
+              EndFormat;
+              StartFormat(15);
+              OutString(50,0,ORp.CustCat,false);
+              OutString(200,0,ORp.Addr1,false);
+              StartFormat(15);
+              EndFormat;
+              StartFormat(15);
+              OutString(50,0,ORp.OurContact,false);
+              OutString(200,0,ORp.Addr2,false);
+              EndFormat;
+              StartFormat(15);
+              OutString(200,0,ORp.Addr3,false);
+              EndFormat;
+              StartFormat(15);
+              OutString(200,0,ORp.CustContact,false); 
+              if (HasMultiCurrency) then begin
+                OutString(480,0,ORp.CurncyCode,true);
+              end;
+              EndFormat;
+              StartFormat(15);
+              OutString(200,0,ORp.Phone,false); 
+              EndFormat;
+              StartFormat(15);
+              OutString(200,0,ORp.Fax,false);
+              EndFormat;
+            end;
+            firstf = false;
+          end;
+          if (RepSpec.repname=="ShipableRn") then begin
+           // qty = qty - ORrw.Shipd2; //whats this
+            qty2 = ORrw.Quant - ORrw.Shipd2;
+          end else begin
+            qty2 = ORrw.Quant - ORrw.Invd;
+          end;
+          CalcSum(qty2,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,rowv,GenOptRec.UseDiscount);
+          StartFormat(15);
+          OutString(15,0,ORrw.ArtCode,false);
+          OutVal(85,0,qty2,M4UVal,true);
+          OutString(90,0,ORrw.PlanShipRow,false);
+          OutString(160,0,ORrw.Spec,false);
+          OutVal(360,0,ORrw.Price,M423Val,true);
+          OutVal(390,0,ORrw.vRebate,M41Val,true);
+          if (gp) then begin
+            OutVal(420,0,ORrw.rowGP,M41Val,true);
+          end;  
+          OutVal(480,0,rowv,M4Val,true);
+          EndFormat;
+          tot = tot + rowv;
+          totgp = totgp + ORrw.rowGP;
+        end;
+    end;
+  end;
+  if (RepSpec.ArtMode<>3) then begin
+    if (tot!=0) then begin
+      Gray_Divider(300,480);
+      StartFormat(15);
+      if (gp) then begin
+        OutVal(400,0,totgp,M4Val,true);
+      end;  
+      OutVal(480,0,tot,M4Val,true);
+      EndFormat;
+    end;
+  end;
+  RETURN;
+END;
+
+function Boolean ShipableOrder(record ORVc ORp,integer allow_part_delivery, string item_code, Integer UpdateAvailable)
+BEGIN
+  Boolean res,testf;
+  val remains,t,stockreservq;
+  row ORVc ORrw;
+  Integer i,rwcnt;
+  record ItemStatusVc ISr;
+  record INVc INr;
+  Boolean partpossible;
+  Boolean fullypossible;
+  string 255 location;
+
+  res = true;
+  partpossible = false;
+  fullypossible = true;
+  rwcnt = MatRowCnt(ORp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ORp,i,ORrw);
+    ORrw.rowGP = 0;
+    if (ORrw.stp==1) then begin
+      testf = true;
+/*
+      if (nonblank(RepSpec.LastAcc)) then begin
+        if (ORrw.ArtCode!=RepSpec.LastAcc) then begin
+          testf = false;
+        end;      
+      end;      
+*/
+      if ((nonblank(ORrw.ArtCode)) and testf) then begin
+        INr.Code = ORrw.ArtCode;
+        if (ReadFirstItem(ORrw.ArtCode,INr,true,false)) then begin
+
+
+          if ((INr.ItemType==1) or (INr.ItemType==2)) then begin
+//            GetStockValue(ORrw.ArtCode,ORp.Location,ISr);
+            location = ORrw.Location;
+            if (blank(location)) then begin
+              location = ORp.Location;
+            end;
+            if (INr.ItemType==2) then begin
+              GetStockValue(ORrw.ArtCode,ORp.Location,ISr);
+            end else begin
+              FindStockValueInclStockReserv(ORp.SerNr,ORrw.ArtCode,ORrw.SerialNr,location,ISr,stockreservq);
+            end;
+
+            if (UpdateAvailable==1) then begin
+              t = ISr.Instock - ISr.InShipment;
+            end else begin
+              t = ISr.Instock;            
+            end;            
+            t = t - stockreservq;
+            remains = ORrw.Quant - ORrw.Shipd1;
+            // do we have anything left to deliver on this order line?
+            if (remains > 0) then begin
+              // do we have anything in stock?
+              if (t>0) then begin
+                ORrw.rowGP = ISr.Instock;
+                if (remains>t) then begin
+                  // this order line can be partly delivered but not fully
+                  fullypossible = false;
+                  partpossible = true;
+/*
+                  if (RepSpec.OnlyUnprntd!=0) then begin
+                    MatRowPut(ORp,i,ORrw);
+                    goto L22;
+                  end;
+*/
+                end else begin  
+                  // this order line can be fully delivered               
+                  partpossible = true;
+                end;
+              end else begin
+                // this order line has a stock value that is
+                // less or equal to zero and items left
+                // to deliver, so it cannot be fully delivered
+                fullypossible = false;                          
+/*
+                if (remains<>0) and (t!=0) then begin                
+                  fullypossible = true;
+                  partpossible = true;
+                  MatRowPut(ORp,i,ORrw);
+                  goto L22;
+                end;                                
+*/
+              end;
+            end else begin
+//              fullypossible = false; if nothing remains how can this be false ? 
+//              partpossible = false;
+            end;
+          end;
+        end;
+      end;
+    end;
+    MatRowPut(ORp,i,ORrw);
+  end;
+L22:;  
+  if (allow_part_delivery==0) then begin
+    res = fullypossible;
+  end else begin
+    res = partpossible;
+  end;  
+  ShipableOrder = res;
+  RETURN;
+END;
+
+function
+Boolean OrdRowMatchFlags(row ORVc ORrwp,var val t,Integer notship,Integer partship,Integer notinvd)
+BEGIN
+  Boolean testf;
+  Integer locnotship,locpartship,locnotinvd;
+  val shpd;
+  
+  testf = false;
+  if (ORrwp.Shipd2<>0) then begin
+    shpd = ORrwp.Shipd2;
+  end else begin
+    shpd = ORrwp.Shipd1;
+  end;  
+  locnotship = 0;
+  locpartship = 0;
+  locnotinvd = 0;
+  t = shpd - ORrwp.Invd;
+  if (t<>0) then begin locnotinvd = 1; end;
+  if (shpd<>0) then begin locpartship = 1; end;
+  if (shpd==0) then begin locnotship = 1; end;
+  if (locnotship==notship) then begin testf = true; end;
+  if (locpartship==partship) then begin testf = true; end;
+  if (locnotinvd==notinvd) then begin testf = true; end;
+  OrdRowMatchFlags = testf;
+  RETURN;
+END;
+
+
+procedure StockNotShipped(record ORVc ORp,Boolean adress,Boolean infoperrow,string frgr,string togr,record RcVc RepSpec)
+BEGIN
+  Integer i,rwcnt;
+  record INVc INr;
+  row ORVc ORrw;
+  val t,t2;
+  Boolean testf;
+  record ItemStatusVc ISr;
+
+  StartFormat(15);
+  OutLongInt(0,"DblORVc",ORp.SerNr,false);
+  OutDate(130,0,ORp.OrdDate,false);
+  OutString(210,0,ORp.CustCode,false);
+  OutString(300,0,ORp.Addr0,false);
+  OutString(480,0,ORp.PlanShip,true);
+  EndFormat;
+  if (adress) then begin
+    if (nonblank(ORp.Addr1)) then begin
+      StartFormat(15);
+      OutString(300,0,ORp.Addr1,false);
+      StartFormat(15);
+    end;
+    EndFormat;
+    if (nonblank(ORp.Addr2)) then begin
+      StartFormat(15);
+      OutString(300,0,ORp.Addr2,false);
+      EndFormat;
+    end;
+    if (nonblank(ORp.Addr3)) then begin
+      StartFormat(15);
+      OutString(300,0,ORp.Addr3,false);
+      EndFormat;
+    end;
+    StartFormat(10);
+    EndFormat;
+  end;
+  StartFormat(15);
+  if (RepSpec.flags[11]==1) then begin
+    OutString(260,0,USetStr(2631),true);
+    OutString(305,0,USetStr(5511),true);
+    OutString(345,0,USetStr(2632),true);
+    OutString(390,0,USetStr(2630),true);
+    OutString(435,0,USetStr(2729),true);
+    OutString(480,0,USetStr(2633),true);
+  end else begin
+    OutString(320,0,USetStr(2631),true);
+    OutString(360,0,USetStr(5511),true);
+    OutString(400,0,USetStr(2632),true);
+    OutString(440,0,USetStr(2630),true);
+    OutString(480,0,USetStr(2633),true);
+  end;
+  EndFormat;
+  Gray_Divider(260,1);
+  rwcnt = MatRowCnt(ORp);
+  for (i = 0 ; i<rwcnt ;i=i+1) begin
+    MatRowGet(ORp,i,ORrw);
+    if ((ORrw.stp==1) and ((ORrw.Quant-ORrw.Shipd2)!=0)) then begin
+        testf = true;
+        if (infoperrow) then begin
+          testf = OrdRowMatchFlags(ORrw,t2,RepSpec.flags[2],RepSpec.flags[3],RepSpec.flags[4]);
+        end;
+        if (testf) then begin
+          INr.Code = ORrw.ArtCode;
+          if (ReadFirstItem(ORrw.ArtCode,INr,true,false)) then begin end;
+          if ((INr.ItemType==1) or (INr.ItemType==2)) then begin
+            GetStockValue(ORrw.ArtCode,ORp.Location,ISr);
+            if (ISr.Instock<=0) then begin testf = false; end;
+          end;          
+        end;
+        if (testf) then begin
+          /*
+          if ((nonblank(frgr)) and (RepSpec.Comparison==1)) then begin
+            testf = false;
+            INr.Code = ORrw.ArtCode;
+//            if (ReadFirstItem(ORrw.ArtCode,INr,true,false)) then begin
+            if (true) then begin
+              if (INr.Group>=frgr) then begin
+                if (INr.Group<=togr) then begin
+                  testf = true;
+                end;
+              end;    
+            end;  
+          end;
+          */
+          if (CheckItemGroupClassification(ORrw.ArtCode,RepSpec.f3,RepSpec.f8)==false) then begin 
+            testf = false;
+          end;
+        end;
+        if(nonblank(RepSpec.LastAcc)) then begin
+          if(RepSpec.LastAcc <> ORrw.ArtCode) then begin
+            testf = false;
+          end;
+        end;
+        if (blank(ORrw.ArtCode)) then begin testf = false; end;
+        if (nonblank(RepSpec.Stext)) then begin
+          if (nonblank(ORrw.PlanShipRow)) then begin
+            if (CheckPlanShip(RepSpec.Stext,ORrw.PlanShipRow)==false) then begin 
+              testf = false;
+            end;
+          end else begin
+            if (nonblank(ORp.PlanShip)) then begin
+              if (CheckPlanShip(RepSpec.Stext,ORp.PlanShip)==false) then begin 
+                testf = false;
+              end;
+            end;
+          end;
+        end;  
+        if (testf) then begin
+          StartFormat(15);
+          OutString(20,0,ORrw.ArtCode,false);
+          OutString(144,0,ORrw.Spec,false);
+          t = ORrw.Quant - ORrw.Shipd1;
+          if (RepSpec.flags[11]==1) then begin
+            OutVal(260,0,ORrw.Quant,M4UVal,true);
+            OutVal(305,0,ORrw.Shipd1-ORrw.Shipd2,M4UVal,true);
+            OutVal(345,0,ORrw.Shipd2,M4UVal,true);
+            OutVal(390,0,t,M4UVal,true);
+            OutVal(435,0,ORrw.rowGP,M4UVal,true); 
+            OutVal(480,0,ORrw.Invd,M4UVal,true);
+          end else begin
+            OutVal(320,0,ORrw.Quant,M4UVal,true);
+            OutVal(360,0,ORrw.Shipd1-ORrw.Shipd2,M4UVal,true);
+            OutVal(400,0,ORrw.Shipd2,M4UVal,true);
+            OutVal(440,0,t,M4UVal,true);
+            OutVal(480,0,ORrw.Invd,M4UVal,true);
+          end;
+          EndFormat;
+        end;
+    end;
+  end;
+  Gray_Divider(0,1);
+  RETURN;
+END;
+
+procedure PrintShipRnOrder(var array string acur,var array val av1,var Integer curcnt,record RcVc RepSpec,var val TotQty,var val TotLev,var val TotinPick,var val TotNotLev,var val TotInv,LongInt afr,LongInt ato,string frgr,string togr,string user)
+begin
+  record INVc INr;
+  record ORVc ORr;
+  row ORVc ORrw;
+  Boolean TrHs,testf,item;
+  Boolean addressf;
+  val t,t2,iv;
+  val TotSum,TotGP;
+  val gp,rowsumv,rowinbasev;
+  Integer i,rwcnt;
+  record MainStockBlock MainStockRec;
+  string 255 planship;
+  record GeneralOptionBlock GenOptRec;
+  record ItemStatusVc ISr;
+  record TaxMatrixVc TMr;
+  record CUVc CUr;
+
+  BlockLoad(GenOptRec);
+  BlockLoad(MainStockRec);
+  item = false;
+  ORr.SerNr = afr;
+  ORr.OSFlag = 1;
+  if (RepSpec.ArtMode==0) then begin
+    Gray_Divider(0,1);
+  end;  
+  TrHs = true;
+  while (LoopKey("OSFlag",ORr,2,TrHs)) begin
+    if (TrHs) then begin
+      if (ato<>-1) then begin
+        if (ORr.SerNr>ato) then begin
+          TrHs = false;
+        end;
+      end;   
+    end;
+    if (TrHs) then begin
+      CUr.Code = ORr.CustCode;
+      ReadFirstMain(CUr,1,true);
+      testf = false;
+      if (ORr.ShipFlag==0) then begin testf = true; end;
+      if (ORr.InvBeforeShip<>0) then begin testf = true; end;
+      if (nonblank(RepSpec.f2) and (RepSpec.f2<>ORr.CustCode)) then begin testf = false; end;
+      if (RepSpec.ArtMode==3) then begin
+        if (user<>ORr.SalesMan) then begin testf = false; end;
+      end else begin
+        if ((nonblank(user)) and (user<>ORr.SalesMan)) then begin testf = false; end;
+      end;
+      if ((nonblank(RepSpec.FirstAcc)) and (RepSpec.FirstAcc<>ORr.OrderClass)) then begin testf = false; end;
+      if (nonblank(RepSpec.Stext)) then begin
+        if (CheckPlanShipRows(RepSpec.Stext,ORr)==false) then begin testf = false; end;
+      end;  
+      if ((nonblank(RepSpec.f4)) and (RepSpec.f4<>ORr.Location)) then begin 
+        testf = false; 
+      end;
+      if ((nonblank(RepSpec.ObjStr)) and (SetInSet(RepSpec.ObjStr,ORr.Objects)==false)) then begin testf = false; end;
+      if (ORr.OKFlag==0) then begin
+        if (RepSpec.flags[7]==0) then begin testf = false; end;
+      end;
+      if (ORr.OKFlag!=0) then begin
+        if (RepSpec.flags[8]==0) then begin testf = false; end;
+      end;  
+      switch (RepSpec.flags[9]) begin
+        case 1: if (CUr.OnHoldFlag!=0) then begin testf = false; end;
+        case 2: if (CUr.OnHoldFlag==0) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f7)) then begin 
+        if (ORr.OrderType!=SetFromString(433,RepSpec.f7)) then begin testf = false; end;
+      end;
+      if ((ORr.InvFlag==2) and (ORr.ShipFlag!=0)) then begin testf = false; end;      
+      if (ORr.Closed!=0) then begin testf = false; end;
+      item = false;
+      if ((testf) and (nonblank(RepSpec.LastAcc) or nonblank(RepSpec.f3) or nonblank(RepSpec.f8))) then begin
+        rwcnt = MatRowCnt(ORr);
+        for (i = 0 ; i<rwcnt ;i=i+1) begin
+          MatRowGet(ORr,i,ORrw);
+          if (ORrw.stp==1) then begin
+            if (nonblank(RepSpec.LastAcc)) then begin 
+              if (TestArtCodeMatch(ORrw.ArtCode,RepSpec.LastAcc)) then begin 
+                 item = true;
+                 goto L30;
+              end;
+            end; 
+            if (CheckItemGroupClassification(ORrw.ArtCode,RepSpec.f3,RepSpec.f8)) then begin
+              item = true;
+              goto L30;
+            end;
+          end;
+        end;
+L30:;
+      end;
+      if ((nonblank(RepSpec.LastAcc)) and (item==false)) then begin testf = false; end;
+      if ((nonblank(RepSpec.f3)) and (item==false)) then begin testf = false; end;
+      if ((nonblank(RepSpec.f8)) and (item==false)) then begin testf = false; end;
+      if (testf) then begin
+        if (ShipableOrder(ORr,RepSpec.OnlyUnprntd,RepSpec.LastAcc,MainStockRec.UpdateAvailable)==false) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        iv = 0;
+        gp = 0;                  
+        rwcnt = MatRowCnt(ORr);
+        for (i=0 ;i<rwcnt ;i=i+1) begin
+          testf = true;
+          MatRowGet(ORr,i,ORrw);
+          if (ORrw.Quant < ORrw.Shipd1) then begin
+            goto LNext;
+          end;
+          if (nonblank(RepSpec.Stext)) then begin
+            if (nonblank(ORrw.PlanShipRow)) then begin
+              if (CheckPlanShip(RepSpec.Stext,ORrw.PlanShipRow)==false) then begin 
+                testf = false;
+              end;
+            end else begin
+              if (nonblank(ORr.PlanShip)) then begin
+                if (CheckPlanShip(RepSpec.Stext,ORr.PlanShip)==false) then begin 
+                  testf = false;
+                end;
+              end;
+            end;
+          end;  
+
+          if (nonblank(RepSpec.LastAcc)) then begin
+            if (ORrw.ArtCode!=RepSpec.LastAcc) then begin testf = false; end;
+          end;
+          if (CheckItemGroupClassification(ORrw.ArtCode,RepSpec.f3,RepSpec.f8)==false) then begin 
+            testf = false;
+          end;
+  
+/*          
+          INr.Code = ORrw.ArtCode;
+          if (ReadFirstItem(ORrw.ArtCode,INr,true,false)) then begin end;
+//          if (INr.ItemType==1) then begin          
+          if ((INr.ItemType==1) or (INr.ItemType==2)) then begin
+            GetStockValue(ORrw.ArtCode,ORr.Location,ISr);
+            if (ISr.Instock<=0) then begin testf = false; end;//instock
+          end;
+*/                    
+          if (ORrw.rowGP<=0) then begin testf = false; end;//instock
+          if (testf) then begin
+            if ((ORrw.stp==1) and ((ORrw.Quant-ORrw.Shipd2)!=0)) then begin          
+              if ((nonblank(RepSpec.f3)) and (RepSpec.Comparison==1)) then begin             
+                INr.Code = ORrw.ArtCode;
+                //nk if (INr.Group>=frgr) then begin
+                  //nk if (INr.Group<=togr) then begin
+                    if (ORr.InvBeforeShip<>0) then begin
+                      if (RepSpec.repname=="ShipableRn") then begin
+                        t = ORrw.Quant - ORrw.Invd;
+                      end else begin
+                        t = ORrw.Quant - ORrw.Shipd2;
+                      end;
+                    end else begin
+                      t = ORrw.Quant - ORrw.Shipd2;
+                    end;                
+                    if (RepSpec.flags[10]==0) then begin
+                      CalcSum(t,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,t2,GenOptRec.UseDiscount);
+                      iv = iv + t2;
+                      t = t * ORrw.BasePrice; 
+                      rowinbasev = MulRateToBase1(ORr.CurncyCode,t2,ORr.FrRate,ORr.ToRateB1,ORr.ToRateB2,ORr.BaseRate1,ORr.BaseRate2,DefaultCurRoundOff);
+                      UnpackRowFieldMatrix(ORrw,"TaxMatrix",TMr);
+                      FindSalesExVat(TMr,ORrw.VATCode,rowinbasev,ORr.InclVAT,ORr.NoTAXonVAT,rowsumv);
+                      gp = gp + (rowsumv - t);
+                    end else begin
+                      iv = iv + t;
+                      t2 = t;
+                    end;
+                  //end;
+                //end;
+              end else begin              
+                if (ORr.InvBeforeShip<>0) then begin
+                  if (RepSpec.repname=="ShipableRn") then begin
+                    t = ORrw.Quant - ORrw.Shipd2;
+                  end else begin
+                    t = ORrw.Quant - ORrw.Invd;// how Invd can matter ? 
+                  end;
+                end else begin
+                  t = ORrw.Quant - ORrw.Shipd2;
+                end;         
+                if (RepSpec.flags[10]==0) then begin
+                  CalcSum(t,ORrw.Price,ORrw.PriceFactor,ORrw.vRebate,t2,GenOptRec.UseDiscount);
+                  iv = iv + t2;
+                  t = t * ORrw.BasePrice;
+                  rowinbasev = MulRateToBase1(ORr.CurncyCode,t2,ORr.FrRate,ORr.ToRateB1,ORr.ToRateB2,ORr.BaseRate1,ORr.BaseRate2,DefaultCurRoundOff);
+                  UnpackRowFieldMatrix(ORrw,"TaxMatrix",TMr);
+                  FindSalesExVat(TMr,ORrw.VATCode,rowinbasev,ORr.InclVAT,ORr.NoTAXonVAT,rowsumv);
+                  gp = gp + (rowsumv - t);
+                end else begin
+                  iv = iv + t;
+                  t2 = t;
+                end;
+              end;
+              AddCurncyTotals(acur,av1,curcnt,ORr.CurncyCode,t2);
+            end;
+LNext:;
+          end;
+        end;
+        if ((RepSpec.ArtMode==1) or (RepSpec.ArtMode==3)) then begin        
+          addressf = true;
+          if (RepSpec.ArtMode==3) then begin
+            addressf = false;
+          end;
+          if (RepSpec.flags[10]==0) then begin   
+            RepStock(ORr,addressf,false,frgr,togr,t,false,RepSpec);
+            TotInv = TotInv + t;
+          end;  
+          if (RepSpec.flags[10]<>0) then begin      
+            StockNotShipped(ORr,addressf,false,frgr,togr,RepSpec);
+            TotInv = TotInv + t;
+          end;
+        end;
+        if (RepSpec.ArtMode==0) then begin
+          StartFormat(15);
+          OutLongInt(0,"DblORVc",ORr.SerNr,false);
+          OutDate(60,0,ORr.OrdDate,false);
+          OutString(140,0,ORr.Addr0,false);
+          if (RepSpec.flags[10]==0) then begin
+            if (HasMultiCurrency) then begin
+              OutVal(5,0,iv,M4Val,true);
+              OutString(1,0,ORr.CurncyCode,true);
+            end else begin
+              OutVal(1,0,iv,M4Val,true);
+            end;
+          end else begin
+            OutVal(1,0,iv,M4Val,true);
+          end;
+          EndFormat;
+        end;
+        if (RepSpec.ArtMode==2) then begin                    
+            rwcnt = MatRowCnt(ORr);
+            for (i=0;i<rwcnt;i=i+1) begin
+              MatRowGet(ORr,i,ORrw);
+              if (ORrw.Quant < ORrw.Shipd1) then begin
+                goto LNext2;
+              end;
+              if (blank(RepSpec.LastAcc) or (RepSpec.LastAcc==ORrw.ArtCode)) and (CheckItemGroupClassification(ORrw.ArtCode,RepSpec.f3,RepSpec.f8)) then begin
+                testf = true;
+
+                /*
+                if (nonblank(RepSpec.f3)) then begin
+                  INr.Code = ORrw.ArtCode;
+                  if (ReadFirstItem(ORrw.ArtCode,INr,true,false)) then begin
+                    if (INr.Group<frgr) then begin testf = false; end;
+                    if (INr.Group>togr) then begin testf = false; end;
+                  end;
+                end;
+                */
+            
+                if ((ORrw.Quant-ORrw.Shipd2)==0) then begin testf = false; end;               
+                if (nonblank(RepSpec.Stext)) then begin
+                  if (CheckPlanShipRows(RepSpec.Stext,ORr)==false) then begin testf = false; end;
+                end;  
+                if (ORrw.rowGP<=0) then begin testf = false; end;//instock
+                if (testf) then begin
+                  StartFormat(15);
+                  OutLongInt(0,"DblORVc",ORr.SerNr,false);
+                 // OutDate(50,0,ORr.OrdDate,false);
+                  planship = ORr.PlanShip;
+                  if (nonblankdate(ORrw.PlanShipRow)) then begin
+                    planship = ORrw.PlanShipRow;
+                  end;
+                  OutString(60,0,planship,false);
+                  OutString(130,0,ORrw.ArtCode,false);
+                  if (RepSpec.flags[10]==0) then begin
+                      t = ORrw.Quant - ORrw.Shipd1;
+                      OutVal(270,0,t,M4UVal,true);
+                      t2 = t * ORrw.Price;
+                      OutVal(380,0,ORrw.Price,M4Val,true);
+                      if (HasMultiCurrency) then begin
+                        OutVal(450,0,t2,M4Val,true);
+                        OutString(480,0,ORr.CurncyCode,true);
+                      end else begin
+                        OutVal(480,0,t2,M4Val,true);
+                      end;
+                      EndFormat;
+                      TotQty = TotQty + t;
+                  end;
+                  if (RepSpec.flags[10]==1) then begin
+                      OutVal(260,0,ORrw.Quant,M4UVal,true);
+                      TotQty = TotQty + ORrw.Quant;
+                      OutVal(320,0,ORrw.Shipd1-ORrw.Shipd2,M4UVal,true);
+                      OutVal(360,0,ORrw.Shipd2,M4UVal,true);
+                      TotLev = TotLev + ORrw.Shipd2;
+                      TotinPick = TotinPick + (ORrw.Shipd1-ORrw.Shipd2);
+                      t = ORrw.Quant - ORrw.Shipd1;
+                      OutVal(400,0,t,M4UVal,true);
+                      OutVal(440,0,ORrw.rowGP,M4UVal,true);
+                      TotNotLev = TotNotLev + t;
+                      t = ORrw.Shipd2 - ORrw.Invd;
+                      OutVal(480,0,t,M4UVal,true);
+                      TotInv = TotInv + t;
+                      EndFormat;
+                  end;
+                end;
+              end;
+LNext2:;
+            end;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+ 
+global
+procedure ShipableRn(record RcVc RepSpec)
+BEGIN
+  record UserVc USr;
+  Boolean usfoundf,ustestf;
+  string 255 frgr,togr,tstr;
+  val TotQty,TotLev,TotinPick,TotNotLev,TotInv;
+  LongInt afr,ato;
+  Integer rw;
+  array val av1;
+  array val av2;
+  array val av3;
+  array string 20 acur;
+  Integer curcnt;
+
+  afr = FirstInRange(RepSpec.f1,10);
+  ato = LastInRange(RepSpec.f1,10);  
+  frgr = FirstInRange(RepSpec.f3,5);
+  togr = LastInRange(RepSpec.f3,5);  
+  BeginCurncyTotals(curcnt);
+   if (RepSpec.flags[10]==0) then begin
+     StartReportJob(USetStr(5601)); 
+   end;
+   if (RepSpec.flags[10]==1) then begin
+     StartReportJob(USetStr(5601));
+   end;  
+   if (RepSpec.flags[10]==2) then begin
+     StartReportJob(USetStr(5600));
+   end;  
+   rw = 1;
+   if (nonblank(RepSpec.f1)) then begin            
+     HTOrder(afr,ato,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   HTOrdStatus(RepSpec.flags[2],RepSpec.flags[3],RepSpec.flags[4],0,tstr);
+   Header(rw,tstr,0);
+   if (RepSpec.flags[10]==0) then begin
+     tstr = USetStr(1177);
+   end else begin
+     if (RepSpec.flags[10]==1) then begin
+       tstr = USetStr(1176);
+     end;
+   end;    
+   Header(rw,tstr,1);
+   rw = rw + 1;
+   if (nonblank(RepSpec.LastAcc)) then begin
+     HTArtSel(RepSpec.LastAcc,RepSpec.f3,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   if (nonblank(RepSpec.f8)) then begin 
+     HTItemClass(RepSpec.f8,tstr);
+     Header(rw,tstr,1);  
+     rw = rw + 1;  
+   end;
+   if (nonblank(RepSpec.f2)) then begin
+     tstr = USetStr(1113);
+     tstr = tstr & RepSpec.f2;
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   HTSaleMan(RepSpec.AccStr,tstr);
+   if (nonblank(tstr)) then begin
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;         
+   if (nonblank(RepSpec.f4)) then begin
+      tstr = USetStr(2768);
+      tstr = tstr & ": " & RepSpec.f4;
+      Header(rw,tstr,1);
+      rw = rw + 1;
+   end;
+
+   if (nonblank(RepSpec.FirstAcc)) then begin
+     tstr = USetStr(1825);
+     tstr = tstr & RepSpec.FirstAcc;
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   if (blank(RepSpec.ObjStr)==false) then begin
+     HTObj(RepSpec.ObjStr,tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   if (blank(RepSpec.f2)) then begin
+     HTOnHoldCustomers(RepSpec.flags[9],tstr);
+     Header(rw,tstr,1);
+     rw = rw + 1;
+   end;
+   HTOKF(RepSpec.flags[7],RepSpec.flags[8],tstr);
+   Header(rw,tstr,0);
+  EndHeader;
+  SetRepCol(2,404);
+  SetRepCol(3,520-(2*96));
+  SetRepCol(4,540-(3*96));
+  SetRepCol(5,430);
+  if (RepSpec.ArtMode==0) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2622),false);
+    OutString(60,0,USetStr(2623),false);
+    OutString(140,0,USetStr(2624),false);
+    if (RepSpec.flags[10]==0) then begin
+      if (HasMultiCurrency) then begin
+        OutString(5,0,USetStr(2627),true);
+      end else begin
+        OutString(1,0,USetStr(2627),true);
+      end;
+    end else begin
+      OutString(1,0,USetStr(2627),true);
+    end;
+    EndFormat;
+  end;
+  if (RepSpec.ArtMode==1) then begin
+    StartFormat(15);
+    OutString(0,0,USetStr(2622),false);
+    OutString(130,0,USetStr(2623),false);
+    OutString(220,0,USetStr(2624),false);
+    OutString(480,0,USetStr(2638),true);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  if (RepSpec.ArtMode==3) then begin
+      StartFormat(15);
+      OutString(0,0,USetStr(2622),false);
+      OutString(100,0,USetStr(2623),false);
+      OutString(220,0,USetStr(2624),false);
+      OutString(480,0,USetStr(2638),true);
+      EndFormat;
+  end;
+  if (RepSpec.ArtMode==2) then begin
+      if (RepSpec.flags[10]==0) then begin
+        StartFormat(15);
+        OutString(0,0,USetStr(2622),false);
+     //   OutString(50,0,USetStr(2623),false);
+        OutString(60,0,USetStr(2638),false);
+        OutString(130,0,USetStr(2637),false);
+        OutString(270,0,USetStr(2646),true);
+        OutString(380,0,USetStr(2640),true);
+        if (HasMultiCurrency) then begin
+          OutString(450,0,USetStr(2625),true);
+        end else begin
+          OutString(1,0,USetStr(2625),true);
+        end;
+        EndFormat;
+      end;
+      if (RepSpec.flags[10]==1) then begin
+        StartFormat(15);
+        OutString(0,0,USetStr(2622),false);
+     //   OutString(50,0,USetStr(2623),false);
+        OutString(60,0,USetStr(2638),false);
+        OutString(130,0,USetStr(2637),false);
+        OutString(260,0,USetStr(2631),true);
+        OutString(320,0,USetStr(5511),true);
+        OutString(360,0,USetStr(2632),true);
+        OutString(400,0,USetStr(2630),true);
+        OutString(440,0,USetStr(2342),true);
+        OutString(480,0,USetStr(2639),true);
+        EndFormat;
+      end;
+      Gray_Divider(0,1);
+  end;
+  if (RepSpec.ArtMode==3) then begin
+    USr.Code = RepSpec.AccStr;
+    usfoundf = true;
+    while (LoopMain(USr,1,usfoundf)) begin
+      if (nonblank(RepSpec.AccStr)) then begin
+        if (RepSpec.AccStr<>USr.Code) then begin
+          usfoundf = false;
+        end;
+      end;
+      ustestf = usfoundf;
+      if (ustestf) then begin
+        StartFormat(15);
+        OutString(0,0,USr.Code,false);
+        OutString(150,0,USr.Name,false);
+        EndFormat;
+        PrintShipRnOrder(acur,av1,curcnt,RepSpec,TotQty,TotLev,TotinPick,TotNotLev,TotInv,afr,ato,frgr,togr,USr.Code);
+        Gray_Divider(0,1);
+        StartFormat(15);
+        if (RepSpec.flags[10]==0) then begin
+          OutString(300,0,USetStr(4915),false);
+          OutVal(480,0,TotInv,M4Val,true); /* Adding Apples and Pears , i have speakers in my demo :)*/
+        end else begin
+          OutString(250,0,USetStr(4915),false);
+          OutVal(435,0,TotInv,M4Val,true);
+        end;
+        EndFormat;
+        StartFormat(15);
+        EndFormat;
+        TotInv = 0;
+      end;
+    end;
+  end else begin
+    PrintShipRnOrder(acur,av1,curcnt,RepSpec,TotQty,TotLev,TotinPick,TotNotLev,TotInv,afr,ato,frgr,togr,RepSpec.AccStr);
+    Gray_Divider(0,1);
+  end;
+  switch (RepSpec.ArtMode) begin
+    case 0:
+      if (RepSpec.flags[10]==0) then begin
+        if (HasMultiCurrency) then begin
+          PrintCurncyTotals(acur,av1,av2,av3,curcnt,5,-1,-1,4,true,RepSpec.PocketPC);
+        end else begin
+          PrintCurncyTotals(acur,av1,av2,av3,curcnt,1,-1,-1,4,true,RepSpec.PocketPC);
+        end;
+      end else begin
+        PrintCurncyTotals(acur,av1,av2,av3,curcnt,1,-1,-1,-1,true,RepSpec.PocketPC);
+      end;
+    case 1:
+      if (RepSpec.flags[10]==0) then begin
+        PrintCurncyTotals(acur,av1,av2,av3,curcnt,1,-1,-1,4,true,RepSpec.PocketPC);
+      end else begin
+        PrintCurncyTotals(acur,av1,av2,av3,curcnt,435,-1,-1,-1,true,RepSpec.PocketPC);
+      end;
+    case 2:
+      StartFormat(15);
+      if (RepSpec.flags[10]==0) then begin
+        OutVal(270,0,TotQty,M4UVal,true);
+      end;
+      if (RepSpec.flags[10]==1) then begin
+        OutVal(260,0,TotQty,M4UVal,true);
+        OutVal(320,0,TotinPick,M4UVal,true);
+        OutVal(360,0,TotLev,M4UVal,true);
+        OutVal(400,0,TotNotLev,M4UVal,true);
+        OutVal(480,0,TotInv,M4UVal,true);
+      end;
+      EndFormat;
+      Gray_Divider(0,1);
+      if (RepSpec.flags[10]==0) then begin
+        if (HasMultiCurrency) then begin
+          PrintCurncyTotals(acur,av1,av2,av3,curcnt,450,-1,-1,4,true,RepSpec.PocketPC);
+        end else begin
+          PrintCurncyTotals(acur,av1,av2,av3,curcnt,1,-1,-1,4,true,RepSpec.PocketPC);
+        end;
+      end;
+  end;
+  EndJob;
+  RETURN;
+END;

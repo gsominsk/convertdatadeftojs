@@ -1,0 +1,148 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+external function string 20 FindJobCustomerCode(record JobVc);
+external function LongInt DateDiff(Date,Date);
+external function Boolean IsCancelState(String);
+external procedure HT2Per(Date, Date , var string);
+external function boolean IsTDBefore(date,time,date,time);
+external function val NumberOfStayDays(Date,Date,Time,Time,Integer);
+
+
+function boolean StayStatsSelect(Record RcVc RepSpec,Record JobVc Jobr,var boolean foundf)
+begin
+  Boolean sel,testf;
+  string 255 custcode;
+
+  sel = false;
+  if (Jobr.TransDate > RepSpec.sEndDate) then begin
+    foundf = false;
+  end else begin
+    custcode = FindJobCustomerCode(Jobr);
+    if ((custcode==RepSpec.f1) or blank(RepSpec.f1)) then begin
+      testf = true;
+      if (testf) then begin
+        testf = ContactInGroupClass(custcode,RepSpec.f2,RepSpec.f6,"CUST","","");
+      end;      
+      if (testf) then begin
+        if ((RepSpec.f4==Jobr.Type) or (blank(RepSpec.f4))) then begin
+          if ((RepSpec.FirstAcc==Jobr.ResStatus) or (blank(RepSpec.FirstAcc))) then begin
+            if ((RepSpec.LastAcc==Jobr.ResUsage) or (blank(RepSpec.LastAcc))) then begin
+              if ((RepSpec.f5==Jobr.PriceList) or (blank(RepSpec.f5))) then begin
+                if ((RepSpec.flags[1]==0) or (IsCancelState(Jobr.ResStatus)==false)) then begin
+                  sel = true;
+                end;
+              end;  
+            end;      
+          end;
+        end; 
+      end; 
+    end;
+  end; 
+
+  StayStatsSelect = sel;
+  return;
+end;
+
+global
+procedure StayStatsRn(Record RcVc RepSpec)
+begin
+  boolean foundf;
+  String 255 tstr,tmp;
+  Integer NroRes,rw;
+  Array integer StayDist;
+  integer DaysStay,i,j,maxstay,NrCases;
+  val avgstay,prcnt;
+  Record JobVc Jobr;
+    
+  maxstay = 90;
+  for (j=1;j<maxstay;j=j+1) begin
+    StayDist[j] = 0;
+  end;
+  
+  NrCases = 0;
+  StartReportJob(USetStr(12061));
+  rw = 1;
+  HT2Per(RepSpec.sStartDate,RepSpec.sEndDate,tstr);
+  rw = rw + 1;
+//  Header(rw,tstr,1);
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f2,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f6,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  EndHeader;
+
+  SetRepCol(2,120);
+  SetRepCol(3,180);
+  SetRepCol(4,240);
+  SetRepCol(5,300);
+  SetRepCol(6,360);
+  SetRepCol(7,420);
+  SetRepCol(8,480);
+  
+  StartFormat(15);
+  OutString(2,0,USetStr(12062) & " (" &USetStr(12063) & ")",true);
+  OutString(6,0,USetStr(12067),true);
+  OutString(8,0,USetStr(12064),true);
+  EndFormat;
+  Black_Divider(0,1);
+
+  avgstay = 0;
+  foundf = true; 
+  Jobr.TransDate = AddDay(RepSpec.sStartDate,-maxstay);
+  while LoopKey("TransDate",Jobr,1,foundf) begin
+  
+    if (Jobr.TransDate > RepSpec.sEndDate) then begin
+      foundf = false;
+    end else begin
+     
+      if (StayStatsSelect(RepSpec,Jobr,foundf)) then begin
+        DaysStay = NumberOfStayDays(Jobr.TransDate,Jobr.EndDate,Jobr.StartTime,Jobr.EndTime,1);
+        StayDist[DaysStay] = StayDist[DaysStay] + 1;
+        avgstay = avgstay + DaysStay;
+        NrCases = NrCases + 1;
+      end;
+    end;
+  end;
+
+  for (i=1;i<maxstay;i=i+1) begin
+
+    if (StayDist[i]<>0) then begin
+      StartFormat(15);
+      OutLongInt(2,0,i,true);
+      prcnt = StayDist[i];
+      prcnt = (prcnt / NrCases) * 100;
+      OutVal(6,0,prcnt,M4Val,true);
+      OutVal(8,0,StayDist[i],M40Val,true);
+      EndFormat;
+    end;
+  end;
+  
+  Black_Divider(0,1);
+  StartFormat(15);
+  OutVal(6,0,100,M4Val,true);
+  OutVal(8,0,NrCases,M4Val,true);
+  EndFormat;
+  
+  StartFormat(15);
+  tstr = (avgstay / NrCases);
+  Outstring(0,0,USetStr(12065) & tstr,false);
+  EndFormat;
+  EndJob;
+  return;
+end;
+
+
+

@@ -1,0 +1,1786 @@
+external procedure AddExistingPOs(array record SMVc,Integer,record RcVc);
+external function Boolean SerInArr(LongInt,array LongInt,Integer);
+external procedure AddToSerArr(LongInt,var array LongInt,var Integer);
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure ExpandRecepy_ProdPlan(string,string,val,val,Date,var Array string,var Array val,var Array val,var Array Date,var Integer);
+external procedure BuildTheItemArray(array record SMVc,Integer,var array string,var array Integer,var Integer);
+external function val SFNumberOfDays_TypeWeeks(string,Integer,Date,Date);
+external function roundmode SetRoundModeD(Integer);
+external procedure ProdPlanDClassItemCodeRemote(var record ProdPlanVc,Integer);
+external function val GetStockQty(string,string,Date,Boolean);
+external function LongInt DateDiff(Date,Date);
+external procedure DebugInfoSim(string,record SMVc,record RcVc);
+external procedure DebugInfoArray(string,array record SMVc,Integer,Date,record RcVc);
+external procedure CopySMArray(array record SMVc,var array record SMVc,Integer);
+external function LongInt GetStockPolicyMonths();
+
+function val GetNumberOfDays2(Integer m,record SFWorkDaysVc SFWDr)
+begin
+  val res;
+  
+  res = 0;
+  switch (m) begin
+    case 1: res = SFWDr.Jan;
+    case 2: res = SFWDr.Feb;
+    case 3: res = SFWDr.Mar;
+    case 4: res = SFWDr.Apr;
+    case 5: res = SFWDr.May;
+    case 6: res = SFWDr.Jun;
+    case 7: res = SFWDr.Jul;
+    case 8: res = SFWDr.Aug;
+    case 9: res = SFWDr.Sep;
+    case 10: res = SFWDr.Oct;
+    case 11: res = SFWDr.Nov;
+    case 12: res = SFWDr.Dec;
+  end;
+  GetNumberOfDays2 = res;
+  return;
+end;
+
+// Fixed MONTHS
+function val GetNumberOfDays(Date frdat,Date todat,record SFWorkDaysVc SFWDr)
+begin
+  Date ld,prevd,temp,temp2;
+  val res,dayinm,days;
+  Integer m,d,d2,d3;
+
+  res = 0;
+  ld = frdat;
+  prevd = ld;
+  d = ld.day;
+  if (d!=1) then begin
+    temp = AddDay(AddMonth(ld,1),1-d); // First of next month
+    m = ld.month;
+    days = GetNumberOfDays2(m,SFWDr);
+    dayinm = DaysInMonth(GetYear(ld),m);
+    res = DateDiff(temp,ld)/(dayinm/days);
+    ld = AddMonth(temp,1);
+    prevd = ld;
+  end;
+  while (ld<todat) begin
+    temp = AddMonth(ld,1);
+    d = temp.day;
+    temp2 = AddDay(temp,-1);
+    d2 = temp2.day;
+    d3 = todat.day;
+    if ((temp<todat) or ((d==1) and (d2==d3))) then begin
+      m = ld.month;
+      res = res + GetNumberOfDays2(m,SFWDr);
+    end;
+    prevd = ld;
+    ld = temp;
+  end;
+  d = prevd.day;
+  temp = AddMonth(AddDay(todat,1),-1);
+  if (d!=temp.day) then begin
+    m = prevd.month;
+    days = GetNumberOfDays2(m,SFWDr);
+    dayinm = DaysInMonth(GetYear(prevd),m);
+    res = res + DateDiff(todat,AddDay(prevd,-1))/(dayinm/days); // Not sure about the -1 day, but it works WITH it, not without.
+  end;
+  if (res<0) then begin
+    res = 0;
+  end;
+  GetNumberOfDays = res;
+  return;
+end;
+
+procedure CombineSFYear(var record SFWorkDaysVc SFWDr,Integer type,Date frdat,Date todat)
+begin
+  record SFWorkDaysVc thisSFWDr;
+  record SFWorkDaysVc nextSFWDr;
+  Date thedat;
+  Boolean nextfoundf;
+  Integer m;
+  Integer days;
+
+  thisSFWDr.YearCode = GetYear(frdat);
+  thisSFWDr.Type = type;
+  if (ReadFirstMain(thisSFWDr,2,true)) then begin
+    nextSFWDr.YearCode = GetYear(todat);
+    nextSFWDr.Type = type;
+    nextfoundf = ReadFirstMain(nextSFWDr,2,true);
+    thedat = frdat;
+    while (thedat<todat) begin
+      m = thedat.month;
+      if ((GetYear(thedat)==thisSFWDr.YearCode) or (nextfoundf==false)) then begin
+        days = GetNumberOfDays2(m,thisSFWDr);
+      end else begin
+        days = GetNumberOfDays2(m,nextSFWDr);
+      end;
+      switch (m) begin
+        case 1: SFWDr.Jan = days;
+        case 2: SFWDr.Feb = days;
+        case 3: SFWDr.Mar = days;
+        case 4: SFWDr.Apr = days;
+        case 5: SFWDr.May = days;
+        case 6: SFWDr.Jun = days;
+        case 7: SFWDr.Jul = days;
+        case 8: SFWDr.Aug = days;
+        case 9: SFWDr.Sep = days;
+        case 10: SFWDr.Oct = days;
+        case 11: SFWDr.Nov = days;
+        case 12: SFWDr.Dec = days;
+      end;
+      thedat = AddMonth(thedat,1);
+    end;
+  end;
+  return;
+end;
+     
+function val GetSalesDays(string class,Date frdat,Date todat)
+begin
+  record SFWorkDaysVc SFWDr;
+  val res;
+  record SFPeriodsBlock SFPb; 
+  
+  BlockLoad(SFPb);  
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      CombineSFYear(SFWDr,0,frdat,todat);
+      res = GetNumberOfDays(frdat,todat,SFWDr);
+    case kForecastPeriodTypeWeeks:
+      res = SFNumberOfDays_TypeWeeks(class,0,frdat,todat);
+  end;
+  GetSalesDays = res;
+  return;
+end;
+
+function val GetProdDays(string class,Date frdat,Date todat)
+begin
+  record SFWorkDaysVc SFWDr;
+  val res;
+  record SFPeriodsBlock SFPb; 
+  
+  BlockLoad(SFPb);  
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      CombineSFYear(SFWDr,1,frdat,todat);
+      res = GetNumberOfDays(frdat,todat,SFWDr);
+    case kForecastPeriodTypeWeeks:
+      res = SFNumberOfDays_TypeWeeks(class,1,frdat,todat);
+  end;
+  GetProdDays = res;
+  return;
+end;
+
+function val ForecastDateDiff(string class,Date fr,Date to,Boolean salesdays)
+begin
+  val res;
+  
+  if (salesdays) then begin
+    res = GetSalesDays(class,fr,to);
+  end else begin
+    res = GetProdDays(class,fr,to);
+  end;
+  if (res==0) then begin
+    res = DateDiff(to,fr);
+  end;
+  ForecastDateDiff = res;
+  return;
+end;
+
+procedure AddToCodeArr(string code,var array string asfcodes,var Integer acnt)
+begin
+  asfcodes[acnt] = code;
+  acnt = acnt + 1;
+end;
+
+function Boolean CodeInArr(string code,array string asfcodes,Integer acnt)
+begin
+  Integer i;
+  Boolean res;
+  
+  res = false;
+  for (i=0;i<acnt;i=i+1) begin
+    if (asfcodes[i]==code) then begin
+      res = true;
+      goto LCodeInArr;
+    end;
+  end;
+LCodeInArr:;
+  CodeInArr = res;
+  return;
+end;
+
+procedure AddSFToSM(record SalesForecastVc SFr,vector string SMrw_Objects,vector integer SMrw_RowSimStat,vector val SMrw_DebVal,vector val SMrw_CredVal,vector Boolean SMrwf,var array string SMrwid,var Integer SMrwcnt,val prc,Boolean additgroup)
+begin
+  row SalesForecastVc SFrw;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Integer j,srwcnt;
+  Boolean foundf;
+  string 255 rwid;
+  record SMVc SMr;
+  
+  if (additgroup==false) then begin
+    if (SFr.RowType==0) then begin
+      goto LAddSFToSM;
+    end;
+  end;
+  rwcnt = MatRowCnt(SFr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SFr,i,SFrw);
+    
+    rwid = SFrw.ItemCode & ":" & SFr.RowType;
+    
+    if (SMrwf[rwid]==true) then begin
+      SMrw_DebVal[rwid] = SMrw_DebVal[rwid] - (SFrw.Qty * prc);
+      SMrw_CredVal[rwid] = SMrw_CredVal[rwid] - (SFrw.Sum * prc);
+    end else begin
+      SMrw_Objects[rwid] = SFrw.ItemCode;
+      SMrw_RowSimStat[rwid] = SFr.RowType;
+      SMrw_DebVal[rwid] = -SFrw.Qty * prc;
+      SMrw_CredVal[rwid] = -SFrw.Sum * prc;
+      
+      SMrwf[rwid] = true;
+      SMrwid[SMrwcnt] = rwid;
+      SMrwcnt = SMrwcnt + 1;
+    end;
+    
+    /*
+    foundf = false;
+    srwcnt = MatRowCnt(SMr);
+    for (j=0;j<srwcnt;j=j+1) begin
+      MatRowGet(SMr,j,SMrw);
+      if ((SMrw.Objects==SFrw.ItemCode) and (SMrw.RowSimStat==SFr.RowType)) then begin
+        SMrw.DebVal = SMrw.DebVal - (SFrw.Qty * prc);
+        SMrw.CredVal = SMrw.CredVal - (SFrw.Sum * prc);
+        MatRowPut(SMr,j,SMrw);
+        foundf = true;
+      end;
+    end;
+    if (foundf==false) then begin
+      ClearRow(SMr,SMrw,1);
+      SMrw.Objects = SFrw.ItemCode;
+      SMrw.RowSimStat = SFr.RowType;
+      SMrw.DebVal = -SFrw.Qty * prc;
+      SMrw.CredVal = -SFrw.Sum * prc;
+      MatRowPut(SMr,srwcnt,SMrw);
+    end;
+    */
+  end;
+LAddSFToSM:;
+  return;
+end;
+
+procedure AddProdNeedToSM(record ProdPlanCompVc PPCr,var record SMVc SMr,val prc,Boolean additgroup,Boolean inclvalues,Integer roundof)
+begin
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Integer j,srwcnt;
+  Boolean foundf;
+  
+  foundf = false;
+  srwcnt = MatRowCnt(SMr);
+  for (j=0;j<srwcnt;j=j+1) begin
+    MatRowGet(SMr,j,SMrw);
+    if ((SMrw.Objects==PPCr.ItemCode) and (SMrw.RowSimStat==1) and ((SMrw.TransDate==PPCr.NeededDate) or (inclvalues==false))) then begin
+      if (inclvalues) then begin
+        if (PPCr.Qty==0) then begin
+          SMrw.DebVal = Round(SMrw.DebVal + (PPCr.SugQty * prc),SetRoundModeD(roundof));
+        end else begin
+          SMrw.DebVal = Round(SMrw.DebVal + (PPCr.Qty * prc),SetRoundModeD(roundof));
+        end;
+        MatRowPut(SMr,j,SMrw);
+      end;
+      foundf = true;
+    end;
+  end;
+  if (foundf==false) then begin
+    ClearRow(SMr,SMrw,1);
+    SMrw.Objects = PPCr.ItemCode;
+    SMrw.RowSimStat = 1;
+    if (inclvalues) then begin
+      if (PPCr.Qty==0) then begin
+        SMrw.DebVal = Round(PPCr.SugQty * prc,SetRoundModeD(roundof));
+      end else begin
+        SMrw.DebVal = Round(PPCr.Qty * prc,SetRoundModeD(roundof));
+      end;
+      SMrw.TransDate = PPCr.NeededDate;
+    end else begin
+      SMrw.VATCode = "XX"; // To know that this line should be removed is proper data for this item comes in... silly but neccesary
+    end;
+    MatRowPut(SMr,srwcnt,SMrw);
+  end;
+LAddProdNeedToSM:;
+  return;
+end;
+
+procedure AddPOToSM(record POPlanVc POPlanr,var record SMVc SMr,val prc,Boolean inclvalues,Boolean skiporderedf,Integer displaysel,Integer roundof,record RcVc debugRepSpec)
+begin
+  record AutoProdVc AutoProdr;
+  row POPlanVc POPlanrw;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Integer j,srwcnt;
+  Boolean foundf,testf;
+  string 20 theitem;
+  val coeff;
+  
+  rwcnt = MatRowCnt(POPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(POPlanr,i,POPlanrw);
+    foundf = false;
+    testf = true;
+    if (skiporderedf) then begin
+      if (POPlanrw.PONr>0) then begin
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      theitem = POPlanrw.ItemCode;
+      coeff = 1;
+      if (displaysel==1) then begin
+        if (nonblank(POPlanrw.FromItemCode)) then begin
+          theitem = POPlanrw.FromItemCode;
+          AutoProdr.ToItemCode = POPlanrw.ItemCode;
+          AutoProdr.FromItemCode = theitem;
+          if (ReadFirstKey("ToItemCode",AutoProdr,2,true)) then begin
+            coeff = AutoProdr.UnitCoefficient;
+          end;
+        end;
+      end;
+      srwcnt = MatRowCnt(SMr);
+      for (j=0;j<srwcnt;j=j+1) begin
+        MatRowGet(SMr,j,SMrw);
+        if ((SMrw.Objects==theitem) and (SMrw.RowSimStat==1)) then begin
+          if (inclvalues) then begin
+            if (POPlanrw.Qty==BlankVal) then begin
+              SMrw.DebVal = Round(SMrw.DebVal + ((POPlanrw.SugQty * prc) / coeff),SetRoundModeD(roundof));
+            end else begin
+              SMrw.DebVal = Round(SMrw.DebVal + ((POPlanrw.Qty * prc) / coeff),SetRoundModeD(roundof));
+            end;
+            MatRowPut(SMr,j,SMrw);
+          end;
+          foundf = true;
+        end;
+      end;
+      if (foundf==false) then begin
+        ClearRow(SMr,SMrw,1);
+        SMrw.Objects = theitem;
+        SMrw.RowSimStat = 1;
+        if (inclvalues) then begin
+          if (POPlanrw.Qty==BlankVal) then begin
+            SMrw.DebVal = Round((POPlanrw.SugQty * prc) / coeff,SetRoundModeD(roundof));
+          end else begin
+            SMrw.DebVal = Round((POPlanrw.Qty * prc) / coeff,SetRoundModeD(roundof));
+          end;
+        end else begin
+          SMrw.VATCode = "XX"; // To know that this line should be removed is proper data for this item comes in... silly but neccesary
+        end;
+        MatRowPut(SMr,srwcnt,SMrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure AddProdToSM(record ProdPlanVc ProdPlanr,var record SMVc SMr,val prc,Integer roundof)
+begin
+  row ProdPlanVc ProdPlanrw;
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  Integer j,srwcnt;
+  Boolean foundf;
+  
+  rwcnt = MatRowCnt(ProdPlanr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(ProdPlanr,i,ProdPlanrw);
+    foundf = false;
+    srwcnt = MatRowCnt(SMr);
+    for (j=0;j<srwcnt;j=j+1) begin
+      MatRowGet(SMr,j,SMrw);
+      if ((SMrw.Objects==ProdPlanrw.ItemCode) and (SMrw.RowSimStat==1)) then begin
+        if (ProdPlanrw.Qty==BlankVal) then begin
+          SMrw.DebVal = Round(SMrw.DebVal + (ProdPlanrw.SugQty * prc),SetRoundModeD(roundof));
+        end else begin
+          SMrw.DebVal = Round(SMrw.DebVal + (ProdPlanrw.Qty * prc),SetRoundModeD(roundof));
+        end;
+        MatRowPut(SMr,j,SMrw);
+        foundf = true;
+      end;
+    end;
+    if (foundf==false) then begin
+      ClearRow(SMr,SMrw,1);
+      SMrw.Objects = ProdPlanrw.ItemCode;
+      SMrw.RowSimStat = 1;
+      if (ProdPlanrw.Qty==BlankVal) then begin
+        SMrw.DebVal = Round(ProdPlanrw.SugQty * prc,SetRoundModeD(roundof));
+      end else begin
+        SMrw.DebVal = Round(ProdPlanrw.Qty * prc,SetRoundModeD(roundof));
+      end;
+      MatRowPut(SMr,srwcnt,SMrw);
+    end;
+  end;
+  return;
+end;
+
+procedure ResortSM(var record SMVc SMr,var record SMVc inSMr)
+begin
+  inSMr = SMr;
+  SortRows(SMr,"Objects",true);
+  return;
+end;
+
+/*
+procedure ResortSM(var record SMVc SMr,var record SMVc inSMr)
+begin
+  row SMVc SMrw;
+  Integer theline,i,rwcnt;
+  string 200 topin;
+  
+  RecordNew(inSMr);
+  inSMr.TransDate = SMr.TransDate;
+  rwcnt = MatRowCnt(SMr);
+  while (rwcnt>0) begin
+    topin = "";
+    theline = rwcnt -1;
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SMr,i,SMrw);
+      if (nonblank(topin)) then begin
+        if (topin>SMrw.Objects) then begin
+          topin = SMrw.Objects;
+          theline = i;
+        end;
+      end else begin
+        topin = SMrw.Objects;
+        theline = i;
+      end;
+    end;
+    MatRowGet(SMr,theline,SMrw);
+    MatRowPut(inSMr,MatRowCnt(inSMr),SMrw);
+    MatRowDelete(SMr,theline);
+    rwcnt = MatRowCnt(SMr);
+  end;
+  return;
+end;
+*/
+
+procedure AutoProductionSumup(record SMVc SMreal,var record SMVc SMr,Integer displaysel,Integer roundof)
+begin
+  record AutoProdVc AutoProdr;
+  row SMVc SMrw;
+  row SMVc SMrealrw;
+  Boolean foundf,treatedf,testf;
+  Integer rwcnt,i;
+  Integer srwcnt,j;
+
+  RecordNew(SMr);
+  SMr.Comment = SMreal.Comment;
+  SMr.TransDate = SMreal.TransDate;
+  SMr.Sign = SMreal.Sign;
+  SMr.FileName = SMreal.FileName;
+  rwcnt = MatRowCnt(SMreal);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMreal,i,SMrealrw);
+    srwcnt = MatRowCnt(SMr);
+    if (displaysel==0) then begin // Not needed..
+      MatRowPut(SMr,srwcnt,SMrealrw);
+    end;
+    if (displaysel==1) then begin
+      treatedf = false;
+      foundf = true;
+      ResetLoop(AutoProdr);
+      AutoProdr.FromItemCode = SMrealrw.Objects;
+      while (LoopMain(AutoProdr,1,foundf)) begin
+        if (AutoProdr.FromItemCode!=SMrealrw.Objects) then begin
+          foundf = false;
+        end;
+        if (foundf) then begin
+          srwcnt = MatRowCnt(SMr);
+          for (j=0;j<srwcnt;j=j+1) begin
+            MatRowGet(SMr,j,SMrw);
+            if ((SMrw.Objects==AutoProdr.ToItemCode) and (SMrw.RowSimStat==1)) then begin
+              SMrw.DebVal = SMrw.DebVal + Round(SMrealrw.DebVal / AutoProdr.UnitCoefficient,SetRoundModeD(roundof));
+              MatRowPut(SMr,j,SMrw);
+              treatedf = true;
+            end;
+          end;
+          if (treatedf==false) then begin
+            ClearRow(SMr,SMrw,1);
+            SMrw.Objects = AutoProdr.ToItemCode;
+            SMrw.RowSimStat = SMrealrw.RowSimStat;
+            SMrw.DebVal = SMrealrw.DebVal / AutoProdr.UnitCoefficient;
+            MatRowPut(SMr,srwcnt,SMrw);
+            treatedf = true;
+          end;
+        end;
+      end;
+      if (treatedf==false) then begin
+        MatRowPut(SMr,srwcnt,SMrealrw);
+      end;
+    end;
+    if (displaysel==2) then begin
+      treatedf = false;
+      foundf = true;
+      ResetLoop(AutoProdr);
+      AutoProdr.ToItemCode = SMrealrw.Objects;
+      while (LoopKey("ToItemCode",AutoProdr,1,foundf)) begin
+        if (AutoProdr.ToItemCode!=SMrealrw.Objects) then begin
+          foundf = false;
+        end;
+        testf = foundf;
+        if (AutoProdr.Default==0) then begin
+          testf = false;
+        end;
+        if (testf) then begin
+          for (j=0;j<srwcnt;j=j+1) begin
+            MatRowGet(SMr,j,SMrw);
+            if ((SMrw.Objects==AutoProdr.FromItemCode) and (SMrw.RowSimStat==1)) then begin
+              SMrw.DebVal = SMrw.DebVal + Round(SMrealrw.DebVal * AutoProdr.UnitCoefficient,SetRoundModeD(roundof));
+              MatRowPut(SMr,j,SMrw);
+              treatedf = true;
+            end;
+          end;
+          if (treatedf==false) then begin
+            ClearRow(SMr,SMrw,1);
+            SMrw.Objects = AutoProdr.FromItemCode;
+            SMrw.RowSimStat = SMrealrw.RowSimStat;
+            SMrw.DebVal = SMrealrw.DebVal * AutoProdr.UnitCoefficient;
+            MatRowPut(SMr,srwcnt,SMrw);
+            treatedf = true;
+          end;
+        end;
+      end;
+      if (treatedf==false) then begin
+        MatRowPut(SMr,srwcnt,SMrealrw);
+      end;
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AppendAutoProductions(array record SMVc aSMr,Integer asmcnt,Integer displaysel,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  LongInt months;
+  Integer i,j;
+  val workdays;
+  Boolean maxf;
+  record SFPeriodsBlock SFPb;
+
+  BlockLoad(SFPb);
+  if (displaysel>0) then begin
+    for (i=0;i<asmcnt;i=i+1) begin
+      SMr = aSMr[i];
+      AutoProductionSumup(SMr,SM2r,displaysel,SFPb.RoundOff);
+      aSMr[i] = SM2r;
+    end;
+    DebugInfoArray(USetStr(17022),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  end;
+  return;
+end;
+
+global
+procedure BuildForecastSM(var record SMVc inSMr,Date startdate,Date enddate,string theclass,Boolean additgroup)
+begin
+  record SalesForecastVc SFr;
+  record SMVc SMr;
+  array string 20 asfcodes;
+  Integer acnt;
+  Boolean foundf,testf;
+  val prc,dip,dsip;
+  record SFPeriodsBlock SFPb;
+  
+  //vector row SMVc SMrwv;
+  vector string 255 SMrw_Objects;
+  vector integer SMrw_RowSimStat;
+  vector val SMrw_DebVal;
+  vector val SMrw_CredVal;
+  
+  vector Boolean SMrwf;
+  array string 255 SMrwid;
+  Integer i,SMrwcnt;
+  row SMVc SMrw;
+  string 255 rwid;
+  
+  BlockLoad(SFPb);  
+  ResetLoop(SFr);
+  foundf = true;
+  acnt = 0;
+  SFr.StartDate = startdate;
+  while (LoopKey("ActStartDate",SFr,1,foundf)) begin
+    if (SFr.StartDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (SFr.EndDate<startdate) then begin 
+      testf = false;
+    end;
+    if (nonblank(theclass)) then begin
+      if (SFr.Class!=theclass) then begin 
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      dip = ForecastDateDiff(SFr.Class,SFr.StartDate,SFr.EndDate,true);
+      dsip = dip;
+      if (enddate<SFr.EndDate) then begin
+        dsip = dsip - ForecastDateDiff(SFr.Class,enddate,SFr.EndDate,true);
+      end;
+      if (startdate>SFr.StartDate) then begin
+        dsip = dsip - ForecastDateDiff(SFr.Class,SFr.StartDate,startdate,true);
+      end;
+      prc = dsip / dip;
+      AddToCodeArr(SFr.Code,asfcodes,acnt);
+      
+      AddSFToSM(SFr,SMrw_Objects,SMrw_RowSimStat,SMrw_DebVal,SMrw_CredVal,SMrwf,SMrwid,SMrwcnt,prc,additgroup);
+    end;
+  end;
+  ResetLoop(SFr);
+  foundf = true;
+  SFr.EndDate = startdate;
+  while (LoopKey("ActEndDate",SFr,1,foundf)) begin
+    if (SFr.StartDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (nonblank(theclass)) then begin
+      if (SFr.Class!=theclass) then begin 
+        testf = false;
+      end;
+    end;
+    if (testf) then begin
+      if (CodeInArr(SFr.Code,asfcodes,acnt)==false) then begin
+        dip = ForecastDateDiff(SFr.Class,SFr.StartDate,SFr.EndDate,true);
+        dsip = dip;
+        if (enddate<SFr.EndDate) then begin
+          dsip = dsip - ForecastDateDiff(SFr.Class,enddate,SFr.EndDate,true);
+        end;
+        if (startdate>SFr.StartDate) then begin
+          dsip = dsip - ForecastDateDiff(SFr.Class,SFr.StartDate,startdate,true);
+        end;
+        prc = dsip / dip;
+        AddSFToSM(SFr,SMrw_Objects,SMrw_RowSimStat,SMrw_DebVal,SMrw_CredVal,SMrwf,SMrwid,SMrwcnt,prc,additgroup);
+      end;
+    end;
+  end;
+  
+  RecordNew(SMr);
+  SMr.TransDate = startdate;
+  
+  for (i = 0; i<=SMrwcnt; i = i + 1) begin
+    ClearRow(SMr,SMrw,1);
+    
+    rwid = SMrwid[i];
+    SMrw.Objects = SMrw_Objects[rwid];
+    SMrw.RowSimStat = SMrw_RowSimStat[rwid];
+    SMrw.DebVal = SMrw_DebVal[rwid];
+    SMrw.CredVal = SMrw_CredVal[rwid];
+    
+    MatRowPut(SMr,i,SMrw);
+  end;
+  
+  ResortSM(SMr,inSMr);
+  return;
+end;
+
+procedure BuildProdNeedSM(var record SMVc SMr,Date startdate,Date enddate,string theclass,Boolean additgroup,Boolean inclvalues,Integer roundof)
+begin
+  record ProdPlanCompVc PPCr;
+  array LongInt asfsers;
+  Integer acnt;
+  Boolean foundf,testf;
+  val prc,dip,dsip;
+  
+  RecordNew(SMr);
+  ResetLoop(PPCr);
+  foundf = true;
+
+  SMr.TransDate = startdate;
+  PPCr.NeededDate = startdate;
+  while (LoopKey("NeededDate",PPCr,1,foundf)) begin
+    if (PPCr.NeededDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (testf) then begin
+      AddProdNeedToSM(PPCr,SMr,1,additgroup,inclvalues,roundof);
+    end;
+  end;
+  return;
+end;
+
+procedure BuildPOPlanSM(var record SMVc inSMr,Date startdate,Date enddate,string theclass,Boolean inclvalues,Boolean skiporderedf,Integer displaysel,Integer roundof,record RcVc debugRepSpec)
+begin
+  record POPlanVc POPlanr;
+  record SMVc SMr;
+  array LongInt asfsers;
+  Integer acnt;
+  Boolean foundf,testf;
+  val prc,dip,dsip;
+  
+  RecordNew(SMr);
+  ResetLoop(POPlanr);
+  foundf = true;
+  acnt = 0;
+  SMr.TransDate = startdate;
+  POPlanr.StartDate = startdate;
+  while (LoopKey("StartDate",POPlanr,1,foundf)) begin
+    if (POPlanr.StartDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (POPlanr.OKFlag==0) then begin 
+      testf = false;
+    end;
+    if (POPlanr.Closed!=0) then begin 
+      testf = false;
+    end;
+    if (POPlanr.EndDate<startdate) then begin 
+      testf = false;
+    end;
+    if (nonblank(theclass)) then begin
+/*    
+      if (POPlanr.Class!=theclass) then begin 
+        testf = false;
+      end;
+*/      
+    end;
+    if (testf) then begin
+      dip = ForecastDateDiff("",POPlanr.StartDate,POPlanr.EndDate,false);
+      dsip = dip;
+      if (enddate<POPlanr.EndDate) then begin
+        dsip = dsip - ForecastDateDiff("",enddate,POPlanr.EndDate,false);
+      end;
+      if (startdate>POPlanr.StartDate) then begin
+        dsip = dsip - ForecastDateDiff("",POPlanr.StartDate,startdate,false);
+      end;
+      prc = dsip / dip;
+      AddToSerArr(POPlanr.SerNr,asfsers,acnt);
+      AddPOToSM(POPlanr,SMr,prc,inclvalues,skiporderedf,displaysel,roundof,debugRepSpec);
+    end;
+  end;
+  ResetLoop(POPlanr);
+  foundf = true;
+  POPlanr.EndDate = startdate;
+  while (LoopKey("EndDate",POPlanr,1,foundf)) begin
+    if (POPlanr.StartDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (POPlanr.OKFlag==0) then begin 
+      testf = false;
+    end;
+    if (POPlanr.Closed!=0) then begin 
+      testf = false;
+    end;
+    if (testf) then begin
+      if (SerInArr(POPlanr.SerNr,asfsers,acnt)==false) then begin
+        dip = ForecastDateDiff("",POPlanr.StartDate,POPlanr.EndDate,false);
+        dsip = dip;
+        if (enddate<POPlanr.EndDate) then begin
+          dsip = dsip - ForecastDateDiff("",enddate,POPlanr.EndDate,false);
+        end;
+        if (startdate>POPlanr.StartDate) then begin
+          dsip = dsip - ForecastDateDiff("",POPlanr.StartDate,startdate,false);
+        end;
+        prc = dsip / dip;
+        AddPOToSM(POPlanr,SMr,prc,inclvalues,skiporderedf,displaysel,roundof,debugRepSpec);
+      end;
+    end;
+  end;
+  ResortSM(SMr,inSMr);
+  return;
+end;
+
+procedure BuildProdPlanSM(var record SMVc inSMr,Date startdate,Date enddate,string theclass)
+begin
+  record ProdPlanVc ProdPlanr;
+  record SMVc SMr;
+  array LongInt asfsers;
+  Integer acnt;
+  Boolean foundf,testf;
+  val prc,dip,dsip;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  RecordNew(SMr);
+  ResetLoop(ProdPlanr);
+  foundf = true;
+  acnt = 0;
+  SMr.TransDate = startdate;
+  ProdPlanr.StartDate = startdate;
+  while (LoopKey("StartDate",ProdPlanr,1,foundf)) begin
+    if (ProdPlanr.StartDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (ProdPlanr.OKFlag==0) then begin 
+      testf = false;
+    end;
+    if (ProdPlanr.Closed!=0) then begin 
+      testf = false;
+    end;
+    if (ProdPlanr.EndDate<startdate) then begin 
+      testf = false;
+    end;
+    if (nonblank(theclass)) then begin
+/*    
+      if (ProdPlanr.Class!=theclass) then begin 
+        testf = false;
+      end;
+*/      
+    end;
+    if (testf) then begin
+      dip = ForecastDateDiff("",ProdPlanr.StartDate,ProdPlanr.EndDate,false);
+      dsip = dip;
+      if (enddate<ProdPlanr.EndDate) then begin
+        dsip = dsip - ForecastDateDiff("",enddate,ProdPlanr.EndDate,false);
+      end;
+      if (startdate>ProdPlanr.StartDate) then begin
+        dsip = dsip - ForecastDateDiff("",ProdPlanr.StartDate,startdate,false);
+      end;
+      prc = dsip / dip;
+      AddToSerArr(ProdPlanr.SerNr,asfsers,acnt);
+      AddProdToSM(ProdPlanr,SMr,prc,SFPb.RoundOff);
+    end;
+  end;
+  ResetLoop(ProdPlanr);
+  foundf = true;
+  ProdPlanr.EndDate = startdate;
+  while (LoopKey("EndDate",ProdPlanr,1,foundf)) begin
+    if (ProdPlanr.StartDate>enddate) then begin 
+      foundf = false;
+    end;
+    testf = foundf;
+    if (ProdPlanr.OKFlag==0) then begin 
+      testf = false;
+    end;
+    if (ProdPlanr.Closed!=0) then begin 
+      testf = false;
+    end;
+    if (testf) then begin
+      if (SerInArr(ProdPlanr.SerNr,asfsers,acnt)==false) then begin
+        dip = ForecastDateDiff("",ProdPlanr.StartDate,ProdPlanr.EndDate,false);
+        dsip = dip;
+        if (enddate<ProdPlanr.EndDate) then begin
+          dsip = dsip - ForecastDateDiff("",enddate,ProdPlanr.EndDate,false);
+        end;
+        if (startdate>ProdPlanr.StartDate) then begin
+          dsip = dsip - ForecastDateDiff("",ProdPlanr.StartDate,startdate,false);
+        end;
+        prc = dsip / dip;
+        AddProdToSM(ProdPlanr,SMr,prc,SFPb.RoundOff);
+      end;
+    end;
+  end;
+  ResortSM(SMr,inSMr);
+  return;
+end;
+
+function LongInt GetStockPolicyDo(string item,string class,Date dat,Boolean maxf)
+begin
+  record StockPolicyVc StockPolicyr;
+  Boolean foundf,testf;
+  LongInt res;
+  string 255 ckey;
+  Integer keys;
+  
+  res = 0;
+  ckey = "ArtCode";
+  keys = 1;
+  StockPolicyr.ArtCode = item;
+  if (nonblank(class)) then begin
+    StockPolicyr.Class = class;
+    ckey = "ItemClass";
+    keys = 2;
+  end;
+  StockPolicyr.StartDate = dat;
+  foundf = true;
+  while (LoopKey(ckey,StockPolicyr,keys,foundf)) begin
+    if (StockPolicyr.ArtCode!=item) then begin
+      foundf = false;
+    end;
+    if (nonblank(class)) then begin
+      if (StockPolicyr.Class!=class) then begin
+        foundf = false;
+      end;
+    end;
+    if (foundf) then begin
+      testf = true;
+      if (nonblankdate(StockPolicyr.StartDate)) and (nonblankdate(StockPolicyr.EndDate)) then begin
+        if (DateInRange(dat,StockPolicyr.StartDate,StockPolicyr.EndDate)==false) then begin
+          testf = false;
+        end;
+      end;
+      if (nonblankdate(StockPolicyr.StartDate)) and (blankdate(StockPolicyr.EndDate)) then begin
+        if (dat<StockPolicyr.StartDate) then begin testf = false; end;
+      end;
+      if (blankdate(StockPolicyr.StartDate)) and (nonblankdate(StockPolicyr.EndDate)) then begin
+        if (dat>StockPolicyr.EndDate) then begin testf = false; end;
+      end;
+      if (testf) then begin
+        if (StockPolicyr.OKFlag!=0) then begin 
+          if (maxf) then begin
+            if (StockPolicyr.MaxDays>0) then begin
+              res = StockPolicyr.MaxDays;
+            end else begin
+              res = StockPolicyr.MinDays;
+            end;
+          end else begin
+            res = StockPolicyr.MinDays;
+          end;
+          foundf = false;
+        end;
+      end;
+    end;
+  end;
+  GetStockPolicyDo = res;
+  return;
+end;
+
+function LongInt GetStockPolicy(string item,string class,Date dat,Boolean maxf)
+begin
+  LongInt res;
+  
+  res = GetStockPolicyDo(item,class,dat,maxf);
+  if (res==0) then begin
+    if (nonblank(class)) then begin
+      res = GetStockPolicyDo(item,"",dat,maxf);
+    end;
+  end;
+  GetStockPolicy = res;
+  return;
+end;
+procedure CombineSMWithSM(var record SMVc SMr,var record SMVc SM2r,Boolean decr,Integer roundof)
+begin
+  row SMVc SMrw;
+  row SMVc SM2rw;
+  Integer i,rwcnt;
+  Integer j,rwcnt2;
+  
+  rwcnt = MatRowCnt(SMr);
+  rwcnt2 = MatRowCnt(SM2r);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    for (j=0;j<rwcnt2;j=j+1) begin
+      MatRowGet(SM2r,j,SM2rw);
+      if ((SMrw.Objects==Sm2rw.Objects) and (SMrw.RowSimStat==Sm2rw.RowSimStat)) then begin
+        SMrw.DebVal = Round(SMrw.DebVal + SM2rw.DebVal,SetRoundModeD(roundof));
+        SMrw.CredVal = Round(SMrw.CredVal + SM2rw.CredVal,SetRoundModeD(roundof));
+        MatRowPut(SMr,i,SMrw);
+        MatRowDelete(SM2r,j);
+        j=j-1;
+        rwcnt2 = MatRowCnt(SM2r);
+        j = rwcnt2;
+      end;
+    end;
+  end;
+  rwcnt2 = MatRowCnt(SM2r);
+  for (j=0;j<rwcnt2;j=j+1) begin
+    MatRowGet(SM2r,j,SM2rw);
+    MatRowPut(SMr,MatRowCnt(SMr),SM2rw);
+  end;
+  return;
+end;
+
+procedure AddSMToSMIfPolicy(var record SMVc SMr,record SMVc SM2r,Boolean maxf,Integer roundof,string class)
+begin
+  row SMVc SMrw;
+  row SMVc SM2rw;
+  LongInt days;
+  Integer i,rwcnt;
+  Integer j,rwcnt2;
+  
+  rwcnt = MatRowCnt(SMr);
+  rwcnt2 = MatRowCnt(SM2r);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    days = GetStockPolicy(SMrw.Objects,class,SMr.TransDate,maxf);
+    if (days>0) then begin
+      for (j=0;j<rwcnt2;j=j+1) begin
+        MatRowGet(SM2r,j,SM2rw);
+        if ((SMrw.Objects==Sm2rw.Objects) and (SMrw.RowSimStat==Sm2rw.RowSimStat)) then begin
+          SMrw.DebVal = Round(SMrw.DebVal + SM2rw.DebVal,SetRoundModeD(roundof));
+          SMrw.CredVal = Round(SMrw.CredVal + SM2rw.CredVal,SetRoundModeD(roundof));
+          MatRowPut(SMr,i,SMrw);
+          j = rwcnt2;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure AddSMToSM(var record SMVc SMr,record SMVc SM2r,Integer roundof)
+begin
+  row SMVc SMrw;
+  row SMVc SM2rw;
+  Integer i,rwcnt;
+  Integer j,rwcnt2;
+  
+  rwcnt = MatRowCnt(SMr);
+  rwcnt2 = MatRowCnt(SM2r);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    for (j=0;j<rwcnt2;j=j+1) begin
+      MatRowGet(SM2r,j,SM2rw);
+      if ((SMrw.Objects==Sm2rw.Objects) and (SMrw.RowSimStat==Sm2rw.RowSimStat)) then begin
+        SMrw.DebVal = Round(SMrw.DebVal + SM2rw.DebVal,SetRoundModeD(roundof));
+        SMrw.CredVal = Round(SMrw.CredVal + SM2rw.CredVal,SetRoundModeD(roundof));
+        MatRowPut(SMr,i,SMrw);
+        j = rwcnt2;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure SubSMWithSM(var record SMVc SMr,record SMVc SM2r)
+begin
+  row SMVc SMrw;
+  row SMVc SM2rw;
+  Integer i,rwcnt;
+  Integer j,rwcnt2;
+  val t;
+  
+  rwcnt = MatRowCnt(SMr);
+  rwcnt2 = MatRowCnt(SM2r);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    for (j=0;j<rwcnt2;j=j+1) begin
+      MatRowGet(SM2r,j,SM2rw);
+      if ((SMrw.Objects==Sm2rw.Objects) and (SMrw.RowSimStat==Sm2rw.RowSimStat)) then begin
+        t = SM2rw.DebVal - SMrw.DebVal;
+        SMrw.DebVal = t;
+        t = SM2rw.CredVal - SMrw.CredVal;
+        SMrw.CredVal = t;
+        MatRowPut(SMr,i,SMrw);
+        j = rwcnt2;
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure AppendWorkdaysAndPolicyToSM(var record SMVc SMr,val workdays,Boolean maxf,string class)
+begin
+  row SMVc SMrw;
+  LongInt days;
+  Integer i,rwcnt;
+
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    days = GetStockPolicy(SMrw.Objects,class,SMr.TransDate,maxf);
+    if (days>=0) then begin    
+      SMrw.DebVal = (SMrw.DebVal/workdays)*days; // Round(SMrw.DebVal/workdays*days,SFPb.RoundOff);
+      SMrw.CredVal = (SMrw.CredVal/workdays)*days; // Round(SMrw.CredVal/workdays*days,SFPb.RoundOff);
+      MatRowPut(SMr,i,SMrw);
+    end;
+  end;
+  return;
+end;
+
+global
+procedure AppendMaxCalculations(var array record SMVc amaxSMr,var Integer asmcnt,Integer maxmin,Boolean reallydotheappend,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  LongInt months;
+  Integer i,j;
+  val workdays;
+  Boolean maxf;
+  record SFPeriodsBlock SFPb;
+  array record SMVc aForecastr;
+  
+  CopySMArray(amaxSMr,aForecastr,asmcnt);
+  BlockLoad(SFPb);
+  months = GetStockPolicyMonths;
+  asmcnt = asmcnt - months;
+  if ((reallydotheappend) and (maxmin<2)) then begin
+    if (maxmin==0) then begin
+      maxf = false;
+    end else begin
+      maxf = true;
+    end;
+    for (i=0;i<asmcnt;i=i+1) begin
+      SMr = amaxSMr[i];
+      switch (SFPb.PeriodType) begin
+        case kForecastPeriodTypeMonths:
+          workdays = GetSalesDays(debugRepSpec.LastAcc,SMr.TransDate,AddDay(AddMonth(SMr.TransDate,months),-1)); // Fixed MONTHS
+        case kForecastPeriodTypeWeeks:
+          workdays = GetSalesDays(debugRepSpec.LastAcc,SMr.TransDate,AddDay(SMr.TransDate,months*6)); // Fixed WEEKS
+      end;
+      for (j=i+1;j<i+months;j=j+1) begin
+        SM2r = aForecastr[j];
+        AddSMToSMIfPolicy(SMr,SM2r,maxf,SFPb.RoundOff,debugRepSpec.LastAcc);
+      end;
+      AppendWorkdaysAndPolicyToSM(SMr,workdays,maxf,debugRepSpec.LastAcc);
+      amaxSMr[i] = SMr;
+    end;
+    DebugInfoArray(USetStr(17021),amaxSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  end;
+  return;
+end;
+
+procedure NegateSim(record SMVc SMr)
+begin
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+    SMrw.DebVal = -SMrw.DebVal;
+    SMrw.CredVal = -SMrw.CredVal;
+    MatRowPut(SMr,i,SMrw);
+  end;
+  return;
+end;
+
+global
+procedure NegateArray(var array record SMVc aSMr,Integer asmcnt,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  Integer i,j;
+
+  for (i=0;i<asmcnt;i=i+1) begin
+    SMr = aSMr[i];
+    NegateSim(SMr);
+    aSMr[i] = SMr;
+  end;
+end;
+
+global
+procedure BuildCurStockPlusForecastSM(var array record SMVc aSMr,var Integer asmcnt,Date d,Date startdate,string theclass,array string aitems,Integer acnt,record RcVc debugRepSpec)
+begin
+  //to build data for month before specified period, openeing balance/number 
+  record SMVc SMr;
+  record SMVc forcSMr;
+  record SMVc tempSMr;
+  row SMVc SMrw;
+  row SMVc forcSMrw;
+  Integer i,j,rwcnt;
+  record SFPeriodsBlock SFPb;
+  Date ed;
+  
+  BlockLoad(SFPb);
+  RecordNew(SMr);
+  if (blankdate(d)) then begin
+    SMr.TransDate = CurrentDate;
+  end else begin
+    SMr.TransDate = d;
+  end;
+//  if ((SMr.TransDate<startdate) and (AddDay(SMr.TransDate,1)<AddDay(startdate,-1))) then begin
+  if ((SMr.TransDate<startdate) and (AddDay(SMr.TransDate,1)<=AddDay(startdate,0))) then begin
+    BuildForecastSM(forcSMr,AddDay(SMr.TransDate,0),AddDay(startdate,-1),theclass,false);
+    NegateSim(forcSMr);
+    DebugInfoSim(USetStr(17024),forcSMr,debugRepSpec);
+    BuildPOPlanSM(tempSMr,AddDay(SMr.TransDate,0),AddDay(startdate,-1),theclass,true,false,0,SFPb.RoundOff,debugRepSpec);
+    DebugInfoSim(USetStr(17025),tempSMr,debugRepSpec);
+    NegateSim(tempSMr);
+    AddSMToSM(forcSMr,tempSMr,SFPb.RoundOff);
+    NegateSim(tempSMr);
+    BuildProdPlanSM(tempSMr,AddDay(SMr.TransDate,0),AddDay(startdate,-1),theclass);
+    DebugInfoSim(USetStr(17026),tempSMr,debugRepSpec);
+    NegateSim(tempSMr);
+    AddSMToSM(forcSMr,tempSMr,SFPb.RoundOff);
+    NegateSim(tempSMr);
+    DebugInfoSim(USetStr(17027) & " " & AddDay(SMr.TransDate,0) & " - " & AddDay(startdate,-1) & "; (6) = (3) + (4) + (5)",forcSMr,debugRepSpec);
+  end else begin
+    RecordNew(forcSMr);
+//I think it should be same as in BuildTheForecastArray
+    switch (SFPb.PeriodType) begin
+      case kForecastPeriodTypeMonths:
+        SMr.TransDate = AddMonth(d,-1); // Fixed MONTHS
+        forcSMr.TransDate = AddMonth(forcSMr.TransDate,-1); // Fixed MONTHS
+      case kForecastPeriodTypeWeeks:
+        SMr.TransDate = AddDay(d,-7); // Fixed WEEKS
+        forcSMr.TransDate = AddDay(SMr.TransDate,6); // Fixed WEEKS
+    end;
+  end;
+  rwcnt = MatRowCnt(forcSMr);
+  for (i=0;i<acnt;i=i+1) begin
+    ClearRow(forcSMr,SMrw,1);
+    SMrw.Objects = aitems[i];
+    SMrw.RowSimStat = 1;
+    SMrw.DebVal = GetStockQty(SMrw.Objects,"",SMr.TransDate,false);
+    for (j=0;j<rwcnt;j=j+1) begin
+      MatRowGet(forcSMr,j,forcSMrw);
+      if (forcSMrw.Objects==SMrw.Objects) then begin
+        SMrw.DebVal = SMrw.DebVal - forcSMrw.DebVal;
+      end;
+    end;
+    MatRowPut(SMr,i,SMrw);
+  end;
+  aSMr[0] = SMr;
+  ed = AddDay(startdate,-1);
+  if (ed<=SMr.TransDate) then begin
+    ed = SMr.TransDate;
+  end;
+  DebugInfoSim(USetStr(17028) & " " & SMr.TransDate & " " & USetStr(17024) & " " & AddDay(SMr.TransDate,0) & " " & USetStr(17030) & " " & ed & "; (7) = " & USetStr(17043) & " - (6)",SMr,debugRepSpec);
+  return;
+end;
+
+global
+procedure BuildTheForecastArray(var array record SMVc aSMr,var Integer asmcnt,Date actualstartdate,Date actualenddate,string theclass,Boolean additemgr,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb; 
+  
+  BlockLoad(SFPb);
+  sd = actualstartdate;
+  RecordNew(SMr);
+  switch (SFPb.PeriodType) begin
+    case kForecastPeriodTypeMonths:
+      ed = AddDay(AddMonth(actualstartdate,1),-1); // Fixed MONTHS
+      SMr.TransDate = AddMonth(actualstartdate,-1); // Fixed MONTHS
+    case kForecastPeriodTypeWeeks:
+      ed = AddDay(sd,6); // Fixed WEEKS        
+      SMr.TransDate = AddDay(actualstartdate,-7); // Fixed WEEKS
+  end;
+  if (ed>actualenddate) then begin
+    ed = actualenddate;
+  end;
+
+  aSMr[asmcnt] = SMr;
+  asmcnt = asmcnt + 1;
+  while (sd<actualenddate) begin
+    BuildForecastSM(SMr,sd,ed,theclass,additemgr);
+    aSMr[asmcnt] = SMr;
+    asmcnt = asmcnt + 1;
+
+    switch (SFPb.PeriodType) begin
+      case kForecastPeriodTypeMonths:
+        sd = AddMonth(sd,1); // Fixed MONTHS
+        ed = AddDay(AddMonth(sd,1),-1); // Fixed MONTHS
+      case kForecastPeriodTypeWeeks:
+        sd = AddDay(sd,7); // Fixed WEEKS
+        ed = AddDay(sd,6); // Fixed WEEKS        
+    end;
+   
+    if (ed>actualenddate) then begin
+      ed = actualenddate;
+    end;
+  end;
+  DebugInfoArray(USetStr(17031),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+procedure CreateFakeProdPlanComp(record SMVc SMr,Array record ProdPlanCompVc aPPCr,var Integer appcnt)
+begin
+  row SMVc SMrw;
+  Integer i,rwcnt;
+  record ProdPlanCompVc PPCr;
+  record INVc INr;
+  
+  Array string 255 aitemcode;
+  Array val aqty;
+  Array val asugqty;
+  Array Date aneeded;
+  Integer ai,acnt;
+  
+  rwcnt = MatRowCnt(SMr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+
+    if (ReadFirstItem(SMrw.Objects,INr,false,false)) then begin
+      if (nonblank(INr.Recepy)) then begin
+        acnt = 0;
+        ExpandRecepy_ProdPlan(INr.Code,INr.Recepy,0,SMrw.DebVal,SMr.TransDate,aitemcode,asugqty,aqty,aneeded,acnt);
+        for (ai=0;ai<acnt;ai=ai+1) begin
+          RecordNew(PPCr);
+          PPCr.ItemCode = aitemcode[ai];
+          PPCr.Qty = aqty[ai];
+          aPPCr[appcnt] = PPCr;
+          appcnt = appcnt + 1;
+        end;
+      end;
+    end;
+  end;
+  return;
+end;
+
+function val FakeProdPlanCompQty(string artcode,Array record ProdPlanCompVc aPPCr,Integer appcnt)
+begin
+  val res;
+  record ProdPlanCompVc PPCr;
+  Integer ai;
+  
+  for (ai=0;ai<appcnt;ai=ai+1) begin
+    PPCr = aPPCr[ai];
+    if (artcode==PPCr.ItemCode) then begin
+      res = PPCr.Qty;
+      ai = appcnt;
+    end;
+  end;  
+  FakeProdPlanCompQty = res;
+  return;
+end;
+
+global
+procedure AppendTheProdNeeds(var array record SMVc aSMr,var Integer asmcnt,Date actualstartdate,Date actualenddate,string theclass,Boolean additemgr,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  record SMVc SM3r;
+  record SMVc POSSMr;
+  Integer i,j;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb;
+  row SMVc SMrw;
+  Integer rwcnt;
+  record SMVc SM0r;
+  
+  Boolean printf;
+  array string 20 aitems;
+  array Integer atype;
+  Integer acnt;
+  array string 20 aitemsprodneed;
+  array Integer atypeprodneed;
+  Integer acntprodneed; 
+  record SMVc forcSMr;
+  record SMVc tempSMr;
+  Array record ProdPlanCompVc aPPCr;
+  Integer appcnt;
+  
+  BlockLoad(SFPb);
+  SM0r = aSMr[0];
+  BuildTheItemArray(aSMr,asmcnt,aitems,atype,acnt);
+
+  for (i=1;i<asmcnt-1;i=i+1) begin
+    SMr = aSMr[i];
+    SM2r = aSMr[i+1];
+    sd = SMr.TransDate;
+    ed = AddDay(SM2r.TransDate,-1);
+    BuildProdNeedSM(POSSMr,sd,ed,theclass,additemgr,true,SFPb.RoundOff);
+    NegateSim(POSSMr);
+    CombineSMWithSM(SMr,POSSMr,true,SFPb.RoundOff);
+    ResortSM(SMr,SM3r);
+    aSMr[i] = SM3r;
+  end;
+
+
+
+  RecordNew(SMr);
+  if (blankdate(actualstartdate)) then begin
+    SMr.TransDate = CurrentDate;
+  end else begin
+    SMr.TransDate = actualstartdate;
+  end;
+  if ((SMr.TransDate<debugRepSpec.sStartDate) and (AddDay(SMr.TransDate,1)<=AddDay(debugRepSpec.sStartDate,0))) then begin
+    BuildForecastSM(forcSMr,AddDay(SMr.TransDate,0),AddDay(debugRepSpec.sStartDate,-1),theclass,false);
+    NegateSim(forcSMr);
+    BuildPOPlanSM(tempSMr,AddDay(SMr.TransDate,0),AddDay(debugRepSpec.sStartDate,-1),theclass,true,false,0,SFPb.RoundOff,debugRepSpec);
+    NegateSim(tempSMr);
+    AddSMToSM(forcSMr,tempSMr,SFPb.RoundOff);
+    NegateSim(tempSMr);
+    BuildProdPlanSM(tempSMr,AddDay(SMr.TransDate,0),AddDay(debugRepSpec.sStartDate,-1),theclass);
+    NegateSim(tempSMr);
+    AddSMToSM(forcSMr,tempSMr,SFPb.RoundOff);
+    NegateSim(tempSMr);
+    
+    CreateFakeProdPlanComp(forcSMr,aPPCr,appcnt);
+  end;
+
+
+  BuildTheItemArray(aSMr,asmcnt,aitemsprodneed,atypeprodneed,acntprodneed);  
+  for (i=0;i<acntprodneed;i=i+1) begin
+    printf = true;
+    for (j=0;j<acnt;j=j+1) begin
+      if (aitemsprodneed[i]==aitems[j]) then begin 
+        printf = false; 
+        j = acnt;
+      end;
+    end;
+    if (printf) then begin
+      ClearRow(SM0r,SMrw,1);
+      SMrw.Objects = aitemsprodneed[i];
+      SMrw.RowSimStat = 1;
+      SMrw.DebVal = GetStockQty(SMrw.Objects,"",SMr.TransDate,false);
+      SMrw.DebVal = SMrw.DebVal - FakeProdPlanCompQty(SMrw.Objects,aPPCr,appcnt);
+      MatRowPut(SM0r,MatRowCnt(SM0r),SMrw);
+    end;
+  end;
+
+  aSMr[0] = SM0r;
+  DebugInfoArray(USetStr(17032),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+global
+procedure AppendAllPurchaseItems(var array record SMVc aSMr,var Integer asmcnt,Date actualstartdate,Date actualenddate,string theclass,Boolean additemgr,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  record SMVc SM3r;
+  record SMVc POSSMr;
+  Integer i,j;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  for (i=1;i<asmcnt-1;i=i+1) begin
+    SMr = aSMr[i];
+    SM2r = aSMr[i+1];
+    sd = SMr.TransDate;
+    ed = AddDay(SM2r.TransDate,-1);
+    BuildProdNeedSM(POSSMr,sd,ed,theclass,additemgr,false,SFPb.RoundOff);
+    CombineSMWithSM(SMr,POSSMr,true,SFPb.RoundOff);
+    BuildPOPlanSM(POSSMr,sd,ed,theclass,false,false,0,SFPb.RoundOff,debugRepSpec);
+    CombineSMWithSM(SMr,POSSMr,true,SFPb.RoundOff);
+    ResortSM(SMr,SM3r);
+    aSMr[i] = SM3r;
+  end;
+  DebugInfoArray(USetStr(17033),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+global
+procedure AppendStockSMToForecastArray(var array record SMVc aSMr,Integer asmcnt,record RcVc debugRepSpec)
+begin
+  record SMVc SM2r;
+  record SMVc SMr;
+  row SMVc SMrw;
+  row SMVc SM2rw;
+  Integer i,rwcnt;
+  Integer j,jrwcnt;
+  Integer ai;
+  Boolean foundf;
+  
+  for (ai=0;ai<asmcnt-1;ai=ai+1) begin
+    SM2r = aSMr[ai];
+    SMr = aSMr[ai+1];
+//    DebugInfoSim("First Sim " & ai,SM2r,debugRepSpec);
+//    DebugInfoSim("Next Sim " & ai + 1 & " " & SMr.TransDate,SMr,debugRepSpec);
+    rwcnt = MatRowCnt(SMr);
+    jrwcnt = MatRowCnt(SM2r);
+    
+//    rwcnt = 1; jrwcnt = 1; //jjtmp
+    
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SMr,i,SMrw);
+      foundf = false;
+      for (j=0;j<jrwcnt;j=j+1) begin
+        MatRowGet(SM2r,j,SM2rw);
+        if ((SM2rw.Objects==SMrw.Objects) and (SM2rw.RowSimStat==SMrw.RowSimStat)) then begin
+          SMrw.DebVal = SM2rw.DebVal + SMrw.DebVal;
+          MatRowPut(SMr,i,SMrw);
+          foundf = true;
+        end;
+      end;
+/* // First record in the arra should have ALL posible lines
+      if (foundf==false) then begin
+        SMrw.DebVal = SMrw.DebVal;
+        MatRowPut(SM2r,jrwcnt,SMrw);
+        jrwcnt = MatRowCnt(SM2r);
+      end;
+*/
+    end;
+    aSMr[ai+1] = SMr;
+  end;
+  DebugInfoArray(USetStr(17034) & "; " & USetStr(17043) & " - [(3) - (4) - (5)]",aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+global
+procedure AppendPOPlanToForecastArray(var array record SMVc aSMr,Integer asmcnt,string theclass,Boolean negf,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  record SMVc POSSMr;
+  Integer i,j;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  for (i=0;i<asmcnt;i=i+1) begin
+    SMr = aSMr[i];
+    SM2r = aSMr[i+1];
+    sd = SMr.TransDate;
+    ed = AddDay(SM2r.TransDate,-1);
+    BuildPOPlanSM(POSSMr,sd,ed,theclass,true,false,0,SFPb.RoundOff,debugRepSpec);
+    if (negf) then begin
+      NegateSim(POSSMr);
+    end;
+    AddSMToSM(SMr,POSSMr,SFPb.RoundOff);
+    aSMr[i] = SMr;
+    for (j=i+1;j<asmcnt;j=j+1) begin // Speedup possible.
+      SMr = aSMr[j];
+      AddSMToSM(SMr,POSSMr,SFPb.RoundOff);
+      aSMr[j] = SMr;
+    end;
+  end;
+  DebugInfoArray(USetStr(17035) & "; (12) = (11) - (4)",aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+global
+procedure BuildThePOPlanArray(var array record SMVc aSMr,var Integer asmcnt,Date actualstartdate,Date actualenddate,string theclass,Boolean additemgr,Integer displaysel,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  sd = actualstartdate;
+  ed = AddDay(AddMonth(actualstartdate,1),-1); // Fixed MONTHS
+  if (ed>actualenddate) then begin
+    ed = actualenddate;
+  end;
+  RecordNew(SMr);
+  SMr.TransDate = AddMonth(actualstartdate,-1); // Fixed MONTHS
+  aSMr[asmcnt] = SMr;
+  asmcnt = asmcnt + 1;
+  while (sd<actualenddate) begin
+    BuildPOPlanSM(SMr,sd,ed,theclass,true,false,displaysel,SFPb.RoundOff,debugRepSpec); // true for skipping plans that was actually ordered
+    aSMr[asmcnt] = SMr;
+    asmcnt = asmcnt + 1;
+    sd = AddMonth(sd,1); // Fixed MONTHS
+    ed = AddDay(AddMonth(sd,1),-1); // Fixed MONTHS
+    if (ed>actualenddate) then begin
+      ed = actualenddate;
+    end;
+  end;
+  DebugInfoArray(USetStr(17036),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+global
+procedure AppendProdPlanToForecastArray(var array record SMVc aSMr,Integer asmcnt,string theclass,Boolean negf,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  record SMVc POSSMr;
+  Integer i,j;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  for (i=0;i<asmcnt;i=i+1) begin
+    SMr = aSMr[i];
+    SM2r = aSMr[i+1];
+    sd = SMr.TransDate;
+    ed = AddDay(SM2r.TransDate,-1);
+    BuildProdPlanSM(POSSMr,sd,ed,theclass);
+    if (negf) then begin
+      NegateSim(POSSMr);
+    end;
+    AddSMToSM(SMr,POSSMr,SFPb.RoundOff);
+    aSMr[i] = SMr;
+    for (j=i+1;j<asmcnt;j=j+1) begin // Speedup possible.
+      SMr = aSMr[j];
+      AddSMToSM(SMr,POSSMr,SFPb.RoundOff);
+      aSMr[j] = SMr;
+    end;
+  end;
+  DebugInfoArray(USetStr(17037) & "; (13) = (12) - (5) ",aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec,);
+  return;
+end;
+
+procedure DeductFromEachMonth(array record SMVc aprevSMr,Integer asmcnt,Integer assumeplan,record RcVc debugRepSpec)
+begin
+  record SMVc prevSMr;
+  record SMVc SMr;
+
+  record SMVc orgprevSMr;
+  record SMVc orgSMr;
+
+  row SMVc prevSMrw;
+  row SMVc SMrw;
+  row SMVc orgprevSMrw;
+  row SMVc orgSMrw;
+  Integer rwcnt,rwcnt2,i,j,k;
+  record SFPeriodsBlock SFPb;
+  array record SMVc aorgprevSMr;
+  val curv,prev;
+
+  CopySMArray(aprevSMr,aorgprevSMr,asmcnt);
+
+  BlockLoad(SFPb);
+  for (i=1;i<asmcnt;i=i+1) begin
+    prevSMr = aprevSMr[i-1];
+    SMr = aprevSMr[i];
+
+    orgprevSMr = aorgprevSMr[i-1];
+    orgSMr = aorgprevSMr[i];
+
+/*
+    if (i==2) then begin
+      DebugInfoSim("Current Stock on " & prevSMr.TransDate,prevSMr,debugRepSpec);
+      DebugInfoSim("first month " & SMr.TransDate,SMr,debugRepSpec);
+    end;
+*/
+    rwcnt = MatRowCnt(prevSMr);
+    rwcnt2 = MatRowCnt(SMr);
+
+    if (rwcnt==0) then begin
+      for (k=0;k<rwcnt2;k=k+1) begin
+        MatRowGet(SMr,k,SMrw);
+        if (SMrw.DebVal<0) then begin
+          SMrw.DebVal = 0;
+          MatRowPut(SMr,k,SMrw);
+          k = rwcnt2;
+        end;
+      end;
+    end;
+    for (j=0;j<rwcnt;j=j+1) begin
+      MatRowGet(prevSMr,j,prevSMrw);
+      MatRowGet(orgprevSMr,j,orgprevSMrw);
+      for (k=0;k<rwcnt2;k=k+1) begin
+        MatRowGet(SMr,k,SMrw);
+        MatRowGet(orgSMr,k,orgSMrw);
+        if ((SMrw.Objects==prevSMrw.Objects) and (SMrw.RowSimStat==prevSMrw.RowSimStat)) then begin
+
+          curv = orgSMrw.DebVal;
+          if (curv<0) then begin
+            curv = 0;
+          end;
+          prev = orgprevSMrw.DebVal;
+          if (prev<0) then begin
+            prev = 0;
+          end;
+/*
+StartFormat(15);          
+ OutString(0,0,SMr.TransDate,false);
+ OutString(100,0,curv,false);
+ OutString(200,0,prev,false);
+ OutString(300,0,k,false);
+EndFormat;
+*/
+          SMrw.DebVal = Round(curv - prev,SetRoundModeD(SFPb.RoundOff));
+          MatRowPut(SMr,k,SMrw);
+          k = rwcnt2;
+
+        end;
+      end;
+    end;
+    aprevSMr[i] = SMr;
+  end;
+  return;
+end;
+
+global
+procedure AssumeCorrectPlans(var array record SMVc aSMr,Integer asmcnt,Integer assumeplan,record RcVc debugRepSpec)
+begin
+  if (assumeplan!=0) then begin
+    DeductFromEachMonth(aSMr,asmcnt,assumeplan,debugRepSpec);
+    DebugInfoArray(USetStr(17038),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  end;
+  return;
+end;
+
+global
+procedure ConvertToAvgPerDay(var array record SMVc aSMr,Integer asmcnt,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  row SMVc SMrw;
+  Integer ai,rwcnt,i;
+  val workdays;
+  record SFPeriodsBlock SFPb; 
+
+  BlockLoad(SFPb);  
+  for (ai=0;ai<asmcnt;ai=ai+1) begin
+    SMr = aSMr[ai];
+    switch (SFPb.PeriodType) begin
+      case kForecastPeriodTypeMonths:
+        workdays = GetProdDays(debugRepSpec.LastAcc,SMr.TransDate,AddDay(AddMonth(SMr.TransDate,1),-1)); // Fixed MONTHS
+      case kForecastPeriodTypeWeeks:
+        workdays = GetProdDays(debugRepSpec.LastAcc,SMr.TransDate,AddDay(SMr.TransDate,6)); // Fixed WEEKS
+    end;
+    rwcnt = MatRowCnt(SMr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(SMr,i,SMrw);
+      SMrw.DebVal = SMrw.DebVal/workdays;
+      SMrw.CredVal = SMrw.CredVal/workdays;
+      MatRowPut(SMr,i,SMrw);
+    end;
+    aSMr[ai] = SMr;
+  end;
+  return;
+end;
+
+global
+procedure AddPlanToStockLevel(array record SMVc aresSMr,Integer arescnt,var array record SMVc aSMr,Integer asmcnt,record RcVc debugRepSpec)
+begin
+  record SMVc SMr;
+  record SMVc SM2r;
+  Integer i;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  for (i=0;i<arescnt;i=i+1) begin
+    SMr = aSMr[i];
+    SM2r = aresSMr[i];
+    AddSMToSM(SMr,SM2r,SFPb.RoundOff);
+    aSMr[i] = SMr;
+  end;
+  DebugInfoArray(USetStr(17039),aSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec,);
+  return;
+end;
+
+global
+procedure CombineAndAddPlan(array record SMVc aproSMr,array record SMVc amaxSMr,var array record SMVc aresSMr,Integer asmcnt,var Integer arescnt,string theclass,Boolean addf,record RcVc debugRepSpec)
+begin
+  array record SMVc aPOSMr;
+  record SMVc maxSMr;
+  record SMVc proSMr;
+  record SMVc forcSMr;
+  record SMVc SMr;
+  Integer i,j;
+  Date sd,ed;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  arescnt = 0;
+  for (i=1;i<asmcnt;i=i+1) begin
+    arescnt = arescnt + 1;
+    SMr = amaxSMr[i];
+    maxSMr = amaxSMr[i+1];
+    proSMr = aproSMr[i-1];
+    RecordNew(forcSMr);
+    BuildForecastSM(forcSMr,SMr.TransDate,AddDay(maxSMr.TransDate,-1),theclass,false);
+//    DebugInfoSim("1 Current Forecast (FORC)" & forcSMr.TransDate,forcSMr,debugRepSpec);
+//    DebugInfoSim("2 Prev Month close (PRO) " & proSMr.TransDate,proSMr,debugRepSpec);
+//    DebugInfoSim("4 Calc Level of    (MAX)" & maxSMr.TransDate,maxSMr,debugRepSpec);
+    AddSMToSM(forcSMr,proSMr,SFPb.RoundOff);
+//    DebugInfoSim("5 After Pro (2 -1) " & forcSMr.TransDate,forcSMr,debugRepSpec);
+    if (addf) then begin
+      AddSMToSM(forcSMr,maxSMr,SFPb.RoundOff);
+      NegateSim(forcSMr);
+    end else begin
+      SubSMWithSM(forcSMr,maxSMr);
+    end;
+//    DebugInfoSim("6 After Max 4 - (2-1)" & forcSMr.TransDate,forcSMr,debugRepSpec);
+    aresSMr[arescnt] = forcSMr;
+  end;
+//  arescnt = arescnt - 1;
+  SMr = aproSMr[0];
+  RecordNew(forcSMr);
+  forcSMr.TransDate = SMr.TransDate;
+  aresSMr[0] = forcSMr;
+
+  DebugInfoArray(USetStr(17040) & "; (9) = (8)",aproSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  DebugInfoArray(USetStr(17041) & "; (10) = (2)",amaxSMr,asmcnt,debugRepSpec.sStartDate,debugRepSpec);
+  DebugInfoArray(USetStr(17042),aresSMr,arescnt,debugRepSpec.sStartDate,debugRepSpec);
+  return;
+end;
+
+
+// 4 - ( 2 - 1 )
+
+global
+procedure StockPolicyMinusProjectedStockLevels(array record SMVc aspSMr,Integer aspcnt,array record SMVc amaxSMr,Integer amaxcnt,Date actualenddate,string theclass,record RcVc debugRepSpec)
+begin
+  Integer i;
+  record SMVc SMr;
+  record SMVc maxSMr;
+  record SFPeriodsBlock SFPb;
+  
+  BlockLoad(SFPb);
+  for (i=1;i<aspcnt;i=i+1) begin
+    SMr = aspSMr[i];
+    if ((i+1)<amaxcnt) then begin
+      maxSMr = amaxSMr[i+1];
+      AddSMToSM(SMr,maxSMr,SFPb.RoundOff);
+    end;
+    aspSMr[i] = SMr;
+  end;
+  return;
+end;

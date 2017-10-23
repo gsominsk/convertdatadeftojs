@@ -1,0 +1,205 @@
+external function Boolean IsEnterprise();
+external procedure HTResClass(string,var string);
+external procedure HTResLoc(string,var string);
+external function Boolean IsCancelState(String);
+external function boolean IsTDBefore(date,time,date,time);
+external function Boolean CheckDblReserved(record JobVc);
+
+procedure ResBubSort40Type(var array string Table,Integer TableSize)
+begin
+  LongInt Run,i;
+  string 20 Resr1,Resr2;
+
+  for (Run=2; Run<=(TableSize - 1); Run=Run+1) begin
+    for(i= TableSize;i>=Run;i=i-1) begin
+      Resr1 = Table[i];
+      Resr2 = Table[i-1];
+      if (Resr1<Resr2) then begin
+        Table[i]   = Resr2;
+        Table[i-1] = Resr1;
+      end;
+    end;
+  end;  
+  return;    
+end;
+
+global
+procedure AsigRoomsRn(Record RcVc RepSpec)
+begin
+  Record JobVc Jobr,TestJobr;
+  Record ResVc Resr;
+  Record ResTypeVc ResTyper;
+  Boolean foundf,skip;
+  String 255 tstr;
+  Integer rw,maxstay,j,rowcnt;
+  Array record ResVc aResr;
+  Array string 20 aRes;
+  Array record ResVc aDirtyResr;
+  Array string 20 aDirtyRes;
+  Integer acnt;
+  Integer adirtycnt;
+  val dif,tdif,pr;
+  Record HotelBlock Hotelb;
+  Boolean testf;
+  string 255 ckey;
+  Integer sorting;
+
+  StartReportJob(USetStr(12070));
+  rw = 1;
+  HTResLoc(RepSpec.f3,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  HTResClass(RepSpec.f6,tstr);
+  Header(rw,tstr,1);
+  rw = rw + 1;
+  EndHeader;
+
+  SetRepCol(2,90);
+  SetRepCol(3,120);
+  SetRepCol(5,200);
+  SetRepCol(8,480);
+
+  StartFormat(15);
+  OutString(0,0,USetStr(12071),false);
+  if (IsEnterprise) then begin 
+    OutString(2,0,USetStr(12073),false);
+  end;
+  OutString(5,0,USetStr(13002),false);
+  if (IsEnterprise) then begin
+    OutString(8,0,USetStr(12076),true);
+  end;
+  EndFormat;  
+  Black_Divider(0,1);
+  
+  Jobr.SerNr = RepSpec.long1;
+  if (ReadFirstMain(Jobr,1,true)) then begin 
+      if (BuildProductCode=="StandardHotel") then begin
+//        Jobr.Type = UpperCase(USetStr(32017));
+      end;
+      ResTyper.Code = Jobr.Type;
+      ReadFirstMain(ResTyper,1,true);
+      if (blank(RepSpec.f3)) then begin
+        RepSpec.f3 = ResTyper.ResLoc;
+      end;
+      BlockLoad(Hotelb);
+      acnt = 0;
+      foundf = true;
+      if (nonblank(RepSpec.f3)) then begin
+        ckey = "RLResStatus:" & RepSpec.f3;//not working ? 
+        ckey = "ResStatus";
+        sorting = 0;
+      end else begin
+        ckey = "ResStatus";
+        sorting = 0;
+      end;
+      if (nonblank(Jobr.Type)) then begin
+        Resr.Type = Jobr.Type;
+        ckey = "Type";
+        sorting = 1;
+      end;
+      Resr.ResStatus = Hotelb.FromResStatus;
+      while LoopKey(ckey,Resr,1,foundf) begin
+        switch (sorting) begin
+          case 0:
+            if (Jobr.TransDate==CurrentDate) then begin// If Assigning rooms beforehand, you should see all rooms.
+              if (Resr.ResStatus!=Hotelb.FromResStatus) then begin
+                foundf = false;
+              end;
+            end;
+          case 1:
+            if (Resr.Type!=Jobr.Type) then begin
+              foundf = false;
+            end;
+        end;
+        if (foundf) then begin
+          testf = true;
+          if (nonblank(RepSpec.f3)) then begin
+            if (Resr.ResLoc!=RepSpec.f3) then begin testf = false; end;
+          end;
+          if (nonblank(RepSpec.f6)) then begin
+            if (SetInSet(RepSpec.f6,Resr.Class)==false) then begin testf = false; end;
+          end;
+          switch (sorting) begin
+            case 1:
+              if (Jobr.TransDate==CurrentDate) then begin// If Assigning rooms beforehand, you should see all rooms.
+                if (Resr.ResStatus!=Hotelb.FromResStatus) then begin
+                  testf = false;
+                end;
+              end;
+          end;
+          if (testf) then begin 
+            if (Resr.Terminated!=0) then begin 
+              testf = false;
+            end;          
+          end; 
+          if (testf) then begin
+            if ((Resr.ResStatus==Hotelb.FromResStatus) or (Jobr.TransDate!=CurrentDate)) then begin
+              Jobr.ResCode = Resr.Code;
+              if not CheckDblReserved(Jobr) then begin
+                if (Jobr.Type==Resr.Type or blank(Jobr.Type)) then begin
+                  if (Resr.MaxPersons<0) then begin
+                    Resr.MaxPersons = ResTyper.MaxPersons;
+                  end;
+                  acnt = acnt + 1;
+                  aRes[acnt] = Resr.Code;
+                  aResr[acnt] = Resr;
+                end;   
+              end;
+            end else begin
+              if (Jobr.TransDate==CurrentDate) then begin
+                if (Resr.MaxPersons<0) then begin
+                  Resr.MaxPersons = ResTyper.MaxPersons;
+                end;
+                adirtycnt = adirtycnt + 1;
+                aDirtyRes[adirtycnt] = Resr.Code;
+                aDirtyResr[adirtycnt] = Resr;
+              end;
+            end;
+          end;
+        end;
+      end;
+  end;
+
+  ResBubSort40Type(aRes,acnt);
+  ResBubSort40Type(aDirtyRes,adirtycnt);
+
+  for(j=1;j<=acnt;j=j+1) begin
+    Resr.Code = aRes[j];
+    Resr = aResr[j];
+    StartFormat(15);
+    OutString(0,"DblResToJob",Resr.Code,false);
+    if (IsEnterprise) then begin 
+      OutString(2,0,Resr.Class,false);
+    end;
+    OutStringID(5,"DblResVcID",Resr.Name,false,Resr.Code);
+    if (IsEnterprise) then begin
+      OutString(8,0,Resr.MaxPersons,true);
+    end;
+    EndFormat;  
+  end;
+  if (adirtycnt>0) then begin
+    StartFormat(15);
+    EndFormat;
+    StartFormat(15);
+    OutString(0,0,USetStr(12141),false);
+    EndFormat;
+    Gray_Divider(0,1);
+  end;
+  for(j=1;j<=adirtycnt;j=j+1) begin
+    Resr.Code = aDirtyRes[j];
+    Resr = aDirtyResr[j];
+    StartFormat(15);
+    OutString(0,"DblResToJob",Resr.Code,false);
+    if (IsEnterprise) then begin 
+      OutString(2,0,Resr.Class,false);
+    end;
+    OutStringID(5,"DblResVcID",Resr.Name,false,Resr.Code);
+    if (IsEnterprise) then begin
+      OutString(8,0,Resr.MaxPersons,true);
+    end;
+    EndFormat;  
+  end;
+  EndJob;
+  return;
+end; 
+

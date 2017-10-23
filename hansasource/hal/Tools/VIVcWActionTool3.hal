@@ -1,0 +1,307 @@
+external function Integer VATType(string);
+external function Boolean HasApprovals();
+external function Integer VIApprovalStatus(record VIVc,var record AcceptanceRulesVc);
+external function string 255 OverrideTaxMatrix(string,var record TaxMatrixVc);
+external procedure VIDDefault(Integer,string,var record VIVc);
+external function string 255 FillupTaxMatrix(Integer,string,string,string,string,string,var record TaxMatrixVc);
+external procedure RowCalculateTaxMatrix_VIVc(var record VIVc,Integer,row VIVc,Integer);
+external function Boolean UseTaxTemplatesforTaxCalc();
+external function val CalculateTotalVATFromTaxMatrix(record TaxMatrixVc,Integer);
+external procedure AddRowTaxMatrixToSumTaxMatrix(record TaxMatrixVc,var record TaxMatrixVc,Integer);
+external function Boolean FindWHVETax(string,Date,var record WHVEVc);
+external function roundmode GetVATRoundMode(record RoundBlock);
+external function roundmode DefaultRoundMode();
+external function Boolean GetWHTaxRow(string,var row WHTaxBlock);
+external procedure RoundVATSum(string,string,string,var val);
+external procedure CalcVATBaseVAT(record SMVc,Integer,Integer,Integer,var val,var val);
+external procedure SetupVATBase(var record SMVc,var Integer);
+external procedure AddVATBase(var record SMVc,string,val,val,Integer,Integer,Integer);
+external procedure CalcCashDiscount(var record VIVc);
+
+global
+function val CalculateVIWithholdingTax(var record VIVc VIr,string paycode,val net)
+begin
+  record WHCalcFormVc WHCFr;
+  row WHCalcFormVc WHCFrw;
+  val res,basev,calcv;
+  Integer i,rwcnt;
+  
+  WHCFr.PayCode = paycode;
+  if (ReadFirstMain(WHCFr,1,true)) then begin
+    if (WHCFr.TaxCalc==kWHTaxCalcOnPurchaseInvoice) then begin
+      if (WHCFr.BaseCalcNet!=0) then begin
+        basev = basev + net;
+      end;
+      if (WHCFr.BaseCalcVAT!=0) then begin
+        if (nonblank(VIr.VATVal)) then begin
+          basev = basev + VIr.VATVal;
+        end else begin
+          basev = basev + VIr.CalcVATVal;
+        end;
+      end;
+      if (WHCFr.BaseCalcExTax!=0) then begin
+        basev = basev + VIr.TAX1Sum;
+      end;
+      rwcnt = MatRowCnt(WHCFr);
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(WHCFr,i,WHCFrw);
+        if ((basev>=WHCFrw.From) and (basev<=WHCFrw.To)) then begin
+          calcv = basev;
+          calcv = calcv * WHCFrw.Percent;
+          calcv = calcv/100;
+          calcv = calcv + WHCFrw.FixAmount;
+          if (calcv<WHCFrw.MinAmount) then begin
+            calcv = blankval;
+          end;
+
+          res = res + calcv;
+        end;
+      end;
+    end;
+  end;
+  CalculateVIWithholdingTax = res;
+  return;
+end;        
+
+global
+procedure CalculateVIWithholdingTaxes(var record VIVc VIr)
+begin
+  row VIVc VIrw;
+  record WHVEVc WHVEr;
+  row WHVEVc WHVErw;
+  Integer i,rwcnt;
+  val whtax,totwhtax,dsc,net;
+  row WHTaxBlock WHTbrw;
+  record APAccBlock APb;
+  Boolean testf;
+  
+  BlockLoad(APb);
+  if (FindWHVETax(VIr.VECode,VIr.TransDate,WHVEr)) then begin
+    rwcnt = MatRowCnt(VIr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(VIr,i,VIrw);
+      net = net + VIrw.Sum; 
+    end;
+
+    rwcnt = MatRowCnt(WHVEr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(WHVEr,i,WHVErw);
+      testf = true;
+      if (WHVErw.CalculateTax!=kCalculateTax) then begin
+        testf = false;
+      end;
+      if (APb.GrossIncomeWithTaxPerRegion==1) then begin 
+        if (WHVErw.Region!=VIr.Region) then begin
+          testf = false;
+        end;
+      end;     
+      if (testf) then begin   
+        GetWHTaxRow(WHVErw.WHTax,WHTbrw);
+        whtax = CalculateVIWithholdingTax(VIr,WHTbrw.WHCalcForm,net);
+        if (WHVErw.Discount!=0) then begin
+          dsc = whtax*WHVErw.Discount;
+          dsc = dsc/100;
+          whtax = whtax - dsc;
+        end;
+        totwhtax = totwhtax + Round(whtax,DefaultRoundMode);
+      end;
+    end;
+  end;
+  VIr.WithHoldingTax = Round(totwhtax,DefaultRoundMode);
+  return;
+end;
+
+procedure VICalcVals_TaxTemplate(var record VIVc VIp)
+begin
+  record RoundBlock RoundRec;
+  row VIVc VIrw;
+  record SMVc VATr;
+  Integer rwcnt,i,vcrwcnt;
+  val vat,t1,rowwhtax;
+  record VITBlock VITb;
+  record TaxMatrixVc TMr;
+  record TaxMatrixVc sumTMr;
+ 
+  BlockLoad(VITb); 
+  BlockLoad(RoundRec); 
+
+  UnpackFieldMatrix(VIp,"TaxMatrix",sumTMr);
+  RecordClear(sumTMr);
+
+  VIp.CalcVATVal = blankval;
+  VIp.WithHoldingTax = blankval;
+  rwcnt = MatRowCnt(VIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    switch (VIrw.stp) begin
+      case kInvoiceRowTypeNormal:
+//TaxTemplateCode      
+        if (nonblank(VIrw.TaxTemplateCode)) then begin
+          RowCalculateTaxMatrix_VIVc(VIp,i,VIrw,0);
+          UnpackRowFieldMatrix(VIrw,"TaxMatrix",TMr);
+          MatRowPut(VIp,i,VIrw);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,0);
+        end;
+      case kInvoiceRowTypeDownpayment:
+//TaxTemplateCode      
+        if (nonblank(VIrw.TaxTemplateCode)) then begin
+          RowCalculateTaxMatrix_VIVc(VIp,i,VIrw,0);
+          UnpackRowFieldMatrix(VIrw,"TaxMatrix",TMr);
+          MatRowPut(VIp,i,VIrw);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,0);
+        end;
+      case kInvoiceRowTypeRetention:
+        if (nonblank(VIrw.TaxTemplateCode)) then begin
+          RowCalculateTaxMatrix_VIVc(VIp,i,VIrw,0);
+          UnpackRowFieldMatrix(VIrw,"TaxMatrix",TMr);
+          MatRowPut(VIp,i,VIrw);
+          AddRowTaxMatrixToSumTaxMatrix(TMr,sumTMr,0);
+        end;
+      case kInvoiceRowTypeWithholdingTax: 
+        rowwhtax = rowwhtax + VIrw.Sum;
+    end;
+  end;
+  PackFieldMatrix(VIp,"TaxMatrix",sumTMr);
+  VIp.TAX1Sum = t1;  
+  vat = CalculateTotalVATFromTaxMatrix(sumTMr,0);
+  RoundVATSum(VIp.CurncyCode,VIp.PayDeal,"VIVc",vat);        
+  if (VIp.ExportFlag!=2) then begin // NEWVAT I don't think this is correct....
+//  if ((VIp.ExportFlag==0) or (VIp.ExportFlag==3) or (VIp.ExportFlag==4)) then begin
+    VIp.CalcVATVal = Round(vat,GetVATRoundMode(RoundRec));  
+  end;
+  if (VITb.CalcWithholdingTax!=0) then begin
+    CalculateVIWithholdingTaxes(VIp);
+  end;
+  if (rowwhtax>0) then begin
+    VIp.WithHoldingTax = rowwhtax;
+  end;
+  CalcCashDiscount(VIp);
+LVICalcVals:;  
+  return;
+end;
+
+global
+procedure VICalcVals(var record VIVc VIp)
+begin
+  record RoundBlock RoundRec;
+  row VIVc VIrw;
+  record SMVc VATr;
+  Integer rwcnt,i,vcrwcnt;
+  val vat,t1,rowwhtax;
+  record VITBlock VITb;
+  Integer vt;
+ 
+ if (UseTaxTemplatesforTaxCalc) then begin
+    VICalcVals_TaxTemplate(VIp);
+    goto LVICalcVals;
+  end;
+  BlockLoad(VITb); 
+  BlockLoad(RoundRec); 
+  SetupVATBase(VATr,vcrwcnt);  
+  VIp.CalcVATVal = blankval;
+  VIp.WithHoldingTax = blankval;
+  rwcnt = MatRowCnt(VIp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIp,i,VIrw);
+    vt = VATType(VIrw.VATCode);
+    switch (VIrw.stp) begin
+      case kInvoiceRowTypeDownpayment:
+        if (nonblank(VIrw.VATCode)) then begin
+          if (vt!=kVATTypeReversed or HasLocalization("LTU,LVA")==false) then begin
+            AddVATBase(VATr,VIrw.VATCode,VIrw.Sum,blankval,vcrwcnt,0,VIp.NoTAXonVAT); 
+          end;
+        end;
+      case kInvoiceRowTypeNormal:
+        if (nonblank(VIrw.VATCode)) then begin
+          if (vt!=kVATTypeReversed or HasLocalization("LTU,LVA")==false) then begin
+            AddVATBase(VATr,VIrw.VATCode,VIrw.Sum,blankval,vcrwcnt,0,VIp.NoTAXonVAT); 
+          end;
+        end;
+      case kInvoiceRowTypeRetention:
+        if (nonblank(VIrw.VATCode)) then begin
+          if (vt!=kVATTypeReversed or HasLocalization("LTU,LVA")==false) then begin
+            AddVATBase(VATr,VIrw.VATCode,VIrw.Sum,blankval,vcrwcnt,0,VIp.NoTAXonVAT); 
+          end;
+        end;
+      case kInvoiceRowTypeWithholdingTax: rowwhtax = rowwhtax + VIrw.Sum;
+    end;
+  end;
+  CalcVATBaseVAT(VATr,0,VIp.NoTAXonVAT,vcrwcnt,vat,t1);
+  
+  VIp.TAX1Sum = t1;  
+  RoundVATSum(VIp.CurncyCode,VIp.PayDeal,"VIVc",vat);        
+  if (VIp.ExportFlag!=2) then begin // NEWVAT I don't think this is correct....
+//  if ((VIp.ExportFlag==0) or (VIp.ExportFlag==3) or (VIp.ExportFlag==4)) then begin
+    VIp.CalcVATVal = Round(vat,GetVATRoundMode(RoundRec));  
+  end;
+  if (VITb.CalcWithholdingTax!=0) then begin
+    CalculateVIWithholdingTaxes(VIp);
+  end;
+  if (rowwhtax>0) then begin
+    VIp.WithHoldingTax = rowwhtax;
+  end;
+  CalcCashDiscount(VIp);
+LVICalcVals:;  
+  return;
+end;
+
+global
+procedure VIVc_PasteTaxTemplate(var record VIVc VIr,Integer rownr)
+begin
+  row VIVc VIrw;
+  record TaxMatrixVc TMr;
+
+  MatRowGet(VIr,rownr,VIrw);
+//  VIrw.TaxTemplateCode = FillupTaxMatrix(1,VIr.BranchID,VIr.VECode,"","",VIrw.TaxTemplateCode,TMr);
+//  FillupTaxMatrix(1,VIr.BranchID,VIr.VECode,"","",VIrw.TaxTemplateCode,TMr);
+  VIrw.TaxTemplateCode = OverrideTaxMatrix(VIrw.TaxTemplateCode,TMr);
+  PackRowFieldMatrix(VIrw,"TaxMatrix",TMr);
+  MatRowPut(VIr,rownr,VIrw);
+  RowCalculateTaxMatrix_VIVc(VIr,rownr,VIrw,0);
+  MatRowPut(VIr,rownr,VIrw);
+//  VIDDefault(rownr,"TaxTemplateCode",VIr);
+  return;
+end;
+
+global
+function Boolean VEIVPDFAttach(LongInt visernr,var record Attach2Vc Attach2r)
+begin
+  Boolean res;
+  record VEIVVc VEIVr;
+  Integer filenr;
+  record RLinkVc RLr;
+  string 255 filename;
+  
+  VEIVr.VISerNr = visernr;
+  if (ReadFirstKey("VISerNr",VEIVr,1,true)) then begin
+    filename = VEIVr.InvoiceNr;
+    if (blank(filename)) then begin
+      filename = VEIVr.VESerNr;
+    end;
+    filename = filename & ".pdf";
+    filenr = 1;
+    while (ReadRecordLink(VEIVr,filenr,Attach2r,RLr)) begin
+      if (Attach2r.FileName==filename) then begin
+        res = true;
+        goto LVEIVPDFAttach;
+      end;
+      filenr = filenr + 1;
+    end;
+  end;
+  RecordClear(Attach2r);
+LVEIVPDFAttach:;
+  VEIVPDFAttach = res;
+  return;
+end;
+
+global
+procedure VIDClassOnOpenWindowRemote(var record VIVc VIr,var Integer AcceptanceStatusFlag)
+begin
+  record AcceptanceRulesVc Acptr;
+  record ActVc Actr;
+  
+  if (HasApprovals) then begin
+    AcceptanceStatusFlag = VIApprovalStatus(VIr,Acptr);
+  end;
+  return;
+end;

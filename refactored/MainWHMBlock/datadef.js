@@ -1,0 +1,17 @@
+module.exports = { fields: 
+   { id: { type: 'INTEGER', autoIncrement: true, primaryKey: true },
+     fDemandPosition: { public: true, type: 'INTEGER' },
+     fPalletArea: { public: true, type: 'TEXT' },
+     fDefPUPosCode: { public: true, type: 'TEXT' },
+     fDefProdPosCode: { public: true, type: 'TEXT' },
+     fPickArea: { public: true, type: 'TEXT' },
+     fLocation: { public: true, type: 'TEXT' },
+     fWraperPosCode: { public: true, type: 'TEXT' },
+     fDeliveryPosCode: { public: true, type: 'TEXT' },
+     fForkLiftSystem: { public: true, type: 'INTEGER' },
+     fAutOKStockMovements: { public: true, type: 'INTEGER' },
+     fDeliveryArea: { public: true, type: 'TEXT' },
+     fExpressOrderClass: { public: true, type: 'TEXT' },
+     fPickOrderPerArea: { public: true, type: 'INTEGER' },
+     fHighestPosCodeFirst: { public: true, type: 'INTEGER' },
+     fDefPUVECode: { public: true, type: 'TEXT' } } }

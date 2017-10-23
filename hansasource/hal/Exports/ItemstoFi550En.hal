@@ -1,0 +1,189 @@
+external function Boolean FindLocalSerialPortDevice(Integer,LongInt,string,var record LSerialPortDeviceVc);
+external procedure M4PadString(string,Integer,string,Boolean,var string);
+
+procedure ExportItemData(record INVc INr)
+begin
+  string 255 eol,newitemline,tstr;
+  
+  eol = chr(13) & chr(10);
+  newitemline = "0";
+
+  ExportPadString(INr.Code,20," ",false);      
+  ExportPadString(INr.VATCode,2," ",false);      
+  tstr = ValToString(INr.UPrice1,M4Val,"",".",0);
+  ExportPadString(tstr,10," ",true);      
+  ExportPadString(INr.Name,40," ",false);      
+  ExportPadString(newitemline,1," ",false);      
+  ExportPadString(eol,2," ",false);      
+  return;
+end;
+
+function LongInt FindLastExporteSeqenceNumber(string localmachine)
+begin
+  LongInt res;
+  record Fi550SeqNrBlock Fi550SeqNrb;
+  row Fi550SeqNrBlock Fi550SeqNrbrw;
+  Integer i,rwcnt;
+
+  BlockLoad(Fi550SeqNrb); 
+  rwcnt = MatRowCnt(Fi550SeqNrb); 
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Fi550SeqNrb,i,Fi550SeqNrbrw);
+    if (localmachine==Fi550SeqNrbrw.LocalMachineCode) and (Fi550SeqNrbrw.FileName=="INVc") then begin
+      res = Fi550SeqNrbrw.SeqNr;
+      goto LFindLastExporteSeqenceNumber;
+    end;
+  end;
+LFindLastExporteSeqenceNumber:;  
+  FindLastExporteSeqenceNumber = res;
+  return;
+end;
+
+global
+updating procedure UpdateFi550SeqNr(string filename,LongInt seqnr)
+begin
+  record Fi550SeqNrBlock Fi550SeqNrb;
+  row Fi550SeqNrBlock Fi550SeqNrbrw;
+  Integer i,rwcnt;
+  record LocalMachineVc LMr;
+  Boolean found;
+
+  BlockLoad(Fi550SeqNrb); 
+  found = true;
+  LMr.Code = "";
+  while (LoopMain(LMr,1,found)) begin
+    if (found) then begin
+      rwcnt = MatRowCnt(Fi550SeqNrb); 
+      for (i=0;i<rwcnt;i=i+1) begin
+        MatRowGet(Fi550SeqNrb,i,Fi550SeqNrbrw);
+        if (LMr.Code==Fi550SeqNrbrw.LocalMachineCode) and (filename==Fi550SeqNrbrw.FileName) then begin
+          Fi550SeqNrbrw.LocalMachineCode = LMr.Code;
+          Fi550SeqNrbrw.FileName = filename;
+          Fi550SeqNrbrw.SeqNr = seqnr;
+          MatRowPut(Fi550SeqNrb,i,Fi550SeqNrbrw);
+          goto LUpdateFi550SeqNr;
+        end;
+      end;
+      Fi550SeqNrbrw.LocalMachineCode = LMr.Code;
+      Fi550SeqNrbrw.FileName = filename;
+      Fi550SeqNrbrw.SeqNr = seqnr;
+      MatRowPut(Fi550SeqNrb,rwcnt,Fi550SeqNrbrw);
+ LUpdateFi550SeqNr:;
+    end;
+  end;
+  BlockStore(Fi550SeqNrb);  
+  return;
+end;
+
+updating procedure UpdateLastExportedSeqenceNumber(string localmachine,LongInt seqnr)
+begin
+  record Fi550SeqNrBlock Fi550SeqNrb;
+  row Fi550SeqNrBlock Fi550SeqNrbrw;
+  Integer i,rwcnt;
+
+  BlockLoad(Fi550SeqNrb); 
+  rwcnt = MatRowCnt(Fi550SeqNrb); 
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Fi550SeqNrb,i,Fi550SeqNrbrw);
+    if (localmachine==Fi550SeqNrbrw.LocalMachineCode) then begin
+      Fi550SeqNrbrw.LocalMachineCode = localmachine;
+      Fi550SeqNrbrw.FileName = "INVc";
+      Fi550SeqNrbrw.SeqNr = seqnr;
+      MatRowPut(Fi550SeqNrb,i,Fi550SeqNrbrw);
+      goto LUpdateLastExporteSeqenceNumber;
+    end;
+  end;
+  Fi550SeqNrbrw.LocalMachineCode = localmachine;
+  Fi550SeqNrbrw.FileName = "INVc";
+  Fi550SeqNrbrw.SeqNr = seqnr;
+  MatRowPut(Fi550SeqNrb,rwcnt,Fi550SeqNrbrw);
+LUpdateLastExporteSeqenceNumber:;
+  BlockStore(Fi550SeqNrb);  
+  return;
+end;
+
+global
+updating procedure ItemstoFi550En(record RcVc RepSpec)
+begin
+  record INVc INr;
+  string 255 frin,toin;
+  Boolean found;
+  Integer FiscalPrinter;
+  record CashPrintBlock CPb;
+  record LocalMachineBlock LMb;
+  record MachineCashVc MCr;
+  string 255 filename,device;
+  Integer cnt;
+  LongInt seqnr;
+  record LSerialPortDeviceVc LSPDr;
+  
+  BlockLoad(LMb);  
+  BlockLoad(CPb);  
+  if (FindLocalSerialPortDevice(kSerialPortDeviceClassFiscalPrinter,kSerialPortDeviceModelFiscPrinterFI550,LMb.LocalMachineCode,LSPDr)) then begin  
+    FiscalPrinter = LSPDr.Printer;
+    device = LSPDr.Port;
+  end else begin
+    MCr.Code = LMb.LocalMachineCode;
+    if (ReadFirstMain(MCr,1,true)) then begin
+      FiscalPrinter = MCr.FiscalPrinter;
+      device = MCr.CommPort;
+    end;
+    if (FiscalPrinter==0) then begin
+      FiscalPrinter = CPb.FiscalPrinter;
+    end;
+    if (blank(device)) then begin
+      device = LMb.DefPrinter;
+    end;
+    if (blank(device)) then begin
+      device = CPb.CommPort;
+    end;
+  end;
+  if (blank(device)) then begin
+    device = "FI550/";
+  end;
+  filename = device & "Print/";
+//  filename = filename & "DAT" & DateToString(CurrentDate,"YYYYMMDD") & StripNonDigits(CurrentTime);
+  filename = filename & "DAT" & StripNonDigits(CurrentTime);
+  filename = filename & ".txt";
+  if (OpenExportFile(filename,false)) then begin
+    MessageBox(1694," " & filename);
+//    goto LEND;
+  end;
+  CreateFile(filename);
+  CloseFile;
+  if (OpenExportFile(filename,false)==false) then begin
+    MessageBox(1695," " & filename);
+ //   goto LEND;
+  end;
+  cnt = 0;
+  frin = FirstInRange(RepSpec.f1,20);
+  toin = LastInRange(RepSpec.f1,20);
+  found = true;
+  INr.Code = frin;
+  switch (RepSpec.flags[0]) begin
+    case 0:
+      while (LoopMain(INr,1,found)) begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (INr.Code>toin) then begin found = false; end;
+        end;
+        if (found) then begin
+          ExportItemData(INr);
+        end;
+      end;
+    case 1:
+      seqnr = FindLastExporteSeqenceNumber(RepSpec.FirstAcc) + 1;
+      while (LoopSequence(INr,seqnr,found)) begin
+        if (nonblank(RepSpec.f1)) then begin
+          if (INr.Code>toin) then begin found = false; end;
+        end;
+        if (found) then begin
+          ExportItemData(INr);
+          seqnr = seqnr + 1;
+        end;
+      end;
+      UpdateLastExportedSeqenceNumber(RepSpec.FirstAcc,ReadLastSequence("INVc"));
+  end;
+LEND:;  
+  CloseFile;
+  return;
+end;

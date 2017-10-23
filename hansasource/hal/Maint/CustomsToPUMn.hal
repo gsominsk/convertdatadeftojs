@@ -1,0 +1,165 @@
+external function Boolean ReadFirstItem(string,var record INVc,Boolean,Boolean);
+external procedure CheckFlush(var Integer,Integer);
+external procedure PUSumUp(var record PUVc);
+external function val MulWithCustomsRateToBase1(string,Date,val);
+external procedure PURecalcCost(var record PUVc);
+external procedure PUSetShipCost(var record PUVc,Integer);
+external procedure PUCalcCostPrice(string,val,Integer,Integer,string,string,
+                                   val,val,val,val,val,
+                                   val,val,val,val,val,val,
+                                   string,var val,val,var val,string,Integer);
+
+function
+Boolean PORowReceived(LongInt PONr,Integer PORowNr,val customsqty)
+BEGIN
+  Boolean res;
+  record POVc POr;
+  row POVc POrw;
+  
+  if (PORowNr>=0) then begin
+    POr.SerNr = PONr;
+    if (ReadFirstMain(POr,1,true)) then begin    
+      if (PORowNr<MatRowCnt(POr)) then begin
+        MatRowGet(POr,PORowNr,POrw);
+        if (customsqty>(POrw.Quant-POrw.Shipd2)) then begin
+          res = true;
+        end;
+      end;
+    end;
+  end;
+  PORowReceived = res;
+  RETURN;
+END;
+
+updating
+procedure NewPU(record CustomsVc Customsr,Array LongInt ponrs,Integer ponrscnt,var Integer flushcnt)
+BEGIN
+  record PUVc PUr;
+  record PUVc PU2p;
+  row PUVc PUrw;
+  Integer i,rwcnt;
+  Integer p,pucnt;
+  row CustomsVc Customsrw;
+  val pv,sv;
+  
+  for (p=0;p<ponrscnt;p=p+1) begin
+    RecordNew(PUr);
+    PUr.PONr = ponrs[p];
+//  PUr.Location = Customsr.Location;
+//  PUr.Objects = Customsr.Objects;
+    PUr.VECode = Customsr.VECode;
+    PUr.VEName = Customsr.Addr0;
+    PUr.CurncyCode = Customsr.CurncyCode;
+    PUr.FrRate = Customsr.FrRate;
+    PUr.ToRateB1 = Customsr.ToRateB1;
+    PUr.ToRateB2 = Customsr.ToRateB2;
+    PUr.BaseRate1 = Customsr.BaseRate1;
+    PUr.BaseRate2 = Customsr.BaseRate2;
+    PUr.Comment = Customsr.ArrivalCode;
+    pucnt = 0;
+    rwcnt = MatRowCnt(Customsr);
+    for (i=0;i<rwcnt;i=i+1) begin
+      MatRowGet(Customsr,i,Customsrw);
+      if (ponrs[p]==Customsrw.PONr) then begin
+        if (PORowReceived(Customsrw.PONr,Customsrw.PORowNr,Customsrw.Quant)==false) then begin
+          ClearRow(PUr,PUrw,1);
+          PUrw.ArtCode = Customsrw.ArtCode;
+          PUrw.Quant = Customsrw.Quant;
+          PUrw.Spec = Customsrw.ArtDesc;
+          PUrw.UPrice = Customsrw.FOBVal;
+          PUrw.Extra = blankval;
+          PUrw.RowCost4 = Customsrw.DutiesVal;
+          PUrw.RowCost5 = Customsrw.ChargesVal+Customsrw.ATaxVal;          
+          PUrw.VATCode = Customsrw.VATCode;
+          PUrw.CountryOfOrg = Customsrw.CountryCode;
+          PUrw.CustomsNr = Customsrw.CommodityCode;
+          PUCalcCostPrice(PUrw.ArtCode,PUrw.UPrice,PUr.InclVAT,PUr.NoTAXonVAT,PUrw.Extra,PUr.CurncyCode,
+                          PUr.FrRate,PUr.ToRateB1,PUr.ToRateB2,PUr.BaseRate1,PUr.BaseRate2,
+                          PUrw.ShipCost,PUrw.RowCost1,PUrw.RowCost2,PUrw.RowCost3,PUrw.RowCost4,PUrw.RowCost5,
+                          PUrw.CustomsCost,pv,PUrw.Quant,sv,PUrw.VATCode,PUr.ExportFlag);
+
+          PUrw.CostPrice = pv;                                        
+          PUrw.Sum = sv;
+          PUrw.OrdRow = -1;
+          if (Customsrw.PORowNr>0) then begin
+            PUrw.OrdRow = Customsrw.PORowNr-1;
+          end;
+          MatRowPut(PUr,pucnt,PUrw);
+          pucnt = pucnt + 1;
+        end;
+      end;
+    end;
+    PUr.ShipCost = MulWithCustomsRateToBase1(Customsr.ShpCurncy,Customsr.TransDate,Customsr.ShpVal);
+    PUSetShipCost(PUr,0);
+    PURecalcCost(PUr);
+
+    PUr.Cost1 = MulWithCustomsRateToBase1(Customsr.InsCurncy,Customsr.TransDate,Customsr.InsVal);
+    PUSetShipCost(PUr,2);
+    PURecalcCost(PUr);
+
+    PUr.Cost2 = MulWithCustomsRateToBase1(Customsr.Div1Curncy,Customsr.TransDate,Customsr.Div1Val) 
+              + MulWithCustomsRateToBase1(Customsr.Div2Curncy,Customsr.TransDate,Customsr.Div2Val);
+    PUSetShipCost(PUr,3);
+    PURecalcCost(PUr);
+
+    PUr.Cost3 = Customsr.LocalTransVal + Customsr.LocalTrans2Val;
+    PUSetShipCost(PUr,4);
+    PURecalcCost(PUr);
+
+    if (pucnt>0) then begin
+      PUSumUp(PUr);
+      if (RecordStore(PUr,false)) then begin
+      end;
+      CheckFlush(flushcnt,10);
+    end;  
+  end;
+  RETURN;
+END;
+
+procedure GetPOs(record CustomsVc Customsr,var Array LongInt ponrs,var Integer ponrscnt)
+BEGIN
+  Integer i,rwcnt;
+  Integer p;
+  row CustomsVc Customsrw;
+
+  rwcnt = MatRowCnt(Customsr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(Customsr,i,Customsrw);
+    for (p=0;p<ponrscnt;p=p+1) begin
+      if (ponrs[p]==Customsrw.PONr) then begin
+        goto LSKIPPO;
+      end;
+    end;    
+    ponrs[ponrscnt] = Customsrw.PONr;
+    ponrscnt = ponrscnt + 1;
+LSKIPPO:;    
+  end;
+  RETURN;
+END;
+
+global
+updating procedure CustomsToPUMn(record RcVc RepSpec)
+BEGIN
+  record CustomsVc Customsr;
+  LongInt frcustoms,tocustoms;
+  Boolean TrHs;
+  Array LongInt ponrs;
+  Integer ponrscnt,flushcnt;
+  
+  frcustoms = FirstInRange(RepSpec.f1,10);
+  tocustoms = LastInRange(RepSpec.f1,10);  
+  Customsr.SerNr = frcustoms;
+  TrHs = true;  
+  while (LoopMain(Customsr,1,TrHs)) begin
+    if (nonblank(RepSpec.f1)) then begin
+      if (Customsr.SerNr>tocustoms) then begin
+        TrHs = false;
+      end;
+    end;
+    if (TrHs) then begin
+      GetPOs(Customsr,ponrs,ponrscnt);
+      NewPU(Customsr,ponrs,ponrscnt,flushcnt);
+    end;
+  end;
+  RETURN;
+END;

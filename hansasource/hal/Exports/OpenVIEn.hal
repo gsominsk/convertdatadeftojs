@@ -1,0 +1,417 @@
+external procedure VIVc_GetPrePaidAmount2(record VIVc,var val,var val);
+external procedure OPPastePayMode(var record OPVc);
+external procedure APGetOnAccBalance(record RcVc,record CUVc,Boolean,var val,var val,var val,var val,var val,var val,var val,
+                   Array string,Array val,var Integer,Array string,Array val,var Integer);
+external procedure OutRegisterTag(string);
+external procedure ExpBackupString(string);
+external procedure OPSumup(var record OPVc,Boolean);
+
+procedure SetupPay(var record OPVc OPp,var LongInt sernr,string paymode,Date datp)
+BEGIN
+  RecordNew(OPp);
+  if (nonblank(paymode)) then begin
+    OPp.PayMode = paymode;
+    OPPastePayMode(OPp);
+  end;
+  OPp.SerNr = sernr;
+  OPp.RegDate   = datp;
+  OPp.TransDate = datp;
+  OPp.PayDate = datp;
+  OPp.OrderedFlag = 1;
+  OPp.DoneFlag = 1;
+  sernr = sernr + 1;
+  RETURN;
+END;
+
+procedure OpenPrepayments(record RcVc RepSpec,record CUVc VEr,var record OPVc OPr,var LongInt serno,string paymode,Date datp,vector val vprepval)
+begin
+  record APPayHistVc APPayHistr;  
+  record APPayHistVc lastAPPayHistr;  
+  Boolean found,testf;
+  record VIVc VIr;
+  Boolean vif;
+  val rval,bookval;
+  row OPVc OPrw;
+  row OPVc OP2rw;
+  record OPVc OP2r;
+  record APVc APr;
+
+  found = true;
+  APPayHistr.VECode = VEr.Code;
+  while (LoopKey("VEPNrVECode",APPayHistr,1,found)) begin
+    if (APPayHistr.VECode!=VEr.Code) then begin found = false; end;
+    if (found) then begin
+      if (lastAPPayHistr.VEPNr>0 and lastAPPayHistr.VEPNr!=APPayHistr.VEPNr and rval>0) then begin
+        rval = rval - vprepval[lastAPPayHistr.VEPNr];
+        ClearRow(OPr,OPrw,1);
+        OPrw.stp = 1;
+        OPrw.VISerNr = -1;
+        OPrw.VECode = VEr.Code;
+        OPrw.Comment = VEr.Name;
+        OPrw.PInvCurncy = lastAPPayHistr.CurncyCode;
+        OPrw.PInvVal = rval;
+        OPrw.BankCurncy = lastAPPayHistr.CurncyCode;
+        OPrw.BankVal = rval;
+        OPrw.RecCurncy = lastAPPayHistr.CurncyCode;
+        OPrw.RecVal = rval;
+        OPrw.PrepayNr = lastAPPayHistr.VEPNr;
+        if (OPrw.RecVal!=0) then begin
+          MatRowPut(OPr,MatRowCnt(OPr),OPrw);
+          if (MatRowCnt(OPr)>0) then begin
+            OPSumup(OPr,false);
+            ExportRecord(OPr);
+            UserTrace(OPr.SerNr,M4Long);
+            NewLine;
+            SetupPay(OPr,serno,paymode,datp);
+          end;
+        end;
+        rval = blankval;
+        bookval = blankval;
+      end;
+      if (APPayHistr.FileName=="VIVc") then begin
+        testf = true;
+        if (nonblankdate(datp)) then begin
+          if (datp<APPayHistr.TransDate) then begin
+            testf = false;
+          end;
+        end;
+        if (testf) then begin
+          APr.SerNr = APPayHistr.SerNr;
+          testf = ReadFirstMain(APr,1,true)==false;
+        end;
+        if (testf) then begin
+          rval = rval - APPayHistr.Val;
+          bookval = bookval - APPayHistr.BookVal;
+        end;  
+      end;
+      if (APPayHistr.FileName=="OPVc") then begin
+        testf = true;
+        if (nonblankdate(datp)) then begin
+          if (datp<APPayHistr.TransDate) then begin
+            testf = false;
+          end;
+        end;        
+        if (testf) then begin          
+          rval = rval + APPayHistr.Val;
+          bookval = bookval + APPayHistr.BookVal;
+        end;  
+      end;
+      if (APPayHistr.FileName=="CLOutVc") then begin
+        testf = true;
+        if (nonblankdate(datp)) then begin
+          if (datp<APPayHistr.TransDate) then begin
+            testf = false;
+          end;
+        end;
+        if (testf) then begin
+          rval = rval + APPayHistr.Val;
+          bookval = bookval + APPayHistr.BookVal;
+        end;
+      end;
+      if (APPayHistr.FileName=="CLInVc") then begin
+        testf = true;
+        if (nonblankdate(datp)) then begin
+          if (datp<APPayHistr.TransDate) then begin
+            testf = false;
+          end;
+        end;        
+        if (testf) then begin
+          rval = rval - APPayHistr.Val;
+          bookval = bookval - APPayHistr.BookVal;
+        end;
+      end;        
+      lastAPPayHistr = APPayHistr;
+    end;
+  end;
+  if (lastAPPayHistr.VEPNr>0 and rval>0) then begin
+    rval = rval - vprepval[lastAPPayHistr.VEPNr];
+    ClearRow(OPr,OPrw,1);
+    OPrw.stp = 1;
+    OPrw.VISerNr = -1;
+    OPrw.VECode = VEr.Code;
+    OPrw.Comment = VEr.Name;
+    OPrw.PInvCurncy = lastAPPayHistr.CurncyCode;
+    OPrw.PInvVal = rval;
+    OPrw.BankCurncy = lastAPPayHistr.BankCurncy;
+    OPrw.BankVal = bookval;
+    OPrw.RecCurncy = lastAPPayHistr.CurncyCode;
+    OPrw.RecVal = rval;
+    OPrw.PrepayNr = lastAPPayHistr.VEPNr;
+    OP2r.SerNr = lastAPPayHistr.SerNr;
+    if (ReadFirstMain(OP2r,1,true)) then begin
+      MatRowGet(OP2r,0,OP2rw);
+      OPrw.B1BankVal = OP2rw.B1BankVal;
+      OPrw.ToRateB1BankVal = OP2rw.ToRateB1BankVal;
+    end;
+    if (OPrw.RecVal!=0) then begin
+      MatRowPut(OPr,MatRowCnt(OPr),OPrw);
+      if (MatRowCnt(OPr)>0) then begin
+        OPSumup(OPr,false);
+        ExportRecord(OPr);
+        UserTrace(OPr.SerNr,M4Long);
+        NewLine;
+        SetupPay(OPr,serno,paymode,datp);
+      end;
+    end;
+  end;
+  return;
+end;
+
+procedure CreateOpenPayments(record RcVc RepSpec,LongInt startno,string paymode,Date datp,var Boolean oplabelf,vector val vprepval)
+BEGIN
+  record APVc APr;
+  record VIVc VIr;
+  record OPVc OPr;
+  row OPVc OPrw;
+  Integer currow;
+  Boolean firstf;
+  LongInt serno;
+  string 20 tstr,curncy;
+  val paidval;
+  record CUVc VEr;
+  val sumdiff,sumcurncy,sumbooked,sumnow,sum,sum2,rval;
+  Boolean backdatf;  
+  Boolean TrHs;
+  Array string 10 credaccs;
+  Array val credbal;
+  Integer credcnt;
+  array val av1;
+  array string 20 acur;
+  Integer curcnt;
+  val prepaid,preppaidval,prepaidb1;
+
+  firstf = true;
+  serno = startno;
+  if (oplabelf) then begin
+    OutRegisterTag("OPVc");
+    NewLine;
+    oplabelf = true;
+  end;
+  APr.VECode = "";
+  while (LoopKey("VECode",APr,1,true)) begin
+    VIr.SerNr = APr.SerNr;
+    if (ReadFirstMain(VIr,1,true)) then begin
+      if (VIr.Invalid==0) then begin
+        if (VIr.InvType!=kInvoiceTypeCredit and VIr.InvType!=kInvoiceTypeCreditSpecialSales) then begin
+          paidval = VIr.PayVal - VIr.WithHoldingTax - APr.RVal;
+        end else begin
+          paidval = (VIr.PayVal - VIr.WithHoldingTax) + APr.RVal;
+          paidval = -paidval;
+        end;
+        if (VIr.InvType!=kInvoiceTypeCredit) then begin
+          VIVc_GetPrePaidAmount2(VIr,preppaidval,prepaidb1);
+          paidval = paidval - preppaidval;
+        end;
+      
+        if (paidval!=0) then begin
+          if ((VIr.CurncyCode!=curncy) or (firstf)) then begin
+            if (firstf==false) then begin
+              OPSumup(OPr,false);
+              ExportRecord(OPr);
+              UserTrace(OPr.SerNr,M4Long);
+              NewLine;
+            end;
+            SetupPay(OPr,serno,paymode,datp);
+            curncy = VIr.CurncyCode;
+            currow = 0;
+            firstf = false;
+          end;
+          ClearRow(OPr,OPrw,1);
+          OPrw.VISerNr = VIr.SerNr;
+          OPrw.VECode = VIr.VECode;
+          OPrw.Comment = VIr.VEName;
+          OPrw.PInvCurncy = VIr.CurncyCode;
+          OPrw.BankCurncy = VIr.CurncyCode;
+          OPrw.RecCurncy = VIr.CurncyCode;
+          OPrw.BankVal = paidval;
+          OPrw.RecVal = paidval;
+          OPrw.PInvVal = paidval;
+          MatRowPut(OPr,currow,OPrw);
+          currow = currow + 1;
+        end;
+      end;
+    end;
+L88:;    
+  end;
+  if (firstf==false) then begin
+    if (MatRowCnt(OPr)>0) then begin
+      OPSumup(OPr,false);
+      ExportRecord(OPr);
+      UserTrace(OPr.SerNr,M4Long);
+      NewLine;
+    end;
+  end;
+
+  if (RepSpec.flags[4]!=0) then begin
+    SetupPay(OPr,serno,paymode,datp);
+    currow = 0;  
+    RepSpec.d1 = RepSpec.RegDate;
+    backdatf = true;
+    TrHs = true;
+    while (LoopMain(VEr,1,TrHs)) begin
+      if (TrHs) then begin
+        RepSpec.flags[29] = 1;
+        APGetOnAccBalance(RepSpec,VEr,backdatf,sum,sum2,rval,sumbooked,sumnow,sumcurncy,sumdiff,credaccs,credbal,credcnt,acur,av1,curcnt);
+        if (rval!=0) then begin
+          rval = -rval;
+          ClearRow(OPr,OPrw,1);
+          OPrw.stp = 1;
+          OPrw.VISerNr = -1;
+          OPrw.VECode = VEr.Code;
+          OPrw.Comment = VEr.Name;
+          OPrw.PInvCurncy = VEr.VECurncyCode;
+          OPrw.PInvVal = rval;
+          OPrw.BankCurncy = VEr.VECurncyCode;
+          OPrw.BankVal = rval;
+          OPrw.RecCurncy = VEr.VECurncyCode;
+          OPrw.RecVal = rval;
+//          OPrw.PrepayNr = rval;
+          if (OPrw.RecVal!=0) then begin
+            MatRowPut(OPr,currow,OPrw);
+            currow = currow + 1;
+            if (MatRowCnt(OPr)>0) then begin
+              OPSumup(OPr,false);
+              ExportRecord(OPr);
+              UserTrace(OPr.SerNr,M4Long);
+              NewLine;
+              SetupPay(OPr,serno,paymode,datp);
+              currow = 0;
+            end;
+          end;
+        end;
+        OpenPrepayments(RepSpec,VEr,OPr,serno,paymode,datp,vprepval);
+      end;
+    end;
+
+    if (MatRowCnt(OPr)>0) then begin
+      OPSumup(OPr,false);
+      ExportRecord(OPr);
+      UserTrace(OPr.SerNr,M4Long);
+      NewLine;
+    end;
+  end;
+  return;
+end;
+
+procedure CreatePrepaymentPayments(record VIVc VIr,var LongInt startno,string paymode,Date datp,var Boolean firstf,var Boolean oplabelf,var vector val vprepval)
+begin
+  record OPVc OPr;
+  row OPVc OPrw;
+  row VIVc VIrw;
+  Integer i,rwcnt;
+  Integer currow;
+  
+  rwcnt = MatRowCnt(VIr);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(VIr,i,VIrw);
+    if (VIrw.stp==kInvoiceRowTypePrepayment) then begin
+      if (oplabelf) then begin
+        OutRegisterTag("OPVc");
+        NewLine;
+        SetupPay(OPr,startno,paymode,datp);
+        firstf = false;
+        oplabelf = false;
+      end;
+      ClearRow(OPr,OPrw,1);      
+      OPrw.stp = 1;
+      OPrw.VISerNr = -1;
+      OPrw.PrepayNr = VIrw.PrepayNr;
+      OPrw.VECode = VIr.VECode;
+      OPrw.Comment = VIr.VEName;
+      OPrw.PInvCurncy = VIr.CurncyCode;
+      OPrw.PInvVal = VIrw.Sum;
+      OPrw.BankCurncy = VIr.CurncyCode;
+      OPrw.BankVal = VIrw.Sum;
+      OPrw.RecCurncy = VIr.CurncyCode;
+      OPrw.RecVal = VIrw.Sum;
+      OPrw.VATCode = VIrw.VATCode;
+      OPrw.VATVal = VIrw.VATVal;
+      
+      MatRowPut(OPr,currow,OPrw);
+      vprepval[OPrw.PrepayNr] = vprepval[OPrw.PrepayNr] + OPrw.PInvVal;
+      currow = currow + 1;      
+    end;
+  end;
+  if (currow>0) then begin
+    OPSumup(OPr,false);
+    ExportRecord(OPr);
+    UserTrace(OPr.SerNr,M4Long);
+    NewLine;
+  end;
+  return;
+end;
+
+global
+procedure OpenVIEn(record RcVc RepSpec)
+begin
+  record VIVc VIr;
+  record APVc APr;
+  Boolean found,firstopf,oplabelf;
+  string 255 tstr;
+  LongInt startno;
+  record CYBlock CYb;
+  record CYBlock CYexpb;
+  vector val vprepval;
+  
+  if (blankdate(RepSpec.RegDate)) then begin 
+    MessageBox(9610,"");
+    goto LOpenVIEn; 
+  end;
+  
+  BlockLoad(CYb);
+//  CYexpb.VATLaw = CYb.VATLaw;
+//  BlockStore(CYexpb);
+  BlockExport("CYBlock");  
+//  BlockStore(CYb);
+
+  ExportFormat;
+  BlockExport("SysFormatBlock");
+  ExpBackupString(RepSpec.f3);
+  
+  found = false;
+  if (CountRecords("APVc")>0) then begin
+    OutRegisterTag("VIVc");
+    NewLine;
+    found = true;
+  end;
+  startno = RepSpec.long1;
+  if (startno==-1) then begin
+    startno = 1;
+  end;
+  while (LoopMain(APr,1,found)) begin
+    VIr.SerNr = APr.SerNr;
+    if (ReadFirstMain(VIr,1,true)) then begin
+      ExportRecord(VIr);    
+      NewLine;
+    end;
+  end;
+  NewLine;
+  NewLine;
+
+  oplabelf = true;
+  startno = RepSpec.long1;
+  if (startno==-1) then begin
+    startno = 1;
+  end;
+  APr.SerNr = -1;
+  ResetLoop(APr);
+  firstopf = true;
+  found = true;
+  while (LoopMain(APr,1,found)) begin
+    if (found) then begin
+      VIr.SerNr = APr.SerNr;
+      if (ReadFirstMain(VIr,1,true)) then begin
+        if (VIr.Invalid==0) then begin
+          CreatePrepaymentPayments(VIr,startno,RepSpec.f1,RepSpec.RegDate,firstopf,oplabelf,vprepval);
+          UserTrace(VIr.SerNr,M4Long);
+        end;
+      end;
+    end;
+  end;
+  
+  if (RepSpec.flags[3]!=0) then begin
+    CreateOpenPayments(RepSpec,startno,RepSpec.f1,RepSpec.RegDate,oplabelf,vprepval);
+  end;  
+LOpenVIEn:;
+  return;
+end;

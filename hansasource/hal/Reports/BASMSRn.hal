@@ -1,0 +1,365 @@
+external function Boolean HasContactClassification();
+external function Boolean HasCategories();
+external procedure HTCustCat(string,var string);
+external procedure HTCustClass(string,var string);
+external function Boolean ContactInGroupClass(string,string,string,string,string,string);
+
+procedure GetLatestSMSStatus(longint SMSSerNr,string CustID,var string custcode,var date d,var time t,var integer stat,var string comment)
+begin
+  record ERecordStatusVc ERSr,ERS2r;
+  record SMSVc SMSr;
+  boolean testf;
+  time tinit;
+  date dinit;
+
+  t = tinit;
+  d = dinit;
+  comment = "";
+  custcode = "";
+  stat = -1;
+  testf = false;
+  
+  ERSr.FileName = "ETasksQueueVc";
+  ERSr.CustID = CustID;
+  ERSr.CustSerNr = SMSSerNr;
+  if (ReadLastKey("FileName",ERSr,3,true)) then begin
+    custcode = ERSr.TheirRecipient;
+    d = ERSr.CreationDate;
+    t = ERSr.CreationTime;
+    stat = ERSr.Status;
+    comment = ERSr.Comment;
+  end;
+  
+  ERS2r.FileName = "SMSVc";
+  ERS2r.CustID = CustID;
+  ERS2r.CustSerNr = SMSSerNr;
+  if (ReadLastKey("FileName",ERS2r,3,true)) then begin
+    if (ERS2r.CreationDate>ERSr.CreationDate) then begin
+      testf = true;
+    end else begin
+      if (ERS2r.CreationDate==ERSr.CreationDate) then begin
+        if (ERS2r.CreationTime>ERSr.CreationTime) then begin
+          testf = true;
+        end;
+      end;
+    end;
+    if (testf) then begin
+      custcode = ERS2r.TheirRecipient;
+      d = ERS2r.CreationDate;
+      t = ERS2r.CreationTime;
+      stat = ERS2r.Status;
+      comment = ERS2r.Comment;
+    end;
+  end;
+  
+  if (blank(custcode)) then begin
+    SMSr.SerNr = SMSSerNr;
+    if (ReadFirstMain(SMSr,1,true)) then begin
+      if (nonblank(SMSr.CustCode)) then begin
+        custcode = SMSr.CustCode;
+      end else begin
+        custcode = ":" & SMSr.PhoneNo;
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+procedure GetSMSInPeriod(date sd,date ed,integer compnr,string custcode,integer ShowSentToServer,integer ShowPending,integer ShowDelivered,integer ShowFailed,var record SMVc SMr,record RcVc RepSpec)
+begin
+  boolean foundf,testf;
+  record ETasksQueueVc ETQr;
+  date d;
+  time t;
+  integer stat;
+  record InternetEnablerBlock IEb;
+  row SMVc SMrw;
+  string 255 comment,mcust;
+  
+  BlockLoad(IEb);
+  foundf = true;
+  ETQr.FileName = "SMSVc";
+  ETQr.CompNr = compnr;
+  ETQr.TransDate = sd;
+  while (LoopKey("FileName",ETQr,3,foundf)) begin
+    if (ETQr.FileName!="SMSVc") then begin
+      foundf = false;
+    end;
+    if (ETQr.CompNr!=compnr) then begin
+      foundf = false;
+    end;
+    if (ETQr.TransDate<sd or ETQr.TransDate>ed) then begin
+      foundf = false;
+    end;
+    
+    if (foundf) then begin
+      GetLatestSMSStatus(ETQr.RecSerNr,IEb.CustomerCode,mcust,d,t,stat,comment);
+      testf = true;
+      if (blank(mcust)) then begin
+        testf = false;
+      end;
+      if (nonblank(custcode) and custcode!=mcust) then begin
+        testf = false;
+      end;
+      if (testf) then begin
+        testf = ContactInGroupClass(custcode,RepSpec.f2,RepSpec.f3,"CUST","","");
+      end;      
+      if (testf) then begin
+        testf = false;
+        if (ShowSentToServer==1 and stat==2) then begin
+          testf = true;
+        end;
+        if (ShowPending==1 and stat==4) then begin
+          testf = true;
+        end;
+        if (ShowDelivered==1 and stat==5) then begin
+          testf = true;
+        end;
+        if (ShowFailed==1 and (stat==0 or stat==3 or stat==6)) then begin
+          testf = true;
+        end;
+
+        if (testf) then begin
+          ClearRow(SMr,SMrw,1);
+
+          SMrw.Objects = mcust;
+          SMrw.RowSimStat = stat;
+          SMrw.Comment = comment;
+          SMrw.AccNumber = ETQr.RecSerNr;
+          
+          SMrw.DebVal = (d.year*100.0+d.month)*100.0+d.day;
+          SMrw.CredVal = (t.hour*60.0+t.minute)*60.0+t.second;
+
+          t = ETQr.TransTime;
+          SMrw.TransDate = ETQr.TransDate;
+          SMrw.CredVal2 = (t.hour*60.0+t.minute)*60.0+t.second;
+          
+          MatRowPut(SMr,MatRowCnt(SMr),SMrw);
+        end;
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+procedure SortSMSInPeriodLines(record SMVc SMr,integer sortmode)
+begin
+  row SMVc SMrw1,SMrw2;
+  integer i,j,cnt;
+  boolean sortf;
+  time t1,t2;
+  
+  cnt = MatRowCnt(SMr);
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw1);
+    for (j=i+1;j<cnt;j=j+1) begin
+      MatRowGet(SMr,j,SMrw2);
+      sortf = false;
+      switch (sortmode) begin
+        case 0:
+          if (SMrw2.Objects<SMrw1.Objects) then begin
+            sortf = true;
+          end;
+        case 1:
+          if (SMrw2.RowSimStat<SMrw1.RowSimStat) then begin
+            sortf = true;
+          end;
+        case 2:
+          if (SMrw2.TransDate<SMrw1.TransDate) then begin
+            sortf = true;
+          end;
+          if (sortf==false) then begin
+            if (SMrw2.TransDate==SMrw1.TransDate) then begin
+
+              t1.second = mod(SMrw1.CredVal2,60.0);
+              SMrw1.CredVal2 = (SMrw1.CredVal2-t1.second)/60.0;
+              t1.minute = mod(SMrw1.CredVal2,60.0);
+              SMrw1.CredVal2 = (SMrw1.CredVal2-t1.minute)/60.0;
+              t1.hour = SMrw1.CredVal2;
+    
+              t2.second = mod(SMrw2.CredVal,60.0);
+              SMrw2.CredVal = (SMrw2.CredVal-t2.second)/60.0;
+              t2.minute = mod(SMrw2.CredVal,60.0);
+              SMrw2.CredVal = (SMrw2.CredVal-t2.minute)/60.0;
+              t2.hour = SMrw2.CredVal;
+              
+              if (t2<t1) then begin
+                sortf = true;
+              end;
+            end;
+          end;
+      end;
+          
+      if (sortf) then begin
+        MatRowPut(SMr,i,SMrw2);
+        MatRowPut(SMr,j,SMrw1);
+        MatRowGet(SMr,i,SMrw1);
+      end;
+    end;
+  end;
+  
+  return;
+end;
+
+function string 255 TimeToString(time t)
+begin
+  string 255 tstr;
+  
+  if (nonblanktime(t)) then begin
+    if (t.hour<10) then begin
+      tstr = "0";
+    end;
+    tstr = tstr & t.hour;
+
+    tstr = tstr & ":";
+    
+    if (t.minute<10) then begin
+      tstr = tstr & "0";
+    end;
+    tstr = tstr & t.minute;
+  end;
+  
+  TimeToString = tstr;
+  return;
+end;
+
+procedure ShowSMSInPeriod(record SMVc SMr)
+begin
+  integer i,cnt;
+  row SMVc SMrw;
+  record CUVc CUr;
+  time t1,t2;
+  date d;
+  
+  cnt = MatRowCnt(SMr);
+  
+  for (i=0;i<cnt;i=i+1) begin
+    MatRowGet(SMr,i,SMrw);
+
+    if (left(SMrw.Objects,1)==":") then begin
+      CUr.Name = mid(SMrw.Objects,1,255);
+      SMrw.Objects = "";
+    end else begin
+      CUr.Code = SMrw.Objects;
+      if (ReadFirstMain(CUr,1,true)==false) then begin
+        CUr.Name = "";
+      end;
+    end;
+    
+    t1.second = mod(SMrw.CredVal2,60.0);
+    SMrw.CredVal2 = (SMrw.CredVal2-t1.second)/60.0;
+    t1.minute = mod(SMrw.CredVal2,60.0);
+    SMrw.CredVal2 = (SMrw.CredVal2-t1.minute)/60.0;
+    t1.hour = SMrw.CredVal2;
+    
+    t2.second = mod(SMrw.CredVal,60.0);
+    SMrw.CredVal = (SMrw.CredVal-t2.second)/60.0;
+    t2.minute = mod(SMrw.CredVal,60.0);
+    SMrw.CredVal = (SMrw.CredVal-t2.minute)/60.0;
+    t2.hour = SMrw.CredVal;
+    
+    d.day = mod(SMrw.DebVal,100.0);
+    SMrw.DebVal = (SMrw.DebVal-d.day)/100.0;
+    d.month = mod(SMrw.DebVal,100.0);
+    SMrw.DebVal = (SMrw.DebVal-d.month)/100.0;
+    d.year = SMrw.DebVal;
+    
+    StartFormat(15);
+    OutString(0,"DblCUVc",SMrw.Objects,false);
+    OutString(60,0,left(CUr.Name,30),false);
+    OutStringID(205,"DblSMSStatus",SMrw.TransDate,false,SMrw.AccNumber);
+    OutString(260,0,TimeToString(t1),false);
+    OutDate(300,0,d,false);
+    OutString(355,0,TimeToString(t2),false);
+    OutString(400,0,SMrw.Comment,false);
+    EndFormat;
+  end;
+  
+  return;
+end;
+
+global
+procedure BASMSStatusRn(record RcVc RepSpec)
+begin
+  record SMVc SMr;
+  
+  Integer rw;
+  string 255 tstr;
+
+  StartReportJob(USetStr(17730));
+  rw = 1;
+  if (nonblank(RepSpec.f1)) then begin
+    tstr = RepSpec.f1;
+    Header(rw,USetStr(17731) & " " & tstr,1);
+    rw = rw + 1;
+  end;
+  if (HasCategories) then begin
+    HTCustCat(RepSpec.f2,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  if (HasContactClassification) then begin
+    HTCustClass(RepSpec.f3,tstr);
+    if (nonblank(tstr)) then begin
+      Header(rw,tstr,1);
+      rw = rw + 1;
+    end;
+  end;
+  
+  tstr = "";
+  if (RepSpec.flags[0]==1) then begin
+    tstr = USetStr(17738);
+  end;
+  if (RepSpec.flags[1]==1) then begin
+    if (nonblank(tstr)) then begin
+      tstr = tstr & ", ";
+    end;
+    tstr = tstr & USetStr(17739);
+  end;
+  if (RepSpec.flags[2]==1) then begin
+    if (nonblank(tstr)) then begin
+      tstr = tstr & ", ";
+    end;
+    tstr = tstr & USetStr(17740);
+  end;
+  if (RepSpec.flags[3]==1) then begin
+    if (nonblank(tstr)) then begin
+      tstr = tstr & ", ";
+    end;
+    tstr = tstr & USetStr(17741);
+  end;
+  Header(rw,USetStr(17736) & " " & tstr,1);
+  rw = rw + 1;
+  tstr = "";
+  switch (RepSpec.ArtMode) begin
+    case 0: tstr = USetStr(17742);
+    case 1: tstr = USetStr(17743);
+    case 2: tstr = USetStr(17744);
+  end;
+  Header(rw,USetStr(17737) & ": " & tstr,1);
+  rw = rw + 1;
+  EndHeader;  
+  
+  StartFormat(15);
+  OutString(0,0,USetStr(17731),false);
+  OutString(60,0,USetStr(17732),false);
+  OutString(205,0,USetStr(17733),false);
+  OutString(300,0,USetStr(17734),false);
+  OutString(400,0,USetStr(17735),false);
+  EndFormat;
+  Black_divider(0,1);
+  
+  GetSMSInPeriod(RepSpec.sStartDate,RepSpec.sEndDate,CurrentCompany,RepSpec.f1,RepSpec.flags[0],RepSpec.flags[1],RepSpec.flags[2],RepSpec.flags[3],SMr,RepSpec);
+  
+  SortSMSInPeriodLines(SMr,RepSpec.ArtMode);
+  
+  ShowSMSInPeriod(SMr);
+  
+  EndJob;
+  
+  return;
+end;

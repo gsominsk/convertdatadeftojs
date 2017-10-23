@@ -1,0 +1,204 @@
+external procedure AddWithholdingTaxesRows_IVVc(var record IVVc);
+external procedure AddPerceptionTaxesRows_IVVc(var record IVVc);
+external procedure CalcPrice(val,val,val,var val,Integer);
+external updating function LongInt IVVcRecordCheck(record IVVc,record IVVc,LongInt,LongInt);
+external function LongInt GetCurUserLastNr(string);
+external procedure IVSumup(var record IVVc,Boolean);
+external procedure CalcSum(val,val,val,val,var val,Integer);
+external function Boolean PasteOrdInInv(var record IVVc,record ORVc,Boolean,string,record RcVc,var val,Boolean,Boolean,Boolean,var Integer,Boolean,array record XSrsVc,var Integer);
+external function Boolean GetItemPriceDiscount3(string,val,var record INVc,string,val,val,val,val,val,string,string,string,string,
+                                                var val,var string,var val,var string,var val,var string,Integer,var Boolean,Date,Time,
+                                                string,Boolean,var Boolean,string,var string,var val,string,string,var string);
+
+updating procedure SaveCreatedIVFromOR(record IVVc IVp,record ORVc ORr,record RcVc RepSpec)
+begin
+  LongInt newnr;
+  record SRBlock SRRec;
+  string 255 sstr,tstr;
+  record IVVc oldIVr;
+  Integer errcode;
+ 
+  sstr = IVp.LangCode;
+  if (nonblank(RepSpec.AccStr)) then begin sstr = RepSpec.AccStr; end;
+  BlockLoad(SRRec);
+  if (IVp.SerNr==-1) then begin
+    newnr = GetCurUserLastNr("IVVc");
+    if (newnr==-1) then begin
+      newnr = SRRec.LastInvNr;
+    end;  
+    IVp.SerNr = NextSerNr("IVVc",IVp.TransDate,newnr,false,sstr);
+  end;
+  AddPerceptionTaxesRows_IVVc(IVp);
+  AddWithholdingTaxesRows_IVVc(IVp);
+  IVSumup(IVp,true);
+  if (MatRowCnt(IVp)>0) then begin
+/* Either we add another flag or we just set it always to what it should be, there is no point in anything else */
+//    IVp.UpdStockFlag = rp.flags[1];
+    if (RecordInsert(IVp,false)) then begin  //maybe     IVVcRecordCheck and delete? 
+      CreateRecordLink(IVp,CurrentCompany,ORr,CurrentCompany);  
+      CreateRecordLink(ORr,CurrentCompany,IVp,CurrentCompany);  
+      RecordCopy(oldIVr,IVp);
+      oldIVr.OKFlag = 0;
+      if (RepSpec.flags[1]!=0) then begin 
+        IVp.OKFlag = 1;
+        if (RecordUpdate(oldIVr,IVp,true)) then begin
+        end;
+      end;
+//      if (IVVcRecordCheck(IVp,oldIVr,2,0)!=0) then begin
+//      end;
+    end;
+  end;
+  return;
+end;
+
+procedure IVUpdatePrices(record IVVc IVp)
+BEGIN
+  record INVc INr;
+  Boolean calcpricef;
+  string 255 tstr;
+  row IVVc IVrw;
+  Integer i,rwcnt;
+  record GeneralOptionBlock GenOptr;
+  val t,s,rowsum,price,vreb,baseprice,tax2prc,p;
+  string 255 curitemname,salesacc,vatcode,tax2code,location,taxtemplatecode;
+  Boolean dummyf;
+  
+  BlockLoad(GenOptr);
+  rwcnt = MatRowCnt(IVp);
+  for (i=0;i<rwcnt;i=i+1) begin
+    MatRowGet(IVp,i,IVrw);
+    if (nonblank(IVrw.ArtCode)) then begin
+      IVrw.Price = blankval;
+      location = IVrw.Location;
+      if (blank(location)) then begin
+        location = IVp.Location;
+      end;
+      if (GetItemPriceDiscount3(IVrw.ArtCode,IVrw.Quant,INr,IVp.CurncyCode,
+                                IVp.FrRate,IVp.ToRateB1,IVp.ToRateB2,IVp.BaseRate1,IVp.BaseRate2,
+                                IVp.LangCode,IVp.CustCat,IVp.PriceList,IVp.RebCode,
+                                price,curitemname,vreb,vatcode,baseprice,salesacc,
+                                IVp.ExportFlag,calcpricef,IVp.TransDate,IVp.TransTime,IVp.CustCode,true,dummyf,IVp.PayDeal,tax2code,tax2prc,IVp.Region,location,taxtemplatecode)) then begin
+        IVrw.Price = price;
+        IVrw.vRebate = vreb;
+        IVrw.BasePrice = baseprice;
+        p = IVrw.Price; 
+        CalcPrice(IVrw.BasePrice,IVrw.PriceFactor,IVrw.vRebate,p,GenOptr.UseDiscount);
+        IVrw.Price = p;  
+        CalcSum(IVrw.Quant,IVrw.Price,IVrw.PriceFactor,IVrw.vRebate,t,GenOptr.UseDiscount);
+        IVrw.Sum = t;
+        IVrw.Perceptions = INr.Perceptions;
+        MatRowPut(IVp,i,IVrw);
+      end;
+    end;
+  end;
+  RETURN;
+END;
+
+global
+updating function Boolean CreateInvMn_Run(var record RcVc RepSpec,Boolean singlef,LongInt prevlooppos)
+BEGIN
+  Boolean res;
+  record ORVc ORr;
+  record IVVc IVr; 
+  record CUVc CUr; 
+  Boolean found,testf;
+  string 20 lastcu;
+  string 255 frcu,tocu;
+  string 255 frsort,tosort;
+  Integer keys;
+  val t;
+  Integer err;
+  array record XSrsVc aXSrsr;
+  Integer axsrscnt;
+
+//  RepSpec.f4 = RepSpec.sStartDate2 & ":" & RepSpec.sEndDate2;
+//only when reportnigperiods on
+  keys = 2;
+  RecordNew(IVr);
+  frcu = FirstInRange(RepSpec.f1,20);
+  tocu = LastInRange(RepSpec.f1,20);
+  frsort = FirstInRange(RepSpec.f3,20);
+  tosort = LastInRange(RepSpec.f3,20);
+
+  ORr.CustCode = frcu;
+  if (blank(RepSpec.f1)) then begin keys = 1; end;// Why did I have to do this?
+  ORr.OSFlag = 1;
+  ORr.SerNr = -1;
+  found = true;
+  SetLoopPosition(ORr,RepSpec.long1);
+  while (LoopKey("OSCU",ORr,keys,found)) begin//InvoiceCode - this is for group invoicing, there is another maint for that purpose
+    if (found) then begin
+      if (ORr.OSFlag!=1) then begin found = false; end;
+      if (nonblank(RepSpec.f1)) then begin
+        if (nonblank(ORr.InvoiceToCode)) then begin
+          if (ORr.InvoiceToCode<frcu) then begin found = false; end;
+          if (ORr.InvoiceToCode>tocu) then begin found = false; end;
+        end else begin
+          if (ORr.CustCode<frcu) then begin found = false; end;
+          if (ORr.CustCode>tocu) then begin found = false; end;
+        end;
+      end;
+    end;
+
+    testf = true;
+    if (found) then begin
+      if (ORr.InvFlag==1) then begin testf = false; end;
+      if (ORr.InvFlag==2) then begin testf = false; end;
+      if (nonblank(RepSpec.f2)) then begin
+        if (ORr.OrderClass!=RepSpec.f2) then begin testf = false; end;
+      end;
+      if (nonblank(RepSpec.f3)) then begin
+        if (ORr.Sorting<frsort) then begin testf = false; end;
+        if (ORr.Sorting>tosort) then begin testf = false; end;
+      end;
+    end;
+    if (nonblank(ORr.InvoiceToCode)) then begin
+      CUr.Code = ORr.InvoiceToCode;
+    end else begin
+      CUr.Code = ORr.CustCode;
+    end;
+    if (ReadFirstMain(CUr,1,true)) then begin end;
+    if (CUr.GroupInv!=0) then begin testf = false; end;
+    
+    if (found==false) then begin testf = false; end;
+    if (testf) then begin
+      if (IsRecordLocked(ORr)) then begin
+        goto L77;
+      end;
+      if (PasteOrdInInv(IVr,ORr,false,lastcu,RepSpec,t,true,true,true,err,false,aXSrsr,axsrscnt)) then begin end;
+      if (RepSpec.flags[2]!=0) then begin IVUpdatePrices(IVr); end;
+      IVr.SerNr = -1;      
+      SaveCreatedIVFromOR(IVr,ORr,RepSpec);
+      RecordNew(IVr);
+L77:;
+      if (nonblank(ORr.InvoiceToCode)) then begin
+        lastcu = ORr.InvoiceToCode;
+      end else begin
+        lastcu = ORr.CustCode;
+      end;
+      res = true;
+      if (singlef) then begin
+        RepSpec.long1 = GetLoopPosition(ORr);
+        if (RepSpec.long1==prevlooppos) then begin
+          res = false;
+        end;
+        goto LCreateInvMn_Run;
+      end;
+    end;
+    UserTrace(ORr.SerNr,M4Long);                
+  end;
+LCreateInvMn_Run:;  
+  CreateInvMn_Run = res;
+  RETURN;
+END;
+
+global
+updating procedure CreateInvMn(record RcVc RepSpec)
+BEGIN
+  LongInt prevlooppos;
+
+  while (qupdating.CreateInvMn_Run(RepSpec,true,prevlooppos)) begin
+    prevlooppos = RepSpec.long1;
+  end;
+  RETURN;
+END;
